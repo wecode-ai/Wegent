@@ -38,6 +38,10 @@ class InternalRetrieveRequest(BaseModel):
         default=None,
         description="Optional list of document IDs to filter. Only chunks from these documents will be returned.",
     )
+    user_name: Optional[str] = Field(
+        default=None,
+        description="User name for placeholder replacement in embedding headers",
+    )
 
 
 class RetrieveRecord(BaseModel):
@@ -108,6 +112,7 @@ async def internal_retrieve(
             knowledge_base_id=request.knowledge_base_id,
             db=db,
             metadata_condition=metadata_condition,
+            user_name=request.user_name,
         )
 
         records = result.get("records", [])

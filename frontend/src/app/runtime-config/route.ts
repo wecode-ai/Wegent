@@ -95,7 +95,7 @@ export async function GET() {
     docsUrl:
       process.env.RUNTIME_DOCS_URL ||
       process.env.NEXT_PUBLIC_DOCS_URL ||
-      'https://github.com/wecode-ai/Wegent',
+      'https://wecode-ai.github.io/wegent-docs',
 
     // OpenTelemetry configuration
     // Priority: RUNTIME_OTEL_* > NEXT_PUBLIC_OTEL_* > defaults

@@ -20,7 +20,7 @@ from executor_manager.executors.docker.constants import (
 from executor_manager.utils.executor_name import generate_executor_name
 from executor_manager.wecode.config.config import (
     EXECUTOR_DEFAULT_MAGE, K8S_NAMESPACE, MAX_USER_TASKS,
-    USER_WHITELIST_TASK_LIMIT_MAP)
+    USER_WHITELIST_TASK_LIMIT_MAP, WARMPOOL_ENABLED, WARMPOOL_TEMPLATE_NAME)
 from executor_manager.wecode.executors.k8s.build_pod import \
     build_pod_configuration
 
@@ -185,28 +185,40 @@ class K8sExecutor(Executor):
                     )
                     callback_status = TaskStatus.FAILED.value
                 else:
-                    # Extract base_image from bot configuration (if available)
-                    base_image = self._get_base_image_from_task(task)
+                    # Check if warm pool is enabled for sandbox tasks
+                    if WARMPOOL_ENABLED and is_sandbox_task:
+                        # Create pod from warm pool
+                        pod_result = self._create_pod_from_warmpool(
+                            task=task,
+                            executor_name=executor_name,
+                            user_name=user_name,
+                            task_id=task_id,
+                            subtask_id=subtask_id,
+                        )
+                    else:
+                        # Extract base_image from bot configuration (if available)
+                        base_image = self._get_base_image_from_task(task)
 
-                    # Log base_image usage
-                    if base_image:
-                        logger.info(
-                            f"Using custom base image: {base_image} with InitContainer pattern"
+                        # Log base_image usage
+                        if base_image:
+                            logger.info(
+                                f"Using custom base image: {base_image} with InitContainer pattern"
+                            )
+
+                        # Need to mount the internal git_token to the pod via secret
+                        pod = build_pod_configuration(
+                            user_name,
+                            executor_name,
+                            K8S_NAMESPACE,
+                            task,
+                            image,
+                            task_id,
+                            task.get("mode", "default"),
+                        )
+                        pod_result = self._submit_kubernetes_pod(
+                            pod, K8S_NAMESPACE, executor_name, task_id
                         )
 
-                    # Need to mount the internal git_token to the pod via secret
-                    pod = build_pod_configuration(
-                        user_name,
-                        executor_name,
-                        K8S_NAMESPACE,
-                        task,
-                        image,
-                        task_id,
-                        task.get("mode", "default"),
-                    )
-                    pod_result = self._submit_kubernetes_pod(
-                        pod, K8S_NAMESPACE, executor_name, task_id
-                    )
                     if pod_result and pod_result.get("status") == "success":
                         # Register regular tasks to RunningTaskTracker for heartbeat monitoring
                         # This enables OOM detection for non-sandbox tasks
@@ -448,6 +460,251 @@ class K8sExecutor(Executor):
             )
             return {"status": "failed", "pod_name": pod_name, "error_msg": str(e)}
 
+    def _create_pod_from_warmpool(
+        self,
+        task: Dict[str, Any],
+        executor_name: str,
+        user_name: str,
+        task_id: str,
+        subtask_id: str,  # noqa: ARG002 - kept for consistency with other methods
+    ) -> Dict[str, Any]:
+        """Create a pod from the warm pool by claiming a SandboxClaim.
+
+        Args:
+            task: Task information
+            executor_name: Name for the executor
+            user_name: User name
+            task_id: Task ID
+            subtask_id: Subtask ID
+
+        Returns:
+            dict with status and error_msg if failed
+        """
+        from executor_manager.wecode.executors.warmpool import WarmPoolClient
+        from executor_manager.wecode.executors.warmpool.constants import (
+            ANNOTATION_AUTH_TOKEN,
+            ANNOTATION_CALLBACK_URL,
+            ANNOTATION_EMAIL,
+            ANNOTATION_HEARTBEAT_BASE_URL,
+            ANNOTATION_HEARTBEAT_ENABLED,
+            ANNOTATION_HEARTBEAT_ID,
+            ANNOTATION_HEARTBEAT_TYPE,
+            ANNOTATION_TASK_API_DOMAIN,
+            LABEL_EXECUTOR,
+            LABEL_EXECUTOR_VALUE,
+            LABEL_PROXY_USER,
+            LABEL_TASK_ID,
+            LABEL_TASK_TYPE,
+            LABEL_TEAM_MODE,
+            LABEL_USER,
+        )
+        from executor_manager.wecode.config.config import (
+            CALLBACK_URL,
+            EXECUTOR_MANAGER_HEARTBEAT_BASE_URL,
+            TASK_API_DOMAIN,
+        )
+
+        api_client = _get_api_client()
+        if api_client is None:
+            return {
+                "status": "failed",
+                "error_msg": "Failed to get Kubernetes API client",
+            }
+
+        warmpool_client = WarmPoolClient(api_client, K8S_NAMESPACE)
+
+        try:
+            # Check if SandboxClaim already exists (reuse existing sandbox)
+            existing_claim = warmpool_client.get_sandbox_claim(executor_name)
+            if existing_claim:
+                logger.info(
+                    f"SandboxClaim '{executor_name}' already exists for task {task_id}, reusing existing sandbox"
+                )
+                # Get sandbox status to retrieve pod info
+                sandbox_status = warmpool_client.get_sandbox_status(executor_name)
+                if sandbox_status.get("exists") and sandbox_status.get("phase") == "Running":
+                    logger.info(
+                        f"Existing sandbox '{executor_name}' is running, reusing"
+                    )
+                    return {"status": "success"}
+                else:
+                    # Sandbox exists but not running, wait for it to be ready
+                    sandbox_status = self._wait_for_warmpool_sandbox_ready(
+                        warmpool_client, executor_name, timeout=60
+                    )
+                    if sandbox_status:
+                        return {"status": "success"}
+                    return {
+                        "status": "failed",
+                        "error_msg": "Existing sandbox pod did not become ready in time",
+                    }
+
+            # Create SandboxClaim CR (claims pod from warm pool)
+            # Note: labels/annotations passed here are for the SandboxClaim CR itself,
+            # not for the Pod. Pod metadata is patched separately after sandbox is ready.
+            warmpool_client.create_sandbox_claim(
+                name=executor_name,
+                template_name=WARMPOOL_TEMPLATE_NAME,
+                labels={},
+                annotations={},
+            )
+
+            logger.info(
+                f"Created SandboxClaim '{executor_name}' for task {task_id} from warm pool"
+            )
+
+            # Wait for sandbox to be ready
+            sandbox_status = self._wait_for_warmpool_sandbox_ready(
+                warmpool_client, executor_name, timeout=60
+            )
+
+            if not sandbox_status:
+                return {
+                    "status": "failed",
+                    "error_msg": "Sandbox pod did not become ready in time",
+                }
+
+            # Build labels and annotations for Pod (injected via patch after sandbox is ready)
+            labels = {
+                "app": executor_name,
+                LABEL_EXECUTOR: LABEL_EXECUTOR_VALUE,
+                LABEL_TASK_ID: str(task_id),
+                LABEL_USER: user_name,
+                LABEL_PROXY_USER: user_name,
+                LABEL_TASK_TYPE: task.get("type", "online"),
+                LABEL_TEAM_MODE: task.get("mode", "default"),
+            }
+            annotations = {
+                ANNOTATION_EMAIL: "weibo_ai_coding@weibo.com",
+                ANNOTATION_HEARTBEAT_ENABLED: "true",
+                ANNOTATION_HEARTBEAT_TYPE: "sandbox",
+                # Use task_id as heartbeat_id for sandbox lookup compatibility
+                ANNOTATION_HEARTBEAT_ID: str(task_id),
+            }
+            auth_token = task.get("auth_token")
+            if auth_token:
+                annotations[ANNOTATION_AUTH_TOKEN] = auth_token
+            if TASK_API_DOMAIN:
+                annotations[ANNOTATION_TASK_API_DOMAIN] = TASK_API_DOMAIN
+            if EXECUTOR_MANAGER_HEARTBEAT_BASE_URL:
+                annotations[ANNOTATION_HEARTBEAT_BASE_URL] = EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
+            if CALLBACK_URL:
+                annotations[ANNOTATION_CALLBACK_URL] = CALLBACK_URL
+
+            # Patch Pod labels and annotations with task-specific data
+            pod_name = sandbox_status.get("pod_name")
+            if pod_name:
+                warmpool_client.patch_pod_metadata(
+                    pod_name=pod_name,
+                    labels=labels,
+                    annotations=annotations,
+                )
+
+            # Save executor binding with sandbox_claim_name for GC to delete SandboxClaim
+            from executor_manager.services.sandbox.repository import (
+                get_sandbox_repository,
+            )
+
+            repository = get_sandbox_repository()
+            repository.save_executor_binding(
+                task_id=int(task_id),
+                executor_name=executor_name,
+                sandbox_claim_name=executor_name,  # SandboxClaim name equals executor_name
+            )
+
+            return {"status": "success"}
+
+        except ApiException as e:
+            logger.error(
+                f"Kubernetes API error creating sandbox from warm pool for task {task_id}: {e}"
+            )
+            return {"status": "failed", "error_msg": f"Kubernetes API error: {e}"}
+        except Exception as e:
+            logger.error(
+                f"Error creating sandbox from warm pool for task {task_id}: {e}"
+            )
+            return {"status": "failed", "error_msg": f"Error: {e}"}
+
+    def _wait_for_warmpool_sandbox_ready(
+        self,
+        warmpool_client,
+        name: str,
+        timeout: int = 60,
+    ) -> Optional[Dict[str, Any]]:
+        """Wait for sandbox pod to be ready.
+
+        Args:
+            warmpool_client: WarmPool client instance
+            name: Sandbox name
+            timeout: Maximum wait time in seconds
+
+        Returns:
+            Sandbox status dict if ready, None otherwise
+        """
+        from executor_manager.wecode.executors.warmpool.constants import (
+            SANDBOX_PHASE_FAILED,
+            SANDBOX_PHASE_RUNNING,
+            SANDBOX_PHASE_TERMINATED,
+        )
+
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            status = warmpool_client.get_sandbox_status(name)
+            phase = status.get("phase", "")
+
+            if phase in (SANDBOX_PHASE_FAILED, SANDBOX_PHASE_TERMINATED):
+                logger.error(f"Sandbox {name} failed (phase: {phase})")
+                return None
+
+            if phase == SANDBOX_PHASE_RUNNING:
+                # Verify service is accessible
+                host = status.get("service_fqdn") or status.get("pod_ip")
+                if host and self._check_warmpool_service_health(host, port=8080):
+                    logger.info(f"Sandbox {name} is running and service is accessible")
+                    return status
+                else:
+                    logger.debug(f"Sandbox {name} is running but service not yet accessible")
+            else:
+                logger.debug(f"Waiting for sandbox {name}, current phase: {phase}")
+
+            time.sleep(2)
+
+        logger.error(f"Timeout waiting for sandbox {name}")
+        return None
+
+    def _check_warmpool_service_health(
+        self,
+        host: str,
+        port: int = 8080,
+        timeout: float = 3.0,
+    ) -> bool:
+        """Check if service is accessible via health endpoint.
+
+        Args:
+            host: Service host (FQDN or IP)
+            port: Service port
+            timeout: Request timeout in seconds
+
+        Returns:
+            True if service is accessible, False otherwise
+        """
+        try:
+            health_url = f"http://{host}:{port}/health"
+            response = requests.get(health_url, timeout=timeout)
+            if response.status_code == 200:
+                return True
+        except requests.exceptions.RequestException:
+            pass
+
+        try:
+            root_url = f"http://{host}:{port}/"
+            response = requests.get(root_url, timeout=timeout)
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.debug(f"Service health check failed for {host}:{port}: {e}")
+            return False
+
     def delete_executor(self, pod_name: str) -> Dict[str, Any]:
         try:
             core_v1 = self._get_core_v1_api()
@@ -479,12 +736,56 @@ class K8sExecutor(Executor):
             logger.error(f"Error deleting Kubernetes pod '{pod_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}"}
 
-    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
-        """Delete a Kubernetes pod by task_id label (fallback method).
+    def delete_sandbox_claim(self, sandbox_claim_name: str) -> Dict[str, Any]:
+        """Delete a SandboxClaim CR (for warm pool sandboxes).
 
-        This is used when the pod name is not known or the pod was not found
-        by name. It searches for pods with the matching task_id label and
-        deletes them.
+        When a sandbox is created from warm pool, deleting the SandboxClaim
+        will trigger the controller to clean up the associated Sandbox and Pod.
+
+        Args:
+            sandbox_claim_name: Name of the SandboxClaim to delete
+
+        Returns:
+            Dict with status and error_msg if failed
+        """
+        from executor_manager.wecode.executors.warmpool import WarmPoolClient
+
+        try:
+            api_client = _get_api_client()
+            if api_client is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                }
+
+            warmpool_client = WarmPoolClient(api_client, K8S_NAMESPACE)
+            warmpool_client.delete_sandbox_claim(sandbox_claim_name)
+            logger.info(f"Deleted SandboxClaim '{sandbox_claim_name}'")
+            return {"status": "success"}
+        except ApiException as e:
+            if e.status == 404:
+                logger.warning(
+                    f"SandboxClaim '{sandbox_claim_name}' not found in namespace {K8S_NAMESPACE}"
+                )
+                return {
+                    "status": "not_found",
+                    "error_msg": f"SandboxClaim '{sandbox_claim_name}' not found",
+                }
+            else:
+                logger.error(
+                    f"Kubernetes API error deleting SandboxClaim '{sandbox_claim_name}': {e}"
+                )
+                return {"status": "failed", "error_msg": f"Kubernetes API error: {e}"}
+        except Exception as e:
+            logger.error(f"Error deleting SandboxClaim '{sandbox_claim_name}': {e}")
+            return {"status": "failed", "error_msg": f"Error: {e}"}
+
+    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+        """Delete executor by task_id.
+
+        First checks if there's a SandboxClaim binding in Redis (for warm pool sandboxes).
+        If so, deletes the SandboxClaim which cascades to delete Sandbox and Pod.
+        Otherwise, falls back to searching and deleting pods by task_id label.
 
         Args:
             task_id: Task ID to search for
@@ -492,6 +793,24 @@ class K8sExecutor(Executor):
         Returns:
             Dict with status and error_msg if failed
         """
+        # First, check if there's a SandboxClaim binding in Redis
+        from executor_manager.services.sandbox.repository import get_sandbox_repository
+
+        try:
+            repository = get_sandbox_repository()
+            binding = repository.load_executor_binding_full(int(task_id))
+
+            if binding and binding.get("sandbox_claim_name"):
+                sandbox_claim_name = binding["sandbox_claim_name"]
+                logger.info(
+                    f"Found sandbox_claim_name '{sandbox_claim_name}' in binding for task {task_id}, "
+                    "deleting SandboxClaim"
+                )
+                return self.delete_sandbox_claim(sandbox_claim_name)
+        except Exception as e:
+            logger.debug(f"Error checking binding for task {task_id}: {e}")
+
+        # Fall back to searching and deleting pods by task_id label
         try:
             core_v1 = self._get_core_v1_api()
             if core_v1 is None:

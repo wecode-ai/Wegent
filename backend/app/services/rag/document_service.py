@@ -120,6 +120,7 @@ class DocumentService:
         splitter_config: Optional[SplitterConfig] = None,
         document_id: Optional[int] = None,
         trace_context: Optional[dict] = None,
+        user_name: Optional[str] = None,
     ) -> Dict:
         """
         Synchronous document indexing implementation.
@@ -139,6 +140,7 @@ class DocumentService:
             splitter_config: Optional splitter configuration
             document_id: Optional document ID to use as doc_ref
             trace_context: Trace context for distributed tracing (captured via capture_trace_context())
+            user_name: User name for placeholder replacement in embedding headers (optional)
 
         Returns:
             Indexing result dict
@@ -168,6 +170,7 @@ class DocumentService:
             user_id=user_id,
             model_name=embedding_model_name,
             model_namespace=embedding_model_namespace,
+            user_name=user_name,
         )
         add_span_event(
             "rag.document_service.embedding_model.created",
@@ -257,6 +260,7 @@ class DocumentService:
         splitter_config: Optional[SplitterConfig] = None,
         document_id: Optional[int] = None,
         trace_context: Optional[dict] = None,
+        user_name: Optional[str] = None,
     ) -> Dict:
         """
         Index a document into storage backend.
@@ -274,6 +278,7 @@ class DocumentService:
             trace_context: Optional trace context for distributed tracing (captured via capture_trace_context()).
                           If provided, this context will be propagated to the background thread.
                           If None, the current trace context will be captured automatically.
+            user_name: User name for placeholder replacement in embedding headers (optional)
 
         Returns:
             Indexing result dict with:
@@ -309,6 +314,7 @@ class DocumentService:
             splitter_config,
             document_id,
             trace_context=trace_ctx,
+            user_name=user_name,
         )
 
     async def delete_document(

@@ -70,20 +70,21 @@ class SandboxScheduler:
             replace_existing=True,
         )
 
+        # TODO: Temporarily disabled - re-enable after fixing task_heartbeat_manager
         # Add heartbeat check job for regular tasks (OOM detection)
         # Uses RunningTaskTracker instead of SandboxManager for better separation of concerns
-        from executor_manager.services.task_heartbeat_manager import (
-            get_running_task_tracker,
-        )
-
-        task_tracker = get_running_task_tracker()
-        self._scheduler.add_job(
-            task_tracker.check_heartbeats,
-            IntervalTrigger(seconds=HEARTBEAT_CHECK_INTERVAL),
-            id="task_heartbeat_check",
-            name="Task Heartbeat Check",
-            replace_existing=True,
-        )
+        # from executor_manager.services.task_heartbeat_manager import (
+        #     get_running_task_tracker,
+        # )
+        #
+        # task_tracker = get_running_task_tracker()
+        # self._scheduler.add_job(
+        #     task_tracker.check_heartbeats,
+        #     IntervalTrigger(seconds=HEARTBEAT_CHECK_INTERVAL),
+        #     id="task_heartbeat_check",
+        #     name="Task Heartbeat Check",
+        #     replace_existing=True,
+        # )
 
         # Add sandbox GC job
         self._scheduler.add_job(
@@ -98,7 +99,6 @@ class SandboxScheduler:
         logger.info(
             f"[SandboxScheduler] Started with jobs: "
             f"sandbox_heartbeat_check (every {HEARTBEAT_CHECK_INTERVAL}s), "
-            f"task_heartbeat_check (every {HEARTBEAT_CHECK_INTERVAL}s), "
             f"sandbox_gc (every {GC_INTERVAL}s)"
         )
 

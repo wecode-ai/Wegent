@@ -15,6 +15,7 @@ import {
   Clock,
   Compass,
   Loader2,
+  Settings,
   Share2,
   Timer,
   UserMinus,
@@ -44,6 +45,7 @@ import type {
 import { paths } from '@/config/paths'
 import { parseUTCDate } from '@/lib/utils'
 import { DiscoverHistoryDialog, type HistoryDialogSubscription } from './DiscoverHistoryDialog'
+import { FollowNotificationSettingsDialog } from './FollowNotificationSettingsDialog'
 
 interface FollowingSubscriptionListProps {
   /**
@@ -76,6 +78,11 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
   // History dialog state
   const [historyDialogSubscription, setHistoryDialogSubscription] =
     useState<HistoryDialogSubscription | null>(null)
+  // Notification settings dialog state
+  const [notificationSettingsSubscription, setNotificationSettingsSubscription] = useState<{
+    id: number
+    name: string
+  } | null>(null)
 
   // Load following subscriptions
   const loadSubscriptions = useCallback(
@@ -320,6 +327,20 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
                   <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() =>
+                      setNotificationSettingsSubscription({
+                        id: subscription.id,
+                        name: subscription.display_name,
+                      })
+                    }
+                    className="text-text-muted hover:text-primary"
+                    title={t('notification_settings.title')}
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => handleUnfollowClick(item)}
                     disabled={unfollowingId === subscription.id}
                     className="text-text-muted hover:text-destructive"
@@ -385,6 +406,18 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
           if (!open) setHistoryDialogSubscription(null)
         }}
       />
+
+      {/* Notification Settings Dialog */}
+      {notificationSettingsSubscription && (
+        <FollowNotificationSettingsDialog
+          subscriptionId={notificationSettingsSubscription.id}
+          subscriptionName={notificationSettingsSubscription.name}
+          open={notificationSettingsSubscription !== null}
+          onOpenChange={open => {
+            if (!open) setNotificationSettingsSubscription(null)
+          }}
+        />
+      )}
     </div>
   )
 }

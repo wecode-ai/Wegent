@@ -81,58 +81,70 @@ export const knowledgePermissionApi = {
    * List all permissions for a knowledge base
    */
   listPermissions: async (kbId: number): Promise<PermissionListResponse> => {
-    const response = await client.get<{ members: ResourceMemberResponse[]; total: number }>(
+    // Fetch approved members
+    const membersResponse = await client.get<{ members: ResourceMemberResponse[]; total: number }>(
       `/share/KnowledgeBase/${kbId}/members`
     )
-    // Transform unified share API response to PermissionListResponse format
-    const pending = response.members
-      .filter(m => m.status === 'pending')
-      .map(m => ({
-        id: m.id,
-        user_id: m.user_id,
-        username: m.user_name || '',
-        email: '',
-        permission_level: m.permission_level as 'view' | 'edit' | 'manage',
-        requested_at: m.requested_at,
-      }))
-    const approved = response.members
-      .filter(m => m.status === 'approved')
-      .reduce(
-        (acc, m) => {
-          const level = m.permission_level as 'view' | 'edit' | 'manage'
-          if (!acc[level]) acc[level] = []
-          const member: {
-            id: number
-            user_id: number
-            username: string
-            email: string
-            permission_level: 'view' | 'edit' | 'manage'
-            requested_at: string
-            reviewed_at?: string
-            reviewed_by?: number
-          } = {
-            id: m.id,
-            user_id: m.user_id,
-            username: m.user_name || '',
-            email: '',
-            permission_level: level,
-            requested_at: m.requested_at,
-          }
-          if (m.reviewed_at) {
-            member.reviewed_at = m.reviewed_at
-          }
-          if (m.reviewed_by_user_id) {
-            member.reviewed_by = m.reviewed_by_user_id
-          }
-          acc[level].push(member)
-          return acc
-        },
-        { view: [], edit: [], manage: [] } as {
-          view: typeof pending
-          edit: typeof pending
-          manage: typeof pending
+
+    // Fetch pending requests separately
+    const pendingResponse = await client.get<{
+      requests: {
+        id: number
+        user_id: number
+        user_name: string | null
+        requested_permission_level: string
+        requested_at: string
+      }[]
+      total: number
+    }>(`/share/KnowledgeBase/${kbId}/requests`)
+
+    // Transform pending requests
+    const pending = pendingResponse.requests.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      username: r.user_name || '',
+      email: '',
+      permission_level: r.requested_permission_level as 'view' | 'edit' | 'manage',
+      requested_at: r.requested_at,
+    }))
+
+    // Transform approved members
+    const approved = membersResponse.members.reduce(
+      (acc, m) => {
+        const level = m.permission_level as 'view' | 'edit' | 'manage'
+        if (!acc[level]) acc[level] = []
+        const member: {
+          id: number
+          user_id: number
+          username: string
+          email: string
+          permission_level: 'view' | 'edit' | 'manage'
+          requested_at: string
+          reviewed_at?: string
+          reviewed_by?: number
+        } = {
+          id: m.id,
+          user_id: m.user_id,
+          username: m.user_name || '',
+          email: '',
+          permission_level: level,
+          requested_at: m.requested_at,
         }
-      )
+        if (m.reviewed_at) {
+          member.reviewed_at = m.reviewed_at
+        }
+        if (m.reviewed_by_user_id) {
+          member.reviewed_by = m.reviewed_by_user_id
+        }
+        acc[level].push(member)
+        return acc
+      },
+      { view: [], edit: [], manage: [] } as {
+        view: typeof pending
+        edit: typeof pending
+        manage: typeof pending
+      }
+    )
     return { pending, approved }
   },
 
@@ -143,9 +155,16 @@ export const knowledgePermissionApi = {
     kbId: number,
     request: PermissionAddRequest
   ): Promise<PermissionResponse> => {
-    // First, get user ID from username
-    const usersResponse = await client.get<{ items: { id: number; user_name: string }[] }>('/users')
-    const user = usersResponse.items.find(u => u.user_name === request.user_name)
+    // First, search for user by username using the search API
+    const searchResponse = await client.get<{
+      users: { id: number; user_name: string; email: string | null }[]
+      total: number
+    }>(`/users/search?q=${encodeURIComponent(request.user_name)}&limit=10`)
+
+    // Find exact match by username
+    const user = searchResponse.users.find(
+      u => u.user_name.toLowerCase() === request.user_name.toLowerCase()
+    )
     if (!user) {
       throw new Error('User not found')
     }

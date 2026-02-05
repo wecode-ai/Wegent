@@ -10,7 +10,7 @@ the chat context when summaries are available.
 """
 
 import logging
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -117,7 +117,7 @@ class TestGetKnowledgeBaseMetaPrompt:
         }
 
         # Mock get_knowledge_base_meta_for_task return value
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [
@@ -152,7 +152,7 @@ class TestGetKnowledgeBaseMetaPrompt:
             }
         }
 
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [
@@ -190,7 +190,7 @@ class TestGetKnowledgeBaseMetaPrompt:
             }
             mock_kb_kinds.append(mock_kb)
 
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [
@@ -222,7 +222,7 @@ class TestGetKnowledgeBaseMetaPrompt:
             }
         }
 
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [
@@ -254,7 +254,7 @@ class TestGetKnowledgeBaseMetaPrompt:
             }
         }
 
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [
@@ -296,7 +296,7 @@ class TestGetKnowledgeBaseMetaPrompt:
             }
         }
 
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [
@@ -318,7 +318,7 @@ class TestGetKnowledgeBaseMetaPrompt:
 
     def test_kb_not_found_fallback(self):
         """Should handle KB not found gracefully."""
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [
@@ -342,7 +342,7 @@ class TestGetKnowledgeBaseMetaPrompt:
         mock_kb_kind = Mock()
         mock_kb_kind.json.get.side_effect = Exception("Test error")
 
-        with pytest.mock.patch(
+        with patch(
             "chat_shell.history.loader.get_knowledge_base_meta_for_task"
         ) as mock_get_meta:
             mock_get_meta.return_value = [

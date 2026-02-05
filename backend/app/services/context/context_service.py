@@ -94,6 +94,33 @@ class ContextService:
         """
         return f"/api/attachments/{attachment_id}/download"
 
+    @staticmethod
+    def build_sandbox_path(
+        task_id: Optional[int],
+        subtask_id: Optional[int],
+        filename: str,
+    ) -> Optional[str]:
+        """
+        Build the sandbox file path for an attachment.
+
+        This path corresponds to where the Executor downloads attachments
+        in the sandbox environment.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            filename: Original filename
+
+        Returns:
+            Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
+            Returns None if task_id or subtask_id is not provided.
+        """
+        if task_id is None or subtask_id is None:
+            return None
+        # Guard against None filename and strip control characters
+        safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
+        return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+
     # ==================== Attachment Operations ====================
 
     def _validate_attachment_input(
@@ -568,14 +595,18 @@ class ContextService:
     def build_document_text_prefix(
         self,
         context: SubtaskContext,
+        task_id: Optional[int] = None,
+        subtask_id: Optional[int] = None,
     ) -> Optional[str]:
         """
         Build a text prefix containing document content for prepending to messages.
 
-        Includes attachment metadata (id, filename, mime_type, file_size, url).
+        Includes attachment metadata (id, filename, mime_type, file_size, url, sandbox_path).
 
         Args:
             context: SubtaskContext record with extracted_text
+            task_id: Optional task ID for building sandbox path
+            subtask_id: Optional subtask ID for building sandbox path
 
         Returns:
             Formatted text prefix without XML tags, or None if no extracted text
@@ -595,11 +626,21 @@ class ContextService:
         formatted_size = self.format_file_size(file_size)
         url = self.build_attachment_url(attachment_id)
 
+        # Build sandbox path if task_id and subtask_id are provided
+        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
+
         # Build the prefix with metadata and optional truncation notice
-        prefix = (
-            f"[Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-        )
+        if sandbox_path:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+                f"File Path(already in sandbox): {sandbox_path}]\n"
+            )
+        else:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+            )
 
         if is_truncated:
             prefix += (
@@ -1134,6 +1175,45 @@ class ContextService:
             )
             .order_by(SubtaskContext.created_at)
             .first()
+        )
+
+    def get_attachments_by_task(
+        self,
+        db: Session,
+        task_id: int,
+    ) -> List[SubtaskContext]:
+        """
+        Get all attachment contexts for a task (across all subtasks).
+
+        This method is used by the executor to pre-download all attachments
+        for a task at sandbox startup.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            List of attachment SubtaskContext records for all subtasks of the task
+        """
+        from app.models.subtask import Subtask
+
+        # Get all subtask IDs for this task
+        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
+        subtask_ids = [s[0] for s in subtask_ids]
+
+        if not subtask_ids:
+            return []
+
+        # Get all attachments for these subtasks
+        return (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.subtask_id.in_(subtask_ids),
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                SubtaskContext.status == ContextStatus.READY.value,
+            )
+            .order_by(SubtaskContext.created_at)
+            .all()
         )
 
     def delete_context(

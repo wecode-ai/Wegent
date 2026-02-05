@@ -90,8 +90,8 @@ class ShareLink(Base):
     # Expiration
     expires_at = Column(
         DateTime,
-        nullable=True,
-        comment="Expiration time (NULL = never expires)",
+        nullable=False,
+        comment="Expiration time (far future = never expires)",
     )
 
     # Creator info
@@ -141,6 +141,4 @@ class ShareLink(Base):
     @property
     def is_expired(self) -> bool:
         """Check if the share link has expired."""
-        if self.expires_at is None:
-            return False
         return datetime.utcnow() > self.expires_at

@@ -19,6 +19,7 @@ import {
   EyeOff,
   Loader2,
   Plus,
+  Settings,
   Share2,
   Timer,
   Users,
@@ -37,6 +38,7 @@ import type {
 } from '@/types/subscription'
 import { paths } from '@/config/paths'
 import { useUser } from '@/features/common/UserContext'
+import { DeveloperNotificationSettingsDialog } from './DeveloperNotificationSettingsDialog'
 import { SubscriptionShareDialog } from './SubscriptionShareDialog'
 
 interface SubscriptionDetailPageProps {
@@ -64,6 +66,7 @@ export function SubscriptionDetailPage({ subscriptionId }: SubscriptionDetailPag
   const [isFollowing, setIsFollowing] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
 
   // Check if current user is the owner
   const isOwner = subscription && user && subscription.user_id === user.id
@@ -194,10 +197,16 @@ export function SubscriptionDetailPage({ subscriptionId }: SubscriptionDetailPag
           {/* Actions */}
           <div className="flex items-center gap-2">
             {isOwner && (
-              <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
-                <Share2 className="h-4 w-4 mr-1.5" />
-                {t('share')}
-              </Button>
+              <>
+                <Button variant="outline" size="sm" onClick={() => setSettingsDialogOpen(true)}>
+                  <Settings className="h-4 w-4 mr-1.5" />
+                  {t('notification_settings.title')}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShareDialogOpen(true)}>
+                  <Share2 className="h-4 w-4 mr-1.5" />
+                  {t('share')}
+                </Button>
+              </>
             )}
             {!isOwner && (
               <Button
@@ -332,6 +341,16 @@ export function SubscriptionDetailPage({ subscriptionId }: SubscriptionDetailPag
           subscription={subscription}
           open={shareDialogOpen}
           onOpenChange={setShareDialogOpen}
+        />
+      )}
+
+      {/* Developer Notification Settings Dialog */}
+      {isOwner && subscription && (
+        <DeveloperNotificationSettingsDialog
+          subscriptionId={subscription.id}
+          subscriptionName={subscription.display_name}
+          open={settingsDialogOpen}
+          onOpenChange={setSettingsDialogOpen}
         />
       )}
     </div>

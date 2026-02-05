@@ -13,7 +13,7 @@ for all event types.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import socketio
 
@@ -908,3 +908,50 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
             logger.warning("WebSocket emitter initialized without event loop reference")
 
     return _ws_emitter
+
+
+async def safe_emit_in_main_loop(
+    emit_func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> None:
+    """
+    Safely execute an emit function in the main event loop.
+
+    This function handles the case where the current event loop is different
+    from the main event loop (which can happen when event handlers run in
+    background threads or different async contexts). Redis connections are
+    bound to the event loop they were created in, so we must ensure emits
+    happen in the main loop.
+
+    Args:
+        emit_func: The emit function to execute (e.g., ws_emitter.sio.emit)
+        *args: Positional arguments for the emit function
+        **kwargs: Keyword arguments for the emit function
+    """
+    global _main_event_loop
+
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop, try to use main loop or execute directly
+        if _main_event_loop and _main_event_loop.is_running():
+            # Schedule in main loop without waiting (fire-and-forget)
+            asyncio.run_coroutine_threadsafe(
+                emit_func(*args, **kwargs), _main_event_loop
+            )
+            return
+        # Fallback: try direct execution (may fail if no loop)
+        await emit_func(*args, **kwargs)
+        return
+
+    # If we're already in the main loop, execute directly
+    if _main_event_loop is None or current_loop is _main_event_loop:
+        await emit_func(*args, **kwargs)
+        return
+
+    # We're in a different loop, schedule in main loop (fire-and-forget)
+    if _main_event_loop and _main_event_loop.is_running():
+        asyncio.run_coroutine_threadsafe(emit_func(*args, **kwargs), _main_event_loop)
+    else:
+        # Main loop not running, execute in current loop (may fail with Redis)
+        # This is a fallback that may raise an exception
+        await emit_func(*args, **kwargs)

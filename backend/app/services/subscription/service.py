@@ -446,6 +446,10 @@ class SubscriptionService:
                 "history_message_count"
             ]
 
+        # Update knowledge base references
+        if "knowledge_base_refs" in update_data:
+            subscription_crd.spec.knowledgeBaseRefs = update_data["knowledge_base_refs"]
+
         # Update trigger configuration
         if "trigger_type" in update_data or "trigger_config" in update_data:
             trigger_type = update_data.get("trigger_type", internal.get("trigger_type"))
@@ -881,6 +885,8 @@ class SubscriptionService:
             preserve_history=subscription_crd.spec.preserveHistory,
             history_message_count=subscription_crd.spec.historyMessageCount,
             bound_task_id=internal.get("bound_task_id", 0),
+            # Knowledge base references
+            knowledge_base_refs=subscription_crd.spec.knowledgeBaseRefs,
             webhook_url=webhook_url,
             webhook_secret=internal.get("webhook_secret"),
             last_execution_time=last_execution_time,

@@ -87,7 +87,12 @@ class GeminiInteractionClient:
         logger.info(
             "[GEMINI_CLIENT][CREATE] Request: url=%s, payload=%s",
             url,
-            {**payload, "input": input_text[:200] + "..." if len(input_text) > 200 else input_text},
+            {
+                **payload,
+                "input": (
+                    input_text[:200] + "..." if len(input_text) > 200 else input_text
+                ),
+            },
         )
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -100,7 +105,11 @@ class GeminiInteractionClient:
                 logger.info(
                     "[GEMINI_CLIENT][CREATE] Response: status=%d, body=%s",
                     response.status_code,
-                    response.text[:1000] if len(response.text) > 1000 else response.text,
+                    (
+                        response.text[:1000]
+                        if len(response.text) > 1000
+                        else response.text
+                    ),
                 )
                 response.raise_for_status()
                 result = response.json()
@@ -241,7 +250,11 @@ class GeminiInteractionClient:
                                     "[GEMINI_CLIENT][STREAM] Event #%d: type=%s, data=%s",
                                     event_count,
                                     event_type,
-                                    event_data[:500] if len(event_data) > 500 else event_data,
+                                    (
+                                        event_data[:500]
+                                        if len(event_data) > 500
+                                        else event_data
+                                    ),
                                 )
                                 yield event_type, event_data
                                 event_type = ""

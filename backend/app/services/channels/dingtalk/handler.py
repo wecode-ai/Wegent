@@ -27,6 +27,7 @@ from dingtalk_stream import AckMessage, CallbackMessage, ChatbotMessage
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
+from app.db.session import SessionLocal
 from app.models.user import User
 from app.services.channels.callback import BaseChannelCallbackService, ChannelType
 from app.services.channels.dingtalk.callback import (
@@ -37,6 +38,9 @@ from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 from app.services.chat.trigger.emitter import ChatEventEmitter
+from app.services.subscription.notification_service import (
+    subscription_notification_service,
+)
 
 if TYPE_CHECKING:
     from dingtalk_stream.stream import DingTalkStreamClient
@@ -283,8 +287,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                         If not provided, uses default Wegent chat processing.
             get_default_team_id: Callback to get current default_team_id dynamically.
             get_default_model_name: Callback to get current default_model_name dynamically.
+                                   Used to override bot's model configuration.
             get_user_mapping_config: Callback to get user mapping configuration.
-            channel_id: The IM channel ID for callback purposes.
+            channel_id: The IM channel ID (Kind.id) for IM binding tracking and callback purposes.
         """
         super(dingtalk_stream.ChatbotHandler, self).__init__()
         self._dingtalk_client = dingtalk_client
@@ -468,6 +473,30 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         self._channel_handler.send_text_reply = patched_send_reply
 
         try:
+            # Get user and update IM binding for subscription notifications
+            db = SessionLocal()
+            try:
+                user = await self._channel_handler.resolve_user(db, message_context)
+                if user and self._channel_id:
+                    try:
+                        subscription_notification_service.update_user_im_binding(
+                            db=db,
+                            user_id=user.id,
+                            channel_id=self._channel_id,
+                            channel_type="dingtalk",
+                            sender_id=message_context.sender_id,
+                            sender_staff_id=message_context.extra_data.get(
+                                "sender_staff_id"
+                            ),
+                            conversation_id=message_context.conversation_id,
+                        )
+                    except Exception as e:
+                        self.logger.warning(
+                            "[DingTalkHandler] Failed to update IM binding: %s", e
+                        )
+            finally:
+                db.close()
+
             return await self._channel_handler.handle_message(incoming_message)
         finally:
             # Restore original method

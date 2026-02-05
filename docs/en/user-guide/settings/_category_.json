@@ -2,7 +2,7 @@
   "label": "Settings",
   "position": 7,
   "link": {
-    "type": "generated-index",
-    "description": "Configure agents, models, shells, and skills."
+    "type": "doc",
+    "id": "user-guide/settings/README"
   }
 }
