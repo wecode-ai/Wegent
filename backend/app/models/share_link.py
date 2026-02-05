@@ -87,10 +87,12 @@ class ShareLink(Base):
         comment="Default permission level: view, edit, manage",
     )
 
-    # Expiration
+    # Expiration - default to year 9999 for "never expires"
     expires_at = Column(
         DateTime,
         nullable=False,
+        default=datetime(9999, 12, 31, 23, 59, 59),
+        server_default="9999-12-31 23:59:59",
         comment="Expiration time (far future = never expires)",
     )
 

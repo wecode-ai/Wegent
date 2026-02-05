@@ -2,6 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+Team service class using kinds table.
+
+Uses the unified ResourceMember model for team sharing.
+"""
+
 import copy
 import json
 import logging
@@ -17,7 +23,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.shared_team import SharedTeam
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
@@ -279,7 +286,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
                 # Add shared teams for personal and all scopes
                 if scope in ("personal", "all"):
-                    # Query for shared teams
+                    # Query for shared teams using ResourceMember
                     shared_teams_query = (
                         db.query(
                             Kind.id.label("team_id"),
@@ -292,12 +299,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             literal_column("2").label(
                                 "share_status"
                             ),  # 2 for shared teams
-                            SharedTeam.original_user_id.label("context_user_id"),
+                            ResourceMember.invited_by_user_id.label("context_user_id"),
                         )
-                        .join(SharedTeam, SharedTeam.team_id == Kind.id)
+                        .join(
+                            ResourceMember,
+                            (ResourceMember.resource_id == Kind.id)
+                            & (ResourceMember.resource_type == ResourceType.TEAM),
+                        )
                         .filter(
-                            SharedTeam.user_id == user_id,
-                            SharedTeam.is_active == True,
+                            ResourceMember.user_id == user_id,
+                            ResourceMember.status == MemberStatus.APPROVED,
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )
@@ -1038,12 +1049,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             shared_entry = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
 
             if shared_entry:
-                # User is deleting their shared team access
-                db.query(SharedTeam).filter(
-                    SharedTeam.team_id == team_id,
-                    SharedTeam.user_id == user_id,
-                    SharedTeam.is_active == True,
-                ).delete()
+                # User is deleting their shared team access - use ResourceMember
+                db.query(ResourceMember).filter(
+                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_id == team_id,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED,
+                ).update({"status": MemberStatus.REJECTED})
                 db.commit()
                 return
 
@@ -1075,9 +1087,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     detail=f"Team '{team_name}' has {len(running_tasks)} running task(s). Use force=true to delete anyway.",
                 )
 
-        # delete share team
-        db.query(SharedTeam).filter(
-            SharedTeam.team_id == team_id, SharedTeam.is_active == True
+        # delete share team - use ResourceMember
+        db.query(ResourceMember).filter(
+            ResourceMember.resource_type == ResourceType.TEAM,
+            ResourceMember.resource_id == team_id,
         ).delete()
 
         db.delete(team)
@@ -1136,14 +1149,18 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 total_count += own_teams_count
 
-                # Count shared teams (for personal and all scopes)
+                # Count shared teams (for personal and all scopes) using ResourceMember
                 if scope in ("personal", "all"):
                     shared_teams_count = (
-                        db.query(SharedTeam)
-                        .join(Kind, SharedTeam.team_id == Kind.id)
+                        db.query(ResourceMember)
+                        .join(
+                            Kind,
+                            (ResourceMember.resource_id == Kind.id)
+                            & (ResourceMember.resource_type == ResourceType.TEAM),
+                        )
                         .filter(
-                            SharedTeam.user_id == user_id,
-                            SharedTeam.is_active == True,
+                            ResourceMember.user_id == user_id,
+                            ResourceMember.status == MemberStatus.APPROVED,
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )

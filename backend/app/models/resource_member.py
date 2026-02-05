@@ -7,16 +7,24 @@ Resource member model for unified resource sharing.
 
 Stores user access permissions to shared resources.
 Supports Team, Task, and KnowledgeBase resource types.
+
+This model replaces the legacy SharedTeam, SharedTask, and TaskMember models
+to provide a unified access control system for all shareable resources.
 """
 
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, Enum, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
 from app.models.share_link import PermissionLevel, ResourceType
+
+
+# Define epoch time for default datetime values
+EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
 
 
 class MemberStatus(str, PyEnum):
@@ -62,10 +70,14 @@ class ResourceMember(Base):
     # Member info
     user_id = Column(
         Integer,
+        ForeignKey("users.id"),
         nullable=False,
         index=True,
         comment="Member user ID",
     )
+
+    # Relationship to User
+    user = relationship("User", foreign_keys=[user_id], back_populates="resource_members")
 
     # Permission level
     permission_level = Column(
@@ -83,40 +95,45 @@ class ResourceMember(Base):
         comment="Status: pending, approved, rejected",
     )
 
-    # Source info
+    # Source info - defaults to 0 for direct membership (not via link/invite)
     invited_by_user_id = Column(
         Integer,
         nullable=False,
         default=0,
-        comment="Inviter user ID (0 = via link)",
+        server_default="0",
+        comment="Inviter user ID (0 = via link or owner)",
     )
     share_link_id = Column(
         Integer,
         nullable=False,
         default=0,
+        server_default="0",
         index=True,
         comment="Associated share link ID (0 = not via link)",
     )
 
-    # Review info
+    # Review info - default 0 for user ID means not reviewed/auto-approved
     reviewed_by_user_id = Column(
         Integer,
         nullable=False,
         default=0,
-        comment="Reviewer user ID (0 = not yet reviewed)",
+        server_default="0",
+        comment="Reviewer user ID (0 = not yet reviewed or auto-approved)",
     )
     reviewed_at = Column(
         DateTime,
         nullable=False,
-        default=func.now(),
-        comment="Review timestamp",
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+        comment="Review timestamp (epoch = not reviewed)",
     )
 
-    # Task-specific field (only for Task type)
+    # Task-specific field (only for Task type) - 0 means no copy made
     copied_resource_id = Column(
         Integer,
         nullable=False,
         default=0,
+        server_default="0",
         comment="Copied resource ID (0 = not copied, for Task copy behavior)",
     )
 
@@ -169,3 +186,8 @@ class ResourceMember(Base):
     def is_pending(self) -> bool:
         """Check if the member is awaiting approval."""
         return self.status == MemberStatus.PENDING
+
+    @property
+    def joined_at(self) -> datetime:
+        """Alias for created_at for backward compatibility with TaskMember."""
+        return self.created_at

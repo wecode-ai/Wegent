@@ -482,17 +482,19 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
 def _add_group_chat_info(
     db: Session, tasks: List[Kind], result: Dict[str, Dict[str, Any]]
 ) -> None:
-    """Add is_group_chat info to result dict."""
-    from app.models.task_member import MemberStatus, TaskMember
+    """Add is_group_chat info to result dict using ResourceMember."""
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
 
     task_ids = [t.id for t in tasks]
     member_count_results = (
-        db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+        db.query(ResourceMember.resource_id, func.count(ResourceMember.id).label("count"))
         .filter(
-            TaskMember.task_id.in_(task_ids),
-            TaskMember.status == MemberStatus.ACTIVE,
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id.in_(task_ids),
+            ResourceMember.status == MemberStatus.APPROVED,
         )
-        .group_by(TaskMember.task_id)
+        .group_by(ResourceMember.resource_id)
         .all()
     )
     member_counts = {row[0]: row[1] for row in member_count_results}
@@ -532,19 +534,21 @@ def build_lite_task_list(
     if not tasks:
         return []
 
-    # Get task member counts in batch for is_group_chat detection
-    from app.models.task_member import MemberStatus, TaskMember
+    # Get task member counts in batch for is_group_chat detection using ResourceMember
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
 
     task_ids_for_members = [t.id for t in tasks]
     member_counts = {}
     if task_ids_for_members:
         member_count_results = (
-            db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+            db.query(ResourceMember.resource_id, func.count(ResourceMember.id).label("count"))
             .filter(
-                TaskMember.task_id.in_(task_ids_for_members),
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id.in_(task_ids_for_members),
+                ResourceMember.status == MemberStatus.APPROVED,
             )
-            .group_by(TaskMember.task_id)
+            .group_by(ResourceMember.resource_id)
             .all()
         )
         member_counts = {row[0]: row[1] for row in member_count_results}
