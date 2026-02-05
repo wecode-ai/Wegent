@@ -297,7 +297,7 @@ flowchart TB
 
 - [Local Device User Guide](../user-guide/ai-devices/local-device-support.md) - User operation guide
 - [System Architecture](./architecture.md) - Overall architecture design
-- [WebSocket API](../reference/websocket-api.md) - API reference
+- [OpenAPI Responses API](../reference/openapi-responses-api.md) - API reference
 
 ---
 

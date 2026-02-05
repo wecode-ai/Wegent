@@ -491,14 +491,14 @@ DROP USER 'task_user'@'localhost';
 
 ---
 
-## 🔗 下一步
+## 🔗 后续步骤
 
 安装完成后，您可以：
 
 - [快速开始](./quick-start.md) - 运行您的第一个任务
 - [核心概念](../concepts/core-concepts.md) - 了解 Wegent 的核心概念
-- [智能体设置](../guides/user/agent-settings.md) - 配置您的第一个智能体
-- [开发指南](../guides/developer/setup.md) - 搭建开发环境
+- [智能体设置](../user-guide/settings/agent-settings.md) - 配置您的第一个智能体
+- [开发指南](../developer-guide/setup.md) - 搭建开发环境
 
 ---
 
