@@ -15,7 +15,7 @@ to provide a unified access control system for all shareable resources.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -57,7 +57,7 @@ class ResourceMember(Base):
 
     # Resource identification (polymorphic association)
     resource_type = Column(
-        Enum(ResourceType),
+        String(50),
         nullable=False,
         comment="Resource type: Team, Task, KnowledgeBase",
     )
@@ -81,17 +81,19 @@ class ResourceMember(Base):
 
     # Permission level
     permission_level = Column(
-        Enum(PermissionLevel),
+        String(20),
         nullable=False,
-        default=PermissionLevel.VIEW,
+        default=PermissionLevel.VIEW.value,
+        server_default="view",
         comment="Permission level: view, edit, manage",
     )
 
     # Status
     status = Column(
-        Enum(MemberStatus),
+        String(20),
         nullable=False,
-        default=MemberStatus.PENDING,
+        default=MemberStatus.PENDING.value,
+        server_default="pending",
         comment="Status: pending, approved, rejected",
     )
 

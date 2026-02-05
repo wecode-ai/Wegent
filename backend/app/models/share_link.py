@@ -55,7 +55,7 @@ class ShareLink(Base):
 
     # Resource identification (polymorphic association)
     resource_type = Column(
-        Enum(ResourceType),
+        String(50),
         nullable=False,
         comment="Resource type: Team, Task, KnowledgeBase",
     )
@@ -81,9 +81,10 @@ class ShareLink(Base):
         comment="Whether joining requires approval",
     )
     default_permission_level = Column(
-        Enum(PermissionLevel),
+        String(20),
         nullable=False,
-        default=PermissionLevel.VIEW,
+        default=PermissionLevel.VIEW.value,
+        server_default="view",
         comment="Default permission level: view, edit, manage",
     )
 
