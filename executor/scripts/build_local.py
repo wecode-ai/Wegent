@@ -125,55 +125,130 @@ def restore_version_source(original_content: str) -> None:
     print("Restored version.py to original content")
 
 
-def find_claude_agent_sdk_binary() -> tuple[str, str] | None:
+def find_claude_agent_sdk_binary(
+    target_platform: str | None = None,
+) -> tuple[str, str] | None:
     """Find the bundled Claude CLI binary from claude-agent-sdk.
+
+    For cross-platform builds, this will download the appropriate wheel.
+
+    Args:
+        target_platform: Target platform ('Windows', 'Darwin', 'Linux').
+                        If None, uses current platform.
 
     Returns:
         Tuple of (source_path, dest_path) for PyInstaller --add-binary,
         or None if not found.
     """
+    target = target_platform or platform.system()
+
+    # Determine binary name based on target platform
+    if target == "Windows":
+        binary_name = "claude.exe"
+    else:
+        binary_name = "claude"
+
     try:
         import claude_agent_sdk
 
         sdk_path = Path(claude_agent_sdk.__file__).parent
         bundled_dir = sdk_path / "_bundled"
-
-        # Determine binary name based on platform
-        if platform.system() == "Windows":
-            binary_name = "claude.exe"
-        else:
-            binary_name = "claude"
-
         binary_path = bundled_dir / binary_name
 
-        if binary_path.exists():
-            # PyInstaller destination: claude_agent_sdk/_bundled/
-            dest = f"claude_agent_sdk/_bundled/{binary_name}"
+        # If building for same platform, use local binary
+        if target == platform.system() and binary_path.exists():
             print(
                 f"Found Claude CLI binary: {binary_path} ({binary_path.stat().st_size / 1024 / 1024:.1f} MB)"
             )
-            return (str(binary_path), f"claude_agent_sdk{os.sep}_bundled")
-        else:
-            print(f"Warning: Claude CLI binary not found at {binary_path}")
-            return None
+            return (str(binary_path), "claude_agent_sdk/_bundled")
+
     except ImportError:
-        print("Warning: claude_agent_sdk not installed, cannot bundle CLI binary")
+        pass
+
+    # For cross-platform builds or missing binary, download from PyPI
+    if target == "Windows":
+        return _download_windows_claude_binary()
+
+    print(f"Warning: Claude CLI binary not found for platform {target}")
+    return None
+
+
+def _download_windows_claude_binary() -> tuple[str, str] | None:
+    """Download Windows claude.exe from PyPI wheel.
+
+    Returns:
+        Tuple of (source_path, dest_dir) for PyInstaller --add-binary,
+        or None if failed.
+    """
+    import tempfile
+    import urllib.request
+    import zipfile
+
+    # Get SDK version from installed package or default to latest
+    try:
+        import claude_agent_sdk
+
+        sdk_version = getattr(claude_agent_sdk, "__version__", "0.1.26")
+    except ImportError:
+        sdk_version = "0.1.26"
+
+    wheel_url = f"https://files.pythonhosted.org/packages/57/c7/9b3ddc3bc1c70b7372a6ee0a3de5627662e126946ad0f3d5a6a0d551941a/claude_agent_sdk-{sdk_version}-py3-none-win_amd64.whl"
+
+    print(
+        f"Downloading Windows Claude CLI binary from PyPI (sdk version {sdk_version})..."
+    )
+
+    try:
+        # Create temp directory for extraction
+        temp_dir = Path(tempfile.mkdtemp(prefix="claude_sdk_"))
+        wheel_path = temp_dir / "claude_agent_sdk.whl"
+
+        # Download wheel
+        urllib.request.urlretrieve(wheel_url, wheel_path)
+        print(f"Downloaded wheel to {wheel_path}")
+
+        # Extract claude.exe from wheel
+        with zipfile.ZipFile(wheel_path, "r") as zf:
+            binary_zip_path = "claude_agent_sdk/_bundled/claude.exe"
+            if binary_zip_path in zf.namelist():
+                zf.extract(binary_zip_path, temp_dir)
+                binary_path = temp_dir / binary_zip_path
+
+                print(
+                    f"Extracted Claude CLI binary: {binary_path} ({binary_path.stat().st_size / 1024 / 1024:.1f} MB)"
+                )
+                return (str(binary_path), "claude_agent_sdk/_bundled")
+            else:
+                print(f"Error: {binary_zip_path} not found in wheel")
+                return None
+
+    except Exception as e:
+        print(f"Error downloading Windows Claude binary: {e}")
         return None
 
 
-def build_executable(target_arch: str | None = None):
+def build_executable(
+    target_arch: str | None = None, target_platform: str | None = None
+):
     """Build the executable using PyInstaller.
 
     Args:
         target_arch: Target architecture for cross-compilation (e.g., 'x86_64', 'arm64').
                      If None, builds for the native architecture.
+        target_platform: Target platform for cross-compilation (e.g., 'Windows', 'Darwin', 'Linux').
+                        If None, builds for the current platform.
     """
     project_root = get_project_root()
     executor_root = get_executor_root()
 
+    # Determine effective target platform
+    effective_platform = target_platform or platform.system()
+
     # Get version and embed it into source
     version = get_version_from_pyproject()
     print(f"Building version: {version}")
+    if target_platform:
+        print(f"Target platform: {target_platform}")
     original_version_content = embed_version_in_source(version)
 
     try:
@@ -323,7 +398,7 @@ def build_executable(target_arch: str | None = None):
         ]
 
         # Add Claude CLI binary if found (critical for Windows to avoid asyncio + .cmd issue)
-        claude_binary = find_claude_agent_sdk_binary()
+        claude_binary = find_claude_agent_sdk_binary(target_platform=effective_platform)
         if claude_binary:
             src_path, dest_dir = claude_binary
             cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
@@ -411,6 +486,12 @@ def main():
         help="Target architecture for cross-compilation (macOS only). "
         "Use 'x86_64' to build for Intel Macs on Apple Silicon.",
     )
+    parser.add_argument(
+        "--target-platform",
+        choices=["Windows", "Darwin", "Linux"],
+        help="Target platform for bundling platform-specific binaries. "
+        "Use 'Windows' when building for Windows from macOS/Linux to include claude.exe.",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -420,13 +501,15 @@ def main():
     print(f"Python: {sys.version}")
     if args.target_arch:
         print(f"Target architecture: {args.target_arch}")
+    if args.target_platform:
+        print(f"Target platform: {args.target_platform}")
     print()
 
     # Clean previous builds
     clean_build_artifacts()
 
     # Build executable
-    build_executable(target_arch=args.target_arch)
+    build_executable(target_arch=args.target_arch, target_platform=args.target_platform)
 
     print()
     print("=" * 60)
