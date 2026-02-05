@@ -367,7 +367,10 @@ class SkillDownloader:
             logger.info(f"[SkillDownloader] Downloading skill: {skill_name}")
 
             # Query skill by name
+            # Include task_id for task-based authorization (enables shared team scenarios)
             query_path = f"/api/v1/kinds/skills?name={skill_name}&namespace={self.team_namespace}"
+            if self.task_id:
+                query_path += f"&task_id={self.task_id}"
             response = self.client.get(query_path, timeout=self.QUERY_TIMEOUT)
 
             if not response:
