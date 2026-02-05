@@ -4,7 +4,7 @@
 
 # Unified Pod Template for both regular tasks and warm pool standby pods.
 # Use is_warm_pool=true for standby pods, which:
-# - Sets WARM_POOL_MODE=true env var
+# - Sets PRELOAD_MODE=true env var
 # - Skips TASK_INFO env var (task data sent via /api/tasks/execute at bind time)
 # - Reads AUTH_TOKEN, TASK_ID, CALLBACK_URL from Downward API mounted files
 # - Mounts wegent-config volume for dynamic config via Downward API
@@ -70,6 +70,8 @@ spec:
         {% if is_warm_pool %}
         # Warm pool mode indicator
         - name: WARM_POOL_MODE
+          value: "true"
+        - name: PRELOAD_MODE
           value: "true"
         # NOTE: TASK_INFO is NOT set here - task data sent via /api/tasks/execute
         # NOTE: AUTH_TOKEN, TASK_ID, CALLBACK_URL read from Downward API files
