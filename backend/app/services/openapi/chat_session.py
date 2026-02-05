@@ -181,7 +181,11 @@ def setup_chat_session(
             "spec": {
                 "title": title,
                 "prompt": input_text,
-                "teamRef": {"name": team.name, "namespace": team.namespace},
+                "teamRef": {
+                    "name": team.name,
+                    "namespace": team.namespace,
+                    "user_id": team.user_id,
+                },
                 "workspaceRef": {"name": workspace_name, "namespace": "default"},
                 "is_group_chat": False,
             },

@@ -215,16 +215,17 @@ def list_skills(
                 db=db, name=name, namespace=namespace
             )
 
-        # 3. Task owner's skill (if task_id provided)
+        # 3. Team owner's skill (if task_id provided)
         # This enables shared team scenarios where executor queries skills
         # owned by the original team owner
         if not skill and task_id:
             from app.models.task import TaskResource
+            from app.schemas.kind import Task
             from app.services.task_member_service import task_member_service
 
             # Verify current user is a member of the task (owner or group member)
             if task_member_service.is_member(db, task_id, current_user.id):
-                # Get task to find the owner
+                # Get task to find the team owner
                 task = (
                     db.query(TaskResource)
                     .filter(
@@ -234,11 +235,20 @@ def list_skills(
                     )
                     .first()
                 )
-                if task and task.user_id != current_user.id:
-                    # Search skill owned by task owner
-                    skill = skill_kinds_service.get_skill_by_name(
-                        db=db, name=name, namespace="default", user_id=task.user_id
-                    )
+                if task:
+                    # Get team owner user_id from task's teamRef
+                    task_crd = Task.model_validate(task.json)
+                    team_owner_user_id = task_crd.spec.teamRef.user_id
+
+                    # If teamRef.user_id is set and different from current user,
+                    # search skill owned by team owner
+                    if team_owner_user_id and team_owner_user_id != current_user.id:
+                        skill = skill_kinds_service.get_skill_by_name(
+                            db=db,
+                            name=name,
+                            namespace="default",
+                            user_id=team_owner_user_id,
+                        )
 
         # 4. Public skill (user_id=0)
         if not skill:
@@ -1078,16 +1088,17 @@ def download_skill(
                 db=db, skill_id=skill_id, namespace=namespace
             )
 
-    # 3. If not found and task_id provided, search task owner's skill
+    # 3. If not found and task_id provided, search team owner's skill
     # This enables shared team scenarios where executor downloads skills
     # owned by the original team owner
     if not skill and task_id:
         from app.models.task import TaskResource
+        from app.schemas.kind import Task
         from app.services.task_member_service import task_member_service
 
         # Verify current user is a member of the task (owner or group member)
         if task_member_service.is_member(db, task_id, current_user.id):
-            # Get task to find the owner
+            # Get task to find the team owner
             task = (
                 db.query(TaskResource)
                 .filter(
@@ -1097,15 +1108,21 @@ def download_skill(
                 )
                 .first()
             )
-            if task and task.user_id != current_user.id:
-                # Search skill owned by task owner
-                skill = skill_kinds_service.get_skill_by_id(
-                    db=db, skill_id=skill_id, user_id=task.user_id
-                )
-                if skill:
-                    binary_data = skill_kinds_service.get_skill_binary(
-                        db=db, skill_id=skill_id, user_id=task.user_id
+            if task:
+                # Get team owner user_id from task's teamRef
+                task_crd = Task.model_validate(task.json)
+                team_owner_user_id = task_crd.spec.teamRef.user_id
+
+                # If teamRef.user_id is set and different from current user,
+                # search skill owned by team owner
+                if team_owner_user_id and team_owner_user_id != current_user.id:
+                    skill = skill_kinds_service.get_skill_by_id(
+                        db=db, skill_id=skill_id, user_id=team_owner_user_id
                     )
+                    if skill:
+                        binary_data = skill_kinds_service.get_skill_binary(
+                            db=db, skill_id=skill_id, user_id=team_owner_user_id
+                        )
 
     # 4. If still not found, search public skill (user_id=0)
     if not skill:

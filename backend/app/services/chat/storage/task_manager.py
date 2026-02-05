@@ -289,7 +289,11 @@ def create_new_task(
         "spec": {
             "title": title,
             "prompt": params.message,
-            "teamRef": {"name": team.name, "namespace": team.namespace},
+            "teamRef": {
+                "name": team.name,
+                "namespace": team.namespace,
+                "user_id": team.user_id,
+            },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
             **(

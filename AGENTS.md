@@ -320,6 +320,31 @@ Task (Team + Workspace) → Subtasks
 | **Workspace** | Git repository | `repository{}` |
 | **Skill** | On-demand capabilities | `description`, `prompt`, `tools`, `provider` |
 
+### Kind Resource Identification
+
+⚠️ **CRITICAL: A Kind resource is uniquely identified by THREE fields: `namespace`, `name`, and `user_id`.**
+
+```python
+# ✅ CORRECT - Use all three fields to locate a Kind
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name,
+    Kind.user_id == user_id
+).first()
+
+# ❌ WRONG - Missing user_id, may return wrong resource
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name
+).first()
+```
+
+**Key Points:**
+- `namespace`: Logical grouping (e.g., "default", "system")
+- `name`: Resource name within the namespace
+- `user_id`: Owner of the resource (enables multi-tenancy)
+- The combination of all three fields forms the unique constraint
+
 ### Database Table Mapping
 
 ⚠️ **Important:** Task and Workspace resources are stored in a **separate `tasks` table**, not in the `kinds` table.
