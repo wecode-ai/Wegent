@@ -50,7 +50,7 @@ def get_api_base_url() -> str:
     """
     if config.EXECUTOR_MODE == "local":
         return config.WEGENT_BACKEND_URL.rstrip("/")
-    # Use env_reader which supports file-based fallback for warm pool mode
+
     task_api_domain = get_task_api_domain()
     if task_api_domain:
         return task_api_domain.rstrip("/")

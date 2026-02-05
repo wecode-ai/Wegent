@@ -71,7 +71,9 @@ def get_env(key: str, default: Optional[str] = None) -> Optional[str]:
     return default
 
 
-def get_env_json(key: str, default: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+def get_env_json(
+    key: str, default: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
     """
     Get JSON configuration value with file-based fallback.
 

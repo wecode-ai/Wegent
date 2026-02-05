@@ -475,7 +475,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             task_id: Task ID
             executor_name: Executor container name
             ttl: TTL in seconds (defaults to config value)
-            **extra_fields: Additional fields to store 
+            **extra_fields: Additional fields to store
 
         Returns:
             True if successful, False otherwise
