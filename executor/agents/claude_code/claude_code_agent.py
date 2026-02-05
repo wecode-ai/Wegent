@@ -14,7 +14,6 @@ import random
 import re
 import string
 import subprocess
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -151,74 +150,6 @@ class ClaudeCodeAgent(Agent):
         if cwd:
             return os.path.join(cwd, ".claude")
         return os.path.join(config.get_workspace_root(), str(self.task_id), ".claude")
-
-    def _write_json_config(self, filename: str, data: dict) -> str | None:
-        """Write JSON data to a config file in .claude directory.
-
-        Args:
-            filename: Name of the config file (e.g., 'mcp_servers.json')
-            data: Dictionary to write as JSON
-
-        Returns:
-            Path to the file, or None if failed
-        """
-        try:
-            config_dir = self._get_claude_config_dir()
-            os.makedirs(config_dir, exist_ok=True)
-            filepath = os.path.join(config_dir, filename)
-
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            return filepath
-        except Exception as e:
-            logger.error(f"Failed to write {filename}: {e}")
-            return None
-
-    def _prepare_options_for_windows(self) -> None:
-        """Write large options to files to avoid Windows command line length limit.
-
-        Windows cmd has ~8191 char limit, causing WinError 206 when exceeded.
-        This writes mcp_servers and system_prompt to files instead.
-        """
-        if sys.platform != "win32":
-            return
-
-        # Write MCP servers to file
-        mcp_servers = self.options.get("mcp_servers")
-        if isinstance(mcp_servers, dict) and mcp_servers:
-            # Format required by Claude Code CLI's --mcp-config flag
-            filepath = self._write_json_config(
-                "mcp_servers.json", {"mcpServers": mcp_servers}
-            )
-            if filepath:
-                self.options["mcp_servers"] = filepath
-                logger.info(
-                    f"Windows: MCP config ({len(mcp_servers)} servers) -> {filepath}"
-                )
-
-        # Write long system_prompt to settings file
-        system_prompt = self.options.get("system_prompt")
-        if isinstance(system_prompt, str) and len(system_prompt) > 2000:
-            # Read existing settings and merge
-            settings_path = os.path.join(
-                self._get_claude_config_dir(), "settings.local.json"
-            )
-            settings = {}
-            if os.path.exists(settings_path):
-                try:
-                    with open(settings_path, "r", encoding="utf-8") as f:
-                        settings = json.load(f)
-                except Exception:
-                    pass
-
-            settings["systemPrompt"] = system_prompt
-            filepath = self._write_json_config("settings.local.json", settings)
-            if filepath:
-                del self.options["system_prompt"]
-                logger.info(
-                    f"Windows: System prompt ({len(system_prompt)} chars) -> {filepath}"
-                )
 
     @classmethod
     def get_active_task_ids(cls) -> list[int]:
@@ -1330,7 +1261,11 @@ class ClaudeCodeAgent(Agent):
 
         # On Windows, write large options to files to avoid command line length limit
         # Windows has a ~8191 character limit (WinError 206 if exceeded)
-        self._prepare_options_for_windows()
+        from executor.platform_compat import prepare_options_for_windows
+
+        self.options = prepare_options_for_windows(
+            self.options, self._get_claude_config_dir()
+        )
 
         # Create client with options
         if self.options:

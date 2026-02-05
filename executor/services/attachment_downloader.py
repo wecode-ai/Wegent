@@ -11,12 +11,13 @@ similar to the skill download pattern.
 
 import logging
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
 import requests
+
+from executor.platform_compat import get_safe_path_name
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,7 @@ def get_attachments_subdir_name(task_id: str) -> str:
         Directory name like '{task_id}_executor_attachments' (Windows)
         or '{task_id}:executor:attachments' (Unix)
     """
-    if sys.platform == "win32":
-        return f"{task_id}_executor_attachments"
-    return f"{task_id}:executor:attachments"
+    return get_safe_path_name(f"{task_id}:executor:attachments")
 
 
 @dataclass

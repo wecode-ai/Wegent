@@ -37,9 +37,13 @@ if IS_WINDOWS:
     )
     from executor.platform_compat.windows import WindowsPtyManager as _PtyManager
     from executor.platform_compat.windows import WindowsSignalHandler as _SignalHandler
-    from executor.platform_compat.windows import WindowsUserInfoProvider as _UserInfoProvider
+    from executor.platform_compat.windows import (
+        WindowsUserInfoProvider as _UserInfoProvider,
+    )
 else:
-    from executor.platform_compat.unix import UnixPermissionsManager as _PermissionsManager
+    from executor.platform_compat.unix import (
+        UnixPermissionsManager as _PermissionsManager,
+    )
     from executor.platform_compat.unix import UnixPtyManager as _PtyManager
     from executor.platform_compat.unix import UnixSignalHandler as _SignalHandler
     from executor.platform_compat.unix import UnixUserInfoProvider as _UserInfoProvider
@@ -107,4 +111,15 @@ __all__ = [
     "get_permissions_manager",
     "get_signal_handler",
     "get_user_info_provider",
+    # Command line utilities
+    "prepare_options_for_windows",
+    "write_json_config",
+    "get_safe_path_name",
 ]
+
+# Import command line utilities
+from executor.platform_compat.cmdline import (
+    get_safe_path_name,
+    prepare_options_for_windows,
+    write_json_config,
+)
