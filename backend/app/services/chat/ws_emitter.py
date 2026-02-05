@@ -922,6 +922,9 @@ async def safe_emit_in_main_loop(
     bound to the event loop they were created in, so we must ensure emits
     happen in the main loop.
 
+    When in a different loop, this function uses fire-and-forget semantics
+    to avoid "Future attached to a different loop" errors.
+
     Args:
         emit_func: The emit function to execute (e.g., ws_emitter.sio.emit)
         *args: Positional arguments for the emit function
@@ -939,8 +942,10 @@ async def safe_emit_in_main_loop(
                 emit_func(*args, **kwargs), _main_event_loop
             )
             return
-        # Fallback: try direct execution (may fail if no loop)
-        await emit_func(*args, **kwargs)
+        # No main loop available, log warning and skip
+        logger.warning(
+            "[WS] Cannot emit: no running event loop and main loop not available"
+        )
         return
 
     # If we're already in the main loop, execute directly
@@ -949,9 +954,27 @@ async def safe_emit_in_main_loop(
         return
 
     # We're in a different loop, schedule in main loop (fire-and-forget)
+    # IMPORTANT: Do NOT await here - just schedule and return immediately
+    # Awaiting would cause "Future attached to a different loop" error
     if _main_event_loop and _main_event_loop.is_running():
-        asyncio.run_coroutine_threadsafe(emit_func(*args, **kwargs), _main_event_loop)
+        future = asyncio.run_coroutine_threadsafe(
+            emit_func(*args, **kwargs), _main_event_loop
+        )
+
+        # Optionally add a callback to log errors (but don't wait for result)
+        # This is purely for debugging purposes
+        def _log_error(f: Any) -> None:
+            try:
+                f.result()
+            except asyncio.CancelledError:
+                # Task was cancelled, this is expected during shutdown
+                logger.debug("[WS] Cross-loop emit was cancelled")
+            except Exception as e:
+                logger.warning("[WS] Error in cross-loop emit: %s", e, exc_info=True)
+
+        future.add_done_callback(_log_error)
     else:
-        # Main loop not running, execute in current loop (may fail with Redis)
-        # This is a fallback that may raise an exception
-        await emit_func(*args, **kwargs)
+        # Main loop not running, log warning and skip
+        logger.warning(
+            "[WS] Cannot emit: main event loop not running, skipping WebSocket event"
+        )

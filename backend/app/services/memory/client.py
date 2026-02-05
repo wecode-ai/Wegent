@@ -17,6 +17,7 @@ Usage:
 
 import asyncio
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -30,6 +31,36 @@ from app.services.memory.schemas import (
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+
+def _is_in_async_task() -> bool:
+    """Check if we're running inside an asyncio Task.
+
+    aiohttp's ClientTimeout requires being inside an asyncio.Task,
+    not just inside an event loop. This is because Python 3.11+'s
+    asyncio.timeout() context manager checks for task context.
+
+    Returns:
+        True if running inside an asyncio Task, False otherwise
+    """
+    try:
+        task = asyncio.current_task()
+        return task is not None
+    except RuntimeError:
+        return False
+
+
+def _get_current_loop_id() -> int:
+    """Get the current event loop's id for comparison.
+
+    Returns:
+        Loop id, or 0 if no loop is running
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        return id(loop)
+    except RuntimeError:
+        return 0
 
 
 class LongTermMemoryClient:
@@ -72,7 +103,12 @@ class LongTermMemoryClient:
             timeout if timeout is not None else settings.MEMORY_TIMEOUT_SECONDS
         )
         self._session: Optional[aiohttp.ClientSession] = None
-        self._session_lock = asyncio.Lock()
+        # Per-loop locks to avoid "attached to different loop" errors
+        # asyncio.Lock is bound to the event loop it was created in
+        self._session_locks: Dict[int, asyncio.Lock] = {}
+        self._session_locks_guard = threading.Lock()
+        # Track which event loop the session was created in
+        self._session_loop_id: int = 0
 
     def _get_headers(self) -> Dict[str, str]:
         """Build HTTP headers for mem0 API requests.
@@ -91,17 +127,90 @@ class LongTermMemoryClient:
         Uses double-check locking pattern to prevent race conditions when
         multiple coroutines attempt to create the session simultaneously.
 
+        The session is bound to the event loop it was created in. If the current
+        loop is different from the one the session was created in, we recreate
+        the session to avoid "Event loop is closed" errors.
+
+        IMPORTANT: We do NOT set timeout on the ClientSession itself because
+        aiohttp's ClientTimeout uses asyncio.timeout() internally, which
+        requires being inside an asyncio.Task. When called from Celery via
+        loop.run_until_complete(), we may not be in a Task context.
+        Instead, timeout is applied per-request only when in Task context.
+
         Returns:
             aiohttp ClientSession instance
         """
-        if self._session is None or self._session.closed:
-            async with self._session_lock:
+        current_loop_id = _get_current_loop_id()
+
+        # Get or create lock for this event loop
+        # asyncio.Lock is bound to the loop it was created in, so we need per-loop locks
+        with self._session_locks_guard:
+            if current_loop_id not in self._session_locks:
+                self._session_locks[current_loop_id] = asyncio.Lock()
+            session_lock = self._session_locks[current_loop_id]
+
+        # Check if we need a new session (no session, closed, or different loop)
+        needs_new_session = (
+            self._session is None
+            or self._session.closed
+            or (current_loop_id != 0 and self._session_loop_id != current_loop_id)
+        )
+
+        if needs_new_session:
+            async with session_lock:
                 # Double-check after acquiring lock
-                if self._session is None or self._session.closed:
-                    self._session = aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(total=self.timeout)
+                current_loop_id = _get_current_loop_id()
+                needs_new_session = (
+                    self._session is None
+                    or self._session.closed
+                    or (
+                        current_loop_id != 0
+                        and self._session_loop_id != current_loop_id
                     )
+                )
+
+                if needs_new_session:
+                    # Close old session if it exists and is from a different loop
+                    if self._session and not self._session.closed:
+                        try:
+                            await self._session.close()
+                        except Exception as e:
+                            # Log the error but continue - session cleanup is not critical
+                            logger.warning("Failed to close old aiohttp session: %s", e)
+
+                    # Create session WITHOUT timeout - timeout is applied per-request
+                    # This avoids "Timeout context manager should be used inside a task"
+                    self._session = aiohttp.ClientSession()
+                    self._session_loop_id = current_loop_id
+                    logger.debug(
+                        "Created new aiohttp session for loop %s", current_loop_id
+                    )
+
         return self._session
+
+    def _get_request_timeout(
+        self, custom_timeout: Optional[float] = None
+    ) -> Optional[aiohttp.ClientTimeout]:
+        """Get timeout for a request, only if we're in an asyncio Task.
+
+        aiohttp's ClientTimeout uses asyncio.timeout() internally (Python 3.11+),
+        which requires being inside an asyncio.Task. When called from Celery
+        via loop.run_until_complete(), we may not be in a Task context.
+
+        Args:
+            custom_timeout: Custom timeout value, or None to use default
+
+        Returns:
+            ClientTimeout if in Task context, None otherwise (no timeout)
+        """
+        if not _is_in_async_task():
+            logger.debug(
+                "Not in asyncio Task context, skipping timeout (may be Celery worker)"
+            )
+            return None
+
+        timeout_value = custom_timeout if custom_timeout is not None else self.timeout
+        return aiohttp.ClientTimeout(total=timeout_value)
 
     async def close(self) -> None:
         """Close aiohttp session."""
@@ -141,10 +250,14 @@ class LongTermMemoryClient:
                 metadata=metadata,
             )
 
+            # Get timeout only if in Task context
+            request_timeout = self._get_request_timeout()
+
             async with session.post(
                 f"{self.base_url}/memories",
                 json=request.model_dump(exclude_none=True),
                 headers=self._get_headers(),
+                timeout=request_timeout,
             ) as resp:
                 if resp.status == 200:
                     result = await resp.json()
@@ -222,10 +335,8 @@ class LongTermMemoryClient:
                 limit=limit,
             )
 
-            # Use custom timeout if provided
-            request_timeout = (
-                aiohttp.ClientTimeout(total=timeout) if timeout is not None else None
-            )
+            # Get timeout only if in Task context
+            request_timeout = self._get_request_timeout(timeout)
 
             async with session.post(
                 f"{self.base_url}/search",
@@ -276,9 +387,13 @@ class LongTermMemoryClient:
         try:
             session = await self._get_session()
 
+            # Get timeout only if in Task context
+            request_timeout = self._get_request_timeout()
+
             async with session.delete(
                 f"{self.base_url}/memories/{memory_id}",
                 headers=self._get_headers(),
+                timeout=request_timeout,
             ) as resp:
                 if resp.status == 200:
                     logger.info("Successfully deleted memory %s", memory_id)
@@ -320,9 +435,13 @@ class LongTermMemoryClient:
         try:
             session = await self._get_session()
 
+            # Get timeout only if in Task context
+            request_timeout = self._get_request_timeout()
+
             async with session.get(
                 f"{self.base_url}/memories/{memory_id}",
                 headers=self._get_headers(),
+                timeout=request_timeout,
             ) as resp:
                 if resp.status == 200:
                     result = await resp.json()
