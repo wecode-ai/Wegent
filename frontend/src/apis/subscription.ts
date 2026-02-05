@@ -31,6 +31,8 @@ import type {
   RentalCountResponse,
   FollowSettingsResponse,
   UpdateFollowSettingsRequest,
+  DeveloperNotificationSettingsResponse,
+  DeveloperNotificationSettingsUpdateRequest,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
