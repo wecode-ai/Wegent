@@ -143,6 +143,17 @@ Output:
 
 **Works in**: Both RAG and No-RAG modes
 
+### Wegent Knowledge Base Skill (MCP)
+
+If your agent has the built-in `wegent-knowledge` skill enabled, it can manage knowledge bases and documents programmatically via MCP:
+
+- `create_knowledge_base`: Create a new knowledge base (personal or group namespace)
+- `list_knowledge_bases`: List accessible knowledge bases
+- `list_documents`: List documents in a knowledge base
+- `create_document`: Upload a document (text / file / web)
+- `update_document`: Update a document's content (replace / append)
+- `delete_document`: Delete a document from a knowledge base
+
 ## Using Knowledge Bases in Conversations
 
 ### In Chat

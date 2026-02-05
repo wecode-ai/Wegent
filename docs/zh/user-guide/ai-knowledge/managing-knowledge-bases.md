@@ -143,6 +143,17 @@ Wegent 支持两种类型的知识库：
 
 **适用**：RAG 和无 RAG 模式
 
+### Wegent 知识库技能（MCP）
+
+如果您的智能体启用了内置的 `wegent-knowledge` 技能，它可以通过 MCP 以编程方式管理知识库与文档：
+
+- `create_knowledge_base`：创建新的知识库（个人或群组命名空间）
+- `list_knowledge_bases`：列出可访问的知识库
+- `list_documents`：列出知识库内的文档
+- `create_document`：上传文档（文本 / 文件 / 网页）
+- `update_document`：更新文档内容（覆盖 / 追加）
+- `delete_document`：从知识库删除文档
+
 ## 在对话中使用知识库
 
 ### 在聊天中
