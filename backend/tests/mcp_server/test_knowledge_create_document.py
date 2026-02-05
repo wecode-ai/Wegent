@@ -13,6 +13,7 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools import knowledge as knowledge_tools
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.services.context import context_service
 
 
 def _create_kb(db: Session, user_id: int) -> Kind:
@@ -55,8 +56,9 @@ def test_create_document_from_text_defaults_file_extension_and_creates_document(
         assert subtask_id == 0
         return attachment, None
 
-    with patch(
-        "app.services.context.context_service.context_service.upload_attachment",
+    with patch.object(
+        context_service,
+        "upload_attachment",
         side_effect=fake_upload_attachment,
     ):
         result = knowledge_tools._create_document_from_text(
@@ -99,8 +101,9 @@ def test_create_document_from_file_uploads_attachment_and_creates_document(
 
     file_base64 = base64.b64encode(b"ABABABAB").decode("utf-8")
 
-    with patch(
-        "app.services.context.context_service.context_service.upload_attachment",
+    with patch.object(
+        context_service,
+        "upload_attachment",
         side_effect=fake_upload_attachment,
     ):
         result = knowledge_tools._create_document_from_file(
