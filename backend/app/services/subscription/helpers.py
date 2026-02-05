@@ -156,6 +156,8 @@ def build_subscription_crd(
         # History preservation settings
         preserveHistory=subscription_in.preserve_history,
         historyMessageCount=subscription_in.history_message_count,
+        # Knowledge base references
+        knowledgeBaseRefs=subscription_in.knowledge_base_refs,
     )
 
     status = SubscriptionStatus()

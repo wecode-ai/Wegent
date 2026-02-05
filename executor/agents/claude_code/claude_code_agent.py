@@ -855,22 +855,15 @@ class ClaudeCodeAgent(Agent):
                 logger.info(f"Detected MCP servers configuration: {mcp_servers}")
                 bot_config["mcp_servers"] = mcp_servers
 
-            # Add wegent MCP server for subscription tasks (provides silent_exit tool via HTTP)
-            if task_data.get("is_subscription"):
-                from executor.mcp_servers.wegent.server import get_wegent_mcp_url
-
-                wegent_mcp_url = get_wegent_mcp_url()
-                wegent_mcp = {
-                    "wegent": {
-                        "type": "http",
-                        "url": wegent_mcp_url,
-                    }
-                }
+            # Add system MCP server for subscription tasks (provides silent_exit tool)
+            # System MCP config is injected by Backend via task_data
+            system_mcp_config = task_data.get("system_mcp_config")
+            if system_mcp_config and task_data.get("is_subscription"):
                 if "mcp_servers" not in bot_config:
                     bot_config["mcp_servers"] = {}
-                bot_config["mcp_servers"].update(wegent_mcp)
+                bot_config["mcp_servers"].update(system_mcp_config)
                 logger.info(
-                    f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
+                    f"Added system MCP server for subscription task: {list(system_mcp_config.keys())}"
                 )
 
             for key in valid_options:

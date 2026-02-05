@@ -493,7 +493,11 @@ def _test_llm_connection(
 
         # Determine the base URL for Gemini Interaction API
         # Default to Google's API if not provided
-        interaction_base_url = base_url.rstrip("/") if base_url else "https://generativelanguage.googleapis.com"
+        interaction_base_url = (
+            base_url.rstrip("/")
+            if base_url
+            else "https://generativelanguage.googleapis.com"
+        )
         interaction_url = f"{interaction_base_url}/v1beta/interactions"
 
         # Build headers with API key
@@ -530,7 +534,11 @@ def _test_llm_connection(
                     "message": f"Successfully connected to Gemini Deep Research API. Interaction ID: {interaction_id}",
                 }
             else:
-                error_msg = response.text[:200] if response.text else f"HTTP {response.status_code}"
+                error_msg = (
+                    response.text[:200]
+                    if response.text
+                    else f"HTTP {response.status_code}"
+                )
                 return {
                     "success": False,
                     "message": f"Gemini Deep Research API error: {error_msg}",
