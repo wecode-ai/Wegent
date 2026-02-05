@@ -23,8 +23,6 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from executor.mcp_servers.wegent import start_wegent_mcp_server
-from executor.mcp_servers.wegent.server import stop_wegent_mcp_server
 from executor.services.agent_service import AgentService
 from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
 from executor.tasks import process, run_task
@@ -97,18 +95,6 @@ async def lifespan(app: FastAPI):
             logger.debug("Restored trace context from environment")
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
-    # Start Wegent MCP server for internal tools (silent_exit, etc.)
-    # Must be started before run_task() so that agents can connect to it
-    wegent_mcp_url = None
-    try:
-        import asyncio
-
-        wegent_mcp_url = start_wegent_mcp_server(background=True)
-        logger.info(f"Wegent MCP server started at {wegent_mcp_url}")
-        # Wait a short time for the server to be fully ready
-        await asyncio.sleep(0.5)
-    except Exception as e:
-        logger.warning(f"Failed to start Wegent MCP server: {e}")
 
     try:
         if os.getenv("TASK_INFO"):
@@ -157,13 +143,6 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to initialize Claude Code for sandbox: {e}")
 
     yield  # Application runs here
-
-    # Stop Wegent MCP server
-    try:
-        stop_wegent_mcp_server()
-        logger.info("Wegent MCP server stopped")
-    except Exception as e:
-        logger.warning(f"Error stopping Wegent MCP server: {e}")
 
     # Stop heartbeat service
     try:
