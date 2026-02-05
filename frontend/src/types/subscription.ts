@@ -66,6 +66,12 @@ export interface SubscriptionModelRef {
   namespace: string
 }
 
+// Knowledge base reference for Subscription
+export interface SubscriptionKnowledgeBaseRef {
+  name: string
+  namespace: string
+}
+
 // Subscription configuration
 export interface Subscription {
   id: number
@@ -99,6 +105,8 @@ export interface Subscription {
   webhook_secret?: string // HMAC signing secret for webhook verification
   last_execution_time?: string
   last_execution_status?: string
+  // Knowledge base references
+  knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
   next_execution_time?: string
   execution_count: number
   success_count: number
@@ -144,6 +152,8 @@ export interface SubscriptionCreateRequest {
   enabled?: boolean
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  // Knowledge base references
+  knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
 }
 
 // Subscription update request
@@ -170,6 +180,8 @@ export interface SubscriptionUpdateRequest {
   enabled?: boolean
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  // Knowledge base references
+  knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
 }
 
 // Subscription list response
@@ -376,4 +388,56 @@ export interface RentalSubscriptionsListResponse {
 export interface RentalCountResponse {
   subscription_id: number
   rental_count: number
+}
+
+// ========== Notification Level Types ==========
+
+// Notification level enumeration
+export type NotificationLevel = 'silent' | 'default' | 'notify'
+
+// Subscription follow config
+export interface SubscriptionFollowConfig {
+  notification_level: NotificationLevel
+  notification_channel_ids?: number[]
+}
+
+// Follow subscription request with notification settings
+export interface FollowSubscriptionRequest {
+  notification_level?: NotificationLevel
+  notification_channel_ids?: number[]
+}
+
+// Update follow settings request
+export interface UpdateFollowSettingsRequest {
+  notification_level: NotificationLevel
+  notification_channel_ids?: number[]
+}
+
+// Notification channel info
+export interface NotificationChannelInfo {
+  id: number
+  name: string
+  channel_type: string
+  is_bound: boolean
+}
+
+// Follow settings response
+export interface FollowSettingsResponse {
+  notification_level: NotificationLevel
+  notification_channel_ids: number[]
+  notification_channels: NotificationChannelInfo[]
+  available_channels: NotificationChannelInfo[]
+}
+
+// Developer notification settings response
+export interface DeveloperNotificationSettingsResponse {
+  notification_level: NotificationLevel
+  notification_channel_ids: number[]
+  available_channels: NotificationChannelInfo[]
+}
+
+// Update developer notification settings request
+export interface DeveloperNotificationSettingsUpdateRequest {
+  notification_level: NotificationLevel
+  notification_channel_ids?: number[]
 }

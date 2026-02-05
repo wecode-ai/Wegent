@@ -20,6 +20,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
@@ -45,7 +46,6 @@ from app.schemas.rag import (
     SentenceSplitterConfig,
     SplitterConfig,
 )
-from app.models.kind import Kind
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge import (
     KnowledgeBaseQAService,
@@ -1155,7 +1155,9 @@ async def reindex_document(
         )
 
     # Extract RAG config using shared helper
-    rag_params = _extract_rag_config_from_knowledge_base(knowledge_base, current_user.id)
+    rag_params = _extract_rag_config_from_knowledge_base(
+        knowledge_base, current_user.id
+    )
 
     if not rag_params:
         raise HTTPException(

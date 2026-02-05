@@ -309,17 +309,30 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
     chat streaming completes or fails. This ensures Subscription execution
     status is properly tracked even without WebSocket connections.
 
+    This class is intentionally kept simple and only handles status updates.
+    Notifications are handled by subscription.event_handler module through
+    callbacks to maintain separation of concerns.
+
     Args:
         execution_id: The BackgroundExecution ID to update on completion/error
+        on_status_changed: Optional async callback for status changes.
+            Called with (status: str, result_summary: str, is_silent_exit: bool)
     """
 
-    def __init__(self, execution_id: int):
+    def __init__(
+        self,
+        execution_id: int,
+        on_status_changed: Optional[Any] = None,
+    ):
         """Initialize SubscriptionEventEmitter.
 
         Args:
             execution_id: The BackgroundExecution ID to update
+            on_status_changed: Async callback for status changes.
+                Signature: async def callback(status, result_summary, is_silent_exit)
         """
         self.execution_id = execution_id
+        self.on_status_changed = on_status_changed
 
     async def emit_chat_done(
         self,
@@ -332,7 +345,11 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
         """Emit chat:done event and update BackgroundExecution status.
 
         If result contains silent_exit=True, status is set to COMPLETED_SILENT.
+        Also checks subtask's result in database for silent_exit flag set by MCP tool.
         Otherwise, status is set to COMPLETED.
+
+        Calls the on_status_changed callback if provided, allowing the subscription
+        module to handle notifications separately.
         """
         from app.services.subscription.helpers import extract_result_summary
 
@@ -341,8 +358,14 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
             f"execution_id={self.execution_id}"
         )
 
-        # Check if this is a silent exit
+        # Check if this is a silent exit from result parameter
         is_silent_exit = result.get("silent_exit", False) if result else False
+
+        # Also check subtask's result in database for silent_exit flag
+        # This handles the case where MCP silent_exit tool directly updated the subtask
+        if not is_silent_exit:
+            is_silent_exit = await self._check_subtask_silent_exit(subtask_id)
+
         status = "COMPLETED_SILENT" if is_silent_exit else "COMPLETED"
 
         if is_silent_exit:
@@ -350,11 +373,54 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                 f"[SubscriptionEmitter] Silent exit detected for execution {self.execution_id}"
             )
 
+        result_summary = extract_result_summary(result)
+
         # Update BackgroundExecution status using shared helper
         await self._update_execution_status(
             status=status,
-            result_summary=extract_result_summary(result),
+            result_summary=result_summary,
         )
+
+        # Call the callback if provided (subscription module handles notifications)
+        if self.on_status_changed:
+            try:
+                await self.on_status_changed(status, result_summary, is_silent_exit)
+            except Exception as e:
+                logger.error(
+                    f"[SubscriptionEmitter] Status change callback failed for "
+                    f"execution {self.execution_id}: {e}"
+                )
+
+    async def _check_subtask_silent_exit(self, subtask_id: int) -> bool:
+        """Check if subtask has silent_exit flag set in its result.
+
+        This handles the case where MCP silent_exit tool directly updated
+        the subtask's result in the database.
+
+        Args:
+            subtask_id: The subtask ID to check
+
+        Returns:
+            True if subtask has silent_exit=True in its result
+        """
+        try:
+            from app.db.session import get_db_session
+            from app.models.subtask import Subtask
+
+            with get_db_session() as db:
+                subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+                if subtask and subtask.result and isinstance(subtask.result, dict):
+                    is_silent = subtask.result.get("silent_exit", False)
+                    if is_silent:
+                        logger.info(
+                            f"[SubscriptionEmitter] Found silent_exit flag in subtask {subtask_id} result"
+                        )
+                    return is_silent
+        except Exception as e:
+            logger.error(
+                f"[SubscriptionEmitter] Failed to check subtask {subtask_id} silent_exit: {e}"
+            )
+        return False
 
     async def emit_chat_error(
         self,
@@ -363,7 +429,11 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
         error: str,
         message_id: Optional[int] = None,
     ) -> None:
-        """Emit chat:error event and update BackgroundExecution status to FAILED."""
+        """Emit chat:error event and update BackgroundExecution status to FAILED.
+
+        Calls the on_status_changed callback if provided, allowing the subscription
+        module to handle notifications separately.
+        """
         logger.warning(
             f"[SubscriptionEmitter] chat:error task={task_id} subtask={subtask_id} "
             f"execution_id={self.execution_id} error={error}"
@@ -374,6 +444,17 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
             status="FAILED",
             error_message=error,
         )
+
+        # Call the callback if provided (subscription module handles notifications)
+        if self.on_status_changed:
+            try:
+                # For errors, pass status as FAILED and is_silent_exit as False
+                await self.on_status_changed("FAILED", f"Task failed: {error}", False)
+            except Exception as e:
+                logger.error(
+                    f"[SubscriptionEmitter] Status change callback failed for "
+                    f"execution {self.execution_id}: {e}"
+                )
 
     async def emit_chat_cancelled(
         self,
@@ -414,6 +495,9 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                     status=BackgroundExecutionStatus(status),
                     result_summary=result_summary,
                     error_message=error_message,
+                    # Skip notifications here - they are dispatched by subscription_tasks.py
+                    # after the task completes to avoid duplicate notifications
+                    skip_notifications=True,
                 )
                 logger.info(
                     f"[SubscriptionEmitter] Updated execution {self.execution_id} status to {status}"

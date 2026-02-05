@@ -2,4 +2,4 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""MCP Servers package for executor."""
+"""Tests for MCP Server module."""

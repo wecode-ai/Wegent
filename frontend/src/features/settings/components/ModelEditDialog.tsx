@@ -181,7 +181,10 @@ const GEMINI_MODEL_OPTIONS = [
 ]
 
 const GEMINI_DEEP_RESEARCH_MODEL_OPTIONS = [
-  { value: 'deep-research-pro-preview-12-2025', label: 'deep-research-pro-preview-12-2025 (Recommended)' },
+  {
+    value: 'deep-research-pro-preview-12-2025',
+    label: 'deep-research-pro-preview-12-2025 (Recommended)',
+  },
   { value: 'custom', label: 'Custom...' },
 ]
 
@@ -504,7 +507,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     setTesting(true)
     try {
       const result = await modelApis.testConnection({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini' | 'gemini-deep-research' | 'openai-responses',
+        provider_type: providerType as
+          | 'openai'
+          | 'anthropic'
+          | 'gemini'
+          | 'gemini-deep-research'
+          | 'openai-responses',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,

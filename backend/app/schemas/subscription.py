@@ -136,6 +136,13 @@ class SubscriptionWorkspaceRef(BaseModel):
     namespace: str = "default"
 
 
+class SubscriptionKnowledgeBaseRef(BaseModel):
+    """Reference to a Knowledge Base for subscription."""
+
+    name: str = Field(..., description="Knowledge base name")
+    namespace: str = Field("default", description="Knowledge base namespace")
+
+
 class SourceSubscriptionRef(BaseModel):
     """Reference to source subscription for rentals."""
 
@@ -205,6 +212,12 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Reference to source subscription (for rentals). "
         "When set, this subscription is a rental instance.",
+    )
+    # Knowledge base references
+    knowledgeBaseRefs: Optional[List[SubscriptionKnowledgeBaseRef]] = Field(
+        None,
+        description="Knowledge bases to bind to this subscription. "
+        "AI will have access to these knowledge bases during execution.",
     )
 
 
@@ -312,6 +325,12 @@ class SubscriptionBase(BaseModel):
         le=50,
         description="Number of recent messages to include as context (0-50)",
     )
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = Field(
+        None,
+        description="Knowledge bases to bind to this subscription. "
+        "AI will have access to these knowledge bases during execution.",
+    )
 
 
 class SubscriptionCreate(SubscriptionBase):
@@ -346,6 +365,8 @@ class SubscriptionUpdate(BaseModel):
     # History preservation settings
     preserve_history: Optional[bool] = None
     history_message_count: Optional[int] = Field(None, ge=0, le=50)
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = None
 
 
 class SubscriptionInDB(SubscriptionBase):
@@ -716,3 +737,111 @@ class RentalCountResponse(BaseModel):
 
     subscription_id: int
     rental_count: int
+
+
+# ========== Notification Level Schemas ==========
+
+
+class NotificationLevel(str, Enum):
+    """Notification level enumeration for subscription followers."""
+
+    SILENT = "silent"  # Execute but mark as COMPLETED_SILENT, hidden from timeline
+    DEFAULT = "default"  # Normal behavior, shows in Feed timeline
+    NOTIFY = "notify"  # Send notification via Messager channels
+
+
+class SubscriptionFollowConfig(BaseModel):
+    """Configuration for subscription follow notification settings."""
+
+    notification_level: NotificationLevel = Field(
+        NotificationLevel.DEFAULT, description="Notification level for this follow"
+    )
+    notification_channel_ids: Optional[List[int]] = Field(
+        None, description="Messager channel IDs for notify level"
+    )
+
+
+class FollowSubscriptionRequest(BaseModel):
+    """Request to follow a subscription with optional notification settings."""
+
+    notification_level: Optional[NotificationLevel] = Field(
+        None, description="Notification level (default: 'default')"
+    )
+    notification_channel_ids: Optional[List[int]] = Field(
+        None, description="Messager channel IDs for notify level"
+    )
+
+
+class UpdateFollowSettingsRequest(BaseModel):
+    """Request to update follow notification settings."""
+
+    notification_level: NotificationLevel = Field(..., description="Notification level")
+    notification_channel_ids: Optional[List[int]] = Field(
+        None, description="Messager channel IDs for notify level"
+    )
+
+
+class NotificationChannelInfo(BaseModel):
+    """Information about a notification channel (Messager)."""
+
+    id: int = Field(..., description="Messager Kind ID")
+    name: str = Field(..., description="Channel display name")
+    channel_type: str = Field(..., description="Channel type (dingtalk, feishu, etc.)")
+    is_bound: bool = Field(False, description="Whether user has bound to this channel")
+
+
+class FollowSettingsResponse(BaseModel):
+    """Response for follow notification settings."""
+
+    notification_level: NotificationLevel = Field(
+        NotificationLevel.DEFAULT, description="Current notification level"
+    )
+    notification_channel_ids: List[int] = Field(
+        default_factory=list, description="Selected channel IDs"
+    )
+    notification_channels: List[NotificationChannelInfo] = Field(
+        default_factory=list, description="Selected channels info"
+    )
+    available_channels: List[NotificationChannelInfo] = Field(
+        default_factory=list, description="All available Messager channels"
+    )
+
+
+class DeveloperNotificationSettingsResponse(BaseModel):
+    """Response for developer notification settings."""
+
+    notification_level: NotificationLevel = Field(
+        ..., description="Current notification level"
+    )
+    notification_channel_ids: List[int] = Field(
+        default_factory=list, description="List of selected Messager channel IDs"
+    )
+    available_channels: List[NotificationChannelInfo] = Field(
+        default_factory=list,
+        description="List of available Messager channels with binding status",
+    )
+
+
+class DeveloperNotificationSettingsUpdateRequest(BaseModel):
+    """Request to update developer notification settings."""
+
+    notification_level: NotificationLevel = Field(..., description="Notification level")
+    notification_channel_ids: Optional[List[int]] = Field(
+        default=None, description="List of Messager channel IDs for notifications"
+    )
+
+
+class IMChannelBinding(BaseModel):
+    """IM channel binding information in user preferences."""
+
+    channel_type: str = Field(..., description="Channel type (dingtalk, feishu, etc.)")
+    sender_id: str = Field(..., description="Sender ID in the IM platform")
+    sender_staff_id: Optional[str] = Field(
+        None, description="Staff ID (for enterprise channels)"
+    )
+    last_conversation_id: Optional[str] = Field(
+        None, description="Last conversation/task ID"
+    )
+    last_active_at: Optional[str] = Field(
+        None, description="Last activity timestamp (ISO format)"
+    )
