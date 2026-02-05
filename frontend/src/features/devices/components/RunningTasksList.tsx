@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { DeviceRunningTask } from '@/apis/devices'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { cn, parseUTCDate } from '@/lib/utils'
 import { ChevronDown, ChevronUp, X, Clock, Loader2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDistanceToNow } from 'date-fns'
@@ -116,8 +116,10 @@ export function RunningTasksList({
   const formatTime = (dateString?: string) => {
     if (!dateString) return ''
     try {
+      const date = parseUTCDate(dateString)
+      if (!date) return ''
       const locale = i18n.language.startsWith('zh') ? zhCN : enUS
-      return formatDistanceToNow(new Date(dateString), { addSuffix: true, locale })
+      return formatDistanceToNow(date, { addSuffix: true, locale })
     } catch {
       return ''
     }

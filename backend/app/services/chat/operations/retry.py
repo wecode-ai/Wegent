@@ -9,7 +9,7 @@ including context fetching and subtask reset.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from sqlalchemy import and_
@@ -148,7 +148,7 @@ def reset_subtask_for_retry(
             task_json["status"] = {}
         task_json["status"]["status"] = "PENDING"
         task_json["status"]["errorMessage"] = ""
-        task_json["status"]["updatedAt"] = datetime.now().isoformat()
+        task_json["status"]["updatedAt"] = datetime.now(timezone.utc).isoformat()
         task.json = task_json
         task.updated_at = datetime.now()
         flag_modified(task, "json")

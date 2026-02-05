@@ -28,7 +28,7 @@ import { taskApis } from '@/apis/tasks'
 import { isTaskUnread } from '@/utils/taskViewStatus'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDraggable } from '@dnd-kit/core'
-import { cn } from '@/lib/utils'
+import { cn, parseUTCDate } from '@/lib/utils'
 import { useProjectContext } from '@/features/projects'
 import {
   AlertDialog,
@@ -414,7 +414,8 @@ export default function TaskListSection({
 
   const formatTimeAgo = (dateString: string) => {
     const now = new Date()
-    const date = new Date(dateString)
+    const date = parseUTCDate(dateString)
+    if (!date) return ''
     const diffMs = now.getTime() - date.getTime()
 
     const MINUTE_MS = 60 * 1000

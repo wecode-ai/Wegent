@@ -13,7 +13,7 @@ for cross-worker communication in multi-worker deployments.
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core.cache import cache_manager
@@ -535,7 +535,7 @@ class SessionManager:
                 "subtask_id": subtask_id,
                 "user_id": user_id,
                 "username": username,
-                "started_at": datetime.now().isoformat(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
             }
             logger.info(
                 f"[SessionManager] set_task_streaming_status: key={key}, "

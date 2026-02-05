@@ -40,6 +40,7 @@ import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { parseUTCDate } from '@/lib/utils'
 
 // Maximum documents allowed for notebook type
 const NOTEBOOK_MAX_DOCUMENTS = 50
@@ -179,7 +180,7 @@ export function DocumentList({
           comparison = a.file_size - b.file_size
           break
         case 'date':
-          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          comparison = (parseUTCDate(a.created_at)?.getTime() || 0) - (parseUTCDate(b.created_at)?.getTime() || 0)
           break
       }
       return sortOrder === 'asc' ? comparison : -comparison

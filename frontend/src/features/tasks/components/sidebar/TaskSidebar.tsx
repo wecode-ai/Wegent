@@ -29,6 +29,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import TaskListSection from './TaskListSection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTaskUnread } from '@/utils/taskViewStatus'
+import { parseUTCDate } from '@/lib/utils'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
@@ -434,12 +435,12 @@ export default function TaskSidebar({
                   const allGroupChats = tasks
                     .filter(task => task.is_group_chat)
                     .sort(
-                      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+                      (a, b) => (parseUTCDate(b.updated_at)?.getTime() || 0) - (parseUTCDate(a.updated_at)?.getTime() || 0)
                     )
                   const regularTasks = tasks
                     .filter(task => !task.is_group_chat)
                     .sort(
-                      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                      (a, b) => (parseUTCDate(b.created_at)?.getTime() || 0) - (parseUTCDate(a.created_at)?.getTime() || 0)
                     )
 
                   return (

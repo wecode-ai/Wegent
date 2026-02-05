@@ -11,7 +11,7 @@ This module contains methods for creating, updating, deleting, and canceling tas
 import asyncio
 import json as json_lib
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 import httpx
@@ -278,8 +278,8 @@ class TaskOperationsMixin:
                 "progress": 0,
                 "result": None,
                 "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
                 "completedAt": None,
             },
             "metadata": {

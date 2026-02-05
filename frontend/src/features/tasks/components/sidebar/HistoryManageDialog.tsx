@@ -29,6 +29,7 @@ import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { Task } from '@/types/api'
 import { paths } from '@/config/paths'
 import { taskApis } from '@/apis/tasks'
+import { parseUTCDate } from '@/lib/utils'
 
 // History filter type: online (chat), offline (code), flow
 export type HistoryFilterType = 'online' | 'offline' | 'flow'
@@ -254,7 +255,8 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
 
   // Format time ago
   const formatTimeAgo = (dateString: string) => {
-    const date = new Date(dateString)
+    const date = parseUTCDate(dateString)
+    if (!date) return ''
     const now = new Date()
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
 

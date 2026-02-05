@@ -11,7 +11,7 @@ for the chat functionality.
 import json as json_lib
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -277,7 +277,7 @@ def create_new_task(
                     "name": kb.name,
                     "namespace": kb.namespace,
                     "boundBy": user.user_name,
-                    "boundAt": datetime.now().isoformat(),
+                    "boundAt": datetime.now(timezone.utc).isoformat(),
                 }
             ]
             logger.info(
@@ -304,8 +304,8 @@ def create_new_task(
             "progress": 0,
             "result": None,
             "errorMessage": "",
-            "createdAt": datetime.now().isoformat(),
-            "updatedAt": datetime.now().isoformat(),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
             "completedAt": None,
         },
         "metadata": {

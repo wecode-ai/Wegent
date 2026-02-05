@@ -24,7 +24,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { taskApis } from '@/apis/tasks'
 import { subtaskApis } from '@/apis/subtasks'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
-import { cn } from '@/lib/utils'
+import { cn, parseUTCDate } from '@/lib/utils'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 
 interface SubscriptionConversationDialogProps {
@@ -49,8 +49,8 @@ function ConversationMessage({
   const content = isUser
     ? subtask.prompt || ''
     : (typeof rawValue === 'string' ? rawValue : '') || (subtask.result?.message as string) || ''
-  // Parse timestamp - backend returns local time without timezone suffix
-  const timestamp = subtask.created_at ? new Date(subtask.created_at) : null
+  // Parse timestamp - backend returns UTC time with timezone suffix
+  const timestamp = subtask.created_at ? parseUTCDate(subtask.created_at) : null
 
   return (
     <div className={cn('flex gap-3', isUser ? 'flex-row-reverse' : 'flex-row')}>

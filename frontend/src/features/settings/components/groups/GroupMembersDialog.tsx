@@ -29,6 +29,7 @@ import type { Group, GroupMember, GroupRole } from '@/types/group'
 import type { SearchUser } from '@/types/api'
 import { UserPlusIcon, LogOutIcon } from 'lucide-react'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
+import { parseUTCDate } from '@/lib/utils'
 
 interface GroupMembersDialogProps {
   isOpen: boolean
@@ -476,7 +477,7 @@ export function GroupMembersDialog({
                           {member.invited_by_user_name || '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-text-secondary">
-                          {new Date(member.created_at).toLocaleDateString()}
+                          {parseUTCDate(member.created_at)?.toLocaleDateString() || '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-right">
                           {canRemoveMember && !isOwner && !isMe && (

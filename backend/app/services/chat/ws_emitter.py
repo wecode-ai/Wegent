@@ -12,7 +12,7 @@ for all event types.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 import socketio
@@ -294,7 +294,7 @@ class WebSocketEmitter:
                 "subtask_id": subtask_id,
                 "content": content,
                 "result": result,
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
             room=f"user:{user_id}",
             namespace=self.namespace,
@@ -361,7 +361,7 @@ class WebSocketEmitter:
                 "title": title,
                 "team_id": team_id,
                 "team_name": team_name,
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "is_group_chat": is_group_chat,
             },
             room=f"user:{user_id}",
@@ -430,7 +430,7 @@ class WebSocketEmitter:
             payload["completed_at"] = completed_at
         elif status in ("COMPLETED", "FAILED", "CANCELLED"):
             # Auto-generate completed_at for terminal states if not provided
-            payload["completed_at"] = datetime.now().isoformat()
+            payload["completed_at"] = datetime.now(timezone.utc).isoformat()
 
         await self.sio.emit(
             ServerEvents.TASK_STATUS,
@@ -499,7 +499,7 @@ class WebSocketEmitter:
                 "team_name": team_name,
                 "invited_by": invited_by,
                 "is_group_chat": True,
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
             room=f"user:{user_id}",
             namespace=self.namespace,
@@ -784,8 +784,8 @@ class WebSocketEmitter:
             "execution_id": execution_id,
             "flow_id": flow_id,
             "status": status,
-            "created_at": created_at or datetime.now().isoformat(),
-            "updated_at": updated_at or datetime.now().isoformat(),
+            "created_at": created_at or datetime.now(timezone.utc).isoformat(),
+            "updated_at": updated_at or datetime.now(timezone.utc).isoformat(),
         }
         if flow_name is not None:
             payload["flow_name"] = flow_name

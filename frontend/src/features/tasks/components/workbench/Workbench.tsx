@@ -27,6 +27,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, BranchDiffResponse } from '@/apis/tasks'
 import DiffViewer from '../message/DiffViewer'
 import { TaskApp } from '@/types/api'
+import { parseUTCDate } from '@/lib/utils'
 
 // Tool icon mapping
 const TOOL_ICONS: Record<string, string> = {
@@ -434,13 +435,15 @@ export default function Workbench({
       // Extract timestamp
       const details = step.details as { timestamp?: string; created_at?: string } | undefined
       if (details?.timestamp) {
-        timestamp = new Date(details.timestamp).toLocaleTimeString('en-US', {
+        const parsedDate = parseUTCDate(details.timestamp)
+        timestamp = parsedDate?.toLocaleTimeString('en-US', {
           hour12: false,
-        })
+        }) || ''
       } else if (details?.created_at) {
-        timestamp = new Date(details.created_at).toLocaleTimeString('en-US', {
+        const parsedDate = parseUTCDate(details.created_at)
+        timestamp = parsedDate?.toLocaleTimeString('en-US', {
           hour12: false,
-        })
+        }) || ''
       }
 
       if (toolName) {

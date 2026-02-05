@@ -22,7 +22,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -198,8 +198,8 @@ class BackgroundChatExecutor:
             if task_json and "status" in task_json:
                 task_json["status"]["status"] = "COMPLETED"
                 task_json["status"]["progress"] = 100
-                task_json["status"]["updatedAt"] = datetime.now().isoformat()
-                task_json["status"]["completedAt"] = datetime.now().isoformat()
+                task_json["status"]["updatedAt"] = datetime.now(timezone.utc).isoformat()
+                task_json["status"]["completedAt"] = datetime.now(timezone.utc).isoformat()
                 task.json = task_json
                 from sqlalchemy.orm.attributes import flag_modified
 
@@ -238,8 +238,8 @@ class BackgroundChatExecutor:
                 task_json["status"]["status"] = "FAILED"
                 task_json["status"]["progress"] = 0
                 task_json["status"]["errorMessage"] = str(e)
-                task_json["status"]["updatedAt"] = datetime.now().isoformat()
-                task_json["status"]["completedAt"] = datetime.now().isoformat()
+                task_json["status"]["updatedAt"] = datetime.now(timezone.utc).isoformat()
+                task_json["status"]["completedAt"] = datetime.now(timezone.utc).isoformat()
                 task.json = task_json
                 from sqlalchemy.orm.attributes import flag_modified
 
@@ -286,8 +286,8 @@ class BackgroundChatExecutor:
                 "state": "Available",
                 "status": "RUNNING",
                 "progress": 0,
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
             },
             "metadata": {
                 "name": "task-pending",  # Will be updated after flush

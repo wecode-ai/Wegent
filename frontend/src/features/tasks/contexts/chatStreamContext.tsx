@@ -42,6 +42,7 @@ import type { TaskDetailSubtask, Team } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { taskStateManager, generateMessageId, UnifiedMessage } from '../state'
 import DOMPurify from 'dompurify'
+import { parseUTCDate } from '@/lib/utils'
 
 /**
  * Message type enum (re-exported for backward compatibility)
@@ -390,7 +391,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       type: isUserMessage ? 'user' : 'ai',
       status: 'completed',
       content: content || '',
-      timestamp: created_at ? new Date(created_at).getTime() : Date.now(),
+      timestamp: created_at ? (parseUTCDate(created_at)?.getTime() || Date.now()) : Date.now(),
       subtaskId: subtask_id,
       messageId: message_id,
       senderUserName: sender?.user_name,
@@ -794,7 +795,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       if (!subtaskId && backupSubtasks && backupSubtasks.length > 0) {
         runningSubtask = backupSubtasks
           .filter(st => st.role === 'ASSISTANT' && st.status === 'RUNNING')
-          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+          .sort((a, b) => (parseUTCDate(b.created_at)?.getTime() || 0) - (parseUTCDate(a.created_at)?.getTime() || 0))[0]
         if (runningSubtask) {
           subtaskId = runningSubtask.id
         }
@@ -803,7 +804,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         if (!runningSubtask) {
           runningSubtask = backupSubtasks
             .filter(st => st.role === 'ASSISTANT' && st.status === 'RUNNING')
-            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+            .sort((a, b) => (parseUTCDate(b.created_at)?.getTime() || 0) - (parseUTCDate(a.created_at)?.getTime() || 0))[0]
         }
       }
 

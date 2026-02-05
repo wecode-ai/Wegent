@@ -19,7 +19,7 @@ import {
   Minimize2,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+import { cn, parseUTCDate } from '@/lib/utils'
 import {
   Dialog,
   DialogContent,
@@ -316,11 +316,11 @@ export function DocumentDetailDialog({
                     <span>{document.file_extension.toUpperCase()}</span>
                     <span>•</span>
                     <span>
-                      {new Date(document.created_at).toLocaleDateString(getCurrentLanguage(), {
+                      {parseUTCDate(document.created_at)?.toLocaleDateString(getCurrentLanguage(), {
                         year: 'numeric',
                         month: '2-digit',
                         day: '2-digit',
-                      })}
+                      }) || '-'}
                     </span>
                   </DialogDescription>
                 </div>

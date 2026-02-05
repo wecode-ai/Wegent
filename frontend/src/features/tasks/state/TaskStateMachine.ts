@@ -28,6 +28,7 @@
 
 import type { TaskDetailSubtask } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
+import { parseUTCDate } from '@/lib/utils'
 
 /**
  * Task state machine status
@@ -838,7 +839,7 @@ export class TaskStateMachine {
           type: 'ai',
           status: hasFrontendError ? 'error' : 'streaming',
           content: bestContent,
-          timestamp: existingAiMessage?.timestamp || new Date(subtask.created_at).getTime(),
+          timestamp: existingAiMessage?.timestamp || (parseUTCDate(subtask.created_at)?.getTime() || Date.now()),
           subtaskId: subtask.id,
           messageId: subtask.message_id,
           attachments: subtask.attachments,
@@ -897,7 +898,7 @@ export class TaskStateMachine {
         type: isUserMessage ? 'user' : 'ai',
         status,
         content,
-        timestamp: new Date(subtask.created_at).getTime(),
+        timestamp: parseUTCDate(subtask.created_at)?.getTime() || Date.now(),
         subtaskId: subtask.id,
         messageId: subtask.message_id,
         attachments: subtask.attachments,

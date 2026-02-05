@@ -14,7 +14,7 @@ This service handles:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from packaging import version as pkg_version
@@ -69,7 +69,7 @@ class DeviceService:
             "socket_id": socket_id,
             "name": name,
             "status": status,
-            "last_heartbeat": datetime.now().isoformat(),
+            "last_heartbeat": datetime.now(timezone.utc).isoformat(),
             "executor_version": executor_version,
         }
         result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)

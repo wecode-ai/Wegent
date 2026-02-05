@@ -18,6 +18,7 @@ import { MessageBubble, type Message } from '@/features/tasks/components/message
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User, SubtaskContextBrief } from '@/types/api'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
+import { parseUTCDate } from '@/lib/utils'
 import { detectInAppBrowser } from '@/utils/browserDetection'
 import '@/features/common/scrollbar.css'
 
@@ -150,7 +151,7 @@ function SharedTaskContent() {
       return {
         type: 'user',
         content: subtask.prompt || '',
-        timestamp: new Date(subtask.created_at).getTime(),
+        timestamp: parseUTCDate(subtask.created_at)?.getTime() || Date.now(),
         subtaskStatus: subtask.status,
         subtaskId: subtask.id,
         contexts,

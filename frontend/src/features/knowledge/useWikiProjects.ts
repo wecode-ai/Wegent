@@ -16,6 +16,7 @@ import {
   WikiConfigResponse,
 } from '@/apis/wiki'
 import { githubApis } from '@/apis/github'
+import { parseUTCDate } from '@/lib/utils'
 
 interface UseWikiProjectsOptions {
   pageSize?: number
@@ -411,7 +412,7 @@ export function useWikiProjects(options: UseWikiProjectsOptions = {}) {
     }
 
     const latestActiveGeneration = [...activeGenerations].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      (a, b) => (parseUTCDate(b.created_at)?.getTime() || 0) - (parseUTCDate(a.created_at)?.getTime() || 0)
     )[0]
 
     const generationId = latestActiveGeneration.id

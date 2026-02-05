@@ -8,7 +8,7 @@ Contains ChatSessionSetup and related functions.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, NamedTuple, Optional
 
 from fastapi import HTTPException, status
@@ -191,8 +191,8 @@ def setup_chat_session(
                 "progress": 0,
                 "result": None,
                 "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
                 "completedAt": None,
             },
             "metadata": {

@@ -14,7 +14,7 @@ Responsible for:
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -339,7 +339,7 @@ class SummaryService:
             # 6. Update status to generating
             summary_data = document.summary or {}
             summary_data["status"] = "generating"
-            summary_data["updated_at"] = datetime.now().isoformat()
+            summary_data["updated_at"] = datetime.now(timezone.utc).isoformat()
             document.summary = summary_data
             flag_modified(document, "summary")
             self.db.commit()
@@ -387,7 +387,7 @@ class SummaryService:
                     **result.parsed_content,
                     "status": "completed",
                     "task_id": result.task_id,
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 logger.info(
                     f"[SummaryService] Document summary completed: "
@@ -398,7 +398,7 @@ class SummaryService:
                     "status": "failed",
                     "error": result.error or "Failed to parse summary",
                     "task_id": result.task_id,
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 logger.error(
                     f"[SummaryService] Document summary failed: "
@@ -430,7 +430,7 @@ class SummaryService:
                 summary_data = {
                     "status": "failed",
                     "error": str(e),
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 document.summary = summary_data
                 flag_modified(document, "summary")
@@ -552,7 +552,7 @@ class SummaryService:
             spec["summary"] = {
                 **(spec.get("summary") or {}),
                 "status": "generating",
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             kb_json["spec"] = spec
             kb.json = kb_json
@@ -590,11 +590,11 @@ class SummaryService:
                     **result.parsed_content,
                     "status": "completed",
                     "task_id": result.task_id,
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                     "last_summary_doc_count": aggregation.completed_count,
                     "meta_info": {
                         "document_count": aggregation.completed_count,
-                        "last_updated": datetime.now().isoformat(),
+                        "last_updated": datetime.now(timezone.utc).isoformat(),
                     },
                 }
                 logger.info(
@@ -607,7 +607,7 @@ class SummaryService:
                     "status": "failed",
                     "error": result.error or "Failed to parse summary",
                     "task_id": result.task_id,
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 logger.error(
                     f"[SummaryService] KB summary failed: "
@@ -633,7 +633,7 @@ class SummaryService:
                 spec["summary"] = {
                     "status": "failed",
                     "error": str(e),
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 kb_json["spec"] = spec
                 kb.json = kb_json

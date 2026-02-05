@@ -26,6 +26,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { Task } from '@/types/api'
 import { taskApis } from '@/apis/tasks'
 import { paths } from '@/config/paths'
+import { parseUTCDate } from '@/lib/utils'
 
 interface SearchDialogProps {
   open: boolean
@@ -141,7 +142,8 @@ export default function SearchDialog({
 
   // Format time ago
   const formatTimeAgo = (dateString: string) => {
-    const date = new Date(dateString)
+    const date = parseUTCDate(dateString)
+    if (!date) return 'just now'
     const now = new Date()
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
 
