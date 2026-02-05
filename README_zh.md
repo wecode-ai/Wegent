@@ -17,7 +17,7 @@
 
 
 
-[快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/developer-guide/setup.md)
+[快速开始](#-快速开始) · [文档](https://wecode-ai.github.io/wegent-docs/zh/) · [开发指南](https://wecode-ai.github.io/wegent-docs/zh/docs/category/developer-guide)
 
 </div>
 
@@ -137,7 +137,7 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
 - **Ghost** (提示词) + **Shell** (执行环境) + **Model** = **Bot**
 - 多个 **Bot** + **协作模式** = **Team**
 
-> 详见 [核心概念](docs/zh/concepts/core-concepts.md) | [YAML 规范](docs/zh/reference/yaml-specification.md)
+> 详见 [核心概念](https://wecode-ai.github.io/wegent-docs/zh/concepts/core-concepts) | [YAML 规范](https://wecode-ai.github.io/wegent-docs/zh/reference/yaml-specification)
 
 ---
 

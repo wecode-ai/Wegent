@@ -23,13 +23,13 @@
 ### 💻 [AI 编码](./ai-coding/README.md)
 使用 AI 辅助进行代码开发和项目管理。
 
-> 🚧 此功能正在开发中，敬请期待...
+- [管理代码任务](./ai-coding/managing-code-tasks.md) - 创建、执行和管理编码任务
+- [需求澄清模式](./ai-coding/spec-clarification-guide.md) - 将模糊需求精炼为清晰任务
 
 ### 📖 [AI 知识库](./ai-knowledge/README.md)
 创建和管理知识库，实现 RAG 检索增强生成。
 
 - [知识库使用指南](./ai-knowledge/knowledge-base-guide.md) - 知识库的完整使用指南
-- [管理知识库](./ai-knowledge/managing-knowledge-bases.md) - 创建和管理知识库
 - [配置检索器](./ai-knowledge/configuring-retrievers.md) - 配置 RAG 检索后端
 
 ### 🖥️ [AI 设备](./ai-devices/README.md)

@@ -23,6 +23,17 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **docs/**: Detailed architecture, design documents, and comprehensive guides
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
 
+**📚 Documentation Writing Rules:**
+- All documentation files MUST include frontmatter with `sidebar_position` for ordering:
+  ```markdown
+  ---
+  sidebar_position: 1
+  ---
+  ```
+- Document titles should NOT repeat the sidebar category name (e.g., use "概述" instead of "AI 编码" when under AI Coding category)
+- Write Chinese docs first (`docs/zh/`), then create English versions (`docs/en/`)
+- Use consistent heading hierarchy: `#` for title, `##` for sections, `###` for subsections
+
 **📚 Detailed Documentation:** See `docs/en/` or `docs/zh/` for comprehensive guides on setup, testing, architecture, and user guides.
 
 ---

@@ -1,21 +1,21 @@
 ---
-sidebar_position: 6
+sidebar_position: 1
 ---
 
 # ⚙️ Settings
 
-The Settings module provides configuration capabilities for the Wegent system, including agent, model, shell, and skill management.
+The Settings module provides configuration functionality for the Wegent system, including management of Agents, Models, Shells, and Skills.
 
 ---
 
-## 📋 Documents in This Module
+## 📋 Documentation in This Module
 
 | Document | Description |
 |----------|-------------|
-| [Agent Settings](./agent-settings.md) | Configure agents, bots, prompts, and collaboration modes |
+| [Agent Settings](./agent-settings.md) | Configure Agents, Bots, prompts, and collaboration modes |
 | [Configuring Models](./configuring-models.md) | Configure AI models (Anthropic Claude, OpenAI GPT, etc.) |
 | [Configuring Shells](./configuring-shells.md) | Configure runtime environments (ClaudeCode, Agno, Dify) |
-| [Managing Skills](./managing-skills.md) | Upload, manage, and use Skills capability extension packages |
+| [Managing Skills](./managing-skills.md) | Upload, manage, and use Skill capability extension packages |
 
 ---
 
@@ -23,23 +23,23 @@ The Settings module provides configuration capabilities for the Wegent system, i
 
 ### Agent Settings
 
-Configure the core components of AI agents:
+Configure the core components of AI Agents:
 
 ```
 Agent (Team) = Bot(s) + Collaboration Mode
-Bot = Shell (Executor) + Model + Prompt + MCP Tools + Skills
+Bot = Shell + Model + Prompt + MCP Tools + Skills
 ```
 
 **Collaboration Modes**:
 - **Solo**: Single bot working independently
-- **Pipeline**: Sequential execution forming a processing pipeline
-- **Route**: Leader routes to appropriate experts based on content
+- **Pipeline**: Sequential execution, forming a processing pipeline
+- **Route**: Leader routes content to appropriate experts
 - **Coordinate**: Leader coordinates parallel execution and aggregates results
-- **Collaborate**: All members discuss freely with shared context
+- **Collaborate**: All members freely discuss and share context
 
 ### Model Configuration
 
-Support for multiple AI model providers:
+Supports multiple AI model providers:
 
 | Provider | Supported Models |
 |----------|-----------------|
@@ -48,26 +48,26 @@ Support for multiple AI model providers:
 
 ### Shell Configuration
 
-Support for multiple runtime environments:
+Supports multiple runtime environments:
 
 | Shell | Description | Use Case |
 |-------|-------------|----------|
-| **ClaudeCode** | Claude Code SDK with code execution and file operations | Code development, file processing |
-| **Agno** | Agno framework with multiple collaboration modes | Conversations, multi-agent collaboration |
+| **ClaudeCode** | Claude Code SDK, supports code execution and file operations | Code development, file processing |
+| **Agno** | Agno framework, supports multiple collaboration modes | Conversations, multi-agent collaboration |
 | **Dify** | External Dify API proxy | Dify workflow integration |
 | **Chat** | Direct LLM API (no Docker) | Lightweight conversations |
 
 ### Skills Management
 
-Skills are capability extension packages for Claude Code:
+Skills are Claude Code capability extension packages:
 
-- **Upload Skills**: Package as ZIP files and upload
+- **Upload Skills**: Package as ZIP file and upload
 - **Manage Skills**: View, download, update, delete
 - **Use Skills**: Reference Skills in Bots
 
 ---
 
-## 🚀 Configuration Flow
+## 🚀 Configuration Workflow
 
 Recommended configuration order:
 
@@ -81,7 +81,7 @@ Recommended configuration order:
 
 ## 🔗 Related Resources
 
-- [AI Chat](../ai-chat/README.md) - Use configured agents for conversations
-- [AI Knowledge](../ai-knowledge/README.md) - Configure knowledge base retrieval
+- [Chat](../chat/README.md) - Use configured agents for conversations
+- [Knowledge Base](../knowledge/README.md) - Configure knowledge base retrieval
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Wegent architecture
 - [YAML Specification](../../reference/yaml-specification.md) - Complete configuration format

@@ -49,6 +49,7 @@ class RetrievalService:
         db: Session,
         retrieval_setting: Dict[str, Any],
         metadata_condition: Optional[Dict[str, Any]] = None,
+        user_name: Optional[str] = None,
     ) -> Dict:
         """
         Synchronous retrieval implementation.
@@ -63,6 +64,7 @@ class RetrievalService:
             db: Database session
             retrieval_setting: Retrieval settings (Dify-style)
             metadata_condition: Optional metadata filtering
+            user_name: User name for placeholder replacement in embedding headers (optional)
 
         Returns:
             Retrieval result dict
@@ -73,6 +75,7 @@ class RetrievalService:
             user_id=user_id,
             model_name=embedding_model_name,
             model_namespace=embedding_model_namespace,
+            user_name=user_name,
         )
 
         # Create retriever with storage backend
@@ -105,6 +108,7 @@ class RetrievalService:
         vector_weight: Optional[float] = None,
         keyword_weight: Optional[float] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        user_name: Optional[str] = None,
     ) -> Dict:
         """
         Retrieve relevant document chunks (Dify-compatible API).
@@ -122,6 +126,7 @@ class RetrievalService:
             vector_weight: Weight for vector search (hybrid mode only)
             keyword_weight: Weight for BM25 search (hybrid mode only)
             metadata_condition: Optional metadata filtering conditions
+            user_name: User name for placeholder replacement in embedding headers (optional)
 
         Returns:
             Dict with Dify-compatible format:
@@ -163,6 +168,7 @@ class RetrievalService:
             db,
             retrieval_setting,
             metadata_condition,
+            user_name,
         )
 
     async def retrieve_from_knowledge_base(
@@ -230,6 +236,7 @@ class RetrievalService:
         knowledge_base_id: int,
         db: Session,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        user_name: Optional[str] = None,
     ) -> Dict:
         """
         Internal method to retrieve from knowledge base without user permission check.
@@ -246,6 +253,7 @@ class RetrievalService:
             knowledge_base_id: Knowledge base ID
             db: Database session
             metadata_condition: Optional metadata filtering conditions
+            user_name: User name for placeholder replacement in embedding headers
 
         Returns:
             Dict with retrieval results in Dify-compatible format
@@ -274,6 +282,7 @@ class RetrievalService:
             kb=kb,
             db=db,
             metadata_condition=metadata_condition,
+            user_name=user_name,
         )
 
     async def _retrieve_from_kb_internal(
@@ -282,6 +291,7 @@ class RetrievalService:
         kb,  # Kind instance
         db: Session,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        user_name: Optional[str] = None,
     ) -> Dict:
         """
         Internal helper method to perform retrieval from a knowledge base.
@@ -291,6 +301,7 @@ class RetrievalService:
             kb: Knowledge base Kind instance
             db: Database session
             metadata_condition: Optional metadata filtering conditions
+            user_name: User name for placeholder replacement in embedding headers (optional)
 
         Returns:
             Dict with retrieval results
@@ -400,6 +411,7 @@ class RetrievalService:
             user_id=embedding_owner_user_id,
             model_name=embedding_model_name,
             model_namespace=embedding_model_namespace,
+            user_name=user_name,
         )
 
         # Create retriever with storage backend

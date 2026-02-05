@@ -461,6 +461,27 @@ async def _stream_chat_response(
         # Add model info to span
         span_manager.set_model_attributes(chat_config.model_config)
 
+        # Check for special protocol routing (gemini-deep-research)
+        # Deep research requires a completely different flow: create job -> poll -> stream results
+        if chat_config.protocol == "gemini-deep-research":
+            logger.info(
+                "[ai_trigger] Routing to Gemini Deep Research flow: "
+                "task_id=%d, subtask_id=%d",
+                stream_data.task_id,
+                stream_data.subtask_id,
+            )
+            # Close db before starting deep research (long-running operation)
+            db.close()
+            db = None
+            await _stream_deep_research(
+                stream_data=stream_data,
+                message=message,
+                model_config=chat_config.model_config,
+                event_emitter=emitter,
+                span_manager=span_manager,
+            )
+            return
+
         # Search for relevant memories (with timeout, graceful degradation)
         # WebSocket chat (web) respects user preference for memory
         # This runs before context processing to inject memory context
@@ -1419,6 +1440,569 @@ async def _stream_with_http_adapter(
         # Clean up streaming content cache from Redis
         # This prevents stale data from being returned for future streams
         await session_manager.delete_streaming_content(subtask_id)
+
+
+async def _stream_deep_research(
+    stream_data: StreamTaskData,
+    message: str,
+    model_config: dict,
+    event_emitter: Optional["ChatEventEmitter"],
+    span_manager: Optional[Any] = None,
+) -> None:
+    """Stream using Gemini Deep Research API with real-time thinking progress.
+
+    This function handles the special flow for Gemini Deep Research:
+    1. Emit chat:start event
+    2. Create a deep research job via chat_shell proxy
+    3. Poll for job completion while streaming thought_summary as thinking content
+       - Each poll also fetches the stream to get latest thought_summary (index=0)
+       - Stream request times out after 5 seconds of no new content
+    4. On completion, clear thinking and stream the final report (index=1)
+    5. Emit chat:done event
+
+    Deep Research is a long-running operation (10-30 minutes typically).
+    Progress is communicated via thinking steps showing research progress.
+
+    Args:
+        stream_data: StreamTaskData containing all extracted ORM data
+        message: User query for deep research
+        model_config: Model configuration including api_key and model_id
+        event_emitter: Event emitter for chat events
+        span_manager: Optional span manager for telemetry
+    """
+    import json
+
+    import httpx
+
+    from app.core.config import settings
+    from app.services.chat.storage.db import db_handler
+    from app.services.chat.trigger.emitter import (
+        ChatEventEmitter,
+        WebSocketEventEmitter,
+    )
+
+    emitter: ChatEventEmitter = event_emitter or WebSocketEventEmitter()
+    task_id = stream_data.task_id
+    subtask_id = stream_data.subtask_id
+    message_id = stream_data.assistant_message_id
+
+    # Emit chat:start event
+    logger.info(
+        "[deep_research] Starting deep research: task_id=%d, subtask_id=%d",
+        task_id,
+        subtask_id,
+    )
+    await emitter.emit_chat_start(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        message_id=message_id,
+        shell_type="Chat",
+    )
+
+    # Get chat_shell base URL
+    chat_shell_url = settings.CHAT_SHELL_URL.rstrip("/")
+    deep_research_url = f"{chat_shell_url}/v1/deep-research"
+
+    # Track offset for streaming
+    offset = 0
+
+    # Prepare model config for deep research API
+    gemini_base_url = (
+        model_config.get("base_url") or "https://generativelanguage.googleapis.com"
+    )
+    agent = model_config.get("model_id", "deep-research-pro-preview-12-2025")
+
+    dr_model_config = {
+        "api_key": model_config.get("api_key", ""),
+        "base_url": gemini_base_url,
+    }
+
+    async def fetch_thought_summaries(
+        client: httpx.AsyncClient,
+        stream_url: str,
+    ) -> list[dict]:
+        """Fetch thought summaries from stream.
+
+        Returns a list of thought summary items parsed from the stream.
+        The stream returns all current data and closes when in_progress.
+        """
+        thought_summaries = []
+
+        logger.info(
+            "[deep_research][STREAM_THOUGHT] Request: url=%s",
+            stream_url,
+        )
+
+        try:
+            async with client.stream(
+                "POST",
+                stream_url,
+                json={"model_config": dr_model_config},
+                timeout=httpx.Timeout(30.0),
+            ) as response:
+                logger.info(
+                    "[deep_research][STREAM_THOUGHT] Response started: status=%d",
+                    response.status_code,
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "[deep_research] Stream request failed: status=%d",
+                        response.status_code,
+                    )
+                    return thought_summaries
+
+                buffer = ""
+                current_event_type = ""
+                event_count = 0
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+                    lines = buffer.split("\n")
+                    buffer = lines[-1]
+
+                    for line in lines[:-1]:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        # Parse SSE event type line
+                        if line.startswith("event: "):
+                            current_event_type = line[7:]
+                            continue
+
+                        # Parse SSE data line
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            event_count += 1
+                            logger.info(
+                                "[deep_research][STREAM_THOUGHT] SSE event #%d: %s",
+                                event_count,
+                                data_str[:500] if len(data_str) > 500 else data_str,
+                            )
+                            if data_str == "[DONE]":
+                                logger.info(
+                                    "[deep_research][STREAM_THOUGHT] Stream received [DONE], "
+                                    "summaries=%d, total_events=%d",
+                                    len(thought_summaries),
+                                    event_count,
+                                )
+                                return thought_summaries
+
+                            try:
+                                data = json.loads(data_str)
+                                # Use event_type from data or from SSE event line
+                                event_type = data.get("event_type", current_event_type)
+                                index = data.get("index")
+
+                                # Collect thought_summary from index=0 content.delta
+                                if event_type == "content.delta" and index == 0:
+                                    delta = data.get("delta", {})
+                                    delta_type = delta.get("type")
+                                    if delta_type == "thought_summary":
+                                        content = delta.get("content", {})
+                                        text = content.get("text", "")
+                                        if text:
+                                            # Parse the thought summary JSON
+                                            try:
+                                                # Strip markdown code block markers
+                                                clean_text = text.strip()
+                                                if clean_text.startswith("```json"):
+                                                    clean_text = clean_text[7:]
+                                                if clean_text.startswith("```"):
+                                                    clean_text = clean_text[3:]
+                                                if clean_text.endswith("```"):
+                                                    clean_text = clean_text[:-3]
+                                                clean_text = clean_text.strip()
+
+                                                summaries = json.loads(clean_text)
+                                                if isinstance(summaries, list):
+                                                    thought_summaries = summaries
+                                                    logger.info(
+                                                        "[deep_research] Parsed "
+                                                        "%d thought summaries",
+                                                        len(summaries),
+                                                    )
+                                            except json.JSONDecodeError as e:
+                                                logger.warning(
+                                                    "[deep_research] Failed to parse "
+                                                    "thought summary JSON: %s",
+                                                    e,
+                                                )
+
+                                # If we see index=1 content, task is completing
+                                elif event_type == "content.start" and index == 1:
+                                    logger.info(
+                                        "[deep_research] Detected index=1, "
+                                        "task completing"
+                                    )
+                                    return thought_summaries
+
+                            except json.JSONDecodeError:
+                                pass
+
+        except httpx.ReadTimeout:
+            logger.info("[deep_research] Stream read timeout")
+        except Exception as e:
+            logger.warning("[deep_research] Stream fetch error: %s", e)
+
+        logger.info(
+            "[deep_research] fetch_thought_summaries returning %d items",
+            len(thought_summaries),
+        )
+        return thought_summaries
+
+    async def stream_final_report(
+        client: httpx.AsyncClient,
+        stream_url: str,
+    ) -> tuple[str, list[dict]]:
+        """Stream the final report from index=1 content.delta events.
+
+        Returns:
+            Tuple of (content, annotations) where annotations is a list of
+            dicts with start_index, end_index, and source URL.
+        """
+        full_content = ""
+        all_annotations: list[dict] = []
+
+        logger.info(
+            "[deep_research][STREAM_FINAL] Request: url=%s",
+            stream_url,
+        )
+
+        try:
+            async with client.stream(
+                "POST",
+                stream_url,
+                json={"model_config": dr_model_config},
+                timeout=httpx.Timeout(300.0),
+            ) as response:
+                logger.info(
+                    "[deep_research][STREAM_FINAL] Response started: status=%d",
+                    response.status_code,
+                )
+                if response.status_code != 200:
+                    raise Exception(
+                        f"Failed to stream results: status={response.status_code}"
+                    )
+
+                buffer = ""
+                current_event_type = ""
+                event_count = 0
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+                    lines = buffer.split("\n")
+                    buffer = lines[-1]
+
+                    for line in lines[:-1]:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        # Parse SSE event type line
+                        if line.startswith("event: "):
+                            current_event_type = line[7:]
+                            continue
+
+                        # Parse SSE data line
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            event_count += 1
+                            # Log every 10th event or first 5 to avoid too much output
+                            if event_count <= 5 or event_count % 10 == 0:
+                                logger.info(
+                                    "[deep_research][STREAM_FINAL] SSE event #%d: %s",
+                                    event_count,
+                                    data_str[:300] if len(data_str) > 300 else data_str,
+                                )
+                            if data_str == "[DONE]":
+                                logger.info(
+                                    "[deep_research][STREAM_FINAL] Stream received [DONE], "
+                                    "total_events=%d, content_length=%d, "
+                                    "annotations_count=%d",
+                                    event_count,
+                                    len(full_content),
+                                    len(all_annotations),
+                                )
+                                continue
+                            try:
+                                data = json.loads(data_str)
+                                event_type = data.get("event_type", current_event_type)
+                                index = data.get("index")
+
+                                # Only collect index=1 content (final report)
+                                if event_type == "content.delta" and index == 1:
+                                    delta = data.get("delta", {})
+                                    text = delta.get("text", "")
+                                    if text:
+                                        full_content += text
+
+                                    # Collect annotations (grounding metadata)
+                                    annotations = delta.get("annotations", [])
+                                    if annotations:
+                                        all_annotations.extend(annotations)
+
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    "[deep_research] Failed to parse SSE data: %s",
+                                    data_str[:100],
+                                )
+
+        except Exception as e:
+            logger.error("[deep_research] Final report stream error: %s", e)
+            raise
+
+        logger.info(
+            "[deep_research][STREAM_FINAL] Completed: content_length=%d, "
+            "annotations_count=%d",
+            len(full_content),
+            len(all_annotations),
+        )
+        return full_content, all_annotations
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+            # Step 1: Create deep research job
+            create_request_body = {
+                "input": message,
+                "agent": agent,
+                "model_config": dr_model_config,
+            }
+            logger.info(
+                "[deep_research][CREATE] Request: url=%s, body=%s",
+                deep_research_url,
+                json.dumps(create_request_body, ensure_ascii=False)[:500],
+            )
+
+            create_response = await client.post(
+                deep_research_url,
+                json=create_request_body,
+            )
+
+            logger.info(
+                "[deep_research][CREATE] Response: status=%d, body=%s",
+                create_response.status_code,
+                (
+                    create_response.text[:1000]
+                    if len(create_response.text) > 1000
+                    else create_response.text
+                ),
+            )
+
+            if create_response.status_code != 200:
+                error_msg = (
+                    f"Failed to create deep research job: {create_response.text}"
+                )
+                logger.error("[deep_research] %s", error_msg)
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                )
+                return
+
+            create_data = create_response.json()
+            job_id = create_data.get("interaction_id")
+
+            if not job_id:
+                error_msg = (
+                    f"Deep research job created but no interaction_id returned: "
+                    f"{create_data}"
+                )
+                logger.error("[deep_research] %s", error_msg)
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                )
+                return
+
+            logger.info("[deep_research] Job created: job_id=%s", job_id)
+
+            # Step 2: Poll for job completion while streaming thinking progress
+            status_url = f"{deep_research_url}/{job_id}/status"
+            stream_url = f"{deep_research_url}/{job_id}/stream"
+            poll_interval = 5  # seconds
+            max_polls = 720  # 1 hour max
+            polls = 0
+            thinking_steps: list[dict] = []
+
+            while polls < max_polls:
+                polls += 1
+
+                # Check job status
+                logger.info(
+                    "[deep_research][STATUS] Request: url=%s, poll=%d",
+                    status_url,
+                    polls,
+                )
+                status_response = await client.post(
+                    status_url,
+                    json={"model_config": dr_model_config},
+                )
+
+                logger.info(
+                    "[deep_research][STATUS] Response: status=%d, body=%s",
+                    status_response.status_code,
+                    (
+                        status_response.text[:500]
+                        if len(status_response.text) > 500
+                        else status_response.text
+                    ),
+                )
+
+                if status_response.status_code != 200:
+                    logger.warning(
+                        "[deep_research] Status check failed: %s",
+                        status_response.text,
+                    )
+                    await asyncio.sleep(poll_interval)
+                    continue
+
+                status_data = status_response.json()
+                status = status_data.get("status", "in_progress")
+
+                logger.info(
+                    "[deep_research] Poll %d: status=%s",
+                    polls,
+                    status,
+                )
+
+                if status == "completed":
+                    logger.info("[deep_research] Job completed: job_id=%s", job_id)
+                    break
+                elif status == "failed":
+                    error_msg = status_data.get("error", "Deep research job failed")
+                    logger.error("[deep_research] Job failed: %s", error_msg)
+                    await emitter.emit_chat_error(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        error=error_msg,
+                    )
+                    return
+
+                # Fetch thought summaries from stream
+                thought_summaries = await fetch_thought_summaries(client, stream_url)
+
+                # Convert thought summaries to thinking steps format
+                # Use standard Chat shell text format for consistency
+                if thought_summaries:
+                    thinking_steps = [
+                        {
+                            "title": item.get("title", "Research Progress"),
+                            "next_action": "continue",
+                            "details": {
+                                "type": "text",
+                                "text": item.get("content", ""),
+                            },
+                        }
+                        for item in thought_summaries
+                    ]
+
+                    # Emit thinking progress
+                    result_data = {
+                        "shell_type": "Chat",
+                        "thinking": thinking_steps,
+                    }
+                    await emitter.emit_chat_chunk(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        content="",
+                        offset=offset,
+                        result=result_data,
+                    )
+                    logger.info(
+                        "[deep_research] Emitted %d thinking steps",
+                        len(thinking_steps),
+                    )
+
+                await asyncio.sleep(poll_interval)
+
+            if polls >= max_polls:
+                error_msg = "Deep research job timed out after 1 hour"
+                logger.error("[deep_research] %s", error_msg)
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                )
+                return
+
+            # Step 3: Stream the final report (clear thinking, show only index=1)
+            logger.info("[deep_research] Streaming final report: job_id=%s", job_id)
+
+            # Clear thinking steps by emitting empty thinking array
+            await emitter.emit_chat_chunk(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                content="",
+                offset=offset,
+                result={
+                    "shell_type": "Chat",
+                    "thinking": [],  # Clear thinking
+                },
+            )
+
+            # Stream the final report content
+            full_content, annotations = await stream_final_report(client, stream_url)
+
+            if full_content:
+                await emitter.emit_chat_chunk(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=full_content,
+                    offset=offset,
+                )
+                offset += len(full_content)
+
+            # Save the result to database (include annotations for persistence)
+            result_data = {"value": full_content}
+            if annotations:
+                result_data["annotations"] = annotations
+            await db_handler.update_subtask_status(
+                subtask_id=subtask_id,
+                status="COMPLETED",
+                result=result_data,
+            )
+            logger.info(
+                "[deep_research] Saved result to database: subtask_id=%d, "
+                "content_length=%d, annotations_count=%d",
+                subtask_id,
+                len(full_content),
+                len(annotations),
+            )
+
+            # Emit chat:done event (include annotations for frontend rendering)
+            logger.info(
+                "[deep_research] Completed: task_id=%d, subtask_id=%d",
+                task_id,
+                subtask_id,
+            )
+            await emitter.emit_chat_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                offset=offset,
+                result=result_data,
+                message_id=message_id,
+            )
+
+            if span_manager:
+                span_manager.record_success(
+                    event_name="deep_research_completed",
+                )
+
+    except Exception as e:
+        logger.exception(
+            "[deep_research] Error: task_id=%d, subtask_id=%d, error=%s",
+            task_id,
+            subtask_id,
+            e,
+        )
+        if span_manager:
+            span_manager.record_exception(e)
+        await emitter.emit_chat_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=str(e),
+        )
 
 
 async def _stream_with_bridge(

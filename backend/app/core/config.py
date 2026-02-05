@@ -224,6 +224,9 @@ class Settings(BaseSettings):
     WEBHOOK_AUTH_TOKEN: str = ""
     WEBHOOK_HEADERS: str = ""
     WEBHOOK_TIMEOUT: int = 30
+    # Allow PII (Personally Identifiable Information) in webhook notifications
+    # When False, email addresses are masked in notification descriptions
+    ALLOW_PII_IN_WEBHOOKS: bool = False
 
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"

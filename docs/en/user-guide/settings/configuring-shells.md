@@ -2,7 +2,7 @@
 sidebar_position: 3
 ---
 
-# 🔧 Shell (Executor) Configuration Guide
+# Shell (Executor) Configuration Guide
 
 Shell is the runtime environment container in Wegent that provides Bots with capabilities such as code execution, file operations, and tool invocation. This guide will help you understand and configure Shells.
 

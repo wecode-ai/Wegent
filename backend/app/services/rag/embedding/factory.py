@@ -7,20 +7,56 @@ Embedding model factory.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
+from llama_index.core.base.embeddings.base import BaseEmbedding
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.services.chat.config.model_resolver import (
+    build_default_headers_with_placeholders,
+)
 from app.services.rag.embedding.custom import CustomEmbedding
 from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
 
+def _process_custom_headers_placeholders(
+    custom_headers: Dict[str, Any], user_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Process placeholders in custom headers.
+
+    Supports placeholder format: ${user.name}
+
+    Args:
+        custom_headers: Custom headers dict (may contain placeholders)
+        user_name: User name for placeholder replacement
+
+    Returns:
+        Custom headers with placeholders replaced
+    """
+    if not custom_headers or not isinstance(custom_headers, dict):
+        return custom_headers
+
+    # Build data sources for placeholder replacement
+    # Only support ${user.name} for now
+    data_sources: Dict[str, Dict[str, Any]] = {
+        "user": {"name": user_name or ""},
+    }
+
+    # Use existing build_default_headers_with_placeholders function
+    return build_default_headers_with_placeholders(custom_headers, data_sources)
+
+
 def create_embedding_model_from_crd(
-    db: Session, user_id: int, model_name: str, model_namespace: str = "default"
-):
+    db: Session,
+    user_id: int,
+    model_name: str,
+    model_namespace: str = "default",
+    user_name: Optional[str] = None,
+) -> BaseEmbedding:
     """
     Create embedding model from Model CRD.
 
@@ -34,6 +70,7 @@ def create_embedding_model_from_crd(
         user_id: User ID
         model_name: Model name
         model_namespace: Model namespace (default: "default")
+        user_name: User name for placeholder replacement in custom headers (optional)
 
     Returns:
         LlamaIndex-compatible embedding model
@@ -122,6 +159,13 @@ def create_embedding_model_from_crd(
             logger.warning(
                 f"Failed to decrypt API key for embedding_model '{model_name}': {str(e)}. Using as-is."
             )
+
+    # Process placeholders in custom_headers (e.g., ${user.name})
+    if custom_headers and isinstance(custom_headers, dict):
+        custom_headers = _process_custom_headers_placeholders(custom_headers, user_name)
+        logger.info(
+            f"Processed custom_headers placeholders for embedding_model '{model_name}'"
+        )
 
     # Build embedding config based on protocol
     if protocol == "openai":

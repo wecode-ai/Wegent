@@ -30,6 +30,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       paths.home.getHref(),
       paths.auth.password_login.getHref(),
       '/shared/task', // Allow public shared task page without authentication
+      '/shared/knowledge', // Allow public shared knowledge base page without authentication
     ]
     if (!allowedPaths.includes(pathname)) {
       // Use isAuthenticated() to check both token existence and expiry

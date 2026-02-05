@@ -538,12 +538,26 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
-            from app.services.chat.config import should_use_direct_chat
+            from app.services.chat.config import (
+                is_deep_research_protocol,
+                should_use_direct_chat,
+            )
             from app.services.chat.storage import (
                 TaskCreationParams,
                 create_chat_task,
             )
             from app.services.chat.trigger import should_trigger_ai_response
+
+            # Check if this is a follow-up to a deep research task
+            # Deep research (gemini-deep-research protocol) does not support follow-up questions
+            if payload.task_id and is_deep_research_protocol(db, team):
+                logger.warning(
+                    f"[WS] chat:send error: Deep research does not support follow-up questions, "
+                    f"task_id={payload.task_id}, team_id={payload.team_id}"
+                )
+                return {
+                    "error": "Deep Research does not support follow-up questions. Please start a new conversation."
+                }
 
             # Check if team supports direct chat
             supports_direct_chat = should_use_direct_chat(db, team, user_id)
