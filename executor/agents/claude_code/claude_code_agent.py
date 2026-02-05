@@ -172,10 +172,12 @@ class ClaudeCodeAgent(Agent):
 
             os.makedirs(config_dir, exist_ok=True)
 
+            # Write in the format expected by Claude Code CLI's --mcp-config flag
             config_path = os.path.join(config_dir, "mcp_servers.json")
+            mcp_config = {"mcpServers": mcp_servers}
 
             with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(mcp_servers, f, ensure_ascii=False, indent=2)
+                json.dump(mcp_config, f, ensure_ascii=False, indent=2)
 
             logger.info(
                 f"Written MCP servers config ({len(mcp_servers)} servers) to {config_path}"
@@ -183,6 +185,125 @@ class ClaudeCodeAgent(Agent):
             return config_path
         except Exception as e:
             logger.error(f"Failed to write MCP config file: {e}")
+            return None
+
+    def _write_system_prompt_file(self, system_prompt: str) -> str | None:
+        """Write system prompt to a file for Windows command line length workaround.
+
+        Args:
+            system_prompt: The system prompt text
+
+        Returns:
+            Path to the file, or None if failed
+        """
+        try:
+            cwd = self.options.get("cwd", "")
+            if cwd:
+                config_dir = os.path.join(cwd, ".claude")
+            else:
+                config_dir = os.path.join(
+                    config.get_workspace_root(), str(self.task_id), ".claude"
+                )
+
+            os.makedirs(config_dir, exist_ok=True)
+
+            prompt_path = os.path.join(config_dir, "system_prompt.txt")
+
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write(system_prompt)
+
+            logger.info(
+                f"Written system prompt ({len(system_prompt)} chars) to {prompt_path}"
+            )
+            return prompt_path
+        except Exception as e:
+            logger.error(f"Failed to write system prompt file: {e}")
+            return None
+
+    def _prepare_options_for_windows(self) -> None:
+        """Prepare options for Windows to avoid command line length limits.
+
+        Windows has a ~8191 character command line limit. This method writes
+        large options to files to avoid exceeding the limit.
+
+        Handles:
+        - mcp_servers: Written to .claude/mcp_servers.json
+        - system_prompt: Written to .claude/system_prompt.txt and loaded via --system-prompt-file
+        """
+        import sys
+
+        if sys.platform != "win32":
+            return
+
+        # Handle MCP servers - write to file if it's a dict
+        if "mcp_servers" in self.options:
+            mcp_servers = self.options.get("mcp_servers")
+            if isinstance(mcp_servers, dict) and mcp_servers:
+                mcp_config_path = self._write_mcp_config_file(mcp_servers)
+                if mcp_config_path:
+                    self.options["mcp_servers"] = mcp_config_path
+                    logger.info(
+                        f"Windows: MCP servers config written to file: {mcp_config_path}"
+                    )
+
+        # Handle system_prompt - write to file if it's long
+        # Claude Code CLI doesn't support --system-prompt-file, so we use a workaround:
+        # Write to .claude/settings.local.json which Claude Code reads automatically
+        if "system_prompt" in self.options:
+            system_prompt = self.options.get("system_prompt")
+            if isinstance(system_prompt, str) and len(system_prompt) > 2000:
+                # Write system prompt to settings file that Claude Code will read
+                prompt_file = self._write_system_prompt_to_settings(system_prompt)
+                if prompt_file:
+                    # Remove from options since it's now in settings file
+                    del self.options["system_prompt"]
+                    logger.info(
+                        f"Windows: System prompt ({len(system_prompt)} chars) written to settings file"
+                    )
+
+    def _write_system_prompt_to_settings(self, system_prompt: str) -> str | None:
+        """Write system prompt to a local settings file.
+
+        Claude Code reads from .claude/settings.local.json in the project directory.
+
+        Args:
+            system_prompt: The system prompt text
+
+        Returns:
+            Path to the settings file, or None if failed
+        """
+        try:
+            cwd = self.options.get("cwd", "")
+            if cwd:
+                config_dir = os.path.join(cwd, ".claude")
+            else:
+                config_dir = os.path.join(
+                    config.get_workspace_root(), str(self.task_id), ".claude"
+                )
+
+            os.makedirs(config_dir, exist_ok=True)
+
+            settings_path = os.path.join(config_dir, "settings.local.json")
+
+            # Read existing settings if present
+            settings = {}
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, "r", encoding="utf-8") as f:
+                        settings = json.load(f)
+                except Exception:
+                    pass
+
+            # Add system prompt
+            settings["systemPrompt"] = system_prompt
+
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"Written system prompt to settings: {settings_path}")
+            return settings_path
+        except Exception as e:
+            logger.error(f"Failed to write system prompt to settings: {e}")
             return None
 
     @classmethod
@@ -1293,20 +1414,9 @@ class ClaudeCodeAgent(Agent):
             )
             self.options["resume"] = saved_session_id
 
-        # On Windows, write MCP servers config to a temp file to avoid command line length limit
-        # Windows has a ~8191 character limit, and large MCP configs with URLs/headers exceed this
-        import sys
-
-        if sys.platform == "win32" and "mcp_servers" in self.options:
-            mcp_servers = self.options.get("mcp_servers")
-            if isinstance(mcp_servers, dict) and mcp_servers:
-                mcp_config_path = self._write_mcp_config_file(mcp_servers)
-                if mcp_config_path:
-                    # Replace dict with file path - SDK will read from file
-                    self.options["mcp_servers"] = mcp_config_path
-                    logger.info(
-                        f"Windows: MCP servers config written to file: {mcp_config_path}"
-                    )
+        # On Windows, write large options to files to avoid command line length limit
+        # Windows has a ~8191 character limit (WinError 206 if exceeded)
+        self._prepare_options_for_windows()
 
         # Create client with options
         if self.options:
