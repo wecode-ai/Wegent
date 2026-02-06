@@ -257,6 +257,6 @@ To adjust the style or logic of clarification questions, modify the `systemPromp
 
 ## References
 
-- [Wegent Architecture](../../concepts/architecture.md)
+- [Wegent Architecture](../../developer-guide/architecture.md)
 - [Core Concepts](../../concepts/core-concepts.md)
 - [YAML Specification](../../reference/yaml-specification.md)

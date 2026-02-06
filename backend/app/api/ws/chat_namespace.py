@@ -1039,8 +1039,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # For Executor tasks, call executor_manager API
                 await call_executor_cancel(subtask.task_id)
 
+            # Refresh subtask to get latest state from database
+            # This is critical because during the await above, executor callbacks
+            # may have already updated the subtask in another database connection
+            db.refresh(subtask)
+
             # Update subtask
-            subtask.status = SubtaskStatus.COMPLETED
+            subtask.status = SubtaskStatus.CANCELLED
             subtask.progress = 100
             subtask.completed_at = datetime.now()
             subtask.updated_at = datetime.now()
@@ -1066,7 +1071,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 task_crd = Task.model_validate(task.json)
                 if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
+                    task_crd.status.status = "CANCELLED"
                     task_crd.status.errorMessage = ""
                     task_crd.status.updatedAt = datetime.now()
                     task_crd.status.completedAt = datetime.now()

@@ -497,8 +497,8 @@ After installation, you can:
 
 - [Quick Start](./quick-start.md) - Run your first task
 - [Core Concepts](../concepts/core-concepts.md) - Learn Wegent's core concepts
-- [Agent Settings](../guides/user/agent-settings.md) - Configure your first agent
-- [Development Guide](../guides/developer/setup.md) - Setup development environment
+- [Agent Settings](../user-guide/settings/agent-settings.md) - Configure your first agent
+- [Development Guide](../developer-guide/setup.md) - Setup development environment
 
 ---
 

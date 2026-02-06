@@ -24,6 +24,10 @@ export type ActResult = {
   error?: string;
 };
 
+type ActionExecOptions = {
+  client?: BrowserClient;
+};
+
 /**
  * Find element by ref using stored accessibility refs
  */
@@ -129,9 +133,10 @@ async function findElementByRef(
  */
 export async function click(
   ref: string,
-  opts?: { doubleClick?: boolean; button?: string; modifiers?: string[] }
+  opts?: { doubleClick?: boolean; button?: string; modifiers?: string[]; client?: BrowserClient }
 ): Promise<ActResult> {
-  const client = await createBrowserClient();
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const el = await findElementByRef(client, ref);
 
@@ -160,7 +165,9 @@ export async function click(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
@@ -170,9 +177,10 @@ export async function click(
 export async function type(
   ref: string,
   text: string,
-  opts?: { submit?: boolean; slowly?: boolean }
+  opts?: { submit?: boolean; slowly?: boolean; client?: BrowserClient }
 ): Promise<ActResult> {
-  const client = await createBrowserClient();
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     // First click to focus
     const el = await findElementByRef(client, ref);
@@ -221,15 +229,18 @@ export async function type(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
 /**
  * Press a keyboard key
  */
-export async function press(key: string): Promise<ActResult> {
-  const client = await createBrowserClient();
+export async function press(key: string, opts?: ActionExecOptions): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     // Map common key names
     const keyMap: Record<string, { code: string; keyCode: number }> = {
@@ -265,15 +276,18 @@ export async function press(key: string): Promise<ActResult> {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
 /**
  * Hover over element
  */
-export async function hover(ref: string): Promise<ActResult> {
-  const client = await createBrowserClient();
+export async function hover(ref: string, opts?: ActionExecOptions): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const el = await findElementByRef(client, ref);
 
@@ -287,15 +301,22 @@ export async function hover(ref: string): Promise<ActResult> {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
 /**
  * Drag from one element to another
  */
-export async function drag(startRef: string, endRef: string): Promise<ActResult> {
-  const client = await createBrowserClient();
+export async function drag(
+  startRef: string,
+  endRef: string,
+  opts?: ActionExecOptions
+): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const startEl = await findElementByRef(client, startRef);
     const endEl = await findElementByRef(client, endRef);
@@ -327,18 +348,25 @@ export async function drag(startRef: string, endRef: string): Promise<ActResult>
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
 /**
  * Select options in a dropdown
  */
-export async function select(ref: string, values: string[]): Promise<ActResult> {
-  const client = await createBrowserClient();
+export async function select(
+  ref: string,
+  values: string[],
+  opts?: ActionExecOptions
+): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     // Click to open dropdown
-    await click(ref);
+    await click(ref, { client });
     await new Promise((r) => setTimeout(r, 200));
 
     // Select each option by clicking
@@ -386,19 +414,32 @@ export async function select(ref: string, values: string[]): Promise<ActResult> 
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
 /**
  * Fill multiple form fields
  */
-export async function fill(fields: Array<{ ref: string; value: string }>): Promise<ActResult> {
+export async function fill(
+  fields: Array<{ ref: string; value: string }>,
+  opts?: ActionExecOptions
+): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   for (const field of fields) {
-    const result = await type(field.ref, field.value);
+    const result = await type(field.ref, field.value, { client });
     if (!result.ok) {
+      if (ownsClient) {
+        client.close();
+      }
       return result;
     }
+  }
+  if (ownsClient) {
+    client.close();
   }
   return { ok: true };
 }
@@ -410,8 +451,10 @@ export async function scroll(opts?: {
   ref?: string;
   direction?: "up" | "down" | "left" | "right";
   amount?: number;
+  client?: BrowserClient;
 }): Promise<ActResult> {
-  const client = await createBrowserClient();
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const direction = opts?.direction ?? "down";
     const amount = opts?.amount ?? 300;
@@ -462,7 +505,9 @@ export async function scroll(opts?: {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
@@ -474,8 +519,10 @@ export async function wait(opts: {
   text?: string;
   textGone?: string;
   selector?: string;
+  client?: BrowserClient;
 }): Promise<ActResult> {
-  const client = await createBrowserClient();
+  const client = opts.client ?? (await createBrowserClient());
+  const ownsClient = !opts.client;
   try {
     // Simple time wait
     if (opts.timeMs) {
@@ -538,15 +585,22 @@ export async function wait(opts: {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
 /**
  * Resize browser viewport
  */
-export async function resize(width: number, height: number): Promise<ActResult> {
-  const client = await createBrowserClient();
+export async function resize(
+  width: number,
+  height: number,
+  opts?: ActionExecOptions
+): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     await client.send("Emulation.setDeviceMetricsOverride", {
       width: Math.max(1, Math.floor(width)),
@@ -558,41 +612,49 @@ export async function resize(width: number, height: number): Promise<ActResult> 
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
 /**
  * Execute action from request object
  */
-export async function executeAction(request: ActRequest): Promise<ActResult> {
+export async function executeAction(
+  request: ActRequest,
+  opts?: ActionExecOptions
+): Promise<ActResult> {
   switch (request.kind) {
     case "click":
       return click(request.ref, {
         doubleClick: request.doubleClick,
         button: request.button,
         modifiers: request.modifiers,
+        client: opts?.client,
       });
     case "type":
       return type(request.ref, request.text, {
         submit: request.submit,
         slowly: request.slowly,
+        client: opts?.client,
       });
     case "press":
-      return press(request.key);
+      return press(request.key, opts);
     case "hover":
-      return hover(request.ref);
+      return hover(request.ref, opts);
     case "drag":
-      return drag(request.startRef, request.endRef);
+      return drag(request.startRef, request.endRef, opts);
     case "select":
-      return select(request.ref, request.values);
+      return select(request.ref, request.values, opts);
     case "fill":
-      return fill(request.fields);
+      return fill(request.fields, opts);
     case "scroll":
       return scroll({
         ref: request.ref,
         direction: request.direction,
         amount: request.amount,
+        client: opts?.client,
       });
     case "wait":
       return wait({
@@ -600,9 +662,10 @@ export async function executeAction(request: ActRequest): Promise<ActResult> {
         text: request.text,
         textGone: request.textGone,
         selector: request.selector,
+        client: opts?.client,
       });
     case "resize":
-      return resize(request.width, request.height);
+      return resize(request.width, request.height, opts);
     default:
       return { ok: false, error: `Unknown action kind: ${(request as ActRequest).kind}` };
   }

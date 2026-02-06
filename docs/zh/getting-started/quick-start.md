@@ -59,16 +59,16 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
 
 - [详细安装指南](./installation.md) - 了解生产环境部署
 - [核心概念](../concepts/core-concepts.md) - 理解 Ghost、Bot、Team 等核心概念
-- [架构概览](../concepts/architecture.md) - 了解 Wegent 的整体架构
+- [架构概览](../developer-guide/architecture.md) - 了解 Wegent 的整体架构
 
 ### 🎨 创建自定义智能体
 
-- [智能体设置](../guides/user/agent-settings.md) - 配置智能体和机器人
+- [智能体设置](../user-guide/settings/agent-settings.md) - 配置智能体和机器人
 - [协作模式](../concepts/collaboration-models.md) - 了解多机器人协作方式
 
-### 💻 开发和扩展
+### 💻 开发与扩展
 
-- [开发环境搭建](../guides/developer/setup.md) - 搭建本地开发环境
+- [开发环境搭建](../developer-guide/setup.md) - 搭建本地开发环境
 
 ---
 
