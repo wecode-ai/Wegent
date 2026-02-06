@@ -86,7 +86,7 @@ jobs:
       - name: Install shared module
         working-directory: ./shared
         run: |
-          uv venv
+          uv venv --allow-existing
           source .venv/bin/activate
           uv pip install -e .
 

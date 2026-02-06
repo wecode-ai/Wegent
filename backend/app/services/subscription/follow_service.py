@@ -132,14 +132,12 @@ class SubscriptionFollowService:
                 status_code=400, detail="Already following this subscription"
             )
 
-        # Build config JSON if notification settings provided
-        config_json = None
-        if notification_level is not None:
-            config = SubscriptionFollowConfig(
-                notification_level=notification_level,
-                notification_channel_ids=notification_channel_ids,
-            )
-            config_json = config.model_dump_json()
+        # Build config JSON - always provide a default config
+        config = SubscriptionFollowConfig(
+            notification_level=notification_level or SchemaNotificationLevel.DEFAULT,
+            notification_channel_ids=notification_channel_ids,
+        )
+        config_json = config.model_dump_json()
 
         # Create follow record
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -501,8 +499,12 @@ class SubscriptionFollowService:
             existing.updated_at = now
             db.commit()
         else:
-            # Create invitation
+            # Create invitation with default config
             now = datetime.now(timezone.utc).replace(tzinfo=None)
+            default_config = SubscriptionFollowConfig(
+                notification_level=SchemaNotificationLevel.DEFAULT,
+                notification_channel_ids=None,
+            )
             follow = SubscriptionFollow(
                 subscription_id=subscription_id,
                 follower_user_id=target_user.id,
@@ -513,6 +515,7 @@ class SubscriptionFollowService:
                 responded_at=now,  # Default value, will be updated when user responds
                 created_at=now,
                 updated_at=now,
+                config=default_config.model_dump_json(),
             )
             db.add(follow)
             db.commit()
@@ -613,6 +616,10 @@ class SubscriptionFollowService:
 
             if not existing:
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
+                default_config = SubscriptionFollowConfig(
+                    notification_level=SchemaNotificationLevel.DEFAULT,
+                    notification_channel_ids=None,
+                )
                 follow = SubscriptionFollow(
                     subscription_id=subscription_id,
                     follower_user_id=member.user_id,
@@ -623,6 +630,7 @@ class SubscriptionFollowService:
                     responded_at=now,  # Default value, will be updated when user responds
                     created_at=now,
                     updated_at=now,
+                    config=default_config.model_dump_json(),
                 )
                 db.add(follow)
                 invited_count += 1

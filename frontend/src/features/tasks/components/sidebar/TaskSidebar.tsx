@@ -627,7 +627,7 @@ function TaskHistorySection({
   isHistoryManageDialogOpen: _isHistoryManageDialogOpen,
   setIsHistoryManageDialogOpen,
 }: TaskHistorySectionProps) {
-  const { projectTaskIds } = useProjectContext()
+  const { projectTaskIds, projects } = useProjectContext()
 
   // Filter out tasks that are already in projects from history lists
   const filteredPersonalTasks = React.useMemo(
@@ -639,7 +639,15 @@ function TaskHistorySection({
     [groupTasks, projectTaskIds]
   )
 
-  if (filteredGroupTasks.length === 0 && filteredPersonalTasks.length === 0) {
+  // Check if there are any projects with tasks
+  const hasProjectsWithTasks = projects.some(p => p.tasks && p.tasks.length > 0)
+
+  // Only show "no tasks" if there are no filtered tasks AND no projects with tasks
+  if (
+    filteredGroupTasks.length === 0 &&
+    filteredPersonalTasks.length === 0 &&
+    !hasProjectsWithTasks
+  ) {
     return (
       <div className="text-center py-8 text-xs text-text-muted">{t('common:tasks.no_tasks')}</div>
     )
