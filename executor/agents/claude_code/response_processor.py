@@ -547,11 +547,14 @@ async def _process_result_message(
         str: "RETRY" if retry was initiated
     """
 
+    # Get stop_reason safely (may not exist in older SDK versions)
+    stop_reason = getattr(msg, "stop_reason", None)
+
     # Construct detailed result info, matching target format
     result_details = {
         "type": "result",
         "subtype": msg.subtype,
-        "stop_reason": msg.stop_reason,
+        "stop_reason": stop_reason,
         "is_error": msg.is_error,
         "session_id": msg.session_id,
         "num_turns": msg.num_turns,
@@ -569,7 +572,7 @@ async def _process_result_message(
     msg_dict = asdict(msg)
     masked_msg_dict = mask_sensitive_data(msg_dict)
     logger.info(
-        f"Result message received: subtype={msg.subtype}, stop_reason={msg.stop_reason}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
+        f"Result message received: subtype={msg.subtype}, stop_reason={stop_reason}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
 
     # Check for silent exit marker in result
