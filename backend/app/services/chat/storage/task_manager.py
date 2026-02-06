@@ -116,7 +116,8 @@ def get_task_with_access_check(
         to use for creating subtasks (owner's ID for group chats).
         Returns (None, user_id) if task not found or access denied.
     """
-    from app.models.task_member import MemberStatus, TaskMember
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
 
     # First try to get task as owner
     task = (
@@ -133,13 +134,14 @@ def get_task_with_access_check(
     if task:
         return task, user_id
 
-    # Check if user is a group chat member
+    # Check if user is a group chat member using ResourceMember
     member = (
-        db.query(TaskMember)
+        db.query(ResourceMember)
         .filter(
-            TaskMember.task_id == task_id,
-            TaskMember.user_id == user_id,
-            TaskMember.status == MemberStatus.ACTIVE,
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == task_id,
+            ResourceMember.user_id == user_id,
+            ResourceMember.status == MemberStatus.APPROVED,
         )
         .first()
     )

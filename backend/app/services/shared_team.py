@@ -2,6 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+Service for managing team sharing functionality.
+
+Uses the unified ResourceMember model instead of the legacy SharedTeam table.
+"""
+
 import base64
 import json
 import logging
@@ -19,7 +25,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.shared_team import SharedTeam
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import PermissionLevel, ResourceType
 from app.models.user import User
 from app.schemas.kind import Team
 from app.schemas.shared_team import (
@@ -35,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class SharedTeamService:
-    """Service for managing team sharing functionality"""
+    """Service for managing team sharing functionality using ResourceMember"""
 
     def __init__(self):
         # Initialize AES key and IV from settings
@@ -171,14 +178,15 @@ class SharedTeamService:
     def create_share_relationship(
         self, db: Session, user_id: int, original_user_id: int, team_id: int
     ) -> SharedTeamInDB:
-        """Create shared team relationship"""
+        """Create shared team relationship using ResourceMember"""
         # Check if relationship already exists
         existing = (
-            db.query(SharedTeam)
+            db.query(ResourceMember)
             .filter(
-                SharedTeam.user_id == user_id,
-                SharedTeam.team_id == team_id,
-                SharedTeam.is_active == True,
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_id == team_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )
@@ -188,67 +196,144 @@ class SharedTeamService:
                 status_code=400, detail="User already has access to this team"
             )
 
-        # Create new relationship
-        shared_team = SharedTeam(
-            user_id=user_id,
-            original_user_id=original_user_id,
-            team_id=team_id,
-            is_active=True,
-        )
-
-        db.add(shared_team)
-        db.commit()
-        db.refresh(shared_team)
-
-        return SharedTeamInDB.model_validate(shared_team)
-
-    def get_user_shared_teams(self, db: Session, user_id: int) -> List[SharedTeamInDB]:
-        """Get all shared teams for a user"""
-        shared_teams = (
-            db.query(SharedTeam)
-            .filter(SharedTeam.user_id == user_id, SharedTeam.is_active == True)
-            .all()
-        )
-
-        return [SharedTeamInDB.model_validate(team) for team in shared_teams]
-
-    def get_team_shared_users(self, db: Session, team_id: int) -> List[SharedTeamInDB]:
-        """Get all users who have access to a shared team"""
-        shared_teams = (
-            db.query(SharedTeam)
-            .filter(SharedTeam.team_id == team_id, SharedTeam.is_active == True)
-            .all()
-        )
-
-        return [SharedTeamInDB.model_validate(team) for team in shared_teams]
-
-    def remove_shared_team(self, db: Session, user_id: int, team_id: int) -> bool:
-        """Remove shared team relationship (soft delete)"""
-        shared_team = (
-            db.query(SharedTeam)
+        # Check if there's a rejected entry that we should reactivate
+        rejected = (
+            db.query(ResourceMember)
             .filter(
-                SharedTeam.user_id == user_id,
-                SharedTeam.team_id == team_id,
-                SharedTeam.is_active == True,
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_id == team_id,
+                ResourceMember.user_id == user_id,
             )
             .first()
         )
 
-        if not shared_team:
+        if rejected:
+            # Reactivate existing record
+            rejected.status = MemberStatus.APPROVED
+            rejected.invited_by_user_id = original_user_id
+            rejected.permission_level = PermissionLevel.MANAGE
+            rejected.updated_at = datetime.now()
+            db.commit()
+            db.refresh(rejected)
+            # Return as SharedTeamInDB format for backwards compatibility
+            return SharedTeamInDB(
+                id=rejected.id,
+                user_id=rejected.user_id,
+                original_user_id=rejected.invited_by_user_id,
+                team_id=rejected.resource_id,
+                is_active=True,
+                created_at=rejected.created_at,
+                updated_at=rejected.updated_at,
+            )
+
+        # Create new relationship
+        resource_member = ResourceMember(
+            resource_type=ResourceType.TEAM,
+            resource_id=team_id,
+            user_id=user_id,
+            permission_level=PermissionLevel.MANAGE,
+            status=MemberStatus.APPROVED,
+            invited_by_user_id=original_user_id,
+            share_link_id=0,
+            reviewed_by_user_id=0,
+            copied_resource_id=0,
+            requested_at=datetime.now(),
+        )
+
+        db.add(resource_member)
+        db.commit()
+        db.refresh(resource_member)
+
+        # Return as SharedTeamInDB format for backwards compatibility
+        return SharedTeamInDB(
+            id=resource_member.id,
+            user_id=resource_member.user_id,
+            original_user_id=resource_member.invited_by_user_id,
+            team_id=resource_member.resource_id,
+            is_active=True,
+            created_at=resource_member.created_at,
+            updated_at=resource_member.updated_at,
+        )
+
+    def get_user_shared_teams(self, db: Session, user_id: int) -> List[SharedTeamInDB]:
+        """Get all shared teams for a user using ResourceMember"""
+        resource_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .all()
+        )
+
+        return [
+            SharedTeamInDB(
+                id=rm.id,
+                user_id=rm.user_id,
+                original_user_id=rm.invited_by_user_id,
+                team_id=rm.resource_id,
+                is_active=True,
+                created_at=rm.created_at,
+                updated_at=rm.updated_at,
+            )
+            for rm in resource_members
+        ]
+
+    def get_team_shared_users(self, db: Session, team_id: int) -> List[SharedTeamInDB]:
+        """Get all users who have access to a shared team using ResourceMember"""
+        resource_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_id == team_id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .all()
+        )
+
+        return [
+            SharedTeamInDB(
+                id=rm.id,
+                user_id=rm.user_id,
+                original_user_id=rm.invited_by_user_id,
+                team_id=rm.resource_id,
+                is_active=True,
+                created_at=rm.created_at,
+                updated_at=rm.updated_at,
+            )
+            for rm in resource_members
+        ]
+
+    def remove_shared_team(self, db: Session, user_id: int, team_id: int) -> bool:
+        """Remove shared team relationship (soft delete by setting status to rejected)"""
+        resource_member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_id == team_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .first()
+        )
+
+        if not resource_member:
             raise HTTPException(
                 status_code=404, detail="Shared team relationship not found"
             )
 
-        shared_team.is_active = False
-        shared_team.updated_at = datetime.now()
+        resource_member.status = MemberStatus.REJECTED
+        resource_member.updated_at = datetime.now()
         db.commit()
 
         return True
 
     def cleanup_shared_teams_on_team_delete(self, db: Session, team_id: int) -> None:
         """Clean up shared team relationships when team is deleted"""
-        db.query(SharedTeam).filter(
-            SharedTeam.team_id == team_id, SharedTeam.is_active == True
+        db.query(ResourceMember).filter(
+            ResourceMember.resource_type == ResourceType.TEAM,
+            ResourceMember.resource_id == team_id,
         ).delete()
 
         db.commit()

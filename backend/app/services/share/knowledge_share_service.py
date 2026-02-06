@@ -489,10 +489,15 @@ class KnowledgeShareService(UnifiedShareService):
 
         # Find share link by resource_id (more reliable than token matching)
         # The token in DB is URL-encoded, but FastAPI may have decoded the input
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -557,10 +562,15 @@ class KnowledgeShareService(UnifiedShareService):
         Returns:
             Share token if found, None otherwise
         """
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == knowledge_base_id,
                 ShareLink.is_active == True,
             )

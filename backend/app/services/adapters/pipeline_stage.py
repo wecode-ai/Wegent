@@ -613,7 +613,7 @@ class PipelineStageService:
 
         Supports:
         1. Teams owned by task owner
-        2. Teams shared via SharedTeam table
+        2. Teams shared via ResourceMember table
         3. Public teams (user_id=0)
         4. Group teams (namespace != 'default') - can be created by any group member
 
@@ -632,7 +632,7 @@ class PipelineStageService:
 
         # Use kindReader which handles all team types:
         # - Personal teams (owned by user)
-        # - Shared teams (via SharedTeam table)
+        # - Shared teams (via ResourceMember table)
         # - Public teams (user_id=0)
         # - Group teams (namespace != 'default')
         return kindReader.get_by_name_and_namespace(
