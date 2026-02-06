@@ -673,13 +673,14 @@ function ChatAreaContent({
 
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
-        {/* Top gradient fade effect */}
+        {/* Top gradient fade effect - limited width to avoid overlapping scrollbar */}
         {hasMessages && (
           <div
-            className="absolute top-0 left-0 right-0 h-12 z-10 pointer-events-none"
+            className="absolute top-0 left-0 h-8 z-10 pointer-events-none"
             style={{
+              width: 'calc(100% - 12px)',
               background:
-                'linear-gradient(to bottom, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.8) 40%, rgb(var(--color-bg-base) / 0) 100%)',
+                'linear-gradient(to bottom, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
             }}
           />
         )}
@@ -764,12 +765,13 @@ function ChatAreaContent({
               width: floatingMetrics.width,
             }}
           >
-            {/* Bottom gradient fade effect - text fades as it approaches the input */}
+            {/* Bottom gradient fade effect - text fades as it approaches the input, limited width to avoid overlapping scrollbar */}
             <div
-              className="absolute top-0 left-0 right-0 h-12 -translate-y-full pointer-events-none"
+              className="absolute top-0 left-0 h-8 -translate-y-full pointer-events-none"
               style={{
+                width: 'calc(100% - 12px)',
                 background:
-                  'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.8) 40%, rgb(var(--color-bg-base) / 0) 100%)',
+                  'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
               }}
             />
             {/* Scroll to bottom indicator */}
