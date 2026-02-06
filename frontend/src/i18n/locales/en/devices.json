@@ -80,5 +80,23 @@
     "updateAvailable": "Update Available"
   },
   "add_device": "Add Device",
-  "hide_guide": "Hide Guide"
+  "hide_guide": "Hide Guide",
+  "auth_mode_token": "Session Token",
+  "auth_mode_apikey": "API Key",
+  "select_apikey": "Select API Key",
+  "create_apikey": "Create New",
+  "no_apikeys": "No API Keys found",
+  "apikey_load_failed": "Failed to load API keys",
+  "apikey_name_required": "Key name is required",
+  "apikey_create_success": "API Key created successfully",
+  "apikey_create_failed": "Failed to create API Key",
+  "apikey_existing_warning": "You selected an existing API Key. For security reasons, the full key value is only shown once at creation. If you haven't saved this key, please create a new one.",
+  "apikey_benefit_hint": "API Key does not expire. Use it for long-running device connections without re-authentication.",
+  "create_apikey_title": "Create API Key",
+  "create_apikey_desc": "Create an API Key for device authentication",
+  "apikey_name": "Key Name",
+  "apikey_name_placeholder": "My Device",
+  "cancel": "Cancel",
+  "create": "Create",
+  "creating": "Creating..."
 }

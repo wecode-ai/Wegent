@@ -21,7 +21,6 @@ import { ShellListWithScope } from '@/features/settings/components/ShellListWith
 import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope'
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope'
 import ApiKeyList from '@/features/settings/components/ApiKeyList'
-import DeviceSetupGuide from '@/features/settings/components/DeviceSetupGuide'
 import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope'
 import { PetSettings } from '@/features/pet/components/PetSettings'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -191,8 +190,6 @@ function SettingsContent() {
         return <NotificationSettings />
       case 'api-keys':
         return <ApiKeyList />
-      case 'device-setup':
-        return <DeviceSetupGuide />
       case 'pet':
         return <PetSettings />
       default:

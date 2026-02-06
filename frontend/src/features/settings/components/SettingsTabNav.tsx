@@ -42,7 +42,6 @@ export type SettingsTabId =
   | 'general'
   | 'integrations'
   | 'api-keys'
-  | 'device-setup'
   | 'pet'
 
 // Scope type for resource tabs
@@ -149,7 +148,6 @@ export function SettingsTabNav({
       { id: 'general', label: t('settings.sections.general'), category: 'other' },
       { id: 'integrations', label: t('settings.integrations'), category: 'other' },
       { id: 'api-keys', label: t('settings.api_keys'), category: 'other' },
-      { id: 'device-setup', label: t('settings.device_setup'), category: 'other' },
       { id: 'pet', label: t('pet:title'), category: 'other' },
     ],
     [t]

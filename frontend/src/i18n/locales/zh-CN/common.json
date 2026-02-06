@@ -453,37 +453,8 @@
     "groups": "组",
     "groupManager": "组管理",
     "api_keys": "API 密钥",
-    "device_setup": "设备引导",
     "sections": {
       "general": "通用"
-    }
-  },
-  "device_setup": {
-    "title": "设备引导",
-    "description": "按照以下步骤将您的本地设备连接到 Wegent",
-    "step1": {
-      "title": "选择 API Key",
-      "description": "选择一个现有的 API Key 或创建新的",
-      "select_existing": "选择已有的 API Key",
-      "create_new": "创建新的 API Key",
-      "no_keys": "暂无 API Key",
-      "existing_key_warning": "您选择了已存在的 API Key。由于安全原因，完整的 Key 值只在创建时显示一次。如果您没有保存该 Key，请创建一个新的。",
-      "key_name_placeholder": "我的设备"
-    },
-    "step2": {
-      "title": "复制启动命令",
-      "description": "在终端中运行以下命令启动本地设备",
-      "method1_title": "方式一：直接传入参数",
-      "method2_title": "方式二：使用环境变量",
-      "copy_command": "复制命令",
-      "copied": "已复制！",
-      "copy_failed": "复制失败",
-      "hint": "设备连接成功后，您可以在聊天界面的设备选择器中看到您的设备。"
-    },
-    "actions": {
-      "next": "下一步",
-      "previous": "上一步",
-      "done": "完成"
     }
   },
   "retrievers": {
