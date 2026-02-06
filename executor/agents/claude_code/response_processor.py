@@ -822,7 +822,7 @@ async def _process_result_message(
                 )
 
         if is_residual_interrupt:
-            # 残留中断消息，需要重新发送查询
+            # Residual interrupt message detected, need to resend query
             logger.info("Returning RETRY_RESIDUAL to resend query after residual interrupt")
             return "RETRY_RESIDUAL"
 

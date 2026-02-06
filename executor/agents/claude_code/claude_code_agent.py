@@ -715,7 +715,7 @@ class ClaudeCodeAgent(Agent):
                 )
 
                 if result == "RETRY_RESIDUAL":
-                    # 残留中断消息，直接重新发送查询（不需要重建 client）
+                    # Residual interrupt message, resend query without recreating client
                     logger.info(
                         f"RETRY_RESIDUAL: Resending query for session {self.session_id}"
                     )
@@ -758,7 +758,7 @@ class ClaudeCodeAgent(Agent):
                 break
 
             if result is None:
-                # 没有收到最终结果，保持 RUNNING 状态
+                # No final result received, keep RUNNING status
                 logger.warning("No final result received from process_response")
                 result = TaskStatus.RUNNING
 
