@@ -49,8 +49,9 @@ API_ERROR_PATTERNS = [
 # Error subtypes that can be retried by resuming session
 # These errors may be transient and can often be recovered by resuming
 RETRYABLE_ERROR_SUBTYPES = [
-    "error_during_execution",
-    "error_max_turns",
+    "error_during_execution",  # Transient errors during execution
+    # Note: error_max_turns is NOT included because it indicates the task
+    # is too complex and will likely hit the limit again after resume
 ]
 
 
