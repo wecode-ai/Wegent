@@ -132,13 +132,11 @@ async def process_response(
                         )
                         if task_id:
                             try:
-                                from executor.agents.claude_code.claude_code_agent import (
-                                    ClaudeCodeAgent,
+                                from executor.agents.claude_code.session_manager import (
+                                    SessionManager,
                                 )
 
-                                ClaudeCodeAgent._save_session_id(
-                                    task_id, msg.session_id
-                                )
+                                SessionManager.save_session_id(task_id, msg.session_id)
                             except Exception as save_error:
                                 logger.warning(
                                     f"Failed to save session ID: {save_error}"

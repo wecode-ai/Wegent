@@ -13,8 +13,12 @@ This strategy handles execution in local (non-Docker) environments with
 enhanced security measures:
 - Sensitive data (API keys, tokens) are NOT written to disk
 - Sensitive config is passed via environment variables to the SDK
-- Config files use restricted permissions (0700 for dirs, 0600 for files)
+- Config files use restricted permissions (0700 for dirs, 0600 for files on Unix)
 - Task-specific directories isolate different tasks
+
+Cross-platform support:
+- Unix: Uses chmod for file permissions
+- Windows: Uses ACLs via platform abstraction layer
 """
 
 import json
@@ -24,6 +28,7 @@ from typing import Any, Dict, Tuple
 
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
+from executor.platform_compat import get_permissions_manager
 from shared.logger import setup_logger
 
 logger = setup_logger("local_mode_strategy")
@@ -80,14 +85,15 @@ class LocalModeStrategy(ExecutionModeStrategy):
         config_dir = self.get_config_directory(task_id)
         claude_json_path = os.path.join(config_dir, "claude.json")
 
-        # Create directory with restricted permissions (owner only: rwx)
+        # Create directory with restricted permissions (owner only)
         Path(config_dir).mkdir(parents=True, exist_ok=True)
-        os.chmod(config_dir, 0o700)
+        permissions_manager = get_permissions_manager()
+        permissions_manager.set_owner_only(config_dir, is_directory=True)
 
         # Write only non-sensitive claude.json with restricted permissions
         with open(claude_json_path, "w") as f:
             json.dump(claude_json_config, f, indent=2)
-        os.chmod(claude_json_path, 0o600)
+        permissions_manager.set_owner_only(claude_json_path, is_directory=False)
 
         logger.info(
             f"Local mode: Saved claude.json to {config_dir} "

@@ -1039,16 +1039,29 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # For Executor tasks, call executor_manager API
                 await call_executor_cancel(subtask.task_id)
 
+            # Refresh subtask to get latest state from database
+            # This is critical because during the await above, executor callbacks
+            # may have already updated the subtask in another database connection
+            db.refresh(subtask)
+
             # Update subtask
-            subtask.status = SubtaskStatus.COMPLETED
+            subtask.status = SubtaskStatus.CANCELLED
             subtask.progress = 100
             subtask.completed_at = datetime.now()
             subtask.updated_at = datetime.now()
 
-            if payload.partial_content:
-                subtask.result = {"value": payload.partial_content}
-            else:
-                subtask.result = {"value": ""}
+            # Preserve existing thinking and workbench data from database
+            # During streaming, these are saved by _update_subtask_progress
+            existing_result = subtask.result or {}
+            thinking = existing_result.get("thinking")
+            workbench = existing_result.get("workbench")
+
+            # Update result with partial content while preserving thinking/workbench
+            subtask.result = {
+                "value": payload.partial_content or "",
+                **({"thinking": thinking} if thinking is not None else {}),
+                **({"workbench": workbench} if workbench is not None else {}),
+            }
 
             # Update task status
             task = (
@@ -1066,7 +1079,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 task_crd = Task.model_validate(task.json)
                 if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
+                    task_crd.status.status = "CANCELLED"
                     task_crd.status.errorMessage = ""
                     task_crd.status.updatedAt = datetime.now()
                     task_crd.status.completedAt = datetime.now()
@@ -1100,6 +1113,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                     ),
                     result=subtask.result or {},
                     message_id=subtask.message_id,
+                )
+
+                # Emit task:status to notify frontend of task cancellation
+                # This ensures the task status in the frontend is updated from PENDING to CANCELLED
+                await ws_emitter.emit_task_status(
+                    user_id=user_id,
+                    task_id=subtask.task_id,
+                    status="CANCELLED",
+                    progress=100,
                 )
             else:
                 logger.warning(
@@ -1178,26 +1200,24 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 return {"error": "Task not found"}
 
-            # Get the latest subtask to find executor_name
+            # Get the latest subtask with device executor
+            # Note: A task may have mixed subtasks - some from device mode (executor_name starts with "device-")
+            # and some from chat mode (no executor_name). We need to find the device subtask specifically.
             subtask = (
                 db.query(Subtask)
-                .filter(Subtask.task_id == task_id)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.executor_name.like("device-%"),
+                )
                 .order_by(Subtask.id.desc())
                 .first()
             )
 
-            if not subtask or not subtask.executor_name:
+            if not subtask:
                 logger.error(
-                    f"[WS] task:close-session error: No executor found for task_id={task_id}"
+                    f"[WS] task:close-session error: No device executor found for task_id={task_id}"
                 )
-                return {"error": "No executor found for this task"}
-
-            # Check if this is a device task
-            if not subtask.executor_name.startswith("device-"):
-                logger.error(
-                    f"[WS] task:close-session error: Not a device task, executor_name={subtask.executor_name}"
-                )
-                return {"error": "Not a device task"}
+                return {"error": "No device executor found for this task"}
 
             # Extract device_id from executor_name (format: "device-{device_id}")
             device_id = subtask.executor_name[7:]  # Remove "device-" prefix

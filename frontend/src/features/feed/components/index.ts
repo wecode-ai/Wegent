@@ -12,6 +12,7 @@ export { SubscriptionConversationDialog } from './SubscriptionConversationDialog
 // Visibility and follow feature components
 export { DiscoverPageInline } from './DiscoverPageInline'
 export { DiscoverHistoryDialog } from './DiscoverHistoryDialog'
+export { DiscoverFeedCard, DiscoverFeedCardSkeleton } from './DiscoverFeedCard'
 export { SubscriptionDetailPage } from './SubscriptionDetailPage'
 export { SubscriptionShareDialog } from './SubscriptionShareDialog'
 export { SubscriptionInvitations } from './SubscriptionInvitations'

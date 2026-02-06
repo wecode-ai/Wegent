@@ -41,7 +41,8 @@
     "view": "View",
     "copy": "Copy",
     "copied": "Copied",
-    "loadMore": "Load More"
+    "loadMore": "Load More",
+    "configure": "Configure"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -109,12 +110,14 @@
     "no_available_models": "No available models",
     "import_mcp": "Import",
     "import_mcp_button": "Import MCP from other platforms",
+    "mcp_market": "MCP Market",
     "import_mcp_title": "Import MCP Configuration",
     "import_mcp_desc": "Please paste standardized MCP configuration JSON. The system will automatically add type: \"sse\" if missing or convert transport field to type field.",
     "import_mode_replace": "Replace existing config",
     "import_mode_append": "Append to existing config",
     "import_success": "MCP configuration imported successfully",
     "append_success": "MCP configuration appended successfully",
+    "mcp_config_readonly_placeholder": "MCP configuration is read-only. Please use the Import button to modify.",
     "quick_templates": "Use Preset Templates for Quick Configuration",
     "template": "Template",
     "template_hint": "Click template button to autofill configuration, then modify the API Key",

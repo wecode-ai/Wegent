@@ -125,19 +125,152 @@ def restore_version_source(original_content: str) -> None:
     print("Restored version.py to original content")
 
 
-def build_executable(target_arch: str | None = None):
+def find_claude_agent_sdk_binary(
+    target_platform: str | None = None,
+) -> tuple[str, str] | None:
+    """Find the bundled Claude CLI binary from claude-agent-sdk.
+
+    For cross-platform builds, this will download the appropriate wheel.
+
+    Args:
+        target_platform: Target platform ('Windows', 'Darwin', 'Linux').
+                        If None, uses current platform.
+
+    Returns:
+        Tuple of (source_path, dest_path) for PyInstaller --add-binary,
+        or None if not found.
+    """
+    target = target_platform or platform.system()
+
+    # Determine binary name based on target platform
+    if target == "Windows":
+        binary_name = "claude.exe"
+    else:
+        binary_name = "claude"
+
+    try:
+        import claude_agent_sdk
+
+        sdk_path = Path(claude_agent_sdk.__file__).parent
+        bundled_dir = sdk_path / "_bundled"
+        binary_path = bundled_dir / binary_name
+
+        # If building for same platform, use local binary
+        if target == platform.system() and binary_path.exists():
+            print(
+                f"Found Claude CLI binary: {binary_path} ({binary_path.stat().st_size / 1024 / 1024:.1f} MB)"
+            )
+            return (str(binary_path), "claude_agent_sdk/_bundled")
+
+    except ImportError:
+        pass
+
+    # For cross-platform builds or missing binary, download from PyPI
+    if target == "Windows":
+        return _download_windows_claude_binary()
+
+    print(f"Warning: Claude CLI binary not found for platform {target}")
+    return None
+
+
+def _download_windows_claude_binary() -> tuple[str, str] | None:
+    """Download Windows claude.exe from PyPI wheel.
+
+    Uses PyPI JSON API to find the correct wheel URL dynamically.
+
+    Returns:
+        Tuple of (source_path, dest_dir) for PyInstaller --add-binary,
+        or None if failed.
+    """
+    import json as json_module
+    import tempfile
+    import urllib.request
+    import zipfile
+
+    # Get SDK version from installed package
+    try:
+        import claude_agent_sdk
+
+        sdk_version = getattr(claude_agent_sdk, "__version__", None)
+    except ImportError:
+        sdk_version = None
+
+    print(
+        f"Looking for Windows Claude CLI binary (sdk version: {sdk_version or 'latest'})..."
+    )
+
+    try:
+        # Query PyPI API for package info
+        pypi_url = "https://pypi.org/pypi/claude-agent-sdk/json"
+        with urllib.request.urlopen(pypi_url, timeout=30) as response:
+            pypi_data = json_module.loads(response.read().decode())
+
+        # Find Windows wheel URL
+        version = sdk_version or pypi_data["info"]["version"]
+        releases = pypi_data["releases"].get(version, [])
+
+        wheel_url = None
+        for release in releases:
+            filename = release.get("filename", "")
+            if "win_amd64" in filename and filename.endswith(".whl"):
+                wheel_url = release["url"]
+                break
+
+        if not wheel_url:
+            print(f"Error: No Windows wheel found for version {version}")
+            return None
+
+        print(f"Downloading from: {wheel_url}")
+
+        # Create temp directory for extraction
+        temp_dir = Path(tempfile.mkdtemp(prefix="claude_sdk_"))
+        wheel_path = temp_dir / "claude_agent_sdk.whl"
+
+        # Download wheel
+        urllib.request.urlretrieve(wheel_url, wheel_path)
+
+        # Extract claude.exe from wheel
+        with zipfile.ZipFile(wheel_path, "r") as zf:
+            binary_zip_path = "claude_agent_sdk/_bundled/claude.exe"
+            if binary_zip_path in zf.namelist():
+                zf.extract(binary_zip_path, temp_dir)
+                binary_path = temp_dir / binary_zip_path
+
+                print(
+                    f"Extracted Claude CLI binary: {binary_path} ({binary_path.stat().st_size / 1024 / 1024:.1f} MB)"
+                )
+                return (str(binary_path), "claude_agent_sdk/_bundled")
+            else:
+                print(f"Error: {binary_zip_path} not found in wheel")
+                return None
+
+    except Exception as e:
+        print(f"Error downloading Windows Claude binary: {e}")
+        return None
+
+
+def build_executable(
+    target_arch: str | None = None, target_platform: str | None = None
+):
     """Build the executable using PyInstaller.
 
     Args:
         target_arch: Target architecture for cross-compilation (e.g., 'x86_64', 'arm64').
                      If None, builds for the native architecture.
+        target_platform: Target platform for cross-compilation (e.g., 'Windows', 'Darwin', 'Linux').
+                        If None, builds for the current platform.
     """
     project_root = get_project_root()
     executor_root = get_executor_root()
 
+    # Determine effective target platform
+    effective_platform = target_platform or platform.system()
+
     # Get version and embed it into source
     version = get_version_from_pyproject()
     print(f"Building version: {version}")
+    if target_platform:
+        print(f"Target platform: {target_platform}")
     original_version_content = embed_version_in_source(version)
 
     try:
@@ -172,6 +305,18 @@ def build_executable(target_arch: str | None = None):
             "--hidden-import=executor.modes.local.runner",
             "--hidden-import=executor.agents",
             "--hidden-import=executor.agents.claude_code",
+            "--hidden-import=executor.platform_compat",
+            "--hidden-import=executor.platform_compat.base",
+            "--hidden-import=executor.platform_compat.unix",
+            "--hidden-import=executor.platform_compat.unix.pty_manager",
+            "--hidden-import=executor.platform_compat.unix.permissions",
+            "--hidden-import=executor.platform_compat.unix.signals",
+            "--hidden-import=executor.platform_compat.unix.user_info",
+            "--hidden-import=executor.platform_compat.windows",
+            "--hidden-import=executor.platform_compat.windows.pty_manager",
+            "--hidden-import=executor.platform_compat.windows.permissions",
+            "--hidden-import=executor.platform_compat.windows.signals",
+            "--hidden-import=executor.platform_compat.windows.user_info",
             "--hidden-import=shared",
             "--hidden-import=shared.logger",
             "--hidden-import=shared.status",
@@ -272,6 +417,19 @@ def build_executable(target_arch: str | None = None):
             "--hidden-import=sse_starlette.sse",
             # SSL certificates (needed for HTTPS connections)
             "--collect-data=certifi",
+        ]
+
+        # Add Claude CLI binary if found (critical for Windows to avoid asyncio + .cmd issue)
+        claude_binary = find_claude_agent_sdk_binary(target_platform=effective_platform)
+        if claude_binary:
+            src_path, dest_dir = claude_binary
+            cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
+            print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
+        else:
+            print("Warning: Claude CLI binary not found, executor may fail on Windows")
+
+        # Continue with remaining options
+        cmd += [
             # Exclude packages not needed in local mode
             "--exclude-module=uvicorn",
             "--exclude-module=fastapi",
@@ -288,6 +446,25 @@ def build_executable(target_arch: str | None = None):
             # Entry point
             str(executor_root / "main.py"),
         ]
+
+        # Add Windows-specific hidden imports for PTY and Win32 API support
+        if platform.system() == "Windows":
+            windows_imports = [
+                "--hidden-import=winpty",
+                "--hidden-import=win32api",
+                "--hidden-import=win32con",
+                "--hidden-import=win32security",
+                "--hidden-import=win32file",
+                "--hidden-import=win32event",
+                "--hidden-import=win32process",
+                "--hidden-import=ntsecuritycon",
+                "--hidden-import=pywintypes",
+                "--hidden-import=msvcrt",
+            ]
+            # Insert before entry point (last element)
+            for imp in windows_imports:
+                cmd.insert(-1, imp)
+            print("Added Windows-specific hidden imports")
 
         # Add target architecture for cross-compilation on macOS
         if target_arch and platform.system() == "Darwin":
@@ -331,6 +508,12 @@ def main():
         help="Target architecture for cross-compilation (macOS only). "
         "Use 'x86_64' to build for Intel Macs on Apple Silicon.",
     )
+    parser.add_argument(
+        "--target-platform",
+        choices=["Windows", "Darwin", "Linux"],
+        help="Target platform for bundling platform-specific binaries. "
+        "Use 'Windows' when building for Windows from macOS/Linux to include claude.exe.",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -340,13 +523,15 @@ def main():
     print(f"Python: {sys.version}")
     if args.target_arch:
         print(f"Target architecture: {args.target_arch}")
+    if args.target_platform:
+        print(f"Target platform: {args.target_platform}")
     print()
 
     # Clean previous builds
     clean_build_artifacts()
 
     # Build executable
-    build_executable(target_arch=args.target_arch)
+    build_executable(target_arch=args.target_arch, target_platform=args.target_platform)
 
     print()
     print("=" * 60)

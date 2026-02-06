@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import redis
+import redis.asyncio as aioredis
 
 from executor_manager.common.config import get_config
 from executor_manager.common.redis_factory import RedisClientFactory
@@ -37,6 +38,7 @@ logger = setup_logger(__name__)
 SESSION_HASH_PREFIX = "wegent-sandbox-session:"
 SANDBOX_FIELD_NAME = "__sandbox__"
 ACTIVE_SANDBOXES_ZSET = "wegent-sandbox:active"
+E2B_SANDBOX_ID_INDEX_PREFIX = "wegent-sandbox-e2b-index:"
 
 
 class SandboxRepository(metaclass=SingletonMeta):
@@ -50,6 +52,7 @@ class SandboxRepository(metaclass=SingletonMeta):
         """Initialize the repository."""
         self._config = get_config()
         self._redis_client: Optional[redis.Redis] = None
+        self._async_redis_client: Optional[aioredis.Redis] = None
 
     @property
     def redis_client(self) -> Optional[redis.Redis]:
@@ -57,6 +60,12 @@ class SandboxRepository(metaclass=SingletonMeta):
         if self._redis_client is None:
             self._redis_client = RedisClientFactory.get_sync_client()
         return self._redis_client
+
+    async def _get_async_client(self) -> Optional[aioredis.Redis]:
+        """Lazy-load async Redis client."""
+        if self._async_redis_client is None:
+            self._async_redis_client = await RedisClientFactory.get_async_client()
+        return self._async_redis_client
 
     # =========================================================================
     # Sandbox Operations
@@ -105,6 +114,11 @@ class SandboxRepository(metaclass=SingletonMeta):
 
             # Update active sandboxes ZSet with current timestamp
             self.redis_client.zadd(ACTIVE_SANDBOXES_ZSET, {str(task_id): time.time()})
+
+            # Save e2b_sandbox_id index for O(1) lookup
+            e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
+            if e2b_sandbox_id:
+                self._save_e2b_index(e2b_sandbox_id, str(task_id))
 
             return True
         except Exception as e:
@@ -185,6 +199,13 @@ class SandboxRepository(metaclass=SingletonMeta):
 
         try:
             task_id = int(sandbox_id)
+
+            # Load sandbox first to get e2b_sandbox_id for index cleanup
+            sandbox = self.load_sandbox(sandbox_id)
+            if sandbox:
+                e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
+                if e2b_sandbox_id:
+                    self._delete_e2b_index(e2b_sandbox_id)
 
             # Remove from active sandboxes ZSet
             self.redis_client.zrem(ACTIVE_SANDBOXES_ZSET, str(task_id))
@@ -442,7 +463,11 @@ class SandboxRepository(metaclass=SingletonMeta):
     # =========================================================================
 
     def save_executor_binding(
-        self, task_id: int, executor_name: str, ttl: Optional[int] = None
+        self,
+        task_id: int,
+        executor_name: str,
+        ttl: Optional[int] = None,
+        **extra_fields,
     ) -> bool:
         """Save executor binding for task continuity.
 
@@ -450,6 +475,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             task_id: Task ID
             executor_name: Executor container name
             ttl: TTL in seconds (defaults to config value)
+            **extra_fields: Additional fields to store
 
         Returns:
             True if successful, False otherwise
@@ -463,6 +489,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 "executor_name": executor_name,
                 "task_id": task_id,
                 "created_at": time.time(),
+                **extra_fields,  # Merge any additional fields
             }
 
             if ttl is None:
@@ -471,7 +498,8 @@ class SandboxRepository(metaclass=SingletonMeta):
             self.redis_client.setex(binding_key, ttl, json.dumps(binding_value))
             logger.info(
                 f"[SandboxRepository] Stored executor binding: "
-                f"task_id={task_id} -> executor={executor_name}, ttl={ttl}s"
+                f"task_id={task_id} -> executor={executor_name}, "
+                f"extra={list(extra_fields.keys())}, ttl={ttl}s"
             )
             return True
         except Exception as e:
@@ -487,6 +515,18 @@ class SandboxRepository(metaclass=SingletonMeta):
         Returns:
             Executor name if found, None otherwise
         """
+        binding = self.load_executor_binding_full(task_id)
+        return binding.get("executor_name") if binding else None
+
+    def load_executor_binding_full(self, task_id: int) -> Optional[Dict[str, Any]]:
+        """Load full executor binding info for task continuity.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Binding dict with executor_name, sandbox_claim_name, etc. if found
+        """
         if self.redis_client is None:
             return None
 
@@ -495,11 +535,86 @@ class SandboxRepository(metaclass=SingletonMeta):
             binding_json = self.redis_client.get(binding_key)
 
             if binding_json:
-                binding = json.loads(binding_json)
-                return binding.get("executor_name")
+                return json.loads(binding_json)
             return None
         except Exception as e:
             logger.warning(f"[SandboxRepository] Failed to load executor binding: {e}")
+            return None
+
+    # =========================================================================
+    # E2B Sandbox ID Index Operations
+    # =========================================================================
+
+    def _save_e2b_index(self, e2b_sandbox_id: str, sandbox_id: str) -> bool:
+        """Save e2b_sandbox_id -> sandbox_id index for O(1) lookup.
+
+        Args:
+            e2b_sandbox_id: E2B format sandbox UUID
+            sandbox_id: Internal sandbox ID (task_id as string)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.redis_client is None:
+            return False
+
+        try:
+            index_key = f"{E2B_SANDBOX_ID_INDEX_PREFIX}{e2b_sandbox_id}"
+            self.redis_client.setex(
+                index_key, self._config.timeout.redis_ttl, sandbox_id
+            )
+            logger.debug(
+                f"[SandboxRepository] Saved e2b index: {e2b_sandbox_id} -> {sandbox_id}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[SandboxRepository] Failed to save e2b index: {e}")
+            return False
+
+    def _delete_e2b_index(self, e2b_sandbox_id: str) -> bool:
+        """Delete e2b_sandbox_id index.
+
+        Args:
+            e2b_sandbox_id: E2B format sandbox UUID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.redis_client is None:
+            return False
+
+        try:
+            index_key = f"{E2B_SANDBOX_ID_INDEX_PREFIX}{e2b_sandbox_id}"
+            self.redis_client.delete(index_key)
+            logger.debug(f"[SandboxRepository] Deleted e2b index: {e2b_sandbox_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[SandboxRepository] Failed to delete e2b index: {e}")
+            return False
+
+    def lookup_sandbox_id_by_e2b_id(self, e2b_sandbox_id: str) -> Optional[str]:
+        """Lookup sandbox_id by e2b_sandbox_id using index (O(1) lookup).
+
+        Args:
+            e2b_sandbox_id: E2B format sandbox UUID
+
+        Returns:
+            sandbox_id if found, None otherwise
+        """
+        if self.redis_client is None:
+            return None
+
+        try:
+            index_key = f"{E2B_SANDBOX_ID_INDEX_PREFIX}{e2b_sandbox_id}"
+            sandbox_id = self.redis_client.get(index_key)
+            if sandbox_id:
+                logger.debug(
+                    f"[SandboxRepository] E2B index lookup hit: {e2b_sandbox_id} -> {sandbox_id}"
+                )
+                return sandbox_id
+            return None
+        except Exception as e:
+            logger.error(f"[SandboxRepository] Failed to lookup e2b index: {e}")
             return None
 
 

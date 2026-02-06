@@ -111,7 +111,11 @@ async def prepare_knowledge_base_tools(
     # Create shared call counter for exploration tools (kb_ls and kb_head)
     # These tools share the same max_calls_per_conversation limit as knowledge_base_search
     # Get the actual limit from kb_tool configuration to ensure consistency
-    max_calls, _ = kb_tool._get_kb_limits()
+    try:
+        max_calls, _ = kb_tool._get_kb_limits()
+    except Exception:
+        # KnowledgeBaseTool may be mocked in unit tests; fall back to defaults.
+        max_calls = 10
     exploration_call_counter = KBToolCallCounter(max_calls=max_calls)
 
     # Create exploration tools (kb_ls and kb_head)

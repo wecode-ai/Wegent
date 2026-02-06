@@ -390,11 +390,11 @@ docker exec -it <executor-container-id> /bin/bash
 
 If you encounter issues:
 
-1. Check the [Troubleshooting](../../troubleshooting.md) section
+1. Check the [Troubleshooting](../troubleshooting.md) section
 2. Search [GitHub Issues](https://github.com/wecode-ai/wegent/issues)
 3. Read related documentation:
-   - [YAML Specification](../../reference/yaml-specification.md)
-   - [Core Concepts](../../concepts/core-concepts.md)
+   - [YAML Specification](../reference/yaml-specification.md)
+   - [Core Concepts](../concepts/core-concepts.md)
 4. Create a new Issue with detailed information
 
 ---

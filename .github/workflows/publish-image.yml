@@ -599,6 +599,48 @@ jobs:
           retention-days: 1
 
   # ============================================================================
+  # Executor Local Binary Build (Windows)
+  # Note: Windows 10 1809+ required for ConPTY support
+  # ============================================================================
+  build-executor-local-windows-amd64:
+    needs: prepare-release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build
+        working-directory: executor
+        shell: pwsh
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py
+
+      - name: Rename binary with platform suffix
+        shell: pwsh
+        run: |
+          Move-Item executor/dist/wegent-executor.exe executor/dist/wegent-executor-windows-amd64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-windows-amd64
+          path: executor/dist/wegent-executor-windows-amd64.exe
+          retention-days: 1
+
+  # ============================================================================
   # Create Multi-arch Manifests (combine amd64 + arm64 into single tag)
   # ============================================================================
   create-manifests:
@@ -673,6 +715,7 @@ jobs:
       - build-executor-local-macos-amd64
       - build-executor-local-linux-amd64
       - build-executor-local-linux-arm64
+      - build-executor-local-windows-amd64
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -749,4 +792,6 @@ jobs:
             ./executor-binaries/wegent-executor-macos-amd64
             ./executor-binaries/wegent-executor-linux-amd64
             ./executor-binaries/wegent-executor-linux-arm64
+            ./executor-binaries/wegent-executor-windows-amd64.exe
             ./executor/scripts/local_executor_install.sh
+            ./executor/scripts/local_executor_install.ps1

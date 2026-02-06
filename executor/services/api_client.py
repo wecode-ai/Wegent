@@ -37,6 +37,7 @@ from typing import List, Optional
 import requests
 
 from executor.config import config
+from executor.config.env_reader import get_task_api_domain
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,11 @@ def get_api_base_url() -> str:
     """
     if config.EXECUTOR_MODE == "local":
         return config.WEGENT_BACKEND_URL.rstrip("/")
-    return os.getenv("TASK_API_DOMAIN", "http://wegent-backend:8000").rstrip("/")
+
+    task_api_domain = get_task_api_domain()
+    if task_api_domain:
+        return task_api_domain.rstrip("/")
+    return "http://wegent-backend:8000"
 
 
 class ApiClient:
@@ -214,7 +219,8 @@ class SkillDownloader:
         downloader = SkillDownloader(
             auth_token="xxx",
             team_namespace="my-team",
-            skills_dir="~/.claude/skills"
+            skills_dir="~/.claude/skills",
+            task_id=123  # Optional: enables task-based authorization
         )
         result = downloader.download_and_deploy(["skill1", "skill2"])
     """
@@ -227,6 +233,7 @@ class SkillDownloader:
         auth_token: str,
         team_namespace: str = "default",
         skills_dir: Optional[str] = None,
+        task_id: Optional[int] = None,
     ):
         """Initialize skill downloader.
 
@@ -237,9 +244,13 @@ class SkillDownloader:
                         1. Explicit skills_dir parameter
                         2. SKILL_BASE_PATH environment variable + /skills
                         3. Default: ~/.claude/skills
+            task_id: Optional task ID for task-based authorization.
+                     When provided, enables downloading skills owned by the task owner
+                     (for shared team scenarios).
         """
         self.client = ApiClient(auth_token)
         self.team_namespace = team_namespace
+        self.task_id = task_id
 
         # Determine skills directory
         if skills_dir:
@@ -356,7 +367,10 @@ class SkillDownloader:
             logger.info(f"[SkillDownloader] Downloading skill: {skill_name}")
 
             # Query skill by name
+            # Include task_id for task-based authorization (enables shared team scenarios)
             query_path = f"/api/v1/kinds/skills?name={skill_name}&namespace={self.team_namespace}"
+            if self.task_id:
+                query_path += f"&task_id={self.task_id}"
             response = self.client.get(query_path, timeout=self.QUERY_TIMEOUT)
 
             if not response:
@@ -380,9 +394,12 @@ class SkillDownloader:
                 return False
 
             # Download skill ZIP
+            # Include task_id for task-based authorization (enables shared team scenarios)
             download_path = (
                 f"/api/v1/kinds/skills/{skill_id}/download?namespace={skill_namespace}"
             )
+            if self.task_id:
+                download_path += f"&task_id={self.task_id}"
             response = self.client.get(download_path, timeout=self.DOWNLOAD_TIMEOUT)
 
             if not response:

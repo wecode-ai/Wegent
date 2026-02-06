@@ -235,7 +235,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 get_user_mapping_config=lambda: _get_channel_user_mapping_config(
                     channel_id
                 ),
-                channel_id=channel_id,  # Pass channel_id for callback purposes
+                channel_id=channel_id,  # Pass channel_id for IM binding and callback purposes
             )
             self._client.register_callback_handler(
                 dingtalk_stream.chatbot.ChatbotMessage.TOPIC,

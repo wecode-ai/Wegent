@@ -362,7 +362,7 @@ When a task starts:
 ## 🔗 Related Resources
 
 ### Documentation
-- [YAML Specification - Skill](../../../../../reference/yaml-specification.md#-skill)
+- [YAML Specification - Skill](../../reference/yaml-specification.md#-skill)
 - [Agent Settings](./agent-settings.md) - Configure agents and bots with skills
 
 ### External Resources
