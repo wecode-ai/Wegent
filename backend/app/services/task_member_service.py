@@ -21,8 +21,8 @@ from app.models.resource_member import EPOCH_TIME, MemberStatus, ResourceMember
 from app.models.share_link import PermissionLevel, ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.task_member import MemberStatus as SchemaMemberStatus
 from app.schemas.task_member import (
-    MemberStatus as SchemaMemberStatus,
     TaskMemberListResponse,
     TaskMemberResponse,
 )
@@ -82,13 +82,22 @@ class TaskMemberService:
 
     def is_group_chat(self, db: Session, task_id: int) -> bool:
         """Check if a task is configured as a group chat"""
+        logger.info(f"[is_group_chat] Checking task_id={task_id}")
         task = self.get_task(db, task_id)
         if not task:
+            logger.warning(f"[is_group_chat] Task {task_id} not found")
             return False
 
         task_json = task.json if isinstance(task.json, dict) else {}
+        logger.info(
+            f"[is_group_chat] task_id={task_id}, task_json type={type(task.json)}, is_dict={isinstance(task.json, dict)}"
+        )
         spec = task_json.get("spec", {})
-        return spec.get("is_group_chat", False)
+        is_group_chat = spec.get("is_group_chat", False)
+        logger.info(
+            f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}, spec={spec}"
+        )
+        return is_group_chat
 
     def convert_to_group_chat(self, db: Session, task_id: int) -> bool:
         """Convert an existing task to a group chat"""
@@ -178,7 +187,11 @@ class TaskMemberService:
 
         for tm in task_members:
             user = self.get_user(db, tm.user_id)
-            inviter = self.get_user(db, tm.invited_by_user_id) if tm.invited_by_user_id > 0 else None
+            inviter = (
+                self.get_user(db, tm.invited_by_user_id)
+                if tm.invited_by_user_id > 0
+                else None
+            )
 
             if user:
                 member = TaskMemberResponse(
@@ -209,6 +222,10 @@ class TaskMemberService:
         invited_by: int,
     ) -> ResourceMember:
         """Add a user as a member to a task"""
+        logger.info(
+            f"[add_member] Adding member: task_id={task_id}, user_id={user_id}, invited_by={invited_by}"
+        )
+
         # Check if user already exists (even if rejected)
         existing = (
             db.query(ResourceMember)
@@ -221,22 +238,39 @@ class TaskMemberService:
         )
 
         if existing:
+            logger.info(
+                f"[add_member] Existing member found: id={existing.id}, status={existing.status}"
+            )
             if existing.status == MemberStatus.APPROVED:
+                logger.warning(
+                    f"[add_member] User {user_id} is already a member of task {task_id}"
+                )
                 raise HTTPException(status_code=400, detail="User is already a member")
             # Reactivate rejected/pending member
+            logger.info(
+                f"[add_member] Reactivating member: id={existing.id}, old_status={existing.status}"
+            )
             existing.status = MemberStatus.APPROVED
             existing.invited_by_user_id = invited_by
             existing.requested_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
-            existing.permission_level = PermissionLevel.MANAGE  # Group chat members get manage permission
+            existing.permission_level = (
+                PermissionLevel.MANAGE
+            )  # Group chat members get manage permission
             # Clear stale review metadata from previous rejection
             existing.reviewed_by_user_id = 0
             existing.reviewed_at = EPOCH_TIME
             db.commit()
             db.refresh(existing)
+            logger.info(
+                f"[add_member] Member reactivated successfully: id={existing.id}"
+            )
             return existing
 
         # Create new member
+        logger.info(
+            f"[add_member] Creating new member for task {task_id}, user {user_id}"
+        )
         new_member = ResourceMember(
             resource_type=ResourceType.TASK,
             resource_id=task_id,
@@ -252,6 +286,7 @@ class TaskMemberService:
         db.add(new_member)
         db.commit()
         db.refresh(new_member)
+        logger.info(f"[add_member] New member created successfully: id={new_member.id}")
         return new_member
 
     def remove_member(
