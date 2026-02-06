@@ -2,7 +2,7 @@
 sidebar_position: 4
 ---
 
-# ✨ Managing Skills
+# Managing Skills
 
 Skills are Claude Code capability extension packages that add specialized functionality to your Bots. This guide will teach you how to upload, manage, and use Skills in Wegent.
 
@@ -362,7 +362,7 @@ When a task starts:
 ## 🔗 Related Resources
 
 ### Documentation
-- [YAML Specification - Skill](../../../../../reference/yaml-specification.md#-skill)
+- [YAML Specification - Skill](../../reference/yaml-specification.md#-skill)
 - [Agent Settings](./agent-settings.md) - Configure agents and bots with skills
 
 ### External Resources

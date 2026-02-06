@@ -23,6 +23,17 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **docs/**: Detailed architecture, design documents, and comprehensive guides
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
 
+**📚 Documentation Writing Rules:**
+- All documentation files MUST include frontmatter with `sidebar_position` for ordering:
+  ```markdown
+  ---
+  sidebar_position: 1
+  ---
+  ```
+- Document titles should NOT repeat the sidebar category name (e.g., use "概述" instead of "AI 编码" when under AI Coding category)
+- Write Chinese docs first (`docs/zh/`), then create English versions (`docs/en/`)
+- Use consistent heading hierarchy: `#` for title, `##` for sections, `###` for subsections
+
 **📚 Detailed Documentation:** See `docs/en/` or `docs/zh/` for comprehensive guides on setup, testing, architecture, and user guides.
 
 ---
@@ -308,6 +319,31 @@ Task (Team + Workspace) → Subtasks
 | **Task** | Execution unit | `teamRef`, `workspaceRef` |
 | **Workspace** | Git repository | `repository{}` |
 | **Skill** | On-demand capabilities | `description`, `prompt`, `tools`, `provider` |
+
+### Kind Resource Identification
+
+⚠️ **CRITICAL: A Kind resource is uniquely identified by THREE fields: `namespace`, `name`, and `user_id`.**
+
+```python
+# ✅ CORRECT - Use all three fields to locate a Kind
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name,
+    Kind.user_id == user_id
+).first()
+
+# ❌ WRONG - Missing user_id, may return wrong resource
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name
+).first()
+```
+
+**Key Points:**
+- `namespace`: Logical grouping (e.g., "default", "system")
+- `name`: Resource name within the namespace
+- `user_id`: Owner of the resource (enables multi-tenancy)
+- The combination of all three fields forms the unique constraint
 
 ### Database Table Mapping
 

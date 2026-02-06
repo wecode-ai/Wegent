@@ -874,20 +874,78 @@ async def _stream_with_http_adapter(
     )
 
     # Build task_data for MCP variable substitution
-    # This must be built before _append_mcp_servers to support ${{user.name}} etc.
+    # This must be built before _append_mcp_servers to support ${{...}} placeholders.
+    backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+    task_token = ""
+    try:
+        from app.mcp_server.auth import create_task_token
+
+        task_token = create_task_token(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            user_id=stream_data.user_id,
+            user_name=str(stream_data.user_name or ""),
+            expires_delta_minutes=1440,  # 24 hours
+        )
+    except Exception as e:
+        logger.warning("[HTTP_ADAPTER] Failed to create task token for MCP: %s", e)
+
     task_data = {
         "user": {
             "name": str(stream_data.user_name or ""),
             "id": stream_data.user_id,
         },
         "task_id": task_id,
+        "subtask_id": subtask_id,
         "team_id": stream_data.team_id,
+        "backend_url": backend_url,
+        "task_token": task_token,
     }
 
     # Parse MCP servers with separate span (includes variable substitution)
     mcp_servers = _append_mcp_servers(
         ws_config.bot_name, ws_config.bot_namespace, task_data
     )
+
+    # Inject system MCP for subscription tasks (provides silent_exit tool)
+    if is_subscription:
+        try:
+            from app.mcp_server.server import get_mcp_system_config
+
+            # Use the task token created above; fallback to creating one if needed.
+            if not task_token:
+                from app.mcp_server.auth import create_task_token
+
+                task_token = create_task_token(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    user_id=stream_data.user_id,
+                    user_name=str(stream_data.user_name or ""),
+                    expires_delta_minutes=1440,  # 24 hours
+                )
+            system_mcp_config = get_mcp_system_config(backend_url, task_token)
+
+            # Convert system MCP config to list format expected by chat_shell
+            for name, config in system_mcp_config.items():
+                mcp_servers.append(
+                    {
+                        "name": name,
+                        "type": config.get("type", "streamable-http"),
+                        "url": config.get("url", ""),
+                        "auth": config.get("headers", {}),
+                    }
+                )
+            logger.info(
+                "[HTTP_ADAPTER] Injected system MCP for subscription task: task_id=%d, subtask_id=%d, mcp_servers=%s",
+                task_id,
+                subtask_id,
+                [s["name"] for s in mcp_servers],
+            )
+        except Exception as e:
+            logger.warning(
+                "[HTTP_ADAPTER] Failed to inject system MCP for subscription task: %s",
+                e,
+            )
 
     # Append skills with separate span
     _append_skills(skill_names, skill_configs)
@@ -1457,6 +1515,7 @@ async def _stream_deep_research(
     dr_model_config = {
         "api_key": model_config.get("api_key", ""),
         "base_url": gemini_base_url,
+        "default_headers": model_config.get("default_headers", {}),
     }
 
     async def fetch_thought_summaries(
@@ -2068,11 +2127,32 @@ async def _stream_with_bridge(
             # Load MCP tools if enabled
             if settings.CHAT_MCP_ENABLED:
                 logger.info("[BRIDGE] Loading MCP tools for task %d", task_id)
+                backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+                task_token = ""
+                try:
+                    from app.mcp_server.auth import create_task_token
+
+                    task_token = create_task_token(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        user_id=ws_config.user_id,
+                        user_name=str(ws_config.user_name or ""),
+                        expires_delta_minutes=1440,  # 24 hours
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[BRIDGE] Failed to create task token for MCP: %s",
+                        e,
+                    )
                 mcp_task_data = {
                     "user": {
                         "name": str(ws_config.user_name or ""),
                         "id": ws_config.user_id,
                     },
+                    "task_id": task_id,
+                    "subtask_id": subtask_id,
+                    "backend_url": backend_url,
+                    "task_token": task_token,
                 }
                 # Note: Table context is now handled via DataTableTool,
                 # no need to pass table_mcp_config here

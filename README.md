@@ -17,7 +17,7 @@ English | [简体中文](README_zh.md)
 
 
 
-[Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/developer-guide/setup.md)
+[Quick Start](#-quick-start) · [Documentation](https://wecode-ai.github.io/wegent-docs/) · [Development Guide](https://wecode-ai.github.io/wegent-docs/docs/category/developer-guide)
 
 </div>
 
@@ -136,7 +136,7 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
 - **Ghost** (prompt) + **Shell** (environment) + **Model** = **Bot**
 - Multiple **Bots** + **Collaboration Mode** = **Team**
 
-> See [Core Concepts](docs/en/concepts/core-concepts.md) | [YAML Spec](docs/en/reference/yaml-specification.md)
+> See [Core Concepts](https://wecode-ai.github.io/wegent-docs/en/concepts/core-concepts) | [YAML Spec](https://wecode-ai.github.io/wegent-docs/en/reference/yaml-specification)
 
 ---
 

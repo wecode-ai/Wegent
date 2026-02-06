@@ -390,11 +390,11 @@ docker exec -it <executor-container-id> /bin/bash
 
 如果遇到问题:
 
-1. 查看 [故障排查](../../troubleshooting.md) 部分
+1. 查看 [故障排查](../troubleshooting.md) 部分
 2. 搜索 [GitHub Issues](https://github.com/wecode-ai/wegent/issues)
 3. 阅读相关文档:
-   - [YAML 规范](../../reference/yaml-specification.md)
-   - [核心概念](../../concepts/core-concepts.md)
+   - [YAML 规范](../reference/yaml-specification.md)
+   - [核心概念](../concepts/core-concepts.md)
 4. 创建新的 Issue 并提供详细信息
 
 ---

@@ -29,6 +29,7 @@ async def prepare_knowledge_base_tools(
     model_id: Optional[str] = None,
     context_window: Optional[int] = None,
     skip_prompt_enhancement: bool = False,
+    user_name: Optional[str] = None,
 ) -> tuple[list, str]:
     """
     Prepare knowledge base tools and enhanced system prompt.
@@ -54,6 +55,7 @@ async def prepare_knowledge_base_tools(
             Used by KnowledgeBaseTool for injection strategy decisions.
         skip_prompt_enhancement: If True, skip adding KB prompt instructions to system prompt.
             Used in HTTP mode when Backend has already added KB prompts to avoid duplication.
+        user_name: Optional user name for embedding API custom headers (placeholder replacement).
 
     Returns:
         Tuple of (extra_tools list, enhanced_system_prompt string)
@@ -98,6 +100,7 @@ async def prepare_knowledge_base_tools(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
         user_id=user_id,
+        user_name=user_name,
         db_session=db,
         user_subtask_id=user_subtask_id,
         model_id=model_id or KnowledgeBaseTool.model_id,
@@ -108,7 +111,11 @@ async def prepare_knowledge_base_tools(
     # Create shared call counter for exploration tools (kb_ls and kb_head)
     # These tools share the same max_calls_per_conversation limit as knowledge_base_search
     # Get the actual limit from kb_tool configuration to ensure consistency
-    max_calls, _ = kb_tool._get_kb_limits()
+    try:
+        max_calls, _ = kb_tool._get_kb_limits()
+    except Exception:
+        # KnowledgeBaseTool may be mocked in unit tests; fall back to defaults.
+        max_calls = 10
     exploration_call_counter = KBToolCallCounter(max_calls=max_calls)
 
     # Create exploration tools (kb_ls and kb_head)

@@ -41,7 +41,8 @@
     "view": "View",
     "copy": "Copy",
     "copied": "Copied",
-    "loadMore": "Load More"
+    "loadMore": "Load More",
+    "configure": "Configure"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"

@@ -1,0 +1,8 @@
+{
+  "label": "Feed",
+  "position": 3,
+  "link": {
+    "type": "doc",
+    "id": "user-guide/feed/README"
+  }
+}

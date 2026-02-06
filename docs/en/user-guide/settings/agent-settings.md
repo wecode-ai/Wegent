@@ -2,7 +2,7 @@
 sidebar_position: 1
 ---
 
-# 🤖 Agent Settings Guide
+# Agent Settings Guide
 
 This guide covers everything you need to configure AI agents in Wegent through the Web interface. An Agent combines Bots, collaboration modes, and AI models to accomplish tasks.
 
@@ -436,7 +436,7 @@ Enable for development agents, disable for chat agents.
 ## 🔗 Related Resources
 
 - [Model Configuration](./configuring-models.md) - Set up AI models
-- [Managing Tasks](./managing-tasks.md) - Use agents to execute tasks
+- [Managing Tasks](../chat/managing-tasks.md) - Use agents to execute tasks
 - [Shell Configuration](./configuring-shells.md) - Custom executors
 - [Skill Management](./managing-skills.md) - Claude Code skills
 

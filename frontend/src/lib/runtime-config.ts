@@ -92,7 +92,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
         feedbackUrl:
           process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
-        docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+        docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://wecode-ai.github.io/wegent-docs',
         otelEnabled: process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true',
         otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
         otelCollectorEndpoint:
@@ -129,7 +129,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
     feedbackUrl:
       process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
-    docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+    docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://wecode-ai.github.io/wegent-docs',
     otelEnabled: process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true',
     otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
     otelCollectorEndpoint:

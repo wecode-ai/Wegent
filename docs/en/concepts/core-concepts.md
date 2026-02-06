@@ -2,7 +2,7 @@
 sidebar_position: 1
 ---
 
-# 🧠 Core Concepts
+# Core Concepts
 
 This document introduces the core concepts of the Wegent platform to help you understand each component and their relationships.
 

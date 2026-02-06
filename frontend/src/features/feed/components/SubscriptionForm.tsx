@@ -8,7 +8,7 @@
  * Subscription creation/edit form component.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff } from 'lucide-react'
+import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff, Database } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,8 +44,11 @@ import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import type {
+  NotificationChannelInfo,
+  NotificationLevel,
   Subscription,
   SubscriptionCreateRequest,
+  SubscriptionKnowledgeBaseRef,
   SubscriptionTaskType,
   SubscriptionTriggerType,
   SubscriptionUpdateRequest,
@@ -53,6 +56,7 @@ import type {
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
+import { KnowledgeBaseSelector } from './KnowledgeBaseSelector'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
@@ -291,6 +295,9 @@ export function SubscriptionForm({
     initialData?.visibility || 'private'
   ) // Visibility setting
 
+  // Knowledge base selection state
+  const [knowledgeBaseRefs, setKnowledgeBaseRefs] = useState<SubscriptionKnowledgeBaseRef[]>([])
+
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
   const [models, setModels] = useState<SubscriptionModel[]>([])
@@ -309,6 +316,35 @@ export function SubscriptionForm({
 
   // Submit state
   const [submitting, setSubmitting] = useState(false)
+
+  // Developer notification settings state (inline form)
+  const [devNotificationLevel, setDevNotificationLevel] = useState<NotificationLevel>('notify')
+  const [devNotificationChannels, setDevNotificationChannels] = useState<number[]>([])
+  const [devAvailableChannels, setDevAvailableChannels] = useState<NotificationChannelInfo[]>([])
+  const [devSettingsLoading, setDevSettingsLoading] = useState(false)
+
+  // Load developer notification settings when editing
+  useEffect(() => {
+    const loadDeveloperSettings = async () => {
+      if (!isEditing || !subscription || isRental) return
+
+      setDevSettingsLoading(true)
+      try {
+        const response = await subscriptionApis.getDeveloperNotificationSettings(subscription.id)
+        setDevNotificationLevel(response.notification_level)
+        setDevNotificationChannels(response.notification_channel_ids || [])
+        setDevAvailableChannels(response.available_channels || [])
+      } catch (error) {
+        console.error('Failed to load developer notification settings:', error)
+      } finally {
+        setDevSettingsLoading(false)
+      }
+    }
+
+    if (open) {
+      loadDeveloperSettings()
+    }
+  }, [isEditing, subscription, isRental, open])
 
   // Load teams - only show teams with chat or code mode (exclude knowledge-only teams)
   useEffect(() => {
@@ -460,6 +496,7 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
+      setKnowledgeBaseRefs(subscription.knowledge_base_refs || [])
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
       setSelectedBranch(
@@ -499,6 +536,7 @@ export function SubscriptionForm({
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
+      setKnowledgeBaseRefs([])
     }
   }, [subscription, open, initialData])
 
@@ -590,8 +628,24 @@ export function SubscriptionForm({
           // Include model selection - always override bot model when specified
           model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
           force_override_bot_model: !!selectedModel, // Always override when model is selected
+          // Include knowledge base references
+          knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
         }
         await subscriptionApis.updateSubscription(subscription.id, updateData)
+
+        // Update developer notification settings if not rental
+        if (!isRental) {
+          try {
+            await subscriptionApis.updateDeveloperNotificationSettings(subscription.id, {
+              notification_level: devNotificationLevel,
+              notification_channel_ids: devNotificationChannels,
+            })
+          } catch (error) {
+            console.error('Failed to update developer notification settings:', error)
+            // Don't block the main update if this fails
+          }
+        }
+
         toast.success(t('update_success'))
       } else {
         // Generate name from display name
@@ -626,6 +680,8 @@ export function SubscriptionForm({
           // Include model selection - always override bot model when specified
           model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
           force_override_bot_model: !!selectedModel, // Always override when model is selected
+          // Include knowledge base references
+          knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
         }
         await subscriptionApis.createSubscription(createData)
         toast.success(t('create_success'))
@@ -655,6 +711,7 @@ export function SubscriptionForm({
     selectedRepo,
     selectedBranch,
     selectedModel,
+    knowledgeBaseRefs,
     isEditing,
     isRental,
     subscription,
@@ -662,6 +719,8 @@ export function SubscriptionForm({
     onOpenChange,
     t,
     teams,
+    devNotificationLevel,
+    devNotificationChannels,
   ])
 
   // Filter models based on search
@@ -1082,6 +1141,25 @@ export function SubscriptionForm({
                 </div>
               </div>
 
+              {/* Knowledge Base Selection */}
+              <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium text-text-secondary">
+                    {t('knowledge_base_settings')}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{t('knowledge_bases')}</Label>
+                  <KnowledgeBaseSelector
+                    selectedKnowledgeBases={knowledgeBaseRefs}
+                    onChange={setKnowledgeBaseRefs}
+                    disabled={isRental}
+                  />
+                  <p className="text-xs text-text-muted">{t('knowledge_base_hint')}</p>
+                </div>
+              </div>
+
               {/* Preserve History */}
               <div className="flex items-center justify-between pt-2">
                 <div className="space-y-0.5">
@@ -1137,6 +1215,95 @@ export function SubscriptionForm({
                 <Label className="text-sm font-medium">{t('enable_subscription')}</Label>
                 <Switch checked={enabled} onCheckedChange={setEnabled} />
               </div>
+
+              {/* Developer Notification Settings - Only show when editing and not rental */}
+              {isEditing && !isRental && (
+                <div className="space-y-3 pt-4 border-t border-border/50">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">
+                      {t('developer_notification_settings.title')}
+                    </Label>
+                    <p className="text-xs text-text-muted">
+                      {t('developer_notification_settings.description', {
+                        name: subscription?.display_name || displayName,
+                      })}
+                    </p>
+                  </div>
+
+                  {/* Notification Level Selection */}
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      {(['silent', 'default', 'notify'] as NotificationLevel[]).map(level => (
+                        <Button
+                          key={level}
+                          type="button"
+                          variant={devNotificationLevel === level ? 'primary' : 'outline'}
+                          size="sm"
+                          className="flex-1 h-9"
+                          onClick={() => setDevNotificationLevel(level)}
+                          disabled={devSettingsLoading}
+                        >
+                          {t(`notification_level.${level}`)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Notification Channels - Only show when level is 'notify' */}
+                  {devNotificationLevel === 'notify' && (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-text-muted">
+                        {t('developer_notification_settings.channels')}
+                      </Label>
+                      {devAvailableChannels.length > 0 ? (
+                        <>
+                          <div className="flex flex-wrap gap-2">
+                            {devAvailableChannels.map(channel => (
+                              <Button
+                                key={channel.id}
+                                type="button"
+                                variant={
+                                  devNotificationChannels.includes(channel.id)
+                                    ? 'primary'
+                                    : 'outline'
+                                }
+                                size="sm"
+                                className="h-8"
+                                onClick={() => {
+                                  setDevNotificationChannels(prev =>
+                                    prev.includes(channel.id)
+                                      ? prev.filter(id => id !== channel.id)
+                                      : [...prev, channel.id]
+                                  )
+                                }}
+                                disabled={devSettingsLoading}
+                              >
+                                {channel.name}
+                                {!channel.is_bound && (
+                                  <span className="ml-1 text-xs opacity-60">
+                                    ({t('common:actions.configure')})
+                                  </span>
+                                )}
+                              </Button>
+                            ))}
+                          </div>
+                          <p className="text-xs text-text-muted">
+                            {t('developer_notification_settings.channels_hint')}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-text-muted">
+                          {t('developer_notification_settings.no_channels_hint')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {devSettingsLoading && (
+                    <p className="text-xs text-text-muted">{t('common:loading')}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Right Column - Trigger & Execution */}

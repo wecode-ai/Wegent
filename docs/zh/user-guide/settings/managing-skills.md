@@ -2,7 +2,7 @@
 sidebar_position: 4
 ---
 
-# ✨ 管理 Skills
+# 管理 Skills
 
 Skills 是 Claude Code 的能力扩展包,可以为您的 Bot 添加专门的功能。本指南将教您如何上传、管理和使用 Wegent 中的 Skills。
 
@@ -362,7 +362,7 @@ spec:
 ## 🔗 相关资源
 
 ### 文档
-- [YAML 规范 - Skill](../../../../../../reference/yaml-specification.md#-skill)
+- [YAML 规范 - Skill](../../reference/yaml-specification.md#-skill)
 - [智能体设置](./agent-settings.md) - 配置智能体和机器人
 
 ### 外部资源
