@@ -23,8 +23,6 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from executor.mcp_servers.wegent import start_wegent_mcp_server
-from executor.mcp_servers.wegent.server import stop_wegent_mcp_server
 from executor.services.agent_service import AgentService
 from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
 from executor.tasks import process, run_task
@@ -39,7 +37,7 @@ from shared.telemetry.core import is_telemetry_enabled
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
 
-# Flag to track if skills have been initialized (for warm pool mode)
+# Flag to track if skills have been initialized
 _skills_initialized = False
 
 
@@ -97,18 +95,6 @@ async def lifespan(app: FastAPI):
             logger.debug("Restored trace context from environment")
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
-    # Start Wegent MCP server for internal tools (silent_exit, etc.)
-    # Must be started before run_task() so that agents can connect to it
-    wegent_mcp_url = None
-    try:
-        import asyncio
-
-        wegent_mcp_url = start_wegent_mcp_server(background=True)
-        logger.info(f"Wegent MCP server started at {wegent_mcp_url}")
-        # Wait a short time for the server to be fully ready
-        await asyncio.sleep(0.5)
-    except Exception as e:
-        logger.warning(f"Failed to start Wegent MCP server: {e}")
 
     try:
         if os.getenv("TASK_INFO"):
@@ -158,13 +144,6 @@ async def lifespan(app: FastAPI):
 
     yield  # Application runs here
 
-    # Stop Wegent MCP server
-    try:
-        stop_wegent_mcp_server()
-        logger.info("Wegent MCP server stopped")
-    except Exception as e:
-        logger.warning(f"Error stopping Wegent MCP server: {e}")
-
     # Stop heartbeat service
     try:
         stop_heartbeat()
@@ -211,6 +190,9 @@ def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
     downloader = SkillDownloader(
         auth_token=auth_token,
         team_namespace=skills_info.team_namespace,
+        task_id=(
+            int(task_id) if task_id else None
+        ),  # Enable task-based authorization for shared teams
     )
     result = downloader.download_and_deploy(all_skills)
     logger.info(
@@ -288,7 +270,7 @@ def _predownload_task_attachments(auth_token: str, task_id: str) -> None:
 
 
 async def _maybe_initialize_skills_from_env() -> None:
-    """Initialize skills on first HTTP request (for warm pool sandbox mode).
+    """Initialize skills on first HTTP request (for preload sandbox mode).
 
     This function is called by HTTP middleware when the first request arrives.
     It reads auth_token and task_id from environment variables or Downward API files,
@@ -302,12 +284,12 @@ async def _maybe_initialize_skills_from_env() -> None:
     if _skills_initialized:
         return
 
-    # Check if this is a sandbox (warm pool mode) by checking environment
+    # Check if sandbox preload mode is enabled via environment variable
     import os
 
-    warm_pool_mode = os.getenv("WARM_POOL_MODE", "").lower() == "true"
-    if not warm_pool_mode:
-        _skills_initialized = True  # Not warm pool mode, skip
+    preload_mode = os.getenv("PRELOAD_MODE", "").lower() == "true"
+    if not preload_mode:
+        _skills_initialized = True  # Preload mode not enabled, skip
         return
 
     # Read auth_token and task_id from env vars or Downward API files
@@ -317,24 +299,26 @@ async def _maybe_initialize_skills_from_env() -> None:
     task_id = get_task_id()
 
     if not auth_token or not task_id:
-        logger.debug("[WarmPool] No auth_token or task_id available yet, skipping skills init")
+        logger.debug(
+            "[PreloadMode] No auth_token or task_id available yet, skipping skills init"
+        )
         return
 
     try:
         logger.info(
-            f"[WarmPool] First request received, initializing skills for task {task_id}..."
+            f"[PreloadMode] First request received, initializing skills for task {task_id}..."
         )
         _initialize_sandbox_claude(auth_token, str(task_id))
-        logger.info("[WarmPool] Skills initialization completed")
+        logger.info("[PreloadMode] Skills initialization completed")
 
         # Also pre-download attachments for the task
-        logger.info(f"[WarmPool] Pre-downloading attachments for task {task_id}...")
+        logger.info(f"[PreloadMode] Pre-downloading attachments for task {task_id}...")
         _predownload_task_attachments(auth_token, str(task_id))
-        logger.info("[WarmPool] Attachments pre-download completed")
+        logger.info("[PreloadMode] Attachments pre-download completed")
 
         _skills_initialized = True
     except Exception as e:
-        logger.warning(f"[WarmPool] Failed to initialize skills or attachments: {e}")
+        logger.warning(f"[PreloadMode] Failed to initialize skills or attachments: {e}")
         # Don't fail the request, just log the warning
         _skills_initialized = True  # Mark as initialized to avoid retrying
 
@@ -369,7 +353,6 @@ async def log_requests(request: Request, call_next):
     from opentelemetry import context
     from starlette.responses import StreamingResponse
 
-    # Initialize skills on first request (warm pool sandbox mode)
     await _maybe_initialize_skills_from_env()
 
     # Skip logging for health check requests

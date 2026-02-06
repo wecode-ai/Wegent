@@ -269,7 +269,11 @@ class TaskOperationsMixin:
             "spec": {
                 "title": title,
                 "prompt": obj_in.prompt,
-                "teamRef": {"name": team.name, "namespace": team.namespace},
+                "teamRef": {
+                    "name": team.name,
+                    "namespace": team.namespace,
+                    "user_id": team.user_id,
+                },
                 "workspaceRef": {"name": workspace_name, "namespace": "default"},
             },
             "status": {

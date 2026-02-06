@@ -19,7 +19,7 @@ Your first steps with Wegent:
 
 Deep dive into Wegent's design:
 
-- [Architecture Overview](./concepts/architecture.md) - Wegent's overall architecture and tech stack
+- [Architecture Overview](./developer-guide/architecture.md) - Wegent's overall architecture and tech stack
 - [Core Concepts](./concepts/core-concepts.md) - Detailed explanation of Ghost, Bot, Team, Workspace, and more
 - [Collaboration Models](./concepts/collaboration-models.md) - Four collaboration patterns: Pipeline, Route, Coordinate, and Collaborate
 
@@ -29,23 +29,23 @@ Deep dive into Wegent's design:
 
 Guides for Wegent platform users:
 
-- [Agent Settings](./guides/user/agent-settings.md) - Configure agents, bots, prompts, and collaboration modes
-- [Managing Tasks](./guides/user/managing-tasks.md) - Create and manage work tasks
-- [Configuring Models](./guides/user/configuring-models.md) - Set up AI models (LLM, Embedding, Rerank)
-- [Configuring Shells](./guides/user/configuring-shells.md) - Configure execution environments
-- [Managing Skills](./guides/user/managing-skills.md) - Upload and use Claude Code Skills
-- [Spec Clarification Mode](./guides/user/spec-clarification-guide.md) - Interactive requirement specification clarification guide
-- [Knowledge Base Guide](./guides/user/knowledge-base-guide.md) - RAG-based knowledge base system usage
-- [IM Channel Integration](./guides/user/im-channel-integration.md) - Integrate DingTalk and other IM channels
-- [Local Device Support](./guides/user/local-device-support.md) - Use personal computers as task executors
+- [Agent Settings](./user-guide/settings/agent-settings.md) - Configure agents, bots, prompts, and collaboration modes
+- [Managing Tasks](./user-guide/chat/managing-tasks.md) - Create and manage work tasks
+- [Configuring Models](./user-guide/settings/configuring-models.md) - Set up AI models (LLM, Embedding, Rerank)
+- [Configuring Shells](./user-guide/settings/configuring-shells.md) - Configure execution environments
+- [Managing Skills](./user-guide/settings/managing-skills.md) - Upload and use Claude Code Skills
+- [Spec Clarification Mode](./user-guide/chat/clarification-mode-guide.md) - Interactive requirement specification clarification guide
+- [Knowledge Base Guide](./user-guide/knowledge/knowledge-base-guide.md) - RAG-based knowledge base system usage
+- [IM Channel Integration](./user-guide/integrations/im-channel-integration.md) - Integrate DingTalk and other IM channels
+- [Local Device Support](./user-guide/ai-devices/local-device-support.md) - Use personal computers as task executors
 
 #### 💻 Developer Guides
 
 Technical documentation for Wegent developers:
 
-- [Development Setup](./guides/developer/setup.md) - Local development environment configuration
-- [Testing](./guides/developer/testing.md) - Unit and integration testing
-- [Database Migrations](./guides/developer/database-migrations.md) - Alembic database migration management
+- [Development Setup](./developer-guide/setup.md) - Local development environment configuration
+- [Testing](./developer-guide/testing.md) - Unit and integration testing
+- [Database Migrations](./developer-guide/database-migrations.md) - Alembic database migration management
 
 ### 📋 Reference
 

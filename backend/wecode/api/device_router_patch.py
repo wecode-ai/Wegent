@@ -7,7 +7,7 @@ Monkey-patch app.services.device_router to replace ${WECODE_USER_API_KEY}
 placeholder with real API keys from external service.
 
 This patch ensures that device task dispatch has the same API key replacement
-behavior as executor_manager task dispatch (via executors_endpoint_patch.py).
+behavior as executor_manager task dispatch (via dispatch_tasks_patch.py).
 
 Auto-applied on import.
 """
@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict
 
 try:
     from app.services import device_router as device_router_module
-    from wecode.api.executors_endpoint_patch import (
+    from wecode.service.dispatch_tasks_patch import (
         _get_or_create_apikey,
         _replace_api_key_in_config,
     )
@@ -36,7 +36,7 @@ async def _process_task_data_api_key(
     """
     Process task data to replace ${WECODE_USER_API_KEY} placeholder with real API key.
 
-    This function mirrors the logic in executors_endpoint_patch._process_dispatch_response
+    This function mirrors the logic in dispatch_tasks_patch._process_dispatch_response
     but operates on a single task_data dict instead of the full response.
 
     Args:
@@ -111,13 +111,14 @@ def _wrap_route_task_to_device(original_func: Callable) -> Callable:
         auth_token="",
         user_subtask=None,
     ):
-        from fastapi import HTTPException
         from datetime import datetime
 
+        from fastapi import HTTPException
+
+        from app.core.socketio import get_sio
         from app.models.subtask import Subtask, SubtaskStatus
         from app.services.adapters.executor_kinds import executor_kinds_service
         from app.services.device_service import device_service
-        from app.core.socketio import get_sio
 
         # Verify device is online
         device_info = await device_service.get_device_online_info(user_id, device_id)

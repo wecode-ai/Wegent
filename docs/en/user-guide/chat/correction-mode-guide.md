@@ -2,16 +2,16 @@
 sidebar_position: 7
 ---
 
-# Correction Mode
+# AI Cross-Validation
 
-Correction Mode is a quality assurance feature in Wegent that uses another AI model to evaluate and correct agent responses, ensuring accuracy, logic, and completeness.
+AI Cross-Validation is a quality assurance feature in Wegent that uses another AI model to evaluate and correct agent responses, ensuring accuracy, logic, and completeness.
 
 ---
 
 ## 📋 Table of Contents
 
-- [What is Correction Mode](#-what-is-correction-mode)
-- [Enabling Correction Mode](#-enabling-correction-mode)
+- [What is AI Cross-Validation](#-what-is-ai-cross-validation)
+- [Enabling AI Cross-Validation](#-enabling-ai-cross-validation)
 - [Understanding Evaluation Results](#-understanding-evaluation-results)
 - [Applying Corrections](#-applying-corrections)
 - [Use Cases](#-use-cases)
@@ -20,13 +20,13 @@ Correction Mode is a quality assurance feature in Wegent that uses another AI mo
 
 ---
 
-## ✅ What is Correction Mode
+## ✅ What is AI Cross-Validation
 
-Correction Mode is a dual-verification mechanism. When enabled, the system uses another AI model you select to evaluate the agent's response, checking accuracy, logic, and completeness, and providing improvement suggestions when issues are found.
+AI Cross-Validation is a dual-verification mechanism. When enabled, the system uses another AI model you select to evaluate the agent's response, checking accuracy, logic, and completeness, and providing improvement suggestions when issues are found.
 
 **Workflow**:
 ```
-Agent response → Correction model evaluates → Generates scores and suggestions → Provides improved version → User chooses whether to apply
+Agent response → Validation model evaluates → Generates scores and suggestions → Provides improved version → User chooses whether to apply
 ```
 
 ### Core Benefits
@@ -40,27 +40,27 @@ Agent response → Correction model evaluates → Generates scores and suggestio
 
 ---
 
-## 🚀 Enabling Correction Mode
+## 🚀 Enabling AI Cross-Validation
 
-### Step 1: Click the Correction Button
+### Step 1: Click the Cross-Validation Button
 
-1. Find the **correction icon** (✓ checkmark circle) in the chat input area
+1. Find the **cross-validation icon** (✓ checkmark circle) in the chat input area
 2. Click the icon to open the model selection dialog
 
-### Step 2: Select Correction Model
+### Step 2: Select Validation Model
 
 In the popup dialog:
 
 1. **Search Models**: Use the search box to filter models
 2. **Browse List**: View available models
-3. **Select Model**: Click to select the model for correction
-4. **Confirm Selection**: Correction mode is automatically enabled after selection
+3. **Select Model**: Click to select the model for cross-validation
+4. **Confirm Selection**: AI cross-validation is automatically enabled after selection
 
 ### Step 3: Confirm Enabled Status
 
-- Correction icon highlights when enabled
-- Hover to see the current correction model name
-- Click again to disable correction mode
+- Cross-validation icon highlights when enabled
+- Hover to see the current validation model name
+- Click again to disable AI cross-validation
 
 ### Model Types
 
@@ -71,7 +71,7 @@ In the popup dialog:
 
 ### State Persistence
 
-- Correction mode settings are saved to local storage
+- AI cross-validation settings are saved to local storage
 - Settings are automatically restored when switching tasks
 - New tasks inherit previous settings
 
@@ -79,11 +79,11 @@ In the popup dialog:
 
 ## 📊 Understanding Evaluation Results
 
-After the agent responds, the correction model generates evaluation results displayed in a panel below the response.
+After the agent responds, the validation model generates evaluation results displayed in a panel below the response.
 
 ### Scoring Metrics
 
-The correction model evaluates responses across three dimensions:
+The validation model evaluates responses across three dimensions:
 
 | Metric | Description | Score Range |
 |--------|-------------|-------------|
@@ -110,7 +110,7 @@ If issues are found, specific problems and suggestions are displayed:
 
 ### Improved Version
 
-The correction model generates an improved version of the response:
+The validation model generates an improved version of the response:
 
 - Displayed in the main area of the evaluation panel
 - Issues found have been corrected
@@ -152,8 +152,8 @@ If you approve the improved version:
 If re-evaluation is needed:
 
 1. Expand evaluation details
-2. Click the **"Re-evaluate"** button at the bottom
-3. Correction model will re-analyze the response
+2. Click the **"Re-validate"** button at the bottom
+3. Validation model will re-analyze the response
 
 ---
 
@@ -163,7 +163,7 @@ If re-evaluation is needed:
 
 When responses involve factual information:
 
-- Correction model verifies accuracy of facts
+- Validation model verifies accuracy of facts
 - Identifies possible errors or outdated information
 - Provides more accurate information version
 
@@ -195,14 +195,14 @@ When responses are used for important decisions:
 
 ## ✨ Best Practices
 
-### 1. Choosing the Right Correction Model
+### 1. Choosing the Right Validation Model
 
 **Recommended Strategies**:
 - Choose a different model from the main model for different perspectives
 - For specialized domains, choose models that perform well in that area
 - Consider model speed and cost
 
-### 2. When to Enable Correction Mode
+### 2. When to Enable AI Cross-Validation
 
 **Recommended to Enable**:
 - Responses involving factual information
@@ -224,23 +224,23 @@ When responses are used for important decisions:
 
 ### 4. Combining with Other Features
 
-- **With Clarification Mode**: First clarify requirements, then verify with correction
+- **With Smart Follow-up Mode**: First clarify requirements, then verify with cross-validation
 - **With Knowledge Bases**: Responses based on knowledge bases are easier to verify
-- **Iterative Optimization**: Optimize subsequent questions based on correction feedback
+- **Iterative Optimization**: Optimize subsequent questions based on validation feedback
 
 ---
 
 ## ⚠️ Common Issues
 
-### Q1: Does correction mode increase response time?
+### Q1: Does AI cross-validation increase response time?
 
-**Answer**: Yes, correction requires additional model calls, adding some wait time. However, for scenarios requiring high-quality responses, this wait is worthwhile.
+**Answer**: Yes, cross-validation requires additional model calls, adding some wait time. However, for scenarios requiring high-quality responses, this wait is worthwhile.
 
-### Q2: Is the correction model's evaluation always accurate?
+### Q2: Is the validation model's evaluation always accurate?
 
-**Answer**: The correction model's evaluation is a reference opinion, not necessarily 100% accurate. It's recommended to combine with your own judgment when deciding whether to adopt.
+**Answer**: The validation model's evaluation is a reference opinion, not necessarily 100% accurate. It's recommended to combine with your own judgment when deciding whether to adopt.
 
-### Q3: Can I use the same model for correction?
+### Q3: Can I use the same model for cross-validation?
 
 **Answer**: Technically possible, but using a different model is recommended for different perspectives and more effective verification.
 
@@ -248,26 +248,26 @@ When responses are used for important decisions:
 
 **Answer**: After application, the original response is replaced and cannot be directly undone. It's recommended to carefully compare both versions before applying.
 
-### Q5: Which agents support correction mode?
+### Q5: Which agents support AI cross-validation?
 
-**Answer**: Correction mode currently only supports Chat Shell type agents.
+**Answer**: AI cross-validation currently only supports Chat Shell type agents.
 
-### Q6: Are correction settings saved?
+### Q6: Are cross-validation settings saved?
 
-**Answer**: Yes, correction mode settings (including selected model) are saved to local storage and automatically restored when accessing the same task next time.
+**Answer**: Yes, AI cross-validation settings (including selected model) are saved to local storage and automatically restored when accessing the same task next time.
 
 ### Q7: Why is there sometimes no improved version?
 
-**Answer**: If the correction model determines the original response is good enough, it may not generate an improved version, only showing scores and a "no correction needed" message.
+**Answer**: If the validation model determines the original response is good enough, it may not generate an improved version, only showing scores and a "no correction needed" message.
 
 ---
 
 ## 🔗 Related Resources
 
 - [Creating Conversations](./managing-tasks.md) - Learn how to create conversations
-- [Clarification Mode](./clarification-mode-guide.md) - Learn about clarification mode
+- [Smart Follow-up Mode](./clarification-mode-guide.md) - Learn about smart follow-up mode
 - [Configuring Models](../settings/configuring-models.md) - Add and configure models
 
 ---
 
-<p align="center">Use Correction Mode to ensure AI response quality! ✅</p>
+<p align="center">Use AI Cross-Validation to ensure AI response quality! ✅</p>

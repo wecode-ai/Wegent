@@ -496,6 +496,6 @@ spec:
 ## Related Documentation
 
 - [Quick Start Guide](../getting-started/quick-start.md)
-- [Architecture Design](../concepts/architecture.md)
-- [Development Guide](../guides/developer/setup.md)
+- [Architecture Design](../developer-guide/architecture.md)
+- [Development Guide](../developer-guide/setup.md)
 - [Contribution Guide](../../../CONTRIBUTING.md)

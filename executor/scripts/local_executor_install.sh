@@ -262,6 +262,17 @@ detect_platform() {
         Linux)
             OS="linux"
             ;;
+        MINGW*|MSYS*|CYGWIN*)
+            print_error "This script does not support Windows directly."
+            print_info "Please use PowerShell to install on Windows:"
+            echo ""
+            echo "  irm https://github.com/${GITHUB_REPO}/releases/latest/download/local_executor_install.ps1 | iex"
+            echo ""
+            print_info "Or with a specific version:"
+            echo '  $env:WEGENT_VERSION="v1.0.0"; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex'
+            echo ""
+            exit 1
+            ;;
         *)
             print_error "Unsupported operating system: $os"
             exit 1

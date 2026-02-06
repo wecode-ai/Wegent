@@ -496,6 +496,6 @@ spec:
 ## 相关文档
 
 - [快速开始指南](../getting-started/quick-start.md)
-- [架构设计](../concepts/architecture.md)
-- [开发指南](../guides/developer/setup.md)
+- [架构设计](../developer-guide/architecture.md)
+- [开发指南](../developer-guide/setup.md)
 - [贡献指南](../../../CONTRIBUTING.md)

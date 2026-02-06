@@ -328,7 +328,7 @@ sidebar_position: 1
 - [配置执行器](./configuring-shells.md) - 配置运行环境
 
 ### 下一步
-- [管理任务](../ai-chat/managing-tasks.md) - 创建和执行任务
+- [管理任务](../chat/managing-tasks.md) - 创建和执行任务
 - [管理 Skills](./managing-skills.md) - 上传和使用技能
 
 ### 参考文档

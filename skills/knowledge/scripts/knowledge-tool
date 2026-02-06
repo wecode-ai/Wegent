@@ -1,0 +1,395 @@
+#!/usr/bin/env node
+
+/**
+ * Knowledge Base Management Tool
+ *
+ * Usage:
+ *   knowledge-tool '{"action": "list-kb"}'
+ *   echo '{"action": "add-text-document", ...}' | knowledge-tool
+ */
+
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const http = require('http');
+
+// === Configuration ===
+
+const DEFAULT_API_BASE = 'http://127.0.0.1:8000/api';
+
+function getApiBase() {
+  return process.env.WEGENT_API_BASE || DEFAULT_API_BASE;
+}
+
+function getApiToken() {
+  // 1. Environment variable
+  if (process.env.WEGENT_API_TOKEN) {
+    return process.env.WEGENT_API_TOKEN;
+  }
+
+  // 2. Config file: ~/.wecode-cli/config.json
+  const configPath = path.join(process.env.HOME, '.wecode-cli', 'config.json');
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (config.auth?.token) {
+        return config.auth.token;
+      }
+    }
+  } catch (e) {
+    // Ignore config read errors
+  }
+
+  return null;
+}
+
+// === HTTP Utilities ===
+
+function request(method, urlPath, options = {}) {
+  return new Promise((resolve, reject) => {
+    const apiBase = getApiBase();
+    // Properly join base URL with path (apiBase may end with /api)
+    const fullUrl = apiBase.replace(/\/$/, '') + urlPath;
+    const url = new URL(fullUrl);
+
+    // Add query params
+    if (options.params) {
+      Object.entries(options.params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          url.searchParams.append(key, value);
+        }
+      });
+    }
+
+    const isHttps = url.protocol === 'https:';
+    const lib = isHttps ? https : http;
+
+    const headers = {
+      'User-Agent': 'knowledge-tool/1.0',
+    };
+
+    const token = getApiToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    let body = null;
+
+    if (options.json) {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify(options.json);
+    } else if (options.formData) {
+      // Multipart form data
+      const boundary = '----KnowledgeToolBoundary' + Date.now().toString(16);
+      headers['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
+      body = buildMultipartBody(options.formData, boundary);
+    }
+
+    const reqOptions = {
+      method,
+      hostname: url.hostname,
+      port: url.port || (isHttps ? 443 : 80),
+      path: url.pathname + url.search,
+      headers,
+    };
+
+    const req = lib.request(reqOptions, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 400) {
+          let errorMsg = `HTTP ${res.statusCode}`;
+          try {
+            const parsed = JSON.parse(data);
+            errorMsg = parsed.message || parsed.error || errorMsg;
+          } catch (e) {
+            errorMsg = data || errorMsg;
+          }
+          reject(new Error(errorMsg));
+        } else {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            resolve(data);
+          }
+        }
+      });
+    });
+
+    req.on('error', reject);
+
+    if (body) {
+      req.write(body);
+    }
+
+    req.end();
+  });
+}
+
+function buildMultipartBody(formData, boundary) {
+  const parts = [];
+
+  for (const [key, value] of Object.entries(formData)) {
+    if (value.filename) {
+      // File field
+      parts.push(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${key}"; filename="${value.filename}"\r\n` +
+        `Content-Type: ${value.contentType || 'application/octet-stream'}\r\n\r\n`
+      );
+      parts.push(value.content);
+      parts.push('\r\n');
+    } else {
+      // Regular field
+      parts.push(
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${key}"\r\n\r\n` +
+        `${value}\r\n`
+      );
+    }
+  }
+
+  parts.push(`--${boundary}--\r\n`);
+
+  return Buffer.concat(parts.map(p => Buffer.isBuffer(p) ? p : Buffer.from(p)));
+}
+
+// === Actions ===
+
+async function listKb(params = {}) {
+  const queryParams = { scope: params.scope || 'all' };
+  if (params.groupName) {
+    queryParams.group_name = params.groupName;
+  }
+  return request('GET', '/knowledge-bases', { params: queryParams });
+}
+
+async function getKb(params) {
+  if (!params.kbId) throw new Error('kbId is required');
+  return request('GET', `/knowledge-bases/${params.kbId}`);
+}
+
+async function createKb(params) {
+  if (!params.name) throw new Error('name is required');
+  return request('POST', '/knowledge-bases', {
+    json: {
+      name: params.name,
+      description: params.description || '',
+      namespace: params.namespace || 'default',
+    }
+  });
+}
+
+async function deleteKb(params) {
+  if (!params.kbId) throw new Error('kbId is required');
+  await request('DELETE', `/knowledge-bases/${params.kbId}`);
+  return { ok: true, message: `Knowledge base ${params.kbId} deleted` };
+}
+
+async function listDocuments(params) {
+  if (!params.kbId) throw new Error('kbId is required');
+  return request('GET', `/knowledge-bases/${params.kbId}/documents`);
+}
+
+async function getDocument(params) {
+  if (!params.documentId) throw new Error('documentId is required');
+  const queryParams = {
+    include_content: params.includeContent !== false ? 'true' : 'false',
+    include_summary: params.includeSummary !== false ? 'true' : 'false',
+  };
+  return request('GET', `/knowledge-documents/${params.documentId}/detail`, { params: queryParams });
+}
+
+async function deleteDocument(params) {
+  if (!params.documentId) throw new Error('documentId is required');
+  await request('DELETE', `/knowledge-documents/${params.documentId}`);
+  return { ok: true, message: `Document ${params.documentId} deleted` };
+}
+
+async function addWebDocument(params) {
+  if (!params.kbId) throw new Error('kbId is required');
+  if (!params.url) throw new Error('url is required');
+
+  const payload = {
+    url: params.url,
+    knowledge_base_id: params.kbId,
+  };
+  if (params.name) {
+    payload.name = params.name;
+  }
+
+  return request('POST', '/web-scraper/create-document', { json: payload });
+}
+
+async function addTextDocument(params) {
+  if (!params.kbId) throw new Error('kbId is required');
+  if (!params.name) throw new Error('name is required');
+
+  let content;
+  if (params.contentFile) {
+    content = fs.readFileSync(params.contentFile, 'utf-8');
+  } else if (params.content) {
+    content = params.content;
+  } else {
+    throw new Error('content or contentFile is required');
+  }
+
+  // Step 1: Upload as attachment
+  const fileName = params.name.endsWith('.txt') ? params.name : `${params.name}.txt`;
+  const uploadResult = await request('POST', '/attachments/upload', {
+    formData: {
+      file: {
+        filename: fileName,
+        content: Buffer.from(content, 'utf-8'),
+        contentType: 'text/plain',
+      }
+    }
+  });
+
+  // Step 2: Create document
+  const docResult = await request('POST', `/knowledge-bases/${params.kbId}/documents`, {
+    json: {
+      attachment_id: uploadResult.id,
+      name: fileName,
+      file_extension: 'txt',
+      file_size: Buffer.byteLength(content, 'utf-8'),
+      source_type: 'text',
+      source_url: params.sourceUrl || undefined,
+    }
+  });
+
+  return docResult;
+}
+
+async function uploadFile(params) {
+  if (!params.kbId) throw new Error('kbId is required');
+  if (!params.file) throw new Error('file is required');
+
+  const filePath = params.file;
+  const fileName = params.name || path.basename(filePath);
+  const fileExt = path.extname(fileName).slice(1).toLowerCase();
+  const fileContent = fs.readFileSync(filePath);
+  const fileSize = fileContent.length;
+
+  // Guess MIME type
+  const mimeTypes = {
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+  };
+  const contentType = mimeTypes[fileExt] || 'application/octet-stream';
+
+  // Step 1: Upload as attachment
+  const uploadResult = await request('POST', '/attachments/upload', {
+    formData: {
+      file: {
+        filename: fileName,
+        content: fileContent,
+        contentType,
+      }
+    }
+  });
+
+  // Step 2: Create document
+  const docResult = await request('POST', `/knowledge-bases/${params.kbId}/documents`, {
+    json: {
+      attachment_id: uploadResult.id,
+      name: fileName,
+      file_extension: fileExt,
+      file_size: fileSize,
+      source_type: 'file',
+    }
+  });
+
+  return docResult;
+}
+
+async function toggleDocument(params) {
+  if (!params.documentId) throw new Error('documentId is required');
+  if (params.enable === undefined && params.disable === undefined) {
+    throw new Error('enable or disable is required');
+  }
+
+  const isActive = params.enable === true;
+  return request('PATCH', `/knowledge-documents/${params.documentId}`, {
+    json: { is_active: isActive }
+  });
+}
+
+// === Action Router ===
+
+const actions = {
+  'list-kb': listKb,
+  'get-kb': getKb,
+  'create-kb': createKb,
+  'delete-kb': deleteKb,
+  'list-documents': listDocuments,
+  'get-document': getDocument,
+  'delete-document': deleteDocument,
+  'add-web-document': addWebDocument,
+  'add-text-document': addTextDocument,
+  'upload-file': uploadFile,
+  'toggle-document': toggleDocument,
+};
+
+// === Main ===
+
+async function main() {
+  let input;
+
+  // Try to read from argument first
+  if (process.argv[2]) {
+    input = process.argv[2];
+  } else {
+    // Read from stdin
+    input = fs.readFileSync(0, 'utf-8').trim();
+  }
+
+  if (!input) {
+    console.error(JSON.stringify({ ok: false, error: 'No input provided' }));
+    process.exit(1);
+  }
+
+  let params;
+  try {
+    params = JSON.parse(input);
+  } catch (e) {
+    console.error(JSON.stringify({ ok: false, error: `Invalid JSON: ${e.message}` }));
+    process.exit(1);
+  }
+
+  const { action, ...actionParams } = params;
+
+  if (!action) {
+    console.error(JSON.stringify({ ok: false, error: 'action is required' }));
+    process.exit(1);
+  }
+
+  const handler = actions[action];
+  if (!handler) {
+    console.error(JSON.stringify({
+      ok: false,
+      error: `Unknown action: ${action}`,
+      availableActions: Object.keys(actions)
+    }));
+    process.exit(1);
+  }
+
+  try {
+    const result = await handler(actionParams);
+    console.log(JSON.stringify(result, null, 2));
+  } catch (e) {
+    console.error(JSON.stringify({ ok: false, error: e.message }));
+    process.exit(1);
+  }
+}
+
+main();

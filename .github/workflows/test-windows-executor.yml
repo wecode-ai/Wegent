@@ -1,0 +1,45 @@
+# Temporary workflow to test Windows executor build on feature branch
+# Remove this file after testing is complete
+
+name: Test Windows Executor Build
+
+on:
+  push:
+    branches:
+      - 'feature/windows-executor-support'
+
+jobs:
+  build-executor-local-windows-amd64:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build
+        working-directory: executor
+        shell: pwsh
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py
+
+      - name: Rename binary with platform suffix
+        shell: pwsh
+        run: |
+          Move-Item executor/dist/wegent-executor.exe executor/dist/wegent-executor-windows-amd64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-windows-amd64-test
+          path: executor/dist/wegent-executor-windows-amd64.exe
+          retention-days: 7

@@ -36,8 +36,11 @@ router = APIRouter(prefix="/v1/deep-research", tags=["deep-research"])
 class DeepResearchModelConfig(BaseModel):
     """Model configuration for deep research."""
 
-    api_key: str = Field(..., description="API key for Gemini")
+    api_key: str = Field("", description="API key for Gemini")
     base_url: str = Field(..., description="Base URL for Gemini Interaction API")
+    default_headers: dict[str, str] = Field(
+        default_factory=dict, description="Custom request headers for authentication"
+    )
 
 
 class DeepResearchMetadata(BaseModel):
@@ -150,6 +153,7 @@ async def create_deep_research(request: DeepResearchCreateRequest):
     client = GeminiInteractionClient(
         base_url=request.model_config_data.base_url,
         api_key=request.model_config_data.api_key,
+        default_headers=request.model_config_data.default_headers,
     )
 
     try:
@@ -186,6 +190,7 @@ async def get_deep_research_status(
     client = GeminiInteractionClient(
         base_url=request.model_config_data.base_url,
         api_key=request.model_config_data.api_key,
+        default_headers=request.model_config_data.default_headers,
     )
 
     try:
@@ -239,6 +244,7 @@ async def stream_deep_research_result(
     client = GeminiInteractionClient(
         base_url=request.model_config_data.base_url,
         api_key=request.model_config_data.api_key,
+        default_headers=request.model_config_data.default_headers,
     )
 
     async def generate_sse():

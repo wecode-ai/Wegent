@@ -422,6 +422,11 @@ class TeamTaskRef(BaseModel):
 
     name: str
     namespace: str = "default"
+    user_id: Optional[int] = Field(
+        None,
+        description="Team owner's user ID. Used for skill lookup in shared team scenarios. "
+        "When set, allows downloading skills owned by the team owner without additional DB queries.",
+    )
 
 
 class WorkspaceTaskRef(BaseModel):

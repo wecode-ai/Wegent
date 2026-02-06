@@ -362,7 +362,7 @@ spec:
 ## 🔗 相关资源
 
 ### 文档
-- [YAML 规范 - Skill](../../../../../../reference/yaml-specification.md#-skill)
+- [YAML 规范 - Skill](../../reference/yaml-specification.md#-skill)
 - [智能体设置](./agent-settings.md) - 配置智能体和机器人
 
 ### 外部资源
