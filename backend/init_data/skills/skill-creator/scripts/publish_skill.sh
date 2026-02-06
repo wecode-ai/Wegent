@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# publish-skill.sh - Publish a Skill to the user's Wegent Skill library
+# publish_skill.sh - Publish a Skill to the user's Wegent Skill library
 
 set -e
 
@@ -37,7 +37,7 @@ fi
 if [ -z "$SKILL_PATH" ] || [ -z "$SKILL_NAME" ]; then
     echo "❌ Error: skill_path and skill_name are required"
     echo ""
-    echo "Usage: publish-skill.sh <skill_path> <skill_name> [namespace] [--overwrite]"
+    echo "Usage: publish_skill.sh <skill_path> <skill_name> [namespace] [--overwrite]"
     echo ""
     echo "Parameters:"
     echo "  skill_path   - Path to the Skill directory (must contain SKILL.md)"
@@ -46,9 +46,9 @@ if [ -z "$SKILL_PATH" ] || [ -z "$SKILL_NAME" ]; then
     echo "  --overwrite  - Overwrite if Skill with same name exists"
     echo ""
     echo "Example:"
-    echo "  bash ~/.claude/skills/skill-manager/publish-skill.sh /home/user/my-skill code-reviewer"
-    echo "  bash ~/.claude/skills/skill-manager/publish-skill.sh /home/user/my-skill code-reviewer my-team"
-    echo "  bash ~/.claude/skills/skill-manager/publish-skill.sh /home/user/my-skill code-reviewer --overwrite"
+    echo "  bash scripts/publish_skill.sh /home/user/my-skill code-reviewer"
+    echo "  bash scripts/publish_skill.sh /home/user/my-skill code-reviewer my-team"
+    echo "  bash scripts/publish_skill.sh /home/user/my-skill code-reviewer --overwrite"
     exit 1
 fi
 

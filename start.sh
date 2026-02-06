@@ -779,7 +779,8 @@ load_config
 # Compute derived URLs based on configured ports (if not already set from config)
 LOCAL_IP=$(get_local_ip)
 [ -z "$WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="http://$LOCAL_IP:$BACKEND_PORT"
-[ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="http://$LOCAL_IP:$BACKEND_PORT"
+# TASK_API_DOMAIN should be the same as WEGENT_SOCKET_URL (both point to backend)
+[ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="$WEGENT_SOCKET_URL"
 [ -z "$EXECUTOR_MANAGER_URL" ] && EXECUTOR_MANAGER_URL="http://localhost:$EXECUTOR_MANAGER_PORT"
 [ -z "$BACKEND_API_URL" ] && BACKEND_API_URL="http://$LOCAL_IP:$BACKEND_PORT"
 

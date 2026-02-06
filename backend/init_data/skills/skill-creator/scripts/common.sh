@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# common.sh - Common functions for skill-manager scripts
+# common.sh - Common functions for skill-creator scripts
 
 # Validate that a directory is a valid Skill directory
 validate_skill_directory() {

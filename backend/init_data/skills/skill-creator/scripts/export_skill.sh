@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# export-skill.sh - Export a Skill directory as ZIP and upload as attachment for user download
+# export_skill.sh - Export a Skill directory as ZIP and upload as attachment for user download
 
 set -e
 
@@ -17,15 +17,15 @@ OUTPUT_NAME="${2:-$(basename "$SKILL_PATH")}"
 if [ -z "$SKILL_PATH" ]; then
     echo "❌ Error: skill_path is required"
     echo ""
-    echo "Usage: export-skill.sh <skill_path> [output_name]"
+    echo "Usage: export_skill.sh <skill_path> [output_name]"
     echo ""
     echo "Parameters:"
     echo "  skill_path   - Path to the Skill directory (must contain SKILL.md)"
     echo "  output_name  - Name for the exported ZIP file (without .zip extension)"
     echo ""
     echo "Example:"
-    echo "  bash ~/.claude/skills/skill-manager/export-skill.sh /home/user/my-skill"
-    echo "  bash ~/.claude/skills/skill-manager/export-skill.sh /home/user/my-skill custom-name"
+    echo "  bash scripts/export_skill.sh /home/user/my-skill"
+    echo "  bash scripts/export_skill.sh /home/user/my-skill custom-name"
     exit 1
 fi
 
