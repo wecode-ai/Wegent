@@ -11,6 +11,7 @@ from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
+from app.core.config import settings
 from app.main import create_app
 from app.mcp_server.server import (
     _create_knowledge_mcp_app,
@@ -75,13 +76,10 @@ def test_main_app_system_route_without_trailing_slash_does_not_redirect():
     )
 
     with (
+        patch.object(settings, "API_PREFIX", ""),
         patch(
-            "app.mcp_server.server._create_system_mcp_app",
-            return_value=fake_system_app,
-        ),
-        patch(
-            "app.mcp_server.server._create_knowledge_mcp_app",
-            return_value=fake_streamable_app,
+            "app.mcp_server.server._build_mcp_app",
+            side_effect=[fake_system_app, fake_streamable_app],
         ),
     ):
         app = create_app()

@@ -8,6 +8,7 @@ This module provides a unified MCP Server for Wegent Backend with two endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
 - /mcp/knowledge - Knowledge MCP module root
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
+New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
 
 The MCP Server uses FastMCP with HTTP Streamable transport and integrates
 with the existing FastAPI application.
@@ -16,16 +17,16 @@ with the existing FastAPI application.
 import contextvars
 import json
 import logging
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
+from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.core.config import settings
 from app.mcp_server.auth import (
     TaskTokenInfo,
     extract_token_from_header,
@@ -33,6 +34,24 @@ from app.mcp_server.auth import (
 )
 
 logger = logging.getLogger(__name__)
+
+MCP_TRANSPORT_METHODS = ["GET", "POST", "DELETE", "OPTIONS"]
+SYSTEM_MCP_MOUNT_PATH = "/mcp/system"
+SYSTEM_MCP_TRANSPORT_PATH = "/"
+KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
+KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
+
+
+@dataclass(frozen=True)
+class McpAppSpec:
+    name: str
+    service_name: str
+    mount_path: str
+    transport_path: str
+    server: FastMCP
+    token_context: contextvars.ContextVar[Optional[TaskTokenInfo]]
+    log_prefix: str
+    include_root_metadata: bool = True
 
 
 class EmptyPathToSlashMiddleware:
@@ -335,89 +354,50 @@ def update_document(
 
 # ============== Starlette App Factory ==============
 
+_SYSTEM_MCP_SPEC = McpAppSpec(
+    name="system",
+    service_name="wegent-system-mcp",
+    mount_path=SYSTEM_MCP_MOUNT_PATH,
+    transport_path=SYSTEM_MCP_TRANSPORT_PATH,
+    server=system_mcp_server,
+    token_context=_system_request_token_info,
+    log_prefix="System",
+    include_root_metadata=False,
+)
 
-def _create_system_mcp_app() -> Starlette:
-    """Create Starlette app for system MCP server.
+_KNOWLEDGE_MCP_SPEC = McpAppSpec(
+    name="knowledge",
+    service_name="wegent-knowledge-mcp",
+    mount_path=KNOWLEDGE_MCP_MOUNT_PATH,
+    transport_path=KNOWLEDGE_MCP_TRANSPORT_PATH,
+    server=knowledge_mcp_server,
+    token_context=_request_token_info,
+    log_prefix="Knowledge",
+    include_root_metadata=True,
+)
 
-    Note: The session_manager.run() is managed by FastAPI's lifespan in main.py,
-    not by this Starlette app's lifespan. This is required because FastAPI's
-    app.mount() does not automatically run the mounted app's lifespan.
-    """
-
-    async def health_check(request: Request):
-        return JSONResponse({"status": "healthy", "service": "wegent-system-mcp"})
-
-    async def system_auth_middleware(request: Request, call_next):
-        """Middleware to extract and validate task token for system MCP."""
-        auth_header = request.headers.get("authorization", "")
-        token = extract_token_from_header(auth_header)
-
-        token_info: Optional[TaskTokenInfo] = None
-        if token:
-            token_info = verify_task_token(token)
-            if token_info:
-                logger.debug(
-                    f"[MCP:System] Authenticated: task={token_info.task_id}, "
-                    f"subtask={token_info.subtask_id}, user={token_info.user_name}"
-                )
-            else:
-                logger.warning("[MCP:System] Invalid task token")
-
-        # Set token info in context var for the duration of this request
-        ctx_token = _system_request_token_info.set(token_info)
-        try:
-            response = await call_next(request)
-            return response
-        finally:
-            # Reset context var after request completes
-            _system_request_token_info.reset(ctx_token)
-
-    # No lifespan here - session_manager is managed by FastAPI's lifespan
-    # Create base app
-    base_app = Starlette(
-        debug=False,
-        routes=[
-            Route("/health", health_check, methods=["GET"]),
-            Mount("/", app=system_mcp_server.streamable_http_app()),
-        ],
-    )
-
-    # Add auth middleware to extract task token
-    from starlette.middleware.base import BaseHTTPMiddleware
-
-    class SystemAuthMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):
-            return await system_auth_middleware(request, call_next)
-
-    base_app.add_middleware(SystemAuthMiddleware)
-    base_app.add_middleware(EmptyPathToSlashMiddleware)
-
-    return base_app
+MCP_APP_SPECS = (_SYSTEM_MCP_SPEC, _KNOWLEDGE_MCP_SPEC)
 
 
-def _create_knowledge_mcp_app() -> Starlette:
-    """Create Starlette app for knowledge MCP server.
+def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
+    return {
+        "service": spec.service_name,
+        "transport": "streamable-http",
+        "endpoints": {
+            "mcp": f"{spec.mount_path}{spec.transport_path}",
+            "health": f"{spec.mount_path}/health",
+        },
+    }
 
-    Note: The session_manager.run() is managed by FastAPI's lifespan in main.py,
-    not by this Starlette app's lifespan. This is required because FastAPI's
-    app.mount() does not automatically run the mounted app's lifespan.
-    """
 
-    async def health_check(request: Request):
-        return JSONResponse({"status": "healthy", "service": "wegent-knowledge-mcp"})
+def _build_mcp_app(spec: McpAppSpec) -> Starlette:
+    """Create a Starlette app for a streamable-http MCP server."""
 
-    async def knowledge_root(request: Request):
-        """Describe available knowledge MCP endpoints."""
-        return JSONResponse(
-            {
-                "service": "wegent-knowledge-mcp",
-                "transport": "streamable-http",
-                "endpoints": {
-                    "mcp": "/mcp/knowledge/sse",
-                    "health": "/mcp/knowledge/health",
-                },
-            }
-        )
+    async def health_check(request: Request) -> JSONResponse:
+        return JSONResponse({"status": "healthy", "service": spec.service_name})
+
+    async def root_metadata(request: Request) -> JSONResponse:
+        return JSONResponse(_build_root_metadata(spec))
 
     async def auth_middleware(request: Request, call_next):
         """Middleware to extract and validate task token."""
@@ -429,40 +409,39 @@ def _create_knowledge_mcp_app() -> Starlette:
             token_info = verify_task_token(token)
             if token_info:
                 logger.debug(
-                    f"[MCP:Knowledge] Authenticated user: {token_info.user_name}"
+                    "[MCP:%s] Authenticated: task=%s, subtask=%s, user=%s",
+                    spec.log_prefix,
+                    token_info.task_id,
+                    token_info.subtask_id,
+                    token_info.user_name,
                 )
             else:
-                logger.warning("[MCP:Knowledge] Invalid task token")
+                logger.warning("[MCP:%s] Invalid task token", spec.log_prefix)
 
-        # Set token info in context var for the duration of this request
-        token = _request_token_info.set(token_info)
+        ctx_token = spec.token_context.set(token_info)
         try:
             response = await call_next(request)
             return response
         finally:
-            # Reset context var after request completes
-            _request_token_info.reset(token)
+            spec.token_context.reset(ctx_token)
 
-    # No lifespan here - session_manager is managed by FastAPI's lifespan
-    # Create base app
-    base_app = Starlette(
-        debug=False,
-        routes=[
-            Route("/", knowledge_root, methods=["GET"]),
-            Route("/health", health_check, methods=["GET"]),
-            Route(
-                "/sse",
-                endpoint=_ASGIPathAdapter(
-                    knowledge_mcp_server.streamable_http_app(),
-                    target_path="/",
-                ),
-                methods=["GET", "POST", "DELETE", "OPTIONS"],
+    routes = [
+        Route("/health", health_check, methods=["GET"]),
+        Route(
+            spec.transport_path,
+            endpoint=_ASGIPathAdapter(
+                spec.server.streamable_http_app(),
+                target_path="/",
             ),
-        ],
-    )
+            methods=MCP_TRANSPORT_METHODS,
+        ),
+    ]
 
-    # Add auth middleware
-    from starlette.middleware import Middleware
+    if spec.include_root_metadata and spec.transport_path != "/":
+        routes.insert(0, Route("/", root_metadata, methods=["GET"]))
+
+    base_app = Starlette(debug=False, routes=routes)
+
     from starlette.middleware.base import BaseHTTPMiddleware
 
     class AuthMiddleware(BaseHTTPMiddleware):
@@ -473,6 +452,16 @@ def _create_knowledge_mcp_app() -> Starlette:
     base_app.add_middleware(EmptyPathToSlashMiddleware)
 
     return base_app
+
+
+def _create_system_mcp_app() -> Starlette:
+    """Create Starlette app for system MCP server."""
+    return _build_mcp_app(_SYSTEM_MCP_SPEC)
+
+
+def _create_knowledge_mcp_app() -> Starlette:
+    """Create Starlette app for knowledge MCP server."""
+    return _build_mcp_app(_KNOWLEDGE_MCP_SPEC)
 
 
 # ============== FastAPI Router Integration ==============
@@ -492,9 +481,6 @@ def create_mcp_router() -> APIRouter:
     # Mount knowledge MCP at /mcp/knowledge
     knowledge_app = _create_knowledge_mcp_app()
 
-    # Use Starlette mounting through FastAPI
-    from fastapi import FastAPI
-
     # Create sub-applications
     @router.get("/mcp/system/health")
     async def system_health():
@@ -507,6 +493,29 @@ def create_mcp_router() -> APIRouter:
     return router, system_app, knowledge_app
 
 
+def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
+    """Register all internal MCP sub-apps on the FastAPI instance."""
+    normalized_prefix = _normalize_prefix(mount_prefix)
+    for spec in MCP_APP_SPECS:
+        effective_spec = _apply_mount_prefix(spec, normalized_prefix)
+        mcp_app = _build_mcp_app(effective_spec)
+
+        if effective_spec.transport_path == "/":
+            app.add_route(
+                effective_spec.mount_path,
+                _ASGIPathAdapter(mcp_app, target_path="/"),
+                methods=MCP_TRANSPORT_METHODS,
+            )
+
+        app.mount(effective_spec.mount_path, mcp_app)
+        logger.info(
+            "Mounted MCP server '%s' at %s (transport: %s)",
+            effective_spec.name,
+            effective_spec.mount_path,
+            effective_spec.transport_path,
+        )
+
+
 def get_mcp_system_config(backend_url: str, task_token: str) -> Dict[str, Any]:
     """Get system MCP server configuration for task injection.
 
@@ -517,16 +526,12 @@ def get_mcp_system_config(backend_url: str, task_token: str) -> Dict[str, Any]:
     Returns:
         MCP server configuration dictionary
     """
-    return {
-        "wegent-system": {
-            "type": "streamable-http",
-            "url": f"{backend_url}/mcp/system",
-            "headers": {
-                "Authorization": f"Bearer {task_token}",
-            },
-            "timeout": 60,
-        }
-    }
+    return _build_streamable_http_config(
+        name="wegent-system",
+        url=f"{backend_url}{SYSTEM_MCP_MOUNT_PATH}",
+        task_token=task_token,
+        timeout=60,
+    )
 
 
 def get_mcp_knowledge_config(backend_url: str, task_token: str) -> Dict[str, Any]:
@@ -539,13 +544,41 @@ def get_mcp_knowledge_config(backend_url: str, task_token: str) -> Dict[str, Any
     Returns:
         MCP server configuration dictionary
     """
+    return _build_streamable_http_config(
+        name="wegent-knowledge",
+        url=f"{backend_url}{KNOWLEDGE_MCP_MOUNT_PATH}{KNOWLEDGE_MCP_TRANSPORT_PATH}",
+        task_token=task_token,
+        timeout=300,  # 5 minutes for document operations
+    )
+
+
+def _normalize_prefix(prefix: str) -> str:
+    if not prefix:
+        return ""
+
+    if not prefix.startswith("/"):
+        prefix = f"/{prefix}"
+
+    return prefix.rstrip("/")
+
+
+def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
+    if not prefix:
+        return spec
+
+    return replace(spec, mount_path=f"{prefix}{spec.mount_path}")
+
+
+def _build_streamable_http_config(
+    name: str, url: str, task_token: str, timeout: int
+) -> Dict[str, Any]:
     return {
-        "wegent-knowledge": {
+        name: {
             "type": "streamable-http",
-            "url": f"{backend_url}/mcp/knowledge/sse",
+            "url": url,
             "headers": {
                 "Authorization": f"Bearer {task_token}",
             },
-            "timeout": 300,  # 5 minutes for document operations
+            "timeout": timeout,
         }
     }

@@ -631,26 +631,11 @@ def create_app():
     # Mount MCP Server endpoints
     # These provide system-level tools (silent_exit) and knowledge base tools
     try:
-        from app.mcp_server.server import (
-            _ASGIPathAdapter,
-            _create_knowledge_mcp_app,
-            _create_system_mcp_app,
-        )
+        from app.mcp_server.server import register_mcp_apps
 
-        # Mount system MCP server at /mcp/system
-        system_mcp_app = _create_system_mcp_app()
-        app.add_route(
-            "/mcp/system",
-            _ASGIPathAdapter(system_mcp_app, target_path="/"),
-            methods=["GET", "POST", "DELETE", "OPTIONS"],
-        )
-        app.mount("/mcp/system", system_mcp_app)
-        logger.info("System MCP server mounted at /mcp/system")
-
-        # Mount knowledge MCP server at /mcp/knowledge
-        knowledge_mcp_app = _create_knowledge_mcp_app()
-        app.mount("/mcp/knowledge", knowledge_mcp_app)
-        logger.info("Knowledge MCP server mounted at /mcp/knowledge")
+        register_mcp_apps(app)
+        if settings.API_PREFIX:
+            register_mcp_apps(app, settings.API_PREFIX)
     except Exception:
         logger.exception("Failed to mount MCP servers")
         # In production, fail fast to surface configuration problems early
