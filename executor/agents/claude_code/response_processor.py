@@ -34,15 +34,40 @@ logger = setup_logger("claude_response_processor")
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
 
+# Maximum retry count for error subtypes (error_during_execution, etc.)
+MAX_ERROR_SUBTYPE_RETRIES = 3
+
+# Retry message for resuming session
+RETRY_CONTINUE_MESSAGE = "Continue"
+
 # Error patterns to detect API errors that need retry
 API_ERROR_PATTERNS = [
     "API Error: Cannot read properties of undefined",
     "API Error: undefined is not an object",
 ]
 
+# Error subtypes that can be retried by resuming session
+# These errors may be transient and can often be recovered by resuming
+RETRYABLE_ERROR_SUBTYPES = [
+    "error_during_execution",
+    "error_max_turns",
+]
+
 
 def contains_api_error(text: str) -> bool:
     return any(pattern in text for pattern in API_ERROR_PATTERNS)
+
+
+def is_retryable_error_subtype(subtype: str) -> bool:
+    """Check if the error subtype is retryable by resuming session.
+
+    Args:
+        subtype: The error subtype from ResultMessage
+
+    Returns:
+        True if the error subtype can be retried
+    """
+    return subtype in RETRYABLE_ERROR_SUBTYPES
 
 
 async def process_response(
@@ -51,7 +76,8 @@ async def process_response(
     thinking_manager=None,
     task_state_manager=None,
     session_id: str = None,
-) -> TaskStatus:
+    error_subtype_retry_count: int = 0,
+) -> Union[TaskStatus, str]:
     """
     Process the response messages from Claude
 
@@ -61,9 +87,11 @@ async def process_response(
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
         task_state_manager: Optional TaskStateManager instance for checking cancellation
         session_id: Optional session ID for retry operations
+        error_subtype_retry_count: Current retry count for error subtypes (error_during_execution, etc.)
 
     Returns:
         TaskStatus: Processing status
+        str: "RETRY_WITH_RESUME" if session should be resumed for retry
     """
     index = 0
     api_error_retry_count = 0  # Track retry count for this session
@@ -148,6 +176,7 @@ async def process_response(
                         MAX_API_ERROR_RETRIES,
                         silent_exit_detected,
                         silent_exit_reason,
+                        error_subtype_retry_count,
                     )
                     if result_status == "RETRY":
                         # Increment retry count and restart response stream for retry
@@ -157,6 +186,13 @@ async def process_response(
                             f"Retry initiated, restarting response stream for session {session_id}"
                         )
                         break
+                    elif result_status == "RETRY_WITH_RESUME":
+                        # Return to caller to handle session resume retry
+                        logger.info(
+                            f"RETRY_WITH_RESUME requested for session {session_id}, "
+                            f"retry count {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}"
+                        )
+                        return "RETRY_WITH_RESUME"
                     elif result_status:
                         return result_status
 
@@ -527,6 +563,7 @@ async def _process_result_message(
     max_retries: int = 3,
     propagated_silent_exit: bool = False,
     propagated_silent_exit_reason: str = "",
+    error_subtype_retry_count: int = 0,
 ) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
@@ -541,10 +578,12 @@ async def _process_result_message(
         max_retries: Maximum retry attempts
         propagated_silent_exit: Silent exit flag propagated from UserMessage tool results
         propagated_silent_exit_reason: Silent exit reason propagated from UserMessage tool results
+        error_subtype_retry_count: Current retry count for error subtypes
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, otherwise None)
-        str: "RETRY" if retry was initiated
+        str: "RETRY" if API error retry was initiated
+        str: "RETRY_WITH_RESUME" if error subtype retry is needed (session resume required)
     """
 
     # Get stop_reason safely (may not exist in older SDK versions)
@@ -760,6 +799,55 @@ async def _process_result_message(
         logger.error(
             f"Task ended with subtype={msg.subtype} (is_error={msg.is_error}): {result_str}"
         )
+
+        # Check if this error subtype can be retried by resuming session
+        if (
+            is_retryable_error_subtype(msg.subtype)
+            and session_id
+            and error_subtype_retry_count < MAX_ERROR_SUBTYPE_RETRIES
+        ):
+            logger.warning(
+                f"Retryable error subtype detected: {msg.subtype}, "
+                f"retry {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}, "
+                f"session_id={session_id}"
+            )
+
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.error_subtype_retry",
+                    report_immediately=True,
+                    use_i18n_keys=True,
+                    details={
+                        "error_subtype": msg.subtype,
+                        "retry_count": error_subtype_retry_count + 1,
+                        "max_retries": MAX_ERROR_SUBTYPE_RETRIES,
+                        "session_id": session_id,
+                    },
+                )
+
+            # Signal to caller that session should be resumed for retry
+            return "RETRY_WITH_RESUME"
+
+        elif (
+            is_retryable_error_subtype(msg.subtype)
+            and error_subtype_retry_count >= MAX_ERROR_SUBTYPE_RETRIES
+        ):
+            logger.error(
+                f"Max error subtype retries ({MAX_ERROR_SUBTYPE_RETRIES}) reached "
+                f"for session {session_id}, error_subtype={msg.subtype}"
+            )
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.error_subtype_max_retries",
+                    report_immediately=True,
+                    use_i18n_keys=True,
+                    details={
+                        "error_subtype": msg.subtype,
+                        "retry_count": error_subtype_retry_count,
+                        "max_retries": MAX_ERROR_SUBTYPE_RETRIES,
+                        "session_id": session_id,
+                    },
+                )
 
         # Add thinking step for error result
         if thinking_manager:

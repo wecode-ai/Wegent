@@ -39,7 +39,11 @@ from executor.agents.claude_code.mode_strategy import (
     ModeStrategyFactory,
 )
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
-from executor.agents.claude_code.response_processor import process_response
+from executor.agents.claude_code.response_processor import (
+    MAX_ERROR_SUBTYPE_RETRIES,
+    RETRY_CONTINUE_MESSAGE,
+    process_response,
+)
 from executor.agents.claude_code.session_manager import (
     SessionManager,
     build_internal_session_key,
@@ -691,14 +695,50 @@ class ClaudeCodeAgent(Agent):
             await self.client.query(prompt, session_id=self.session_id)
 
             logger.info(f"Waiting for response for prompt: {prompt}")
-            # Process and handle the response using the external processor
-            result = await process_response(
-                self.client,
-                self.state_manager,
-                self.thinking_manager,
-                self.task_state_manager,
-                session_id=self.session_id,
-            )
+
+            # Error subtype retry loop
+            error_subtype_retry_count = 0
+            while True:
+                # Process and handle the response using the external processor
+                result = await process_response(
+                    self.client,
+                    self.state_manager,
+                    self.thinking_manager,
+                    self.task_state_manager,
+                    session_id=self.session_id,
+                    error_subtype_retry_count=error_subtype_retry_count,
+                )
+
+                if result == "RETRY_WITH_RESUME":
+                    error_subtype_retry_count += 1
+                    logger.warning(
+                        f"RETRY_WITH_RESUME: Attempting retry {error_subtype_retry_count}/{MAX_ERROR_SUBTYPE_RETRIES} "
+                        f"for session {self.session_id}"
+                    )
+
+                    # Get current session_id for resume
+                    current_session_id = self.session_id
+
+                    # Close current client but preserve session_id for resume
+                    await self._close_client_for_retry()
+
+                    # Create new client with resume option
+                    self.options["resume"] = current_session_id
+                    await self._create_and_connect_client()
+
+                    # Send continue message to resume session
+                    logger.info(
+                        f"Sending continue message to resume session {current_session_id}"
+                    )
+                    await self.client.query(
+                        RETRY_CONTINUE_MESSAGE, session_id=current_session_id
+                    )
+
+                    # Continue loop to process response
+                    continue
+
+                # Normal completion or non-retryable failure
+                break
 
             # Update task state based on result
             if result == TaskStatus.COMPLETED:
@@ -788,6 +828,35 @@ class ClaudeCodeAgent(Agent):
             resource_id=f"claude_client_{self.session_id}",
             is_async=True,
         )
+
+    async def _close_client_for_retry(self) -> None:
+        """
+        Close the current client for retry purposes.
+
+        This method closes the client connection but preserves the session_id
+        so it can be used to resume the session with a new client.
+        """
+        if self.client is None:
+            logger.warning("No client to close for retry")
+            return
+
+        try:
+            # Terminate the client process
+            await SessionManager._terminate_client_process(self.client, self.session_id)
+
+            # Remove from client cache but keep session_id mapping
+            SessionManager.remove_client(self.session_id)
+
+            # Clear local client reference
+            self.client = None
+
+            logger.info(
+                f"Closed client for retry, session_id={self.session_id} preserved for resume"
+            )
+        except Exception as e:
+            logger.warning(f"Error closing client for retry: {e}")
+            # Clear client reference anyway to allow new client creation
+            self.client = None
 
     def _handle_execution_result(
         self, result_content: str, execution_type: str = "execution"
