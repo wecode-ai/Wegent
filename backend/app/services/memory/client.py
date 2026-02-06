@@ -10,6 +10,10 @@ All methods are designed for graceful degradation:
 - Timeout → log warning, return None/empty list
 - Error → log error, return None/empty list
 
+Note: This client uses AsyncSessionManager to create sessions in the
+current event loop context, avoiding "Event loop is closed" errors when
+called from different event loop contexts (e.g., background tasks).
+
 Usage:
     client = LongTermMemoryClient(base_url, api_key)
     result = await client.add_memory(user_id, messages, metadata)
@@ -21,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
+from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings
 from app.services.memory.schemas import (
     MemoryCreateRequest,
@@ -37,6 +42,11 @@ class LongTermMemoryClient:
 
     This client provides low-level HTTP methods to interact with mem0 API.
     All methods handle errors gracefully and return None/empty on failure.
+
+    Note: This client creates a new aiohttp session for each request to avoid
+    event loop binding issues. This is intentional - while slightly less
+    efficient, it ensures reliability when called from different event loops
+    (e.g., background tasks, Celery workers).
 
     Attributes:
         base_url: mem0 service base URL
@@ -71,8 +81,6 @@ class LongTermMemoryClient:
         self.timeout = (
             timeout if timeout is not None else settings.MEMORY_TIMEOUT_SECONDS
         )
-        self._session: Optional[aiohttp.ClientSession] = None
-        self._session_lock = asyncio.Lock()
 
     def _get_headers(self) -> Dict[str, str]:
         """Build HTTP headers for mem0 API requests.
@@ -84,29 +92,6 @@ class LongTermMemoryClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session (lazy initialization with thread-safety).
-
-        Uses double-check locking pattern to prevent race conditions when
-        multiple coroutines attempt to create the session simultaneously.
-
-        Returns:
-            aiohttp ClientSession instance
-        """
-        if self._session is None or self._session.closed:
-            async with self._session_lock:
-                # Double-check after acquiring lock
-                if self._session is None or self._session.closed:
-                    self._session = aiohttp.ClientSession(
-                        timeout=aiohttp.ClientTimeout(total=self.timeout)
-                    )
-        return self._session
-
-    async def close(self) -> None:
-        """Close aiohttp session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
 
     @trace_async("mem0.client.add_memory")
     async def add_memory(
@@ -133,43 +118,45 @@ class LongTermMemoryClient:
             )
         """
         try:
-            session = await self._get_session()
-
             request = MemoryCreateRequest(
                 user_id=user_id,
                 messages=messages,
                 metadata=metadata,
             )
 
-            async with session.post(
-                f"{self.base_url}/memories",
-                json=request.model_dump(exclude_none=True),
-                headers=self._get_headers(),
-            ) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    # mem0 returns {"results": [{"id": ..., "memory": ..., "event": ...}]}
-                    memory_ids = []
-                    if isinstance(result, dict) and "results" in result:
-                        memory_ids = [
-                            str(item.get("id"))
-                            for item in result.get("results", [])
-                            if isinstance(item, dict) and "id" in item
-                        ]
-                    logger.info(
-                        "Successfully stored memory for user %s: %d memories created (%s)",
-                        user_id,
-                        len(memory_ids),
-                        ", ".join(memory_ids[:3])
-                        + ("..." if len(memory_ids) > 3 else ""),
-                    )
-                    return result
-                else:
-                    error_text = await resp.text()
-                    logger.error(
-                        "Failed to store memory (HTTP %d): %s", resp.status, error_text
-                    )
-                    return None
+            # Use AsyncSessionManager to create session in current event loop
+            async with AsyncSessionManager(timeout=self.timeout) as session:
+                async with session.post(
+                    f"{self.base_url}/memories",
+                    json=request.model_dump(exclude_none=True),
+                    headers=self._get_headers(),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        # mem0 returns {"results": [{"id": ..., "memory": ..., "event": ...}]}
+                        memory_ids = []
+                        if isinstance(result, dict) and "results" in result:
+                            memory_ids = [
+                                str(item.get("id"))
+                                for item in result.get("results", [])
+                                if isinstance(item, dict) and "id" in item
+                            ]
+                        logger.info(
+                            "Successfully stored memory for user %s: %d memories created (%s)",
+                            user_id,
+                            len(memory_ids),
+                            ", ".join(memory_ids[:3])
+                            + ("..." if len(memory_ids) > 3 else ""),
+                        )
+                        return result
+                    else:
+                        error_text = await resp.text()
+                        logger.error(
+                            "Failed to store memory (HTTP %d): %s",
+                            resp.status,
+                            error_text,
+                        )
+                        return None
 
         except asyncio.TimeoutError:
             logger.warning("Timeout storing memory for user %s", user_id)
@@ -213,8 +200,6 @@ class LongTermMemoryClient:
             )
         """
         try:
-            session = await self._get_session()
-
             request = MemorySearchRequest(
                 query=query,
                 user_id=user_id,
@@ -222,32 +207,33 @@ class LongTermMemoryClient:
                 limit=limit,
             )
 
-            # Use custom timeout if provided
-            request_timeout = (
-                aiohttp.ClientTimeout(total=timeout) if timeout is not None else None
-            )
+            # Use custom timeout if provided, otherwise use default
+            request_timeout = timeout if timeout is not None else self.timeout
 
-            async with session.post(
-                f"{self.base_url}/search",
-                json=request.model_dump(exclude_none=True),
-                headers=self._get_headers(),
-                timeout=request_timeout,
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    result = MemorySearchResponse(**data)
-                    logger.info(
-                        "Found %d memories for user %s", len(result.results), user_id
-                    )
-                    return result
-                else:
-                    error_text = await resp.text()
-                    logger.error(
-                        "Failed to search memories (HTTP %d): %s",
-                        resp.status,
-                        error_text,
-                    )
-                    return MemorySearchResponse(results=[])
+            # Use AsyncSessionManager to create session in current event loop
+            async with AsyncSessionManager(timeout=request_timeout) as session:
+                async with session.post(
+                    f"{self.base_url}/search",
+                    json=request.model_dump(exclude_none=True),
+                    headers=self._get_headers(),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        result = MemorySearchResponse(**data)
+                        logger.info(
+                            "Found %d memories for user %s",
+                            len(result.results),
+                            user_id,
+                        )
+                        return result
+                    else:
+                        error_text = await resp.text()
+                        logger.error(
+                            "Failed to search memories (HTTP %d): %s",
+                            resp.status,
+                            error_text,
+                        )
+                        return MemorySearchResponse(results=[])
 
         except asyncio.TimeoutError:
             logger.warning(
@@ -274,24 +260,24 @@ class LongTermMemoryClient:
             True on success, False on failure
         """
         try:
-            session = await self._get_session()
-
-            async with session.delete(
-                f"{self.base_url}/memories/{memory_id}",
-                headers=self._get_headers(),
-            ) as resp:
-                if resp.status == 200:
-                    logger.info("Successfully deleted memory %s", memory_id)
-                    return True
-                else:
-                    error_text = await resp.text()
-                    logger.error(
-                        "Failed to delete memory %s (HTTP %d): %s",
-                        memory_id,
-                        resp.status,
-                        error_text,
-                    )
-                    return False
+            # Use AsyncSessionManager to create session in current event loop
+            async with AsyncSessionManager(timeout=self.timeout) as session:
+                async with session.delete(
+                    f"{self.base_url}/memories/{memory_id}",
+                    headers=self._get_headers(),
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info("Successfully deleted memory %s", memory_id)
+                        return True
+                    else:
+                        error_text = await resp.text()
+                        logger.error(
+                            "Failed to delete memory %s (HTTP %d): %s",
+                            memory_id,
+                            resp.status,
+                            error_text,
+                        )
+                        return False
 
         except asyncio.TimeoutError:
             logger.warning("Timeout deleting memory %s", memory_id)
@@ -318,25 +304,25 @@ class LongTermMemoryClient:
             Memory dict on success, None on failure
         """
         try:
-            session = await self._get_session()
-
-            async with session.get(
-                f"{self.base_url}/memories/{memory_id}",
-                headers=self._get_headers(),
-            ) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    logger.info("Successfully retrieved memory %s", memory_id)
-                    return result
-                else:
-                    error_text = await resp.text()
-                    logger.error(
-                        "Failed to get memory %s (HTTP %d): %s",
-                        memory_id,
-                        resp.status,
-                        error_text,
-                    )
-                    return None
+            # Use AsyncSessionManager to create session in current event loop
+            async with AsyncSessionManager(timeout=self.timeout) as session:
+                async with session.get(
+                    f"{self.base_url}/memories/{memory_id}",
+                    headers=self._get_headers(),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        logger.info("Successfully retrieved memory %s", memory_id)
+                        return result
+                    else:
+                        error_text = await resp.text()
+                        logger.error(
+                            "Failed to get memory %s (HTTP %d): %s",
+                            memory_id,
+                            resp.status,
+                            error_text,
+                        )
+                        return None
 
         except asyncio.TimeoutError:
             logger.warning("Timeout getting memory %s", memory_id)
