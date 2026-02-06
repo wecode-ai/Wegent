@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
@@ -51,6 +52,11 @@ class Settings(BaseSettings):
 
     # Environment configuration
     ENVIRONMENT: str = "development"  # development or production
+
+    # MCP transport security (DNS rebinding protection)
+    MCP_ENABLE_DNS_REBINDING_PROTECTION: bool = False
+    MCP_ALLOWED_HOSTS: list[str] = []
+    MCP_ALLOWED_ORIGINS: list[str] = []
 
     # Database configuration
     DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
@@ -169,6 +175,34 @@ class Settings(BaseSettings):
         """Convert empty strings to None for proper fallback to REDIS_URL."""
         if isinstance(v, str) and v.strip() == "":
             return None
+        return v
+
+    @field_validator(
+        "MCP_ALLOWED_HOSTS",
+        "MCP_ALLOWED_ORIGINS",
+        mode="before",
+    )
+    @classmethod
+    def parse_mcp_list(cls, v: Any) -> list[str]:
+        """Parse MCP allowlist values from JSON or comma-separated strings."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(item).strip() for item in v if str(item).strip()]
+        if isinstance(v, str):
+            raw = v.strip()
+            if not raw:
+                return []
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return [
+                            str(item).strip() for item in parsed if str(item).strip()
+                        ]
+                except json.JSONDecodeError:
+                    pass
+            return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
     # Scheduler backend configuration

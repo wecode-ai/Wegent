@@ -43,7 +43,10 @@ def setup_logging() -> None:
     """Configure logging format with request_id support"""
 
     # Create a custom formatter that includes request_id
-    log_format = "%(asctime)s %(levelname)-4s [%(request_id)s] : %(message)s"
+    log_format = (
+        "%(asctime)s %(levelname)-4s [%(request_id)s] "
+        "%(pathname)s:%(lineno)d : %(message)s"
+    )
 
     # Create handler
     handler = logging.StreamHandler(sys.stdout)
