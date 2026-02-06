@@ -183,15 +183,17 @@ def _invoke_endpoint(
         # Build call kwargs with only valid MCP parameters
         call_kwargs = {k: v for k, v in kwargs.items() if k in param_names}
 
-        # Inject FastAPI dependencies
-        call_kwargs["db"] = db
-        call_kwargs["current_user"] = user
+        # Inject FastAPI dependencies only if accepted by the function
+        sig_params = inspect.signature(original_func).parameters
+        if "db" in sig_params:
+            call_kwargs["db"] = db
+        if "current_user" in sig_params:
+            call_kwargs["current_user"] = user
 
         # Call original function
         if is_async:
             # Run async function in event loop
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
                 result = loop.run_until_complete(original_func(**call_kwargs))
             finally:
@@ -204,7 +206,7 @@ def _invoke_endpoint(
         return _serialize_result(result)
 
     except Exception as e:
-        logger.error(f"[MCP] Tool {tool_name} failed: {e}", exc_info=True)
+        logger.error(f"[MCP:{server_name}] Tool {tool_name} failed: {e}", exc_info=True)
         return json.dumps({"error": str(e)})
     finally:
         db.close()
@@ -240,8 +242,6 @@ def _set_function_signature(func: Callable, params: List[Dict[str, Any]]) -> Non
         func: Function to modify
         params: List of parameter definitions
     """
-    from typing import Optional
-
     new_params = []
     for param in params:
         param_name = param["name"]
