@@ -743,5 +743,37 @@ async def _process_result_message(
             TaskStatus.FAILED
         )  # CRITICAL FIX: Return FAILED status to stop task execution
 
+    # Handle error subtypes (is_error=False but execution ended with error condition)
+    # Official subtypes per https://platform.claude.com/docs/agent-sdk/stop-reasons:
+    # - error_during_execution: Error occurred during execution
+    # - error_max_turns: Reached turn limit
+    # - error_max_budget_usd: Exceeded budget limit
+    # - error_max_structured_output_retries: Reached structured output retry limit
+    if msg.subtype and msg.subtype.startswith("error_"):
+        result_str = (
+            str(msg.result) if msg.result is not None else f"Task ended: {msg.subtype}"
+        )
+        logger.error(
+            f"Task ended with subtype={msg.subtype} (is_error={msg.is_error}): {result_str}"
+        )
+
+        # Add thinking step for error result
+        if thinking_manager:
+            thinking_manager.add_thinking_step(
+                title="thinking.task_execution_failed",
+                report_immediately=False,
+                use_i18n_keys=True,
+                details=masked_result_details,
+            )
+
+        # Update workbench status to failed
+        state_manager.update_workbench_status("failed")
+
+        # Report error using state manager
+        state_manager.report_progress(
+            progress=100, status=TaskStatus.FAILED.value, message=result_str
+        )
+        return TaskStatus.FAILED
+
     # If it's not a successful result message, return None to let caller continue processing
     return None
