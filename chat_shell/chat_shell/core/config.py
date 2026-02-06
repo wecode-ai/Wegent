@@ -130,6 +130,17 @@ class Settings(BaseSettings):
     # Example: "read,write,search" will match "read_file", "write_file", "web_search", etc.
     TOOL_DISPLAY_WHITELIST: str = "read,write,upload,exec"
 
+    # Truncation Recovery Configuration
+    # Maximum retry attempts when tool calls are truncated due to max_token limit
+    # Range: 0-5, Default: 3
+    # Setting to 0 disables retry (will show truncation warning immediately)
+    MAX_TRUNCATION_RETRIES: int = Field(
+        default=3,
+        ge=0,
+        le=5,
+        description="Maximum retry attempts when tool calls are truncated",
+    )
+
     @classmethod
     def settings_customise_sources(
         cls,
