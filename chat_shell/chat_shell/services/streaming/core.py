@@ -35,7 +35,6 @@ TRUNCATED_END = "__END_TRUNCATED__"
 TRUNCATION_WARNING_MESSAGE = """
 
 ---
-⚠️ 内容已截断: 模型输出达到 token 上限, 响应可能不完整。
 ⚠️ Content Truncated: Model output reached token limit, response may be incomplete."""
 
 # Semaphore for concurrent chat limit (lazy initialized)

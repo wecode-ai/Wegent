@@ -132,10 +132,10 @@ class Settings(BaseSettings):
 
     # Truncation Recovery Configuration
     # Maximum retry attempts when tool calls are truncated due to max_token limit
-    # Range: 0-5, Default: 2
+    # Range: 0-5, Default: 3
     # Setting to 0 disables retry (will show truncation warning immediately)
     MAX_TRUNCATION_RETRIES: int = Field(
-        default=2,
+        default=3,
         ge=0,
         le=5,
         description="Maximum retry attempts when tool calls are truncated",
