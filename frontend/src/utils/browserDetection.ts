@@ -10,6 +10,21 @@ export interface BrowserInfo {
 }
 
 /**
+ * Detects if the current browser is Safari (desktop or iOS Safari).
+ * Excludes Chromium-based and other iOS browsers.
+ */
+export function isSafariBrowser(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+
+  const ua = navigator.userAgent
+  const isSafari = /safari/i.test(ua)
+  const isExcluded = /(chrome|crios|chromium|android|edg|edgios|fxios|opr)/i.test(ua)
+  return isSafari && !isExcluded
+}
+
+/**
  * Detects if the current browser is an in-app browser
  * @returns BrowserInfo object with detection results
  */

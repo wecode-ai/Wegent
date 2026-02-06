@@ -13,6 +13,14 @@
   padding: 1rem;
 }
 
+.discover-feed-masonry--grid {
+  columns: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+}
+
 @media (min-width: 768px) {
   .discover-feed-masonry {
     columns: 2;
@@ -34,6 +42,14 @@
   }
 }
 
+@media (min-width: 1536px) {
+  .discover-feed-masonry--grid {
+    max-width: 1440px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 /* Masonry Item - prevents breaking inside columns */
 .discover-feed-item {
   break-inside: avoid;
@@ -48,7 +64,10 @@
   border: 1px solid rgb(var(--color-border) / 0.5);
   border-radius: 1rem;
   box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
-  transition: all 0.3s ease-out;
+  transition:
+    box-shadow 0.3s ease-out,
+    border-color 0.3s ease-out,
+    transform 0.3s ease-out;
   overflow: hidden;
   cursor: pointer;
 }
@@ -66,22 +85,13 @@
   max-width: 100%;
 }
 
-.discover-feed-content.collapsed {
-  max-height: 400px;
+.discover-feed-preview {
+  margin: 0;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 12;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  position: relative;
-}
-
-/* Fade out effect for collapsed content */
-.discover-feed-content.collapsed::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 80px;
-  background: linear-gradient(to bottom, transparent, rgb(var(--color-bg-surface)));
-  pointer-events: none;
 }
 
 /* Expand Button */
@@ -229,6 +239,7 @@
   justify-content: center;
   padding: 1.5rem 0;
   column-span: all;
+  grid-column: 1 / -1;
 }
 
 /* Markdown Content Overrides */
@@ -329,6 +340,11 @@
   overflow-y: auto;
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
+}
+
+.discover-feed-scroll-container--safari {
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: auto;
 }
 
 /* Hide scrollbar but keep functionality */
