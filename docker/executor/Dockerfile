@@ -32,7 +32,7 @@ RUN dnf install -y \
     poppler-utils pandoc tesseract \
     # Chromium dependencies for Playwright browser automation
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
-    && npm install -g @anthropic-ai/claude-code@2.1.27 \
+    && npm install -g @anthropic-ai/claude-code@2.1.33 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

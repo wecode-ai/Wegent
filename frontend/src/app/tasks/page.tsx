@@ -9,7 +9,7 @@ import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import GreyTestButton from '@/features/layout/components/GreyTestButton'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
-import { TaskParamSync } from '@/features/tasks/components/params'
+import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
 import { TeamShareHandler } from '@/features/tasks/components/share'
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
 import '@/app/tasks/tasks.css'
@@ -22,6 +22,7 @@ import { UserProvider } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 import { SocketProvider } from '@/contexts/SocketContext'
+import { DeviceProvider } from '@/contexts/DeviceContext'
 import { ChatArea } from '@/features/tasks/components/chat'
 
 function TasksPageContent() {
@@ -47,6 +48,7 @@ function TasksPageContent() {
       <OidcTokenHandler />
       <Suspense>
         <TaskParamSync />
+        <DeviceTaskSync />
       </Suspense>
       <Suspense>
         <TeamShareHandler
@@ -90,11 +92,13 @@ export default function TasksPage() {
   return (
     <UserProvider>
       <SocketProvider>
-        <TaskContextProvider>
-          <ChatStreamProvider>
-            <TasksPageContent />
-          </ChatStreamProvider>
-        </TaskContextProvider>
+        <DeviceProvider>
+          <TaskContextProvider>
+            <ChatStreamProvider>
+              <TasksPageContent />
+            </ChatStreamProvider>
+          </TaskContextProvider>
+        </DeviceProvider>
       </SocketProvider>
     </UserProvider>
   )

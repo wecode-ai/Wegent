@@ -22,11 +22,13 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, FastAPI, Request
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.config import settings
 from app.mcp_server.auth import (
     TaskTokenInfo,
     extract_token_from_header,
@@ -90,11 +92,32 @@ class _ASGIPathAdapter:
 # Provides system-level tools like silent_exit
 # Automatically injected into all subscription tasks
 
+
+def _build_transport_security_settings() -> TransportSecuritySettings:
+    if not settings.MCP_ENABLE_DNS_REBINDING_PROTECTION:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+    allowed_hosts = settings.MCP_ALLOWED_HOSTS
+    if not allowed_hosts:
+        logger.warning(
+            "MCP DNS rebinding protection enabled but MCP_ALLOWED_HOSTS is empty. "
+            "Disabling protection to avoid blocking all requests."
+        )
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=settings.MCP_ALLOWED_ORIGINS,
+    )
+
+
 system_mcp_server = FastMCP(
     "wegent-system-mcp",
     stateless_http=True,
     json_response=True,
     streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
 )
 
 # Store for system MCP request context (using ContextVar for thread-safe concurrent request handling)
@@ -142,6 +165,7 @@ knowledge_mcp_server = FastMCP(
     stateless_http=True,
     json_response=True,
     streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
 )
 
 
