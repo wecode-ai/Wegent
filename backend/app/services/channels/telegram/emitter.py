@@ -233,11 +233,22 @@ class StreamingResponseEmitter(ChatEventEmitter):
                         display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
                     )
 
-                await self._bot.edit_message_text(
-                    chat_id=self._chat_id,
-                    message_id=self._message_id,
-                    text=display_content,
-                )
+                try:
+                    await self._bot.edit_message_text(
+                        chat_id=self._chat_id,
+                        message_id=self._message_id,
+                        text=display_content,
+                    )
+                except Exception as edit_error:
+                    # Ignore "Message is not modified" error - this happens when
+                    # the final content is the same as the last streamed content
+                    error_str = str(edit_error)
+                    if "Message is not modified" in error_str:
+                        logger.debug(
+                            "[TelegramStreamingEmitter] Message content unchanged, skipping final edit"
+                        )
+                    else:
+                        raise
 
             self._finished = True
             logger.info("[TelegramStreamingEmitter] Message finalized successfully")
