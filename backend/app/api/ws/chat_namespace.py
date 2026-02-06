@@ -1183,26 +1183,24 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 return {"error": "Task not found"}
 
-            # Get the latest subtask to find executor_name
+            # Get the latest subtask with device executor
+            # Note: A task may have mixed subtasks - some from device mode (executor_name starts with "device-")
+            # and some from chat mode (no executor_name). We need to find the device subtask specifically.
             subtask = (
                 db.query(Subtask)
-                .filter(Subtask.task_id == task_id)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.executor_name.like("device-%"),
+                )
                 .order_by(Subtask.id.desc())
                 .first()
             )
 
-            if not subtask or not subtask.executor_name:
+            if not subtask:
                 logger.error(
-                    f"[WS] task:close-session error: No executor found for task_id={task_id}"
+                    f"[WS] task:close-session error: No device executor found for task_id={task_id}"
                 )
-                return {"error": "No executor found for this task"}
-
-            # Check if this is a device task
-            if not subtask.executor_name.startswith("device-"):
-                logger.error(
-                    f"[WS] task:close-session error: Not a device task, executor_name={subtask.executor_name}"
-                )
-                return {"error": "Not a device task"}
+                return {"error": "No device executor found for this task"}
 
             # Extract device_id from executor_name (format: "device-{device_id}")
             device_id = subtask.executor_name[7:]  # Remove "device-" prefix
