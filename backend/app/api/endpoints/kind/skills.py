@@ -288,9 +288,7 @@ def scan_git_repository(
     Returns a list of skills found in the repository (directories containing SKILL.md)
     along with repository authentication information.
     """
-    skills, repo_info = git_skill_service.scan_repository(
-        repo_url, user_id=current_user.id, db=db
-    )
+    skills = git_skill_service.scan_repository(repo_url, user_id=current_user.id, db=db)
 
     return GitScanResponse(
         repo_url=repo_url,
@@ -307,7 +305,6 @@ def scan_git_repository(
             for s in skills
         ],
         total_count=len(skills),
-        repo_info=repo_info,
     )
 
 
@@ -771,9 +768,7 @@ def scan_git_repository_for_public(
     Returns a list of skills found in the repository (directories containing SKILL.md)
     along with repository authentication information.
     """
-    skills, repo_info = git_skill_service.scan_repository(
-        repo_url, user_id=current_user.id, db=db
-    )
+    skills = git_skill_service.scan_repository(repo_url, user_id=current_user.id, db=db)
 
     return GitScanResponse(
         repo_url=repo_url,
@@ -790,7 +785,6 @@ def scan_git_repository_for_public(
             for s in skills
         ],
         total_count=len(skills),
-        repo_info=repo_info,
     )
 
 

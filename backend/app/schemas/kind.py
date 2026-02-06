@@ -919,19 +919,6 @@ class GitSkillInfo(BaseModel):
     )
 
 
-class GitRepoInfo(BaseModel):
-    """Repository authentication information"""
-
-    domain: str = Field(..., description="Git domain (e.g., github.com)")
-    has_token_configured: bool = Field(
-        False, description="Whether a token is configured for this domain"
-    )
-    auth_source: str = Field(
-        "none",
-        description="Authentication source: 'url_credentials', 'platform_integration', or 'none'",
-    )
-
-
 class GitScanResponse(BaseModel):
     """Response from scanning a Git repository for skills"""
 
@@ -940,9 +927,6 @@ class GitScanResponse(BaseModel):
         default_factory=list, description="List of skills found in the repository"
     )
     total_count: int = Field(0, description="Total number of skills found")
-    repo_info: Optional[GitRepoInfo] = Field(
-        None, description="Repository authentication information"
-    )
 
 
 class GitImportRequest(BaseModel):

@@ -39,7 +39,7 @@ class GitSkillService:
 
     def scan_repository(
         self, repo_url: str, user_id: int = None, db: Session = None
-    ) -> Tuple[List[GitSkillInfo], Dict[str, Any]]:
+    ) -> List[GitSkillInfo]:
         """
         Scan a Git repository for skills.
 
@@ -49,7 +49,7 @@ class GitSkillService:
             db: Database session (optional, required if user_id is provided)
 
         Returns:
-            Tuple of (skills list, repo_info dict)
+            List of skills found in the repository
         """
         # Get authentication info
         if user_id and db:
@@ -71,14 +71,7 @@ class GitSkillService:
             # Scan for skills
             skills = scan_skills_in_directory(temp_dir)
 
-        # Build repo_info
-        repo_info = {
-            "domain": provider.host,
-            "has_token_configured": auth_info.auth_source != "none",
-            "auth_source": auth_info.auth_source,
-        }
-
-        return skills, repo_info
+        return skills
 
     def import_skills(
         self,

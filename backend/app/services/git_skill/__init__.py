@@ -12,7 +12,7 @@ Usage:
     from app.services.git_skill import git_skill_service
 
     # Scan a repository for skills
-    skills, repo_info = git_skill_service.scan_repository(repo_url, user_id, db)
+    skills = git_skill_service.scan_repository(repo_url, user_id, db)
 
     # Import skills from a repository
     result = git_skill_service.import_skills(repo_url, skill_paths, namespace, user_id, db=db)
