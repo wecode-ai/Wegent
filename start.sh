@@ -595,10 +595,27 @@ check_frontend_dependencies() {
 get_local_ip() {
     # Try to get the local IP address, fallback to localhost if not available
     local ip=""
+    local default_iface=""
 
-    # Method 1: Try Linux ip command (most reliable, works on Linux)
-    if command -v ip &> /dev/null; then
-        ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+    # Method 1: Get IP from the default route interface (most reliable)
+    # macOS: use 'route -n get default' to get the interface
+    # Linux: use 'ip route' to get the interface
+    if [ -z "$ip" ]; then
+        # Try macOS style
+        if command -v route &> /dev/null; then
+            default_iface=$(route -n get default 2>/dev/null | grep "interface:" | awk '{print $2}')
+            if [ -n "$default_iface" ] && command -v ifconfig &> /dev/null; then
+                ip=$(ifconfig "$default_iface" 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+            fi
+        fi
+
+        # Try Linux style with ip command
+        if [ -z "$ip" ] && command -v ip &> /dev/null; then
+            default_iface=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -1)
+            if [ -n "$default_iface" ]; then
+                ip=$(ip addr show "$default_iface" 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | head -1)
+            fi
+        fi
     fi
 
     # Method 2: Try hostname -I (works on some Linux, gets first non-loopback IP)
@@ -606,10 +623,15 @@ get_local_ip() {
         ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
 
-    # Method 3: Try macOS/BSD ifconfig (works on macOS)
+    # Method 3: Try macOS/BSD ifconfig with common interface patterns
     # Filter out docker/bridge interfaces (br-, docker, veth)
     if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
-        ip=$(ifconfig | grep -A 1 "^en\|^eth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        # First try en0 (most common default on macOS)
+        ip=$(ifconfig en0 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        # Then try en/eth interfaces
+        if [ -z "$ip" ]; then
+            ip=$(ifconfig | grep -A 1 "^en\|^eth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        fi
         # If no en/eth interface, try any non-docker interface
         if [ -z "$ip" ]; then
             ip=$(ifconfig | grep -v "^br-\|^docker\|^veth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
@@ -759,6 +781,9 @@ LOCAL_IP=$(get_local_ip)
 [ -z "$WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="http://$LOCAL_IP:$BACKEND_PORT"
 [ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="http://$LOCAL_IP:$BACKEND_PORT"
 [ -z "$EXECUTOR_MANAGER_URL" ] && EXECUTOR_MANAGER_URL="http://localhost:$EXECUTOR_MANAGER_PORT"
+[ -z "$BACKEND_API_URL" ] && BACKEND_API_URL="http://$LOCAL_IP:$BACKEND_PORT"
+
+export BACKEND_API_URL="$BACKEND_API_URL"
 
 # Create PID directory
 mkdir -p "$PID_DIR"
@@ -835,11 +860,21 @@ stop_services() {
         fi
     done
 
-    # Clean up potentially remaining processes
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "uvicorn main:app.*8001" 2>/dev/null || true
-    pkill -f "uvicorn chat_shell.main:app" 2>/dev/null || true
-    pkill -f "npm run dev.*$WEGENT_FRONTEND_PORT" 2>/dev/null || true
+    # Clean up potentially remaining processes by port (only kill processes on our configured ports)
+    # This ensures we don't accidentally kill other backend instances on the same machine
+    for port in $BACKEND_PORT $CHAT_SHELL_PORT $EXECUTOR_MANAGER_PORT $WEGENT_FRONTEND_PORT; do
+        local pids=$(lsof -ti :$port 2>/dev/null || true)
+        if [ -n "$pids" ]; then
+            echo -e "  Cleaning up processes on port $port..."
+            echo "$pids" | xargs kill 2>/dev/null || true
+            sleep 0.5
+            # Force kill if still running
+            pids=$(lsof -ti :$port 2>/dev/null || true)
+            if [ -n "$pids" ]; then
+                echo "$pids" | xargs kill -9 2>/dev/null || true
+            fi
+        fi
+    done
 
     echo -e "${GREEN}All services stopped${NC}"
 }
@@ -1049,7 +1084,7 @@ start_services() {
     # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
     # CHAT_SHELL_URL: URL for backend to call chat_shell service
     start_service "backend" "backend" \
-        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
+        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
 
     # 2. Start Chat Shell
     # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)

@@ -10,7 +10,10 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ChatTipItem, Team } from '@/types/api'
+import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
+import SkillAutocomplete, { SkillFlyAnimationTrigger } from '../chat/SkillAutocomplete'
+import SkillFlyAnimation from '../chat/SkillFlyAnimation'
 
 interface ChatInputProps {
   message: string
@@ -34,6 +37,19 @@ interface ChatInputProps {
   hasNoTeams?: boolean
   // Custom reason for disabled state (e.g., "Device offline"). Shows as placeholder.
   disabledReason?: string
+
+  // Skill selector support
+  showSkillSelector?: boolean
+  availableSkills?: UnifiedSkill[]
+  teamSkillNames?: string[]
+  preloadedSkillNames?: string[]
+  selectedSkillNames?: string[]
+  onSkillSelect?: (skillName: string) => void
+  isChatShell?: boolean
+  /** Whether skill selector is read-only (can view but not modify via / command) */
+  skillSelectorReadOnly?: boolean
+  /** Ref to the skill button element for fly animation target */
+  skillButtonRef?: React.RefObject<HTMLElement | null>
 }
 
 export default function ChatInput({
@@ -51,6 +67,15 @@ export default function ChatInput({
   onPasteFile,
   hasNoTeams = false,
   disabledReason,
+  showSkillSelector = false,
+  availableSkills = [],
+  teamSkillNames = [],
+  preloadedSkillNames = [],
+  selectedSkillNames = [],
+  onSkillSelect,
+  isChatShell = false,
+  skillSelectorReadOnly = false,
+  skillButtonRef,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -96,6 +121,31 @@ export default function ChatInput({
   const [showMentionMenu, setShowMentionMenu] = useState(false)
   const [mentionMenuPosition, setMentionMenuPosition] = useState({ top: 0, left: 0 })
   const [mentionQuery, setMentionQuery] = useState('')
+
+  // Skill autocomplete state
+  const [showSkillMenu, setShowSkillMenu] = useState(false)
+  const [skillMenuPosition, setSkillMenuPosition] = useState({ top: 0, left: 0 })
+  const [skillQuery, setSkillQuery] = useState('')
+
+  // Skill fly animation state (managed here so animation persists after autocomplete closes)
+  const [flyAnimation, setFlyAnimation] = useState<{
+    skillName: string | null
+    startPosition: { x: number; y: number } | null
+    endPosition: { x: number; y: number } | null
+  }>({
+    skillName: null,
+    startPosition: null,
+    endPosition: null,
+  })
+
+  // Handle fly animation trigger from SkillAutocomplete
+  const handleTriggerFlyAnimation = useCallback((data: SkillFlyAnimationTrigger) => {
+    setFlyAnimation({
+      skillName: data.skillName,
+      startPosition: data.startPosition,
+      endPosition: data.endPosition,
+    })
+  }, [])
 
   // Update placeholder visibility when message changes externally
   useEffect(() => {
@@ -150,7 +200,7 @@ export default function ChatInput({
     // Convert newlines to <br> tags for proper display in contentEditable
     // Use innerHTML to properly render the <br> tags
     const htmlContent = text
-      .split('chat:\n')
+      .split('\n')
       .map(line => {
         // Escape HTML entities to prevent XSS
         const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -270,27 +320,32 @@ export default function ChatInput({
       setMessage(text)
       setShowPlaceholder(!text)
 
+      // Helper function to get cursor position for autocomplete menus
+      const getCursorPosition = () => {
+        const selection = window.getSelection()
+        if (selection && selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0)
+          const rect = range.getBoundingClientRect()
+          const containerRect = editableRef.current?.getBoundingClientRect()
+          if (containerRect) {
+            return {
+              top: rect.top - containerRect.top - 8,
+              left: rect.left - containerRect.left,
+            }
+          }
+        }
+        return null
+      }
+
       // Check for @ trigger in group chat mode
       if (isGroupChat && team) {
         const lastChar = text[text.length - 1]
         if (lastChar === '@') {
-          // Get cursor position to show autocomplete menu
-          const selection = window.getSelection()
-          if (selection && selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0)
-            const rect = range.getBoundingClientRect()
-            const containerRect = editableRef.current?.getBoundingClientRect()
-
-            if (containerRect) {
-              // Position menu above the cursor (bottom of chat input)
-              // Calculate position relative to container
-              setMentionMenuPosition({
-                top: rect.top - containerRect.top - 8, // Position above cursor with 8px gap
-                left: rect.left - containerRect.left,
-              })
-              setShowMentionMenu(true)
-              setMentionQuery('')
-            }
+          const position = getCursorPosition()
+          if (position) {
+            setMentionMenuPosition(position)
+            setShowMentionMenu(true)
+            setMentionQuery('')
           }
         } else if (showMentionMenu) {
           // Update query or close menu if user continues typing after @
@@ -306,8 +361,47 @@ export default function ChatInput({
           }
         }
       }
+
+      // Check for / trigger for skill selector
+      if (showSkillSelector && availableSkills.length > 0) {
+        const lastChar = text[text.length - 1]
+        // Only trigger at start of input or after whitespace
+        const charBeforeLast = text.length > 1 ? text[text.length - 2] : ''
+        const isValidTrigger = lastChar === '/' && (text.length === 1 || /\s/.test(charBeforeLast))
+
+        if (isValidTrigger) {
+          const position = getCursorPosition()
+          if (position) {
+            setSkillMenuPosition(position)
+            setShowSkillMenu(true)
+            setSkillQuery('')
+          }
+        } else if (showSkillMenu) {
+          // Update query or close menu if user continues typing after /
+          const words = text.split(/\s/)
+          const lastWord = words[words.length - 1]
+          if (lastWord.startsWith('/')) {
+            // Extract query after /
+            const query = lastWord.substring(1)
+            setSkillQuery(query)
+          } else {
+            setShowSkillMenu(false)
+            setSkillQuery('')
+          }
+        }
+      }
     },
-    [isInputDisabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu]
+    [
+      isInputDisabled,
+      setMessage,
+      getTextWithNewlines,
+      isGroupChat,
+      team,
+      showMentionMenu,
+      showSkillSelector,
+      availableSkills.length,
+      showSkillMenu,
+    ]
   )
 
   // Handle mention selection
@@ -350,6 +444,51 @@ export default function ChatInput({
       }
     },
     [getTextWithNewlines, setMessage, setContentWithNewlines]
+  )
+
+  // Handle skill selection from autocomplete
+  const handleSkillSelect = useCallback(
+    (skillName: string) => {
+      if (editableRef.current && onSkillSelect) {
+        const currentText = getTextWithNewlines(editableRef.current)
+        // Remove the /query from the text
+        const lastSlashIndex = currentText.lastIndexOf('/')
+        if (lastSlashIndex !== -1) {
+          // Find the position of / that triggered the menu
+          // Get text before the /
+          const textBefore = currentText.substring(0, lastSlashIndex)
+          // Get text after the / and find where the current word ends
+          const textAfterSlash = currentText.substring(lastSlashIndex + 1)
+          // Find the end of the current word (first whitespace after /)
+          const wordEndMatch = textAfterSlash.match(/^\S*/)
+          const currentWord = wordEndMatch ? wordEndMatch[0] : ''
+          const textAfterWord = textAfterSlash.substring(currentWord.length)
+          // Build new text: text before / + remaining text (remove the /query)
+          const newText = textBefore + textAfterWord.trimStart()
+          setMessage(newText)
+          setContentWithNewlines(editableRef.current, newText)
+        }
+
+        // Call the skill selection callback
+        onSkillSelect(skillName)
+
+        // Move cursor to end
+        const selection = window.getSelection()
+        if (selection && editableRef.current) {
+          const range = document.createRange()
+          range.selectNodeContents(editableRef.current)
+          range.collapse(false)
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+
+        // Focus back to input
+        editableRef.current.focus()
+        setShowSkillMenu(false)
+        setSkillQuery('')
+      }
+    },
+    [getTextWithNewlines, setMessage, setContentWithNewlines, onSkillSelect]
   )
 
   const handlePaste = useCallback(
@@ -529,6 +668,36 @@ export default function ChatInput({
         />
       )}
 
+      {/* Skill autocomplete menu */}
+      {showSkillMenu && showSkillSelector && availableSkills.length > 0 && (
+        <SkillAutocomplete
+          skills={availableSkills}
+          teamSkillNames={teamSkillNames}
+          preloadedSkillNames={preloadedSkillNames}
+          query={skillQuery}
+          selectedSkillNames={selectedSkillNames}
+          onSelect={handleSkillSelect}
+          onClose={() => {
+            setShowSkillMenu(false)
+            setSkillQuery('')
+          }}
+          position={skillMenuPosition}
+          isChatShell={isChatShell}
+          readOnly={skillSelectorReadOnly}
+          skillButtonRef={skillButtonRef}
+          onTriggerFlyAnimation={handleTriggerFlyAnimation}
+        />
+      )}
+
+      {/* Skill fly animation - rendered here so it persists after autocomplete closes */}
+      <SkillFlyAnimation
+        skillName={flyAnimation.skillName}
+        startPosition={flyAnimation.startPosition}
+        endPosition={flyAnimation.endPosition}
+        onAnimationComplete={() =>
+          setFlyAnimation({ skillName: null, startPosition: null, endPosition: null })
+        }
+      />
       {/* Scrollable container that includes both badge and editable content */}
       <div
         className="w-full custom-scrollbar"

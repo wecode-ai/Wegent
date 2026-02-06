@@ -131,6 +131,7 @@ const PROTOCOL_BY_CATEGORY: Record<
     { value: 'openai-responses', label: 'OpenAI Responses', hint: 'Responses API' },
     { value: 'anthropic', label: 'Anthropic', hint: 'Claude Code' },
     { value: 'gemini', label: 'Gemini', hint: 'Google' },
+    { value: 'gemini-deep-research', label: 'Gemini Deep Research', hint: 'Long-form Research' },
   ],
   tts: [
     { value: 'openai', label: 'OpenAI TTS' },
@@ -179,6 +180,14 @@ const GEMINI_MODEL_OPTIONS = [
   { value: 'custom', label: 'Custom...' },
 ]
 
+const GEMINI_DEEP_RESEARCH_MODEL_OPTIONS = [
+  {
+    value: 'deep-research-pro-preview-12-2025',
+    label: 'deep-research-pro-preview-12-2025 (Recommended)',
+  },
+  { value: 'custom', label: 'Custom...' },
+]
+
 const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   open,
   model,
@@ -191,27 +200,31 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 }) => {
   const { t } = useTranslation()
   // Support both legacy model prop and new initialData prop
-  const effectiveInitialData =
-    initialData ||
-    (model
-      ? {
-          name: model.metadata.name,
-          displayName: model.metadata.displayName,
-          modelCategoryType: model.spec.modelType,
-          providerType: model.spec.modelConfig?.env?.model,
-          modelId: model.spec.modelConfig?.env?.model_id,
-          apiKey: model.spec.modelConfig?.env?.api_key,
-          baseUrl: model.spec.modelConfig?.env?.base_url,
-          customHeaders: model.spec.modelConfig?.env?.custom_headers,
-          protocol: model.spec.protocol,
-          contextWindow: model.spec.contextWindow,
-          maxOutputTokens: model.spec.maxOutputTokens,
-          ttsConfig: model.spec.ttsConfig,
-          sttConfig: model.spec.sttConfig,
-          embeddingConfig: model.spec.embeddingConfig,
-          rerankConfig: model.spec.rerankConfig,
-        }
-      : null)
+  // Use useMemo to prevent re-creating the object on every render
+  const effectiveInitialData = React.useMemo(() => {
+    return (
+      initialData ||
+      (model
+        ? {
+            name: model.metadata.name,
+            displayName: model.metadata.displayName,
+            modelCategoryType: model.spec.modelType,
+            providerType: model.spec.modelConfig?.env?.model,
+            modelId: model.spec.modelConfig?.env?.model_id,
+            apiKey: model.spec.modelConfig?.env?.api_key,
+            baseUrl: model.spec.modelConfig?.env?.base_url,
+            customHeaders: model.spec.modelConfig?.env?.custom_headers,
+            protocol: model.spec.protocol,
+            contextWindow: model.spec.contextWindow,
+            maxOutputTokens: model.spec.maxOutputTokens,
+            ttsConfig: model.spec.ttsConfig,
+            sttConfig: model.spec.sttConfig,
+            embeddingConfig: model.spec.embeddingConfig,
+            rerankConfig: model.spec.rerankConfig,
+          }
+        : null)
+    )
+  }, [initialData, model])
   const isEditing = !!effectiveInitialData
   const isGroupScope = scope === 'group'
 
@@ -279,9 +292,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         const modelType = effectiveInitialData.providerType
         const protocol = effectiveInitialData.protocol
         // Map model type to provider type
-        // Check protocol first for openai-responses
+        // Check protocol first for openai-responses and gemini-deep-research
         if (protocol === 'openai-responses') {
           setProviderType('openai-responses')
+        } else if (protocol === 'gemini-deep-research') {
+          setProviderType('gemini-deep-research')
         } else if (modelType === 'claude') {
           setProviderType('anthropic')
         } else if (
@@ -371,7 +386,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         ? OPENAI_MODEL_OPTIONS
         : providerType === 'gemini'
           ? GEMINI_MODEL_OPTIONS
-          : ANTHROPIC_MODEL_OPTIONS
+          : providerType === 'gemini-deep-research'
+            ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
+            : ANTHROPIC_MODEL_OPTIONS
 
   // Merge fetched models with base options
   const modelOptions = React.useMemo(() => {
@@ -427,20 +444,27 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }
 
-  // Set model ID when initialData changes
+  // Track if we've already initialized modelId from initialData
+  // This prevents re-setting modelId when modelOptions changes after fetching
+  const hasInitializedModelId = React.useRef(false)
+
+  // Set model ID when initialData changes (only once per dialog open)
   useEffect(() => {
-    if (effectiveInitialData?.modelId) {
+    if (effectiveInitialData?.modelId && !hasInitializedModelId.current) {
       const id = effectiveInitialData.modelId
-      const isPreset = modelOptions.some(opt => opt.value === id && opt.value !== 'custom')
-      if (isPreset) {
-        setModelId(id)
-        setCustomModelId('')
-      } else {
-        setModelId('custom')
-        setCustomModelId(id)
-      }
+      hasInitializedModelId.current = true
+      // Set the model ID directly - it will be displayed even if not in options yet
+      setModelId(id)
+      setCustomModelId('')
     }
-  }, [effectiveInitialData, modelOptions])
+  }, [effectiveInitialData])
+
+  // Reset initialization flag when dialog closes
+  useEffect(() => {
+    if (!open) {
+      hasInitializedModelId.current = false
+    }
+  }, [open])
   const handleProviderChange = (value: string) => {
     setProviderType(value)
     setModelId('')
@@ -451,6 +475,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setBaseUrl('https://api.openai.com/v1')
       } else if (value === 'gemini') {
         setBaseUrl('https://generativelanguage.googleapis.com')
+      } else if (value === 'gemini-deep-research') {
+        // Deep Research uses internal proxy - base_url will be set by backend
+        setBaseUrl('')
       } else {
         setBaseUrl('https://api.anthropic.com')
       }
@@ -480,7 +507,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     setTesting(true)
     try {
       const result = await modelApis.testConnection({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini',
+        provider_type: providerType as
+          | 'openai'
+          | 'anthropic'
+          | 'gemini'
+          | 'gemini-deep-research'
+          | 'openai-responses',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,
@@ -727,6 +759,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         } else if (providerType === 'openai-responses') {
           // openai-responses uses openai as the model type, protocol distinguishes the API format
           modelFieldValue = 'openai'
+        } else if (providerType === 'gemini-deep-research') {
+          // gemini-deep-research uses gemini as the model type, protocol distinguishes the API format
+          modelFieldValue = 'gemini'
         }
       }
 
@@ -750,8 +785,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             },
           },
           modelType: modelCategoryType,
-          // Save protocol for openai-responses to distinguish from regular openai
+          // Save protocol for openai-responses and gemini-deep-research to distinguish from regular variants
           ...(providerType === 'openai-responses' && { protocol: 'openai-responses' }),
+          ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
           // LLM-specific fields
           ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
           ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
@@ -826,7 +862,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const apiKeyPlaceholder =
     providerType === 'openai' || providerType === 'openai-responses'
       ? 'sk-...'
-      : providerType === 'gemini'
+      : providerType === 'gemini' || providerType === 'gemini-deep-research'
         ? 'AIza...'
         : 'sk-ant-...'
   const baseUrlPlaceholder =
@@ -834,7 +870,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       ? 'https://api.openai.com/v1'
       : providerType === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
-        : 'https://api.anthropic.com'
+        : providerType === 'gemini-deep-research'
+          ? 'Internal proxy (auto-configured)'
+          : 'https://api.anthropic.com'
 
   return (
     <Dialog open={open} onOpenChange={open => !open && onClose()}>

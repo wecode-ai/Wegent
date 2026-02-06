@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     EXECUTOR_CANCEL_TASK_URL: str = (
         "http://localhost:8001/executor-manager/tasks/cancel"
     )
+    # Latest Executor version (manually updated when releasing new versions)
+    # This is used to show upgrade warnings in the UI
+    EXECUTOR_LATEST_VERSION: str = "1.0.0"
 
     # JWT configuration
     SECRET_KEY: str = "secret-key"
@@ -222,6 +225,9 @@ class Settings(BaseSettings):
     WEBHOOK_AUTH_TOKEN: str = ""
     WEBHOOK_HEADERS: str = ""
     WEBHOOK_TIMEOUT: int = 30
+    # Allow PII (Personally Identifiable Information) in webhook notifications
+    # When False, email addresses are masked in notification descriptions
+    ALLOW_PII_IN_WEBHOOKS: bool = False
 
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"
@@ -324,6 +330,16 @@ class Settings(BaseSettings):
     # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
     # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
     STREAMING_MODE: str = "legacy"
+
+    # IM Channel configuration
+    # Default Claude model name for device mode (auto-switch when user's model is not Claude)
+    # Format: model name as shown in /models list (e.g., "claude-3-5-sonnet")
+    # If empty, user must manually select a Claude model
+    IM_CHANNEL_DEVICE_DEFAULT_MODEL: str = ""
+    # Conversation timeout in minutes for IM channels
+    # If the last message was sent more than this many minutes ago, start a new conversation
+    # Set to 0 to disable auto-new conversation (default: 720 minutes = 12 hours)
+    IM_CHANNEL_CONVERSATION_TIMEOUT_MINUTES: int = 720
 
     # Default team configuration for each mode
     # Format: "name#namespace" (namespace is optional, defaults to "default")

@@ -58,6 +58,9 @@ hiddenimports += collect_submodules('opentelemetry.instrumentation.system_metric
 if os.path.exists(shared_path):
     hiddenimports += collect_submodules('shared')
 
+# Collect Rich Unicode data modules (fix for Unicode character handling)
+hiddenimports += collect_submodules('rich._unicode_data')
+
 # Additional hidden imports
 hiddenimports += [
     'uvicorn.logging',
@@ -74,7 +77,7 @@ hiddenimports += [
 
 # Collect package data
 for package in ['fastapi', 'uvicorn', 'pydantic', 'anthropic', 'claude_agent_sdk',
-                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette']:
+                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette', 'rich']:
     try:
         tmp_datas, tmp_binaries, tmp_hiddenimports = collect_all(package)
         datas += tmp_datas

@@ -6,7 +6,8 @@
 
 import React, { memo, useMemo, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import remarkGfmSafe from '@/lib/remark-gfm-safe'
+import { autolinkUrls } from '@/lib/autolink-urls'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
@@ -372,8 +373,10 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   theme,
   components,
 }: EnhancedMarkdownProps) {
-  // Pre-process source to convert \[...\] and \(...\) to dollar syntax
-  const processedSource = useMemo(() => preprocessLatexSyntax(source), [source])
+  // Pre-process source:
+  // 1. Convert \[...\] and \(...\) to dollar syntax for LaTeX
+  // 2. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
+  const processedSource = useMemo(() => autolinkUrls(preprocessLatexSyntax(source)), [source])
 
   // Check if source contains math formulas
   const hasMath = useMemo(() => containsMathFormulas(processedSource), [processedSource])
@@ -484,7 +487,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Configure remark/rehype plugins based on content
   const remarkPlugins = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plugins: any[] = [remarkGfm]
+    const plugins: any[] = [remarkGfmSafe]
     if (hasMath) {
       // Enable singleDollarTextMath to support $...$ inline math
       plugins.push([remarkMath, { singleDollarTextMath: true }])
@@ -510,8 +513,8 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return plugins
   }, [hasMath])
 
-  // URL transform to allow wegent:// scheme URLs
-  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:']), [])
+  // URL transform to allow wegent:// and attachment:// scheme URLs
+  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])
 
   // Render markdown content
   const renderMarkdown = (content: string) => (

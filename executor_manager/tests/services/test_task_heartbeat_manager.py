@@ -370,8 +370,8 @@ class TestRunningTaskTracker:
 
         # Mock heartbeat manager - no heartbeat
         mock_heartbeat = MagicMock()
-        mock_heartbeat.check_heartbeat.return_value = False
-        mock_heartbeat.get_last_heartbeat.return_value = None
+        mock_heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        mock_heartbeat.get_last_heartbeat = AsyncMock(return_value=None)
         mocker.patch(
             "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -421,7 +421,7 @@ class TestRunningTaskTracker:
 
         # Mock heartbeat manager - heartbeat is alive
         mock_heartbeat = MagicMock()
-        mock_heartbeat.check_heartbeat.return_value = True
+        mock_heartbeat.check_heartbeat = AsyncMock(return_value=True)
         mocker.patch(
             "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -523,6 +523,7 @@ class TestRunningTaskTracker:
 
         # Mock heartbeat manager (imported inside method)
         mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
         mocker.patch(
             "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -575,6 +576,7 @@ class TestRunningTaskTracker:
 
         # Mock heartbeat manager (imported inside method)
         mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
         mocker.patch(
             "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -623,6 +625,7 @@ class TestRunningTaskTracker:
 
         # Mock heartbeat manager (imported inside method)
         mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
         mocker.patch(
             "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -671,6 +674,7 @@ class TestRunningTaskTracker:
 
         # Mock heartbeat manager (imported inside method)
         mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
         mocker.patch(
             "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -723,6 +727,7 @@ class TestRunningTaskTracker:
 
         # Mock heartbeat manager (imported inside method)
         mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
         mocker.patch(
             "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
             return_value=mock_heartbeat,

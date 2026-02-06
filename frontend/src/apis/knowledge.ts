@@ -125,6 +125,24 @@ export async function deleteDocument(documentId: number): Promise<void> {
   return apiClient.delete(`/knowledge-documents/${documentId}`)
 }
 
+/**
+ * Response for document reindex
+ */
+export interface DocumentReindexResponse {
+  success: boolean
+  document_id: number
+  message: string
+}
+
+/**
+ * Trigger re-indexing for a document
+ * @param documentId The document ID to reindex
+ * @returns Success message indicating reindex has started
+ */
+export async function reindexDocument(documentId: number): Promise<DocumentReindexResponse> {
+  return apiClient.post<DocumentReindexResponse>(`/knowledge-documents/${documentId}/reindex`)
+}
+
 // ============== Batch Document Operations ==============
 
 /**

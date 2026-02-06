@@ -3,6 +3,7 @@
     "name": "Wegent AI Assistant",
     "description": "A whole dev team of AI agents in your editor."
   },
+  "loading": "Loading...",
   "repos": {
     "repository": "Select Repository",
     "branch": "Select Branch",
@@ -40,7 +41,8 @@
     "view": "View",
     "copy": "Copy",
     "copied": "Copied",
-    "loadMore": "Load More"
+    "loadMore": "Load More",
+    "configure": "Configure"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -90,7 +92,8 @@
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
     "placeholder_code": "Let the Agent development team build features, fix bugs, and explore the codebase",
-    "sourceReferences": "Source References"
+    "sourceReferences": "Source References",
+    "sources": "Sources"
   },
   "bot": {
     "name": "Name",
@@ -107,12 +110,14 @@
     "no_available_models": "No available models",
     "import_mcp": "Import",
     "import_mcp_button": "Import MCP from other platforms",
+    "mcp_market": "MCP Market",
     "import_mcp_title": "Import MCP Configuration",
     "import_mcp_desc": "Please paste standardized MCP configuration JSON. The system will automatically add type: \"sse\" if missing or convert transport field to type field.",
     "import_mode_replace": "Replace existing config",
     "import_mode_append": "Append to existing config",
     "import_success": "MCP configuration imported successfully",
     "append_success": "MCP configuration appended successfully",
+    "mcp_config_readonly_placeholder": "MCP configuration is read-only. Please use the Import button to modify.",
     "quick_templates": "Use Preset Templates for Quick Configuration",
     "template": "Template",
     "template_hint": "Click template button to autofill configuration, then modify the API Key",
@@ -240,18 +245,18 @@
     "create_failed": "Failed to create team",
     "sharing": "Sharing",
     "shared_by": "Shared by {{author}}",
-    "share_failed": "Failed to share team, please try again",
-    "share_success_title": "Share Success",
-    "share_success_message": "Share your {{teamName}} with your friends!",
-    "share_success_message_prefix": "Share your",
-    "share_success_message_suffix": "with your friends!",
+    "share_failed": "Failed to share, please try again",
+    "share_success_title": "Share Successful",
+    "share_success_message": "Share agent \"{{teamName}}\" with your friends!",
+    "share_success_message_prefix": "Share agent \"",
+    "share_success_message_suffix": "\" with your friends!",
     "share_link": "Share Link",
     "copy_link": "Copy Link",
-    "copy_success": "Copied successfully",
+    "copy_success": "Link copied",
     "group_required_title": "Please select a group first",
     "group_required_message": "When creating an agent in group mode, a group must be selected first",
-    "share_instructions_content1": "Copy and send this link to others, they can use your shared team to complete tasks directly through the link.",
-    "share_instructions_content2": "After sharing the team, you can still manage and edit this team, and others can apply the latest team configuration but cannot edit the team settings.",
+    "share_instructions_content1": "Copy and send this link to others. They can use your shared agent to complete tasks directly.",
+    "share_instructions_content2": "After sharing, you can still manage and edit this agent. Others can apply the latest agent configuration but cannot edit agent settings.",
     "filter_all": "All",
     "filter_chat": "Chat",
     "filter_code": "Code",
@@ -261,24 +266,24 @@
     "icon": "Icon",
     "selectIcon": "Select Icon",
     "share": {
-      "title": "Team Share",
-      "confirm_message": "Do you want to use {{userName}}'s {{teamName}} to execute tasks?",
-      "join_description": "After confirmation, {{teamName}} will be added to your team list, and you can use this team to create and execute tasks.",
+      "title": "Agent Share",
+      "confirm_message": "Do you want to use {{userName}}'s agent \"{{teamName}}\" to execute tasks?",
+      "join_description": "After confirmation, \"{{teamName}}\" will be added to your agent list, and you can use it to create and execute tasks.",
       "joining": "Joining...",
-      "confirm_join": "Confirm",
-      "self_share_message": "{{teamName}} is your team, no need to join.",
-      "already_joined_message": "{{teamName}} is already in your team list, no need to join again.",
-      "fetch_info_failed": "Failed to fetch shared team information",
-      "join_failed": "Failed to join team",
-      "join_success": "Successfully joined team \"{{teamName}}\"",
-      "loading": "Loading team information...",
-      "self_share_suffix": " is your team, no need to join.",
-      "already_joined_suffix": " is already in your team list, no need to join again.",
-      "confirm_prefix": "Do you want to use",
-      "confirm_middle": "'s",
-      "confirm_suffix": " to execute tasks?",
-      "join_description_prefix": "After confirmation, ",
-      "join_description_suffix": " will be added to your team list, and you can use this team to create and execute tasks."
+      "confirm_join": "Confirm Join",
+      "self_share_message": "\"{{teamName}}\" is your own agent, no need to join.",
+      "already_joined_message": "\"{{teamName}}\" is already in your agent list, no need to join again.",
+      "fetch_info_failed": "Failed to fetch shared agent information",
+      "join_failed": "Failed to join agent, please try again",
+      "join_success": "Successfully joined agent \"{{teamName}}\"",
+      "loading": "Loading agent information...",
+      "self_share_suffix": " is your own agent, no need to join.",
+      "already_joined_suffix": " is already in your agent list, no need to join again.",
+      "confirm_prefix": "Do you want to use ",
+      "confirm_middle": "'s agent \"",
+      "confirm_suffix": "\" to execute tasks?",
+      "join_description_prefix": "After confirmation, \"",
+      "join_description_suffix": "\" will be added to your agent list, and you can use it to create and execute tasks."
     }
   },
   "team": {
@@ -1175,10 +1180,17 @@
       "content_truncated_hint": "File content was too long. Kept first {{length}} million characters",
       "batch_limit_exceeded": "Too many files selected (max {{max}} files)"
     },
+    "preview": {
+      "label": "Preview",
+      "loading": "Loading preview...",
+      "unavailable": "Preview unavailable"
+    },
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
-    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, Code files",
+    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, HTML, Code files",
+    "html_preview": "HTML Preview",
+    "click_to_preview": "Click to preview",
     "characters": "chars",
     "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
   },
@@ -1192,5 +1204,24 @@
       "hint_description": "Use hjkl to navigate, i for insert mode, Esc for normal mode. :w to save, :q to close.",
       "commands_hint": ":w save | :q close | :wq save & close"
     }
+  },
+  "skillSelector": {
+    "slash_command_hint": "Type / to select skills",
+    "select_skills": "Select Skills",
+    "team_skills_section": "Agent Skills",
+    "personal_skills_section": "Personal Skills",
+    "group_skills_section": "Group Skills",
+    "public_skills_section": "Public Skills",
+    "no_available_skills": "No skills available",
+    "skills_selected": "{{count}} skill(s) selected",
+    "remove_skill": "Remove skill",
+    "skill_autocomplete_title": "Select skills to use",
+    "preload_hint": "Selected skills will be auto-loaded",
+    "download_hint": "Selected skills will be downloaded when the task runs",
+    "search_skills": "Search skills...",
+    "no_matching_skills": "No matching skills",
+    "already_selected": "Already selected",
+    "skill_button_tooltip": "Select skills to use with this message",
+    "manage_skills": "Manage"
   }
 }

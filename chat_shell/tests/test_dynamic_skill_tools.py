@@ -608,3 +608,111 @@ class TestSkillRetentionAcrossTurns:
 
         # Check remaining turns uses default value
         assert tool.get_skill_remaining_turns("skill_a") == 5
+
+    def test_restore_from_history_with_loaded_skills_field(self):
+        """Test restore_from_history using the new loaded_skills field (primary method)."""
+        tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["skill_a", "skill_b"],
+            skill_metadata={
+                "skill_a": {"description": "Skill A", "prompt": "Skill A prompt"},
+                "skill_b": {"description": "Skill B", "prompt": "Skill B prompt"},
+            },
+            skill_retention_turns=5,
+        )
+
+        # Simulate history with loaded_skills field (new format from StreamingState)
+        history = [
+            {"role": "user", "content": "Load skill_a"},
+            {
+                "role": "assistant",
+                "content": "I've loaded the skill for you.",
+                "loaded_skills": ["skill_a"],  # New format
+            },
+            {"role": "user", "content": "Do something"},
+            {"role": "assistant", "content": "Done!"},
+            {"role": "user", "content": "Load skill_b too"},
+            {
+                "role": "assistant",
+                "content": "I've loaded skill_b as well.",
+                "loaded_skills": ["skill_b"],  # New format
+            },
+        ]
+
+        # Restore from history
+        tool.restore_from_history(history)
+
+        # Both skills should be restored
+        assert tool.is_skill_loaded("skill_a")
+        assert tool.is_skill_loaded("skill_b")
+
+        # skill_a: loaded 2 turns ago, 5 - 2 = 3 remaining
+        assert tool.get_skill_remaining_turns("skill_a") == 3
+        # skill_b: loaded 0 turns ago (most recent), 5 - 0 = 5 remaining
+        assert tool.get_skill_remaining_turns("skill_b") == 5
+
+    def test_restore_from_history_mixed_formats(self):
+        """Test restore_from_history with both old (content pattern) and new (loaded_skills field) formats."""
+        tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["skill_a", "skill_b"],
+            skill_metadata={
+                "skill_a": {"description": "Skill A", "prompt": "Skill A prompt"},
+                "skill_b": {"description": "Skill B", "prompt": "Skill B prompt"},
+            },
+            skill_retention_turns=5,
+        )
+
+        # Simulate history with mixed formats
+        history = [
+            {"role": "user", "content": "Load skill_a"},
+            {
+                "role": "assistant",
+                "content": "Skill 'skill_a' has been loaded.",  # Old format (content pattern)
+            },
+            {"role": "user", "content": "Do something"},
+            {"role": "assistant", "content": "Done!"},
+            {"role": "user", "content": "Load skill_b"},
+            {
+                "role": "assistant",
+                "content": "I've loaded skill_b.",
+                "loaded_skills": ["skill_b"],  # New format
+            },
+        ]
+
+        # Restore from history
+        tool.restore_from_history(history)
+
+        # Both skills should be restored (from different formats)
+        assert tool.is_skill_loaded("skill_a")
+        assert tool.is_skill_loaded("skill_b")
+
+    def test_restore_from_history_loaded_skills_field_priority(self):
+        """Test that loaded_skills field takes priority over content pattern for the same skill."""
+        tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["skill_a"],
+            skill_metadata={
+                "skill_a": {"description": "Skill A", "prompt": "Skill A prompt"},
+            },
+            skill_retention_turns=5,
+        )
+
+        # Simulate history where skill_a appears in both formats in the same message
+        # The loaded_skills field should be processed first
+        history = [
+            {"role": "user", "content": "Load skill_a"},
+            {
+                "role": "assistant",
+                "content": "Skill 'skill_a' has been loaded.",  # Old format
+                "loaded_skills": ["skill_a"],  # New format (same skill)
+            },
+        ]
+
+        # Restore from history
+        tool.restore_from_history(history)
+
+        # Skill should be restored (only counted once)
+        assert tool.is_skill_loaded("skill_a")
+        # Loaded 0 turns ago, 5 - 0 = 5 remaining
+        assert tool.get_skill_remaining_turns("skill_a") == 5

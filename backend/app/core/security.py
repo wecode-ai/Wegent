@@ -671,3 +671,196 @@ def get_current_user_flexible(
         Authenticated User object
     """
     return auth_context.user
+
+
+def get_current_user_flexible_for_executor(
+    db: Session = Depends(get_db),
+    authorization: str = Header(default=""),
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+) -> User:
+    """
+    Flexible authentication supporting both JWT Token and API Key.
+
+    This dependency is designed for Executor-related endpoints that need to
+    support both authentication methods. Only personal API keys are supported.
+
+    Priority:
+    1. X-API-Key header (if starts with 'wg-')
+    2. Authorization: Bearer header
+
+    Args:
+        db: Database session
+        authorization: Authorization header value (Bearer token)
+        x_api_key: X-API-Key header value
+
+    Returns:
+        Authenticated User object
+
+    Raises:
+        HTTPException: 401 if authentication fails
+    """
+    from app.core.auth_utils import is_api_key, verify_api_key, verify_jwt_token_with_db
+
+    with _tracer.start_as_current_span(
+        "auth.get_current_user_flexible_for_executor"
+    ) as span:
+        # Priority 1: X-API-Key header
+        if x_api_key and is_api_key(x_api_key):
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
+                span.set_attribute(SpanAttributes.AUTH_SOURCE, "x_api_key_header")
+
+            user = verify_api_key(db, x_api_key)
+            if user:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                    span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                    span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                return user
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "invalid_api_key"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Priority 2: Authorization Bearer header
+        if authorization:
+            # Handle both "Bearer xxx" and plain token
+            if authorization.startswith("Bearer "):
+                token = authorization[7:]
+            else:
+                token = authorization
+
+            # Check if it's an API Key in Bearer header
+            if is_api_key(token):
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_SOURCE, "authorization_header"
+                    )
+
+                user = verify_api_key(db, token)
+                if user:
+                    if is_telemetry_enabled():
+                        span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                        span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                        span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                        set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    return user
+
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "invalid_api_key"
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired API key",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            # It's a JWT token
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+                span.set_attribute(SpanAttributes.AUTH_SOURCE, "authorization_header")
+
+            user = verify_jwt_token_with_db(db, token)
+            if user:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                    span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                    span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                return user
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, "invalid_jwt")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # No authentication provided
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+            span.set_attribute(
+                SpanAttributes.AUTH_FAILURE_REASON, "missing_credentials"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Get current authenticated user if a valid token is provided, otherwise return None.
+
+    This is useful for endpoints that support both authenticated and unauthenticated access.
+
+    Args:
+        token: JWT token from Authorization header (optional)
+        db: Database session
+
+    Returns:
+        User object if authenticated, None otherwise
+    """
+    if not token:
+        return None
+
+    with _tracer.start_as_current_span("auth.get_current_user_optional") as span:
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt_optional")
+            span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
+            span.set_attribute(SpanAttributes.AUTH_SOURCE, "authorization_header")
+
+        try:
+            # Verify token
+            token_data = verify_token(token)
+            username = token_data.get("username")
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.USER_NAME, username)
+
+            # Query user
+            user = user_service.get_user_by_name(db=db, user_name=username)
+            if user is None or not user.is_active:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON,
+                        "user_not_found" if user is None else "user_inactive",
+                    )
+                return None
+
+            # Set user context for tracing
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                set_user_context(user_id=str(user.id), user_name=user.user_name)
+
+            return user
+        except HTTPException:
+            # Token verification failed, return None instead of raising
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, "invalid_token")
+            return None
+        except Exception as e:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, str(e)[:200])
+            return None

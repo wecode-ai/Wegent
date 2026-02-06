@@ -21,6 +21,8 @@ import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import type { Model } from '../selector/ModelSelector'
 import type { Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { ContextItem } from '@/types/context'
+import type { SkillRef } from '../../hooks/useSkillSelector'
+
 export interface UseChatStreamHandlersOptions {
   // Team and model
   selectedTeam: Team | null
@@ -74,6 +76,10 @@ export interface UseChatStreamHandlersOptions {
 
   // Selected document IDs from DocumentPanel (for notebook mode context injection)
   selectedDocumentIds?: number[]
+
+  // Skill selection
+  /** Additional skills selected by user (backend determines preload vs download based on executor type) */
+  additionalSkills?: SkillRef[]
 }
 
 export interface ChatStreamHandlers {
@@ -165,6 +171,7 @@ export function useChatStreamHandlers({
   resetContexts,
   onTaskCreated,
   selectedDocumentIds,
+  additionalSkills,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -525,6 +532,13 @@ export function useChatStreamHandlers({
           }
         }
 
+        // Debug log for skill selection
+        console.log('[useChatStreamHandlers] Sending message with skills:', {
+          additionalSkills,
+          additional_skills_in_payload:
+            additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
+        })
+
         const tempTaskId = await contextSendMessage(
           {
             message: finalMessage,
@@ -549,6 +563,9 @@ export function useChatStreamHandlers({
             contexts: contextItems.length > 0 ? contextItems : undefined,
             // Device ID for local device execution (only for executor-based teams, not Chat Shell)
             device_id: !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined,
+            // Skill selection - backend determines preload vs download based on executor type
+            additional_skills:
+              additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
           },
           {
             pendingUserMessage: message,
@@ -639,6 +656,7 @@ export function useChatStreamHandlers({
       selectedDocumentIds,
       selectedDeviceId,
       effectiveRequiresWorkspace,
+      additionalSkills,
     ]
   )
 

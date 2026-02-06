@@ -103,6 +103,47 @@ def _get_channel_default_model_name(channel_id: int) -> Optional[str]:
         db.close()
 
 
+def _get_channel_user_mapping_config(channel_id: int) -> Dict[str, Any]:
+    """
+    Get the user mapping configuration for a channel from database.
+
+    This function is used by the handler to dynamically get the latest
+    user mapping configuration, allowing configuration updates without restart.
+
+    Args:
+        channel_id: The IM channel ID (Kind.id)
+
+    Returns:
+        Dict with user_mapping_mode and user_mapping_config.
+        Defaults to {"mode": "select_user", "config": None}
+    """
+    from app.db.session import SessionLocal
+    from app.models.kind import Kind
+
+    db = SessionLocal()
+    try:
+        channel = (
+            db.query(Kind)
+            .filter(
+                Kind.id == channel_id,
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if channel:
+            spec = channel.json.get("spec", {})
+            config = spec.get("config", {})
+            return {
+                "mode": config.get("user_mapping_mode", "select_user"),
+                "config": config.get("user_mapping_config"),
+            }
+        return {"mode": "select_user", "config": None}
+    finally:
+        db.close()
+
+
 class DingTalkChannelProvider(BaseChannelProvider):
     """
     DingTalk Stream channel provider.
@@ -180,8 +221,8 @@ class DingTalkChannelProvider(BaseChannelProvider):
             # Create client
             self._client = dingtalk_stream.DingTalkStreamClient(credential)
 
-            # Register chatbot handler with dynamic default_team_id getter
-            # This reads from database to always get the latest default_team_id
+            # Register chatbot handler with dynamic configuration getters
+            # This reads from database to always get the latest configuration
             # even if the channel configuration is updated without restart
             channel_id = self.channel_id
             handler = WegentChatbotHandler(
@@ -191,6 +232,10 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 get_default_model_name=lambda: _get_channel_default_model_name(
                     channel_id
                 ),
+                get_user_mapping_config=lambda: _get_channel_user_mapping_config(
+                    channel_id
+                ),
+                channel_id=channel_id,  # Pass channel_id for IM binding and callback purposes
             )
             self._client.register_callback_handler(
                 dingtalk_stream.chatbot.ChatbotMessage.TOPIC,

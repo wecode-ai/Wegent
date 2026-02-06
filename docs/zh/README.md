@@ -19,7 +19,7 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 
 深入理解 Wegent 的核心设计：
 
-- [架构概览](./concepts/architecture.md) - Wegent 整体架构和技术栈
+- [架构概览](./developer-guide/architecture.md) - Wegent 整体架构和技术栈
 - [核心概念](./concepts/core-concepts.md) - Ghost、Bot、Team、Workspace 等核心概念详解
 - [协作模式](./concepts/collaboration-models.md) - Pipeline、Route、Coordinate、Collaborate 四种协作模式
 
@@ -29,20 +29,23 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 
 面向 Wegent 平台用户的操作指南:
 
-- [创建 Ghost](./guides/user/creating-ghosts.md) - 定义智能体的"灵魂"
-- [创建 Bot](./guides/user/creating-bots.md) - 组装完整的智能体实例
-- [管理 Skills](./guides/user/managing-skills.md) - 上传和使用 Claude Code Skills
-- [创建 Team](./guides/user/creating-teams.md) - 构建协作团队
-- [管理任务](./guides/user/managing-tasks.md) - 创建和管理工作任务
-- [需求规范澄清](./guides/user/spec-clarification-guide.md) - Spec Clarification 需求澄清使用指南
+- [智能体设置](./user-guide/settings/agent-settings.md) - 配置智能体、机器人、提示词和协作模式
+- [管理任务](./user-guide/chat/managing-tasks.md) - 创建和管理工作任务
+- [配置模型](./user-guide/settings/configuring-models.md) - 设置 AI 模型（LLM、Embedding、Rerank）
+- [配置执行器](./user-guide/settings/configuring-shells.md) - 配置执行环境
+- [管理 Skills](./user-guide/settings/managing-skills.md) - 上传和使用 Claude Code Skills
+- [需求规范澄清](./user-guide/coding/spec-clarification-guide.md) - Spec Clarification 需求澄清使用指南
+- [知识库使用指南](./user-guide/knowledge/knowledge-base-guide.md) - RAG 知识库系统使用指南
+- [IM 通道集成](./user-guide/integrations/im-channel-integration.md) - 集成钉钉等 IM 通道
+- [本地设备支持](./user-guide/ai-devices/local-device-support.md) - 使用个人电脑作为任务执行器
 
 #### 💻 开发者指南
 
 面向 Wegent 开发者的技术文档：
 
-- [开发环境搭建](./guides/developer/setup.md) - 本地开发环境配置
-- [测试](./guides/developer/testing.md) - 单元测试和集成测试
-- [数据库迁移](./guides/developer/database-migrations.md) - Alembic 数据库迁移管理
+- [开发环境搭建](./developer-guide/setup.md) - 本地开发环境配置
+- [测试](./developer-guide/testing.md) - 单元测试和集成测试
+- [数据库迁移](./developer-guide/database-migrations.md) - Alembic 数据库迁移管理
 
 ### 📋 参考文档
 

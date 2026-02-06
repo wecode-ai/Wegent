@@ -5,6 +5,7 @@
 'use client'
 
 import { useTranslation } from '@/hooks/useTranslation'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import type { ToolRendererProps } from '../../types'
 
 /**
@@ -68,15 +69,28 @@ export function GenericToolRenderer({ tool }: ToolRendererProps) {
             {isError ? t('thinking.tool_error') || 'Error' : t('thinking.tool_output') || 'Output'}
           </div>
           {output ? (
-            <pre
-              className={`text-xs p-2 rounded overflow-x-auto whitespace-pre-wrap break-words ${
-                isError
-                  ? 'text-yellow-700 bg-yellow-50 border border-yellow-200'
-                  : 'text-text-tertiary bg-fill-tert'
-              }`}
-            >
-              {output}
-            </pre>
+            // Check if output contains markdown-style links (e.g., attachment://) or is JSON
+            output.includes('attachment://') || (output.includes('[') && output.includes('](')) ? (
+              <div
+                className={`text-xs p-2 rounded overflow-x-auto whitespace-pre-wrap break-words ${
+                  isError
+                    ? 'text-yellow-700 bg-yellow-50 border border-yellow-200'
+                    : 'text-text-tertiary bg-fill-tert'
+                }`}
+              >
+                <EnhancedMarkdown source={output} theme="light" />
+              </div>
+            ) : (
+              <pre
+                className={`text-xs p-2 rounded overflow-x-auto whitespace-pre-wrap break-words ${
+                  isError
+                    ? 'text-yellow-700 bg-yellow-50 border border-yellow-200'
+                    : 'text-text-tertiary bg-fill-tert'
+                }`}
+              >
+                {output}
+              </pre>
+            )
           ) : completedTitle ? (
             <div className="text-xs text-text-tertiary">{completedTitle}</div>
           ) : null}

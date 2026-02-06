@@ -280,6 +280,9 @@ class RunningTaskTracker:
 
         Uses distributed lock to prevent concurrent execution in multi-replica deployments.
         Only checks tasks older than grace_period to avoid false positives during startup.
+
+        IMPORTANT: This method uses async Redis operations to avoid blocking
+        the event loop, which is critical for maintaining HTTP responsiveness.
         """
         from executor_manager.common.distributed_lock import get_distributed_lock
         from executor_manager.services.heartbeat_manager import (
@@ -313,12 +316,12 @@ class RunningTaskTracker:
                     if not task_id_str:
                         continue
 
-                    # Check heartbeat - use TASK type for regular tasks
-                    if not heartbeat_mgr.check_heartbeat(
+                    # Check heartbeat to avoid blocking event loop
+                    if not await heartbeat_mgr.check_heartbeat(
                         task_id_str, HeartbeatType.TASK
                     ):
                         # Get last heartbeat time (may be None if key expired)
-                        last_heartbeat = heartbeat_mgr.get_last_heartbeat(
+                        last_heartbeat = await heartbeat_mgr.get_last_heartbeat(
                             task_id_str, HeartbeatType.TASK
                         )
 
@@ -441,7 +444,10 @@ class RunningTaskTracker:
                         f"[RunningTaskTracker] Task {task_id} already has status "
                         f"'{task_status.get('status')}', cleaning up tracker only (source: _handle_task_dead/already_final)"
                     )
-                    heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+                    # Clean up heartbeat key
+                    await heartbeat_mgr.delete_heartbeat(
+                        task_id_str, HeartbeatType.TASK
+                    )
                     self.remove_running_task(task_id)
                     return
 
@@ -487,7 +493,8 @@ class RunningTaskTracker:
                     f"[RunningTaskTracker] Container {executor_name} exited normally (code 0), "
                     f"cleaning up tracker (source: _handle_task_dead/exit_code_0)"
                 )
-                heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+                # Clean up heartbeat key
+                await heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
                 self.remove_running_task(task_id)
                 return
             else:
@@ -523,12 +530,12 @@ class RunningTaskTracker:
         except Exception as e:
             logger.error(f"[RunningTaskTracker] Error calling Backend API: {e}")
 
-        # Step 4: Clean up
+        # Step 4: Clean up heartbeat key
         logger.info(
             f"[RunningTaskTracker] Cleaning up task {task_id} after marking as failed "
             f"(source: _handle_task_dead/marked_failed)"
         )
-        heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+        await heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
         self.remove_running_task(task_id)
 
         # Step 5: Optionally delete container (for OOM debugging, keep by default)

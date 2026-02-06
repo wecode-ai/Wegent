@@ -31,12 +31,12 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 
 ### English
 - [Quick Start](./en/getting-started/quick-start.md) - Get up and running in 5 minutes
-- [Architecture Overview](./en/concepts/architecture.md) - Understand how Wegent works
+- [Architecture Overview](./en/developer-guide/architecture.md) - Understand how Wegent works
 - [YAML Specification](./en/reference/yaml-specification.md) - Complete configuration reference
 
 ### 中文
 - [快速开始](./zh/getting-started/quick-start.md) - 5 分钟快速上手
-- [架构概览](./zh/concepts/architecture.md) - 了解 Wegent 工作原理
+- [架构概览](./zh/developer-guide/architecture.md) - 了解 Wegent 工作原理
 - [YAML 规范](./zh/reference/yaml-specification.md) - 完整配置参考
 
 ---

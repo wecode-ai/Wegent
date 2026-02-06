@@ -30,6 +30,7 @@ import { GroupCard } from './GroupCard'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
+import { ShareLinkDialog } from '../../permission/components/ShareLinkDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { listGroups } from '@/apis/groups'
 import { userApis } from '@/apis/user'
@@ -94,6 +95,7 @@ export function KnowledgeDocumentPage() {
   const [createKbType, setCreateKbType] = useState<KnowledgeBaseType>('notebook')
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
+  const [sharingKb, setSharingKb] = useState<KnowledgeBase | null>(null)
 
   // Refresh key for group knowledge bases
   const [groupRefreshKey, setGroupRefreshKey] = useState(0)
@@ -306,6 +308,7 @@ export function KnowledgeDocumentPage() {
             onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
+            onShareKb={setSharingKb}
             onCreateKb={kbType => handleCreateKb(null, kbType)}
           />
         )}
@@ -320,6 +323,7 @@ export function KnowledgeDocumentPage() {
             onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
+            onShareKb={setSharingKb}
             onCreateKb={(groupName, kbType) => handleCreateKb(groupName, kbType)}
           />
         )}
@@ -366,6 +370,13 @@ export function KnowledgeDocumentPage() {
         onConfirm={handleDelete}
         loading={personalKb.loading}
       />
+
+      <ShareLinkDialog
+        open={!!sharingKb}
+        onOpenChange={open => !open && setSharingKb(null)}
+        kbId={sharingKb?.id || 0}
+        kbName={sharingKb?.name || ''}
+      />
     </div>
   )
 }
@@ -377,6 +388,7 @@ interface PersonalKnowledgeContentProps {
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
+  onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (kbType: KnowledgeBaseType) => void
 }
 
@@ -386,6 +398,7 @@ function PersonalKnowledgeContent({
   onSelectKb,
   onEditKb,
   onDeleteKb,
+  onShareKb,
   onCreateKb,
 }: PersonalKnowledgeContentProps) {
   const { t } = useTranslation()
@@ -536,6 +549,8 @@ function PersonalKnowledgeContent({
             onClick={() => onSelectKb(kb)}
             onEdit={() => onEditKb(kb)}
             onDelete={() => onDeleteKb(kb)}
+            onShare={() => onShareKb(kb)}
+            canShare={true}
           />
         ))}
       </div>
@@ -561,6 +576,7 @@ interface GroupKnowledgeContentProps {
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
+  onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (groupName: string, kbType: KnowledgeBaseType) => void
 }
 
@@ -573,6 +589,7 @@ function GroupKnowledgeContent({
   onSelectKb,
   onEditKb,
   onDeleteKb,
+  onShareKb,
   onCreateKb,
 }: GroupKnowledgeContentProps) {
   const { t } = useTranslation()
@@ -644,6 +661,7 @@ function GroupKnowledgeContent({
         onSelectKb={onSelectKb}
         onEditKb={onEditKb}
         onDeleteKb={onDeleteKb}
+        onShareKb={onShareKb}
         onCreateKb={kbType => onCreateKb(selectedGroup.name, kbType)}
       />
     )
@@ -691,6 +709,7 @@ interface GroupKnowledgeBaseListProps {
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
+  onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (kbType: KnowledgeBaseType) => void
 }
 
@@ -701,6 +720,7 @@ function GroupKnowledgeBaseList({
   onSelectKb,
   onEditKb,
   onDeleteKb,
+  onShareKb,
   onCreateKb,
 }: GroupKnowledgeBaseListProps) {
   const { t } = useTranslation()
@@ -885,8 +905,10 @@ function GroupKnowledgeBaseList({
                 onClick={() => onSelectKb(kb)}
                 onEdit={canEdit ? () => onEditKb(kb) : undefined}
                 onDelete={canDelete ? () => onDeleteKb(kb) : undefined}
+                onShare={() => onShareKb(kb)}
                 canEdit={canEdit}
                 canDelete={canDelete}
+                canShare={true}
               />
             ))}
           </div>

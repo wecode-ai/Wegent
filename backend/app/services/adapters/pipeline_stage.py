@@ -448,6 +448,19 @@ class PipelineStageService:
         flag_modified(task, "json")
         db.commit()
 
+        # Push mode: dispatch the next stage subtask to executor_manager
+        # This ensures pipeline stage confirmation works correctly in push mode
+        try:
+            from app.services.task_dispatcher import task_dispatcher
+
+            if task_dispatcher.enabled:
+                task_dispatcher.schedule_dispatch(task.id)
+                logger.info(
+                    f"Pipeline confirm_stage: scheduled dispatch for task {task.id} in push mode"
+                )
+        except Exception as e:
+            logger.warning(f"Pipeline confirm_stage: push mode dispatch failed: {e}")
+
         # Get next stage name
         next_stage_name = None
         if next_stage < len(team_crd.spec.members):

@@ -32,6 +32,10 @@ export interface DeviceInfo {
   slot_used: number
   slot_max: number
   running_tasks: DeviceRunningTask[]
+  // Version information
+  executor_version: string | null
+  latest_version: string | null
+  update_available: boolean
 }
 
 export interface DeviceListResponse {
