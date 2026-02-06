@@ -716,22 +716,26 @@ class ClaudeCodeAgent(Agent):
                         f"for session {self.session_id}"
                     )
 
-                    # Get current session_id for resume
-                    current_session_id = self.session_id
+                    # Store the session_id for resume before closing client
+                    resume_session_id = self.session_id
 
                     # Close current client but preserve session_id for resume
                     await self._close_client_for_retry()
 
                     # Create new client with resume option
-                    self.options["resume"] = current_session_id
+                    # Note: We set resume option here, _create_and_connect_client will use it
+                    self.options["resume"] = resume_session_id
+                    logger.info(f"Creating new client with resume={resume_session_id}")
                     await self._create_and_connect_client()
 
                     # Send continue message to resume session
+                    # Use self.session_id as it may have been updated by the new client
                     logger.info(
-                        f"Sending continue message to resume session {current_session_id}"
+                        f"Sending continue message to resume session, "
+                        f"original_session={resume_session_id}, current_session={self.session_id}"
                     )
                     await self.client.query(
-                        RETRY_CONTINUE_MESSAGE, session_id=current_session_id
+                        RETRY_CONTINUE_MESSAGE, session_id=self.session_id
                     )
 
                     # Continue loop to process response
@@ -776,12 +780,14 @@ class ClaudeCodeAgent(Agent):
             )
 
         # Check if there's a saved session ID to resume
-        saved_session_id = SessionManager.load_saved_session_id(self.task_id)
-        if saved_session_id:
-            logger.info(
-                f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
-            )
-            self.options["resume"] = saved_session_id
+        # Skip if resume option is already set (e.g., from retry logic)
+        if "resume" not in self.options:
+            saved_session_id = SessionManager.load_saved_session_id(self.task_id)
+            if saved_session_id:
+                logger.info(
+                    f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
+                )
+                self.options["resume"] = saved_session_id
 
         # On Windows, write large options to files to avoid command line length limit
         # Windows has a ~8191 character limit (WinError 206 if exceeded)

@@ -37,8 +37,8 @@ MAX_API_ERROR_RETRIES = 3
 # Maximum retry count for error subtypes (error_during_execution, etc.)
 MAX_ERROR_SUBTYPE_RETRIES = 3
 
-# Retry message for resuming session
-RETRY_CONTINUE_MESSAGE = "Continue"
+# Retry message for resuming session - provide clear instruction for Claude to continue
+RETRY_CONTINUE_MESSAGE = "An error occurred during execution. Please continue from where you left off and complete the task."
 
 # Error patterns to detect API errors that need retry
 API_ERROR_PATTERNS = [
