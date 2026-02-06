@@ -20,6 +20,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.mcp_server.decorator import mcp_tool
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -71,6 +72,12 @@ router = APIRouter()
 
 
 @router.get("", response_model=KnowledgeBaseListResponse)
+@mcp_tool(
+    name="list_knowledge_bases",
+    description="List all knowledge bases accessible to the current user",
+    server="knowledge",
+    response_model=KnowledgeBaseListResponse,
+)
 @trace_sync("list_knowledge_bases", "knowledge.api")
 def list_knowledge_bases(
     scope: str = Query(
@@ -158,6 +165,12 @@ def get_knowledge_config():
     "",
     response_model=KnowledgeBaseResponse,
     status_code=status.HTTP_201_CREATED,
+)
+@mcp_tool(
+    name="create_knowledge_base",
+    description="Create a new knowledge base",
+    server="knowledge",
+    response_model=KnowledgeBaseResponse,
 )
 @trace_sync("create_knowledge_base", "knowledge.api")
 def create_knowledge_base(
@@ -355,6 +368,12 @@ def update_knowledge_base_type(
     "/{knowledge_base_id}/documents",
     response_model=KnowledgeDocumentListResponse,
 )
+@mcp_tool(
+    name="list_documents",
+    description="List all documents in a knowledge base",
+    server="knowledge",
+    response_model=KnowledgeDocumentListResponse,
+)
 @trace_sync("list_documents", "knowledge.api")
 def list_documents(
     knowledge_base_id: int,
@@ -378,6 +397,12 @@ def list_documents(
     "/{knowledge_base_id}/documents",
     response_model=KnowledgeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
+)
+@mcp_tool(
+    name="create_document",
+    description="Create a new document in a knowledge base",
+    server="knowledge",
+    response_model=KnowledgeDocumentResponse,
 )
 @trace_async("create_document", "knowledge.api")
 async def create_document(
@@ -1190,6 +1215,11 @@ async def reindex_document(
 
 
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@mcp_tool(
+    name="delete_document",
+    description="Delete a document from the knowledge base",
+    server="knowledge",
+)
 @trace_sync("delete_document", "knowledge.api")
 def delete_document(
     document_id: int,
@@ -1245,6 +1275,11 @@ def delete_document(
 
 
 @document_router.put("/{document_id}/content")
+@mcp_tool(
+    name="update_document_content",
+    description="Update a document's text content and trigger re-indexing",
+    server="knowledge",
+)
 @trace_async("update_document_content", "knowledge.api")
 async def update_document_content(
     document_id: int,

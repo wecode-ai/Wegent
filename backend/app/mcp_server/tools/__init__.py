@@ -6,21 +6,15 @@
 
 Contains tools for:
 - System MCP (silent_exit)
-- Knowledge MCP (list_knowledge_bases, list_documents, create_document, update_document)
+
+Note: Knowledge MCP tools have been migrated to use the decorator-based
+auto-registration system. See @mcp_tool decorator in app.mcp_server.decorator.
+Knowledge tools are now defined directly on FastAPI endpoints in
+app.api.endpoints.knowledge and registered automatically.
 """
 
-from .knowledge import (
-    create_document,
-    list_documents,
-    list_knowledge_bases,
-    update_document,
-)
 from .silent_exit import silent_exit
 
 __all__ = [
     "silent_exit",
-    "list_knowledge_bases",
-    "list_documents",
-    "create_document",
-    "update_document",
 ]
