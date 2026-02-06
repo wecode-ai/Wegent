@@ -89,8 +89,8 @@ async def process_response(
                             f"Task {task_id} cancelled during response processing"
                         )
                         if state_manager:
-                            state_manager.update_workbench_status("completed")
-                        return TaskStatus.COMPLETED
+                            state_manager.update_workbench_status("cancelled")
+                        return TaskStatus.CANCELLED
 
                 # Log the number of messages received
                 logger.info(f"claude message index: {index}, received: {msg}")
@@ -148,6 +148,7 @@ async def process_response(
                         MAX_API_ERROR_RETRIES,
                         silent_exit_detected,
                         silent_exit_reason,
+                        task_state_manager,
                     )
                     if result_status == "RETRY":
                         # Increment retry count and restart response stream for retry
@@ -527,6 +528,7 @@ async def _process_result_message(
     max_retries: int = 3,
     propagated_silent_exit: bool = False,
     propagated_silent_exit_reason: str = "",
+    task_state_manager=None,
 ) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
@@ -541,6 +543,7 @@ async def _process_result_message(
         max_retries: Maximum retry attempts
         propagated_silent_exit: Silent exit flag propagated from UserMessage tool results
         propagated_silent_exit_reason: Silent exit reason propagated from UserMessage tool results
+        task_state_manager: Optional TaskStateManager for checking cancellation state
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, otherwise None)
@@ -757,27 +760,84 @@ async def _process_result_message(
         result_str = (
             str(msg.result) if msg.result is not None else f"Task ended: {msg.subtype}"
         )
-        logger.error(
-            f"Task ended with subtype={msg.subtype} (is_error={msg.is_error}): {result_str}"
-        )
 
-        # Add thinking step for error result
-        if thinking_manager:
-            thinking_manager.add_thinking_step(
-                title="thinking.task_execution_failed",
-                report_immediately=False,
-                use_i18n_keys=True,
-                details=masked_result_details,
+        # Check if this is a residual message from a previous interrupted session
+        # When a session is interrupted and then reused, the first response may be
+        # the result of the previous interrupt, not a real error for the current request.
+        # Indicators of a residual interrupt message:
+        # - subtype is error_during_execution
+        # - result is None
+        # - usage tokens are all 0 (no actual API call was made for this)
+        is_residual_interrupt = False
+        if msg.subtype == "error_during_execution" and msg.result is None:
+            usage = msg.usage or {}
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            if input_tokens == 0 and output_tokens == 0:
+                is_residual_interrupt = True
+                logger.info(
+                    f"Detected residual interrupt message (usage tokens all 0), "
+                    f"this is likely from a previous cancelled session. "
+                    f"Returning None to continue processing."
+                )
+
+        if is_residual_interrupt:
+            # 残留中断消息，直接忽略，返回 None 让流程继续
+            logger.info("Ignoring residual interrupt message, returning None to continue")
+            return None
+
+        # Check if this is a user-initiated cancellation
+        # When user cancels, we get error_during_execution but it's not a real failure
+        is_user_cancellation = False
+        if task_state_manager and state_manager:
+            task_id = state_manager.task_data.get("task_id")
+            if task_id and task_state_manager.is_cancelled(task_id):
+                is_user_cancellation = True
+                logger.info(
+                    f"Task {task_id} error_during_execution is due to user cancellation, treating as CANCELLED"
+                )
+
+        if is_user_cancellation:
+            # User cancelled the task, treat as CANCELLED not FAILED
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.task_cancelled",
+                    report_immediately=False,
+                    use_i18n_keys=True,
+                    details=masked_result_details,
+                )
+
+            # Update workbench status to cancelled
+            state_manager.update_workbench_status("cancelled")
+
+            # Report cancelled status
+            state_manager.report_progress(
+                progress=100, status=TaskStatus.CANCELLED.value, message="Task cancelled by user"
+            )
+            return TaskStatus.CANCELLED
+        else:
+            # Real error, treat as FAILED
+            logger.error(
+                f"Task ended with subtype={msg.subtype} (is_error={msg.is_error}): {result_str}"
             )
 
-        # Update workbench status to failed
-        state_manager.update_workbench_status("failed")
+            # Add thinking step for error result
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.task_execution_failed",
+                    report_immediately=False,
+                    use_i18n_keys=True,
+                    details=masked_result_details,
+                )
 
-        # Report error using state manager
-        state_manager.report_progress(
-            progress=100, status=TaskStatus.FAILED.value, message=result_str
-        )
-        return TaskStatus.FAILED
+            # Update workbench status to failed
+            state_manager.update_workbench_status("failed")
+
+            # Report error using state manager
+            state_manager.report_progress(
+                progress=100, status=TaskStatus.FAILED.value, message=result_str
+            )
+            return TaskStatus.FAILED
 
     # If it's not a successful result message, return None to let caller continue processing
     return None

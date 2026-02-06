@@ -127,8 +127,15 @@ def _update_subtask_progress(
             # Update status if provided
             if "status" in data:
                 try:
-                    subtask.status = SubtaskStatus(data["status"])
+                    # Normalize status to uppercase since SubtaskStatus enum uses uppercase values
+                    status_value = data["status"]
+                    if isinstance(status_value, str):
+                        status_value = status_value.upper()
+                    subtask.status = SubtaskStatus(status_value)
                 except ValueError:
+                    logger.warning(
+                        f"[Device WS] Invalid status value: {data['status']}, skipping status update"
+                    )
                     pass
 
             # Update progress if provided
@@ -168,7 +175,12 @@ def _update_subtask_progress(
                 }
 
             task_id = subtask.task_id
-            is_completed = data.get("status") == "COMPLETED"
+            # Normalize status to uppercase for comparison
+            raw_status = data.get("status", "")
+            normalized_status = (
+                raw_status.upper() if isinstance(raw_status, str) else raw_status
+            )
+            is_completed = normalized_status == "COMPLETED"
 
             # Commit happens automatically when exiting context manager
 
@@ -211,11 +223,16 @@ def _update_subtask_complete(
                     success=False, error="Subtask does not belong to this device"
                 )
 
-            # Update status
+            # Update status - normalize to uppercase since SubtaskStatus enum uses uppercase values
             status_str = data.get("status", "COMPLETED")
+            if isinstance(status_str, str):
+                status_str = status_str.upper()
             try:
                 subtask.status = SubtaskStatus(status_str)
             except ValueError:
+                logger.warning(
+                    f"[Device WS] Invalid status value in complete: {data.get('status')}, defaulting to COMPLETED"
+                )
                 subtask.status = SubtaskStatus.COMPLETED
 
             subtask.progress = data.get("progress", 100)
@@ -232,9 +249,13 @@ def _update_subtask_complete(
             from app.schemas.task import TaskUpdate
             from app.services.adapters.task_kinds import task_kinds_service
 
-            task_status = (
-                "FAILED" if subtask.status == SubtaskStatus.FAILED else "COMPLETED"
-            )
+            # Determine task status based on subtask status
+            if subtask.status == SubtaskStatus.FAILED:
+                task_status = "FAILED"
+            elif subtask.status == SubtaskStatus.CANCELLED:
+                task_status = "CANCELLED"
+            else:
+                task_status = "COMPLETED"
             try:
                 task_kinds_service.update_task(
                     db=db,
