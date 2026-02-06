@@ -55,7 +55,7 @@ export function CommandCopyStep({ selectedKeyId, newlyCreatedKey }: CommandCopyS
     } catch {
       toast({
         variant: 'destructive',
-        title: 'Failed to copy',
+        title: t('common:device_setup.step2.copy_failed'),
       })
     }
   }

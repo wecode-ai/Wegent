@@ -468,7 +468,7 @@
       "create_new": "创建新的 API Key",
       "no_keys": "暂无 API Key",
       "existing_key_warning": "您选择了已存在的 API Key。由于安全原因，完整的 Key 值只在创建时显示一次。如果您没有保存该 Key，请创建一个新的。",
-      "key_name_placeholder": "My Device"
+      "key_name_placeholder": "我的设备"
     },
     "step2": {
       "title": "复制启动命令",
@@ -477,6 +477,7 @@
       "method2_title": "方式二：使用环境变量",
       "copy_command": "复制命令",
       "copied": "已复制！",
+      "copy_failed": "复制失败",
       "hint": "设备连接成功后，您可以在聊天界面的设备选择器中看到您的设备。"
     },
     "actions": {

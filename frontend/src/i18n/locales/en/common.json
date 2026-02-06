@@ -477,6 +477,7 @@
       "method2_title": "Method 2: Use environment variable",
       "copy_command": "Copy Command",
       "copied": "Copied!",
+      "copy_failed": "Failed to copy",
       "hint": "Once the device is connected, you can see it in the device selector in the chat interface."
     },
     "actions": {

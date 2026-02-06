@@ -45,7 +45,7 @@ export function ApiKeySelectionStep({
 
   // Create dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
-  const [keyName, setKeyName] = useState(t('common:device_setup.step1.key_name_placeholder'))
+  const [keyName, setKeyName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
 
   const formatDate = (dateString: string) => {
@@ -70,7 +70,7 @@ export function ApiKeySelectionStep({
     try {
       const created = await apiKeyApis.createApiKey({ name: keyName.trim() })
       setCreateDialogOpen(false)
-      setKeyName(t('common:device_setup.step1.key_name_placeholder'))
+      setKeyName('')
       toast({
         title: t('common:api_keys.create_success'),
       })
@@ -81,7 +81,7 @@ export function ApiKeySelectionStep({
       toast({
         variant: 'destructive',
         title: t('common:api_keys.errors.create_failed'),
-        description: (error as Error).message,
+        description: error instanceof Error ? error.message : String(error),
       })
     } finally {
       setIsCreating(false)
@@ -89,6 +89,8 @@ export function ApiKeySelectionStep({
   }
 
   const handleSelectExistingKey = (key: ApiKey) => {
+    // Skip inactive keys
+    if (!key.is_active) return
     // Clear newly created key when selecting an existing key
     onSelectKey(key.id, undefined)
   }
@@ -123,10 +125,17 @@ export function ApiKeySelectionStep({
             <Card
               key={apiKey.id}
               className={cn(
-                'p-3 cursor-pointer transition-all',
-                selectedKeyId === apiKey.id ? 'border-primary bg-primary/5' : 'hover:bg-hover'
+                'p-3 transition-all',
+                apiKey.is_active ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
+                selectedKeyId === apiKey.id
+                  ? 'border-primary bg-primary/5'
+                  : apiKey.is_active
+                    ? 'hover:bg-hover'
+                    : ''
               )}
               onClick={() => handleSelectExistingKey(apiKey)}
+              aria-disabled={!apiKey.is_active}
+              title={!apiKey.is_active ? t('common:api_keys.status_disabled') : undefined}
             >
               <div className="flex items-center gap-3">
                 <div
@@ -198,10 +207,10 @@ export function ApiKeySelectionStep({
             </label>
             <Input
               className="mt-2"
-              placeholder={t('common:api_keys.name_placeholder')}
+              placeholder={t('common:device_setup.step1.key_name_placeholder')}
               value={keyName}
               onChange={e => setKeyName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              onKeyDown={e => e.key === 'Enter' && !isCreating && handleCreate()}
             />
           </div>
           <DialogFooter>
