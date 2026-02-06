@@ -9,7 +9,6 @@ This module provides ChatEventEmitter implementations for Telegram:
 - StreamingResponseEmitter: Telegram-specific streaming via message editing
 """
 
-import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -33,6 +32,11 @@ class StreamingResponseEmitter(ChatEventEmitter):
     - We throttle updates to avoid hitting limits (max ~3 updates/second)
     - Content changes are accumulated and sent in batches
 
+    Thinking status handling:
+    - Thinking status (e.g., "⏳ 处理中...", "🔧 使用工具: xxx") is displayed
+      as a temporary prefix that gets replaced, not accumulated
+    - Only the actual AI response content is accumulated
+
     Usage:
         emitter = StreamingResponseEmitter(bot, chat_id)
         # ... trigger AI response with this emitter ...
@@ -45,6 +49,17 @@ class StreamingResponseEmitter(ChatEventEmitter):
 
     # Maximum message length for Telegram
     MAX_MESSAGE_LENGTH = 4096
+
+    # Thinking status prefixes that should be replaced, not accumulated
+    THINKING_PREFIXES = (
+        "⏳",
+        "🔧",
+        "✅",
+        "❌",
+        "💭",
+        "⚙️",
+        "📝",
+    )
 
     def __init__(
         self,
@@ -62,7 +77,10 @@ class StreamingResponseEmitter(ChatEventEmitter):
         self._bot = bot
         self._chat_id = chat_id
         self._message_id = message_id
-        self._full_content = ""
+        self._full_content = ""  # Accumulated actual content (not thinking status)
+        self._current_thinking = (
+            ""  # Current thinking status (replaced, not accumulated)
+        )
         self._last_update_time = 0.0
         self._pending_content = ""
         self._started = False
@@ -105,11 +123,67 @@ class StreamingResponseEmitter(ChatEventEmitter):
             )
             return False
 
+    def _is_thinking_status(self, content: str) -> bool:
+        """Check if content is a thinking status that should be replaced.
+
+        Thinking status lines start with specific emoji prefixes and are
+        temporary status updates that should replace previous thinking status,
+        not accumulate.
+
+        Args:
+            content: Content to check
+
+        Returns:
+            True if content is a thinking status
+        """
+        stripped = content.strip()
+        return any(stripped.startswith(prefix) for prefix in self.THINKING_PREFIXES)
+
+    def _extract_thinking_and_content(self, text: str) -> tuple[str, str]:
+        """Extract thinking status and actual content from text.
+
+        Args:
+            text: Text that may contain thinking status and content
+
+        Returns:
+            Tuple of (thinking_status, actual_content)
+        """
+        lines = text.split("\n")
+        thinking_lines = []
+        content_lines = []
+        in_content = False
+
+        for line in lines:
+            stripped = line.strip()
+            # Check if this line starts actual content (after "**回复:**")
+            if "**回复:**" in line:
+                in_content = True
+                continue
+            # If we're in content section, everything is content
+            if in_content:
+                content_lines.append(line)
+            # If line is a thinking status, it's thinking
+            elif self._is_thinking_status(stripped):
+                thinking_lines.append(line)
+            # Empty lines before content are part of thinking section
+            elif not stripped and not content_lines:
+                continue
+            # Otherwise it's content
+            else:
+                content_lines.append(line)
+
+        thinking = "\n".join(thinking_lines).strip()
+        content = "\n".join(content_lines).strip()
+        return thinking, content
+
     async def _send_streaming_update(self, content: str, force: bool = False) -> None:
         """Send a streaming update by editing the message.
 
+        Handles thinking status specially - thinking status is replaced, not accumulated.
+        Only actual AI response content is accumulated.
+
         Args:
-            content: The content to send (will be accumulated)
+            content: The content to send
             force: If True, send immediately regardless of throttling
         """
         if self._finished or not self._message_id:
@@ -118,46 +192,64 @@ class StreamingResponseEmitter(ChatEventEmitter):
         current_time = time.time()
         time_since_last = current_time - self._last_update_time
 
-        # Accumulate content
-        self._pending_content += content
+        # Extract thinking status and actual content from the incoming chunk
+        thinking, actual_content = self._extract_thinking_and_content(content)
+
+        # Update thinking status (replace, not accumulate)
+        if thinking:
+            self._current_thinking = thinking
+
+        # Accumulate actual content
+        if actual_content:
+            self._pending_content += actual_content
 
         # Check if we should send an update
         if not force and time_since_last < self.MIN_UPDATE_INTERVAL:
             return
 
         # Send the update
-        if self._pending_content:
-            try:
-                # Accumulate to full content
+        try:
+            # Accumulate pending content to full content
+            if self._pending_content:
                 self._full_content += self._pending_content
-
-                # Truncate if too long
-                display_content = self._full_content
-                if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
-                    display_content = (
-                        display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
-                    )
-
-                logger.debug(
-                    f"[TelegramStreamingEmitter] Editing message {self._message_id}, "
-                    f"content_len={len(display_content)}"
-                )
-
-                await self._bot.edit_message_text(
-                    chat_id=self._chat_id,
-                    message_id=self._message_id,
-                    text=display_content,
-                )
-
                 self._pending_content = ""
-                # Update timestamp after successful edit to maintain accurate throttle
-                self._last_update_time = time.time()
 
-            except Exception as e:
-                # Don't fail on edit errors - might be rate limited
-                logger.warning(
-                    f"[TelegramStreamingEmitter] Failed to edit message: {e}"
+            # Build display content: thinking status (if any) + actual content
+            display_parts = []
+            if self._current_thinking and not self._full_content:
+                # Only show thinking status if no actual content yet
+                display_parts.append(self._current_thinking)
+            if self._full_content:
+                display_parts.append(self._full_content)
+
+            display_content = "\n\n".join(display_parts) if display_parts else ""
+
+            if not display_content:
+                return
+
+            # Truncate if too long
+            if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
+                display_content = (
+                    display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
                 )
+
+            logger.debug(
+                f"[TelegramStreamingEmitter] Editing message {self._message_id}, "
+                f"content_len={len(display_content)}, thinking={bool(self._current_thinking)}"
+            )
+
+            await self._bot.edit_message_text(
+                chat_id=self._chat_id,
+                message_id=self._message_id,
+                text=display_content,
+            )
+
+            # Update timestamp after successful edit to maintain accurate throttle
+            self._last_update_time = time.time()
+
+        except Exception as e:
+            # Don't fail on edit errors - might be rate limited
+            logger.warning(f"[TelegramStreamingEmitter] Failed to edit message: {e}")
 
     async def emit_chat_start(
         self,
