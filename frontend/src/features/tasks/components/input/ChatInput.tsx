@@ -589,6 +589,19 @@ export default function ChatInput({
             range.setEndAfter(textNode)
             selection.removeAllRanges()
             selection.addRange(range)
+          } else {
+            // Last-resort fallback: append text directly when no selection exists
+            // (e.g., embedded browser contexts or Shadow DOM scenarios)
+            editableRef.current.appendChild(document.createTextNode(pastedText))
+            // Move cursor to end
+            const newSelection = window.getSelection()
+            if (newSelection) {
+              const range = document.createRange()
+              range.selectNodeContents(editableRef.current)
+              range.collapse(false)
+              newSelection.removeAllRanges()
+              newSelection.addRange(range)
+            }
           }
         }
 
