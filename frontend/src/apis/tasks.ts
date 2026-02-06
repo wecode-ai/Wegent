@@ -222,6 +222,22 @@ export interface TaskSkillsResponse {
   preload_skills: string[]
 }
 
+// Workspace Files Types
+export interface WorkspaceFile {
+  name: string // File/directory name
+  path: string // Relative path from workspace root
+  type: 'file' | 'directory' // File type
+  size?: number // File size in bytes (only for files)
+  children?: WorkspaceFile[] // Children (only for directories)
+}
+
+export interface WorkspaceFilesResponse {
+  files: WorkspaceFile[]
+  total_count: number
+  truncated: boolean // True if file count exceeds limit
+  error?: string | null // Error code if failed
+}
+
 // Task Services
 
 export const taskApis = {
@@ -450,6 +466,44 @@ export const taskApis = {
    */
   getTaskSkills: async (taskId: number): Promise<TaskSkillsResponse> => {
     return apiClient.get(`/tasks/${taskId}/skills`)
+  },
+
+  /**
+   * Get workspace files for a task (no repository mode)
+   * @param taskId - Task ID
+   */
+  getWorkspaceFiles: async (taskId: number): Promise<WorkspaceFilesResponse> => {
+    return apiClient.get(`/tasks/${taskId}/workspace/files`)
+  },
+
+  /**
+   * Download workspace files as ZIP archive
+   * @param taskId - Task ID
+   */
+  downloadWorkspaceZip: async (taskId: number): Promise<Blob> => {
+    const token = getToken()
+    const response = await fetch(`/api/tasks/${taskId}/workspace/download`, {
+      method: 'GET',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      let errorMsg = errorText
+      try {
+        const json = JSON.parse(errorText)
+        if (json && typeof json.detail === 'string') {
+          errorMsg = json.detail
+        }
+      } catch {
+        // Not JSON, use original text
+      }
+      throw new Error(errorMsg)
+    }
+
+    return response.blob()
   },
 }
 
