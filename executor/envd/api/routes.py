@@ -241,6 +241,36 @@ def register_rest_api(app: FastAPI):
                 return True
         return False
 
+    def _validate_workspace_path(path: Optional[str]) -> Path:
+        """Validate and resolve workspace path, preventing directory traversal.
+
+        Args:
+            path: User-provided path or None
+
+        Returns:
+            Validated Path object within /workspace
+
+        Raises:
+            HTTPException: If path is outside /workspace
+        """
+        workspace_root = Path("/workspace").resolve()
+
+        if path:
+            dir_path = Path(path).resolve()
+        else:
+            dir_path = workspace_root
+
+        # Ensure the path is within /workspace
+        try:
+            dir_path.relative_to(workspace_root)
+        except ValueError:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: path must be within /workspace",
+            )
+
+        return dir_path
+
     def _scan_directory(
         dir_path: Path, base_path: Path, file_count: List[int], max_count: int
     ) -> List[WorkspaceFile]:
@@ -269,6 +299,10 @@ def register_rest_api(app: FastAPI):
 
             # Skip excluded directories/files
             if _should_exclude(entry.name):
+                continue
+
+            # Skip symlinks to prevent traversal and circular recursion
+            if entry.is_symlink():
                 continue
 
             relative_path = str(entry.relative_to(base_path))
@@ -314,11 +348,8 @@ def register_rest_api(app: FastAPI):
         verify_access_token(x_access_token)
 
         try:
-            # Default to /workspace if no path provided
-            if path:
-                dir_path = Path(path)
-            else:
-                dir_path = Path("/workspace")
+            # Validate and resolve path (prevents directory traversal)
+            dir_path = _validate_workspace_path(path)
 
             # Check if directory exists
             if not dir_path.exists():
@@ -366,11 +397,8 @@ def register_rest_api(app: FastAPI):
         verify_access_token(x_access_token)
 
         try:
-            # Default to /workspace if no path provided
-            if path:
-                dir_path = Path(path)
-            else:
-                dir_path = Path("/workspace")
+            # Validate and resolve path (prevents directory traversal)
+            dir_path = _validate_workspace_path(path)
 
             # Check if directory exists
             if not dir_path.exists():
@@ -396,7 +424,7 @@ def register_rest_api(app: FastAPI):
             with zipfile.ZipFile(
                 zip_buffer, "w", zipfile.ZIP_DEFLATED, allowZip64=True
             ) as zip_file:
-                for root, dirs, files in os.walk(dir_path):
+                for root, dirs, files in os.walk(dir_path, followlinks=False):
                     # Filter excluded directories in-place
                     dirs[:] = [d for d in dirs if not _should_exclude(d)]
 
@@ -405,8 +433,8 @@ def register_rest_api(app: FastAPI):
                             break
 
                         file_path = Path(root) / filename
-                        # Skip excluded files
-                        if _should_exclude(filename):
+                        # Skip excluded files and symlinks
+                        if _should_exclude(filename) or file_path.is_symlink():
                             continue
 
                         try:

@@ -43,6 +43,7 @@ from app.schemas.task import (
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.export.docx_generator import generate_task_docx
 from app.services.shared_task import shared_task_service
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -687,8 +688,9 @@ def delete_task_services(
 
 
 @router.get("/{task_id}/workspace/files", response_model=dict)
+@trace_async()
 async def get_workspace_files(
-    task_id: int,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -755,8 +757,9 @@ async def get_workspace_files(
 
 
 @router.get("/{task_id}/workspace/download")
+@trace_async()
 async def download_workspace_files(
-    task_id: int,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -814,8 +817,6 @@ async def download_workspace_files(
         )
 
     # Return ZIP file as streaming response
-    import io
-
     return StreamingResponse(
         io.BytesIO(zip_bytes),
         media_type="application/zip",

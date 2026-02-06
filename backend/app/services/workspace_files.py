@@ -18,6 +18,7 @@ from typing import Optional, Tuple
 import httpx
 
 from app.schemas.task import WorkspaceFilesResponse
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class WorkspaceFilesService:
         self.files_timeout = files_timeout or WORKSPACE_FILES_TIMEOUT
         self.status_check_timeout = status_check_timeout or SANDBOX_STATUS_CHECK_TIMEOUT
 
+    @trace_async()
     async def get_sandbox_status(
         self, task_id: int
     ) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -113,6 +115,7 @@ class WorkspaceFilesService:
             )
             return False, None, "connection_error"
 
+    @trace_async()
     async def list_workspace_files(
         self, task_id: int
     ) -> Tuple[Optional[WorkspaceFilesResponse], Optional[str]]:
@@ -166,6 +169,7 @@ class WorkspaceFilesService:
             logger.error(f"[WorkspaceFiles] Error listing files: {e}")
             return None, "connection_error"
 
+    @trace_async()
     async def download_workspace_zip(
         self, task_id: int
     ) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
