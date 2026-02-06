@@ -722,30 +722,31 @@ class ClaudeCodeAgent(Agent):
                     await self.client.query(prompt, session_id=self.session_id)
                     continue
 
-                if result == "RETRY_WITH_RESUME":
+                # Check if result is a tuple indicating RETRY_WITH_RESUME with session_id
+                if isinstance(result, tuple) and result[0] == "RETRY_WITH_RESUME":
                     error_subtype_retry_count += 1
+                    # Extract the actual Claude SDK session_id (UUID) from the tuple
+                    actual_claude_session_id = result[1]
                     logger.warning(
                         f"RETRY_WITH_RESUME: Attempting retry {error_subtype_retry_count}/{MAX_ERROR_SUBTYPE_RETRIES} "
-                        f"for session {self.session_id}"
+                        f"for internal_session={self.session_id}, claude_session={actual_claude_session_id}"
                     )
-
-                    # Store the session_id for resume before closing client
-                    resume_session_id = self.session_id
 
                     # Close current client but preserve session_id for resume
                     await self._close_client_for_retry()
 
-                    # Create new client with resume option
-                    # Note: We set resume option here, _create_and_connect_client will use it
-                    self.options["resume"] = resume_session_id
-                    logger.info(f"Creating new client with resume={resume_session_id}")
+                    # Create new client with resume option using actual Claude session_id
+                    # Note: Claude SDK resume requires the actual UUID session_id, not our internal key
+                    self.options["resume"] = actual_claude_session_id
+                    logger.info(
+                        f"Creating new client with resume={actual_claude_session_id}"
+                    )
                     await self._create_and_connect_client()
 
                     # Send continue message to resume session
-                    # Use self.session_id as it may have been updated by the new client
                     logger.info(
                         f"Sending continue message to resume session, "
-                        f"original_session={resume_session_id}, current_session={self.session_id}"
+                        f"claude_session={actual_claude_session_id}, current_session={self.session_id}"
                     )
                     await self.client.query(
                         RETRY_CONTINUE_MESSAGE, session_id=self.session_id
