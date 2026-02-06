@@ -2,7 +2,7 @@
 import json
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
@@ -78,7 +78,7 @@ async def process_response(
     task_state_manager=None,
     session_id: str = None,
     error_subtype_retry_count: int = 0,
-) -> Union[TaskStatus, str]:
+) -> Union[TaskStatus, str, Tuple[str, str]]:
     """
     Process the response messages from Claude
 
@@ -92,7 +92,8 @@ async def process_response(
 
     Returns:
         TaskStatus: Processing status
-        str: "RETRY_WITH_RESUME" if session should be resumed for retry
+        str: "RETRY_RESIDUAL" if residual interrupt detected
+        Tuple[str, str]: ("RETRY_WITH_RESUME", session_id) if session should be resumed for retry
     """
     index = 0
     api_error_retry_count = 0  # Track retry count for this session
@@ -188,13 +189,20 @@ async def process_response(
                             f"Retry initiated, restarting response stream for session {session_id}"
                         )
                         break
-                    elif result_status == "RETRY_WITH_RESUME":
-                        # Return to caller to handle session resume retry
+                    elif result_status == "RETRY_RESIDUAL":
+                        # Return to caller to resend query
+                        return "RETRY_RESIDUAL"
+                    elif (
+                        isinstance(result_status, tuple)
+                        and result_status[0] == "RETRY_WITH_RESUME"
+                    ):
+                        # Return tuple to caller with actual Claude session_id for resume
+                        actual_session_id = result_status[1]
                         logger.info(
-                            f"RETRY_WITH_RESUME requested for session {session_id}, "
+                            f"RETRY_WITH_RESUME requested for session {actual_session_id}, "
                             f"retry count {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}"
                         )
-                        return "RETRY_WITH_RESUME"
+                        return result_status  # Pass through the tuple
                     elif result_status:
                         return result_status
 
@@ -567,7 +575,7 @@ async def _process_result_message(
     propagated_silent_exit_reason: str = "",
     task_state_manager=None,
     error_subtype_retry_count: int = 0,
-) -> Union[TaskStatus, str, None]:
+) -> Union[TaskStatus, str, Tuple[str, str], None]:
     """
     Process a ResultMessage from Claude
 
@@ -585,9 +593,9 @@ async def _process_result_message(
         error_subtype_retry_count: Current retry count for error subtypes
 
     Returns:
-        TaskStatus: Processing status (COMPLETED if successful, otherwise None)
-        str: "RETRY" if API error retry was initiated
-        str: "RETRY_WITH_RESUME" if error subtype retry is needed (session resume required)
+        TaskStatus: Processing status (COMPLETED if successful, CANCELLED, FAILED, or None)
+        str: "RETRY" if API error retry was initiated, "RETRY_RESIDUAL" if residual interrupt
+        Tuple[str, str]: ("RETRY_WITH_RESUME", session_id) if error subtype retry is needed
     """
 
     # Get stop_reason safely (may not exist in older SDK versions)
@@ -866,10 +874,13 @@ async def _process_result_message(
             and session_id
             and error_subtype_retry_count < MAX_ERROR_SUBTYPE_RETRIES
         ):
+            # Get actual Claude session ID (UUID) for resume
+            # msg.session_id is the Claude UUID, session_id parameter is our internal key
+            actual_claude_session_id = msg.session_id or session_id
             logger.warning(
                 f"Retryable error subtype detected: {msg.subtype}, "
                 f"retry {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}, "
-                f"session_id={session_id}"
+                f"internal_session={session_id}, claude_session={actual_claude_session_id}"
             )
 
             if thinking_manager:
@@ -881,12 +892,13 @@ async def _process_result_message(
                         "error_subtype": msg.subtype,
                         "retry_count": error_subtype_retry_count + 1,
                         "max_retries": MAX_ERROR_SUBTYPE_RETRIES,
-                        "session_id": session_id,
+                        "session_id": actual_claude_session_id,
                     },
                 )
 
             # Signal to caller that session should be resumed for retry
-            return "RETRY_WITH_RESUME"
+            # Return tuple with Claude SDK's actual session_id (UUID) for proper resume
+            return ("RETRY_WITH_RESUME", actual_claude_session_id)
 
         elif (
             is_retryable_error_subtype(msg.subtype)
