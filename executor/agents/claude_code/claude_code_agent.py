@@ -714,6 +714,14 @@ class ClaudeCodeAgent(Agent):
                     error_subtype_retry_count=error_subtype_retry_count,
                 )
 
+                if result == "RETRY_RESIDUAL":
+                    # 残留中断消息，直接重新发送查询（不需要重建 client）
+                    logger.info(
+                        f"RETRY_RESIDUAL: Resending query for session {self.session_id}"
+                    )
+                    await self.client.query(prompt, session_id=self.session_id)
+                    continue
+
                 if result == "RETRY_WITH_RESUME":
                     error_subtype_retry_count += 1
                     logger.warning(

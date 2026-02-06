@@ -822,9 +822,9 @@ async def _process_result_message(
                 )
 
         if is_residual_interrupt:
-            # 残留中断消息，直接忽略，返回 None 让流程继续
-            logger.info("Ignoring residual interrupt message, returning None to continue")
-            return None
+            # 残留中断消息，需要重新发送查询
+            logger.info("Returning RETRY_RESIDUAL to resend query after residual interrupt")
+            return "RETRY_RESIDUAL"
 
         # Check if this is a user-initiated cancellation
         # When user cancels, we get error_during_execution but it's not a real failure
