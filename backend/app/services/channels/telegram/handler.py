@@ -325,7 +325,9 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 if query.message:
                     await query.message.delete()
             except Exception:
-                pass
+                self.logger.debug(
+                    "[TelegramHandler] Failed to delete keyboard message", exc_info=True
+                )
             return None
 
         if action == CallbackAction.SELECT_MODEL.value:
@@ -437,9 +439,13 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
             # Check if user has a device selected
             selection = await device_selection_manager.get_selection(user.id)
             if selection.device_id:
+                # Actually switch to device mode by setting the device
+                await device_selection_manager.set_local_device(
+                    user.id, selection.device_id, selection.device_name
+                )
                 return "✅ 已切换到**设备模式**"
             else:
-                return "❌ 尚未选择设备，请先使用 `/devices` 选择一个设备"
+                return "❌ 尚未选择设备,请先使用 `/devices` 选择一个设备"
 
         return f"❌ 未知的执行模式: {value}"
 
@@ -493,6 +499,11 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 if message_context.conversation_id
                 else self._current_chat_id
             )
+            if not chat_id:
+                self.logger.error(
+                    "[TelegramHandler] No chat_id available for models keyboard"
+                )
+                return False
             await self._bot.send_message(
                 chat_id=chat_id,
                 text="🤖 **可用模型列表**\n\n选择一个模型:",
@@ -558,6 +569,11 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 if message_context.conversation_id
                 else self._current_chat_id
             )
+            if not chat_id:
+                self.logger.error(
+                    "[TelegramHandler] No chat_id available for devices keyboard"
+                )
+                return False
             await self._bot.send_message(
                 chat_id=chat_id,
                 text="📱 **在线设备列表**\n\n选择一个设备:",
@@ -612,6 +628,11 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 if message_context.conversation_id
                 else self._current_chat_id
             )
+            if not chat_id:
+                self.logger.error(
+                    "[TelegramHandler] No chat_id available for mode keyboard"
+                )
+                return False
             await self._bot.send_message(
                 chat_id=chat_id,
                 text="🔧 **执行模式**\n\n选择执行模式:",

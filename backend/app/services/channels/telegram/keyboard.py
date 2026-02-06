@@ -60,7 +60,6 @@ class TelegramKeyboardBuilder:
         for idx, model in enumerate(models, start=1):
             model_name = model.get("name", "")
             display_name = model.get("displayName") or model_name
-            provider = model.get("provider", "")
 
             # Truncate long names
             if len(display_name) > 20:
