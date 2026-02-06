@@ -72,6 +72,7 @@ API_BASE=$(get_api_base)
 UPLOAD_URL="$API_BASE/api/attachments/upload"
 
 RESPONSE=$(curl -s -X POST \
+    --connect-timeout 10 --max-time 60 \
     -H "Authorization: Bearer $AUTH_TOKEN" \
     -F "file=@$ZIP_FILE" \
     "$UPLOAD_URL")
@@ -97,7 +98,9 @@ if [ -n "$ATTACHMENT_ID" ] && [ "$ATTACHMENT_ID" != "null" ]; then
 else
     ERROR=$(echo "$RESPONSE" | jq -r '.detail // .message // "Unknown error"')
     echo "❌ Export failed: $ERROR"
-    echo ""
-    echo "Response: $RESPONSE"
+    if [ "${VERBOSE:-}" = "1" ]; then
+        echo ""
+        echo "Response: $RESPONSE"
+    fi
     exit 1
 fi

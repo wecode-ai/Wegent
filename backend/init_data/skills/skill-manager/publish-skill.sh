@@ -29,7 +29,7 @@ done
 # Assign positional arguments
 SKILL_PATH="${POSITIONAL[0]:-}"
 SKILL_NAME="${POSITIONAL[1]:-}"
-if [ -n "${POSITIONAL[2]:-}" ] && [ "${POSITIONAL[2]}" != "--overwrite" ]; then
+if [ -n "${POSITIONAL[2]:-}" ]; then
     NAMESPACE="${POSITIONAL[2]}"
 fi
 
@@ -90,8 +90,9 @@ ZIP_FILE="$TMP_DIR/${SKILL_NAME}.zip"
 
 if [ "$SKILL_DIR_NAME" != "$SKILL_NAME" ]; then
     # Create package directory with correct name
+    # Use /. to include hidden files (dotfiles)
     mkdir -p "$TMP_DIR/pkg/$SKILL_NAME"
-    cp -r "$SKILL_PATH"/* "$TMP_DIR/pkg/$SKILL_NAME/"
+    cp -r "$SKILL_PATH"/. "$TMP_DIR/pkg/$SKILL_NAME/"
     cd "$TMP_DIR/pkg"
     zip -rq "$ZIP_FILE" "$SKILL_NAME"
 else
@@ -101,9 +102,11 @@ fi
 
 echo "🔍 Checking for existing skill..."
 
-# Check if skill already exists
-CHECK_URL="$API_BASE/api/v1/kinds/skills?name=${SKILL_NAME}&namespace=${NAMESPACE}&exact_match=true"
-EXISTING=$(curl -s -H "Authorization: Bearer $AUTH_TOKEN" "$CHECK_URL" 2>/dev/null || echo '{"items":[]}')
+# Check if skill already exists (URL-encode parameters to handle special characters)
+ENCODED_NAME=$(urlencode "$SKILL_NAME")
+ENCODED_NS=$(urlencode "$NAMESPACE")
+CHECK_URL="$API_BASE/api/v1/kinds/skills?name=${ENCODED_NAME}&namespace=${ENCODED_NS}&exact_match=true"
+EXISTING=$(curl -s --connect-timeout 10 --max-time 30 -H "Authorization: Bearer $AUTH_TOKEN" "$CHECK_URL" 2>/dev/null || echo '{"items":[]}')
 EXISTING_ID=$(echo "$EXISTING" | jq -r '.items[0].metadata.labels.id // empty')
 
 ACTION="created"
@@ -114,6 +117,7 @@ if [ -n "$EXISTING_ID" ] && [ "$EXISTING_ID" != "null" ]; then
         # Update existing skill via PUT endpoint
         UPDATE_URL="$API_BASE/api/v1/kinds/skills/$EXISTING_ID"
         RESPONSE=$(curl -s -X PUT \
+            --connect-timeout 10 --max-time 60 \
             -H "Authorization: Bearer $AUTH_TOKEN" \
             -F "file=@$ZIP_FILE" \
             "$UPDATE_URL")
@@ -133,6 +137,7 @@ else
     # Upload skill via API
     UPLOAD_URL="$API_BASE/api/v1/kinds/skills/upload"
     RESPONSE=$(curl -s -X POST \
+        --connect-timeout 10 --max-time 60 \
         -H "Authorization: Bearer $AUTH_TOKEN" \
         -F "file=@$ZIP_FILE" \
         -F "name=$SKILL_NAME" \
@@ -166,7 +171,9 @@ if [ -n "$NEW_ID" ] && [ "$NEW_ID" != "null" ]; then
 else
     ERROR=$(echo "$RESPONSE" | jq -r '.detail // .message // "Unknown error"')
     echo "❌ Publish failed: $ERROR"
-    echo ""
-    echo "Response: $RESPONSE"
+    if [ "${VERBOSE:-}" = "1" ]; then
+        echo ""
+        echo "Response: $RESPONSE"
+    fi
     exit 1
 fi

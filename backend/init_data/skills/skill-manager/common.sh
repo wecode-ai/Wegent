@@ -38,8 +38,9 @@ validate_skill_directory() {
         echo "   First line should be '---'"
     fi
 
-    # Check description field exists (case-insensitive)
-    if ! grep -qi "^description:" "$skill_path/SKILL.md"; then
+    # Check description field exists within frontmatter only (case-insensitive)
+    # Extract frontmatter block (lines between first pair of ---) and check for description
+    if ! sed -n '1,/^---$/{ /^---$/d; p; }' "$skill_path/SKILL.md" | head -n 50 | grep -qi "^description:"; then
         echo "❌ Error: SKILL.md must contain a 'description' field in frontmatter"
         echo ""
         echo "Add 'description: \"Your skill description\"' to the frontmatter."
@@ -80,11 +81,18 @@ get_api_base() {
 # Format file size for display
 format_file_size() {
     local size="$1"
+    # Default to 0 if not a valid integer
+    [[ "$size" =~ ^[0-9]+$ ]] || size=0
     if [ "$size" -lt 1024 ]; then
         echo "${size} B"
     elif [ "$size" -lt 1048576 ]; then
-        echo "$(awk "BEGIN {printf \"%.1f\", $size / 1024}") KB"
+        echo "$(awk -v s="$size" 'BEGIN {printf "%.1f", s / 1024}') KB"
     else
-        echo "$(awk "BEGIN {printf \"%.1f\", $size / 1048576}") MB"
+        echo "$(awk -v s="$size" 'BEGIN {printf "%.1f", s / 1048576}') MB"
     fi
+}
+
+# URL-encode a string
+urlencode() {
+    python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
 }
