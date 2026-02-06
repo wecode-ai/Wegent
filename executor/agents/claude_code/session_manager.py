@@ -214,6 +214,9 @@ class SessionManager:
     async def close_client(cls, session_id: str) -> bool:
         """Close a specific client connection.
 
+        Uses _terminate_client_process instead of disconnect() to avoid
+        cancel scope issues when called from different asyncio context.
+
         Args:
             session_id: Session ID to close
 
@@ -223,7 +226,9 @@ class SessionManager:
         try:
             if session_id in cls._clients:
                 client = cls._clients[session_id]
-                await client.disconnect()
+                # Use _terminate_client_process to avoid cancel scope issues
+                # when called from different asyncio task context
+                await cls._terminate_client_process(client, session_id)
                 del cls._clients[session_id]
                 logger.info(f"Closed Claude client for session_id: {session_id}")
                 return True
@@ -236,10 +241,14 @@ class SessionManager:
 
     @classmethod
     async def close_all_clients(cls) -> None:
-        """Close all client connections."""
+        """Close all client connections.
+
+        Uses _terminate_client_process instead of disconnect() to avoid
+        cancel scope issues when called from different asyncio context.
+        """
         for session_id, client in list(cls._clients.items()):
             try:
-                await client.disconnect()
+                await cls._terminate_client_process(client, session_id)
                 logger.info(f"Closed Claude client for session_id: {session_id}")
             except Exception as e:
                 logger.exception(
