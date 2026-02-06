@@ -26,8 +26,8 @@ Wegent provides multiple conversation modes for different scenarios:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| **Clarification** | AI asks questions to clarify requirements | Complex tasks with unclear requirements |
-| **Correction** | AI suggests modifications | Code review, document optimization |
+| **Smart Follow-up** | AI asks questions to clarify requirements | Complex tasks with unclear requirements |
+| **AI Cross-Validation** | AI suggests modifications | Code review, document optimization |
 | **Direct Execution** | AI executes tasks immediately | Simple tasks with clear requirements |
 
 ---
@@ -76,8 +76,8 @@ Flexible conversation control options:
 | Document | Description |
 |----------|-------------|
 | [Managing Tasks](./managing-tasks.md) | Creating and managing chat tasks |
-| [Clarification Mode](./clarification-mode-guide.md) | Using clarification mode to clarify requirements |
-| [Correction Mode](./correction-mode-guide.md) | Using correction mode to optimize results |
+| [Smart Follow-up Mode](./clarification-mode-guide.md) | Using smart follow-up mode to clarify requirements |
+| [AI Cross-Validation](./correction-mode-guide.md) | Using AI cross-validation to optimize results |
 
 ---
 

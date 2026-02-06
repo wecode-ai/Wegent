@@ -2,16 +2,16 @@
 sidebar_position: 6
 ---
 
-# Clarification Mode
+# Smart Follow-up Mode
 
-Clarification Mode is an intelligent feature in Wegent that allows AI agents to ask questions before executing tasks, confirming requirement details to provide more accurate responses.
+Smart Follow-up Mode is an intelligent feature in Wegent that allows AI agents to ask questions before executing tasks, confirming requirement details to provide more accurate responses.
 
 ---
 
 ## 📋 Table of Contents
 
-- [What is Clarification Mode](#-what-is-clarification-mode)
-- [Enabling Clarification Mode](#-enabling-clarification-mode)
+- [What is Smart Follow-up Mode](#-what-is-smart-follow-up-mode)
+- [Enabling Smart Follow-up Mode](#-enabling-smart-follow-up-mode)
 - [Question Types](#-question-types)
 - [Answering Questions](#-answering-questions)
 - [Use Cases](#-use-cases)
@@ -20,9 +20,9 @@ Clarification Mode is an intelligent feature in Wegent that allows AI agents to 
 
 ---
 
-## 💬 What is Clarification Mode
+## 💬 What is Smart Follow-up Mode
 
-Clarification Mode is an interactive requirement confirmation mechanism. When enabled, the AI agent analyzes user requirements before execution, identifies areas that may be ambiguous or need more information, and then asks structured questions to confirm with the user.
+Smart Follow-up Mode is an interactive requirement confirmation mechanism. When enabled, the AI agent analyzes user requirements before execution, identifies areas that may be ambiguous or need more information, and then asks structured questions to confirm with the user.
 
 **Workflow**:
 ```
@@ -40,37 +40,37 @@ User sends message → AI analyzes requirements → Generates clarification ques
 
 ---
 
-## 🚀 Enabling Clarification Mode
+## 🚀 Enabling Smart Follow-up Mode
 
-### Method 1: Click the Clarification Button
+### Method 1: Click the Follow-up Button
 
-1. Find the **clarification icon** (💬 question bubble) in the chat input area
-2. Click the icon to enable clarification mode
+1. Find the **follow-up icon** (💬 question bubble) in the chat input area
+2. Click the icon to enable smart follow-up mode
 3. The icon highlights when enabled
 4. Click again to disable
 
 ### Method 2: Enable When Sending Messages
 
-Clarification mode takes effect when sending messages:
+Smart follow-up mode takes effect when sending messages:
 
-1. Enable clarification mode
+1. Enable smart follow-up mode
 2. Enter your requirements
 3. Send the message
-4. AI will return clarification questions instead of executing directly
+4. AI will return follow-up questions instead of executing directly
 
 ### Status Indicators
 
 | Status | Icon Style | Description |
 |--------|------------|-------------|
-| **Off** | Default border | Clarification mode not enabled |
-| **On** | Theme color highlight | Clarification mode enabled |
+| **Off** | Default border | Smart follow-up mode not enabled |
+| **On** | Theme color highlight | Smart follow-up mode enabled |
 | **Disabled** | Gray | Loading or streaming in progress |
 
 ---
 
 ## 📝 Question Types
 
-AI agents generate different types of clarification questions based on requirements:
+AI agents generate different types of follow-up questions based on requirements:
 
 ### Single Choice
 
@@ -103,9 +103,9 @@ For situations requiring free-form user input:
 
 ## ✅ Answering Questions
 
-### Clarification Form Interface
+### Follow-up Form Interface
 
-When AI returns clarification questions, a structured form is displayed:
+When AI returns follow-up questions, a structured form is displayed:
 
 1. **Question List**: Each question displayed in a separate card
 2. **Options/Input Fields**: Appropriate controls based on question type
@@ -148,7 +148,7 @@ When user requirements are vague:
 
 **User Input**: "Help me write a report"
 
-**Clarification Questions**:
+**Follow-up Questions**:
 - What is the report topic?
 - Who is the target audience?
 - What is the length requirement?
@@ -160,7 +160,7 @@ When tasks have multiple possible implementations:
 
 **User Input**: "Help me analyze this data"
 
-**Clarification Questions**:
+**Follow-up Questions**:
 - What type of analysis do you want? (Descriptive/Predictive/Diagnostic)
 - Output format preference? (Table/Chart/Text)
 - Do you need statistical tests?
@@ -171,7 +171,7 @@ When technical choices are involved:
 
 **User Input**: "Help me build a website"
 
-**Clarification Questions**:
+**Follow-up Questions**:
 - What is the main purpose of the website?
 - Do you need user login functionality?
 - Expected traffic level?
@@ -183,7 +183,7 @@ When understanding limitations is needed:
 
 **User Input**: "Help me create a plan"
 
-**Clarification Questions**:
+**Follow-up Questions**:
 - What is the time frame?
 - Available resources/budget?
 - What constraints must be met?
@@ -193,7 +193,7 @@ When understanding limitations is needed:
 
 ## ✨ Best Practices
 
-### 1. When to Enable Clarification Mode
+### 1. When to Enable Smart Follow-up Mode
 
 **Recommended to Enable**:
 - Complex or multi-step tasks
@@ -206,16 +206,16 @@ When understanding limitations is needed:
 - Already provided detailed requirements
 - Quick Q&A scenarios
 
-### 2. How to Answer Clarification Questions
+### 2. How to Answer Follow-up Questions
 
 - **Read Carefully**: Understand each question's meaning
 - **Choose Recommended**: If unsure, select recommended options
 - **Add Notes**: Use the notes box to provide extra context
 - **Stay Consistent**: Keep answers logically consistent
 
-### 3. Improving Clarification Effectiveness
+### 3. Improving Follow-up Effectiveness
 
-- **Initial Description**: Even with clarification mode, provide clear initial descriptions
+- **Initial Description**: Even with smart follow-up mode, provide clear initial descriptions
 - **Key Information**: Include key constraints and preferences in initial message
 - **Iterative Optimization**: Adjust future requirement descriptions based on AI questions
 
@@ -223,15 +223,15 @@ When understanding limitations is needed:
 
 ## ⚠️ Common Issues
 
-### Q1: Does clarification mode increase response time?
+### Q1: Does smart follow-up mode increase response time?
 
-**Answer**: Yes, clarification mode adds one round of interaction. However, this usually reduces subsequent modifications and communication, potentially being more efficient overall.
+**Answer**: Yes, smart follow-up mode adds one round of interaction. However, this usually reduces subsequent modifications and communication, potentially being more efficient overall.
 
-### Q2: Can I skip clarification questions and execute directly?
+### Q2: Can I skip follow-up questions and execute directly?
 
-**Answer**: Clarification questions must be answered to continue. If you don't want to answer, disable clarification mode and resend the message.
+**Answer**: Follow-up questions must be answered to continue. If you don't want to answer, disable smart follow-up mode and resend the message.
 
-### Q3: Is there a limit on the number of clarification questions?
+### Q3: Is there a limit on the number of follow-up questions?
 
 **Answer**: AI generates an appropriate number of questions based on requirement complexity, typically 3-5 questions.
 
@@ -239,9 +239,9 @@ When understanding limitations is needed:
 
 **Answer**: Cannot modify after submission. If changes are needed, explain in subsequent conversation.
 
-### Q5: Which agents support clarification mode?
+### Q5: Which agents support smart follow-up mode?
 
-**Answer**: Clarification mode currently only supports Chat Shell type agents.
+**Answer**: Smart follow-up mode currently only supports Chat Shell type agents.
 
 ### Q6: Why are some questions required?
 
@@ -252,9 +252,9 @@ When understanding limitations is needed:
 ## 🔗 Related Resources
 
 - [Creating Conversations](./managing-tasks.md) - Learn how to create conversations
-- [Correction Mode](./correction-mode-guide.md) - Learn about correction mode
+- [AI Cross-Validation](./correction-mode-guide.md) - Learn about AI cross-validation
 - [Agent Settings](../settings/agent-settings.md) - Configure agents
 
 ---
 
-<p align="center">Use Clarification Mode to help AI better understand your needs! 💬</p>
+<p align="center">Use Smart Follow-up Mode to help AI better understand your needs! 💬</p>
