@@ -599,19 +599,32 @@ class ClaudeCodeAgent(Agent):
             if cached_client:
                 # Verify the cached client is still valid
                 # Check if client process is still running
+                # Note: Claude SDK client structure is: client._transport._process
                 try:
-                    if hasattr(cached_client, "_process") and cached_client._process:
-                        if cached_client._process.poll() is not None:
+                    process = None
+                    if (
+                        hasattr(cached_client, "_transport")
+                        and cached_client._transport
+                        and hasattr(cached_client._transport, "_process")
+                        and cached_client._transport._process
+                    ):
+                        process = cached_client._transport._process
+
+                    if process is not None:
+                        poll_result = process.poll()
+                        if poll_result is not None:
                             # Process has terminated, remove from cache
                             logger.warning(
-                                f"Cached client process terminated for session_id: {self.session_id}, creating new client"
+                                f"Cached client process terminated for session_id: {self.session_id}, "
+                                f"exit_code={poll_result}, creating new client"
                             )
                             SessionManager.remove_client(self.session_id)
                             # Proceed to create new client
                         else:
                             # Process is still running, reuse client
                             logger.info(
-                                f"Reusing existing Claude client for session_id: {self.session_id}"
+                                f"Reusing existing Claude client for session_id: {self.session_id}, "
+                                f"process_pid={process.pid}"
                             )
                             self.add_thinking_step(
                                 title="Reuse Existing Client",
@@ -621,11 +634,13 @@ class ClaudeCodeAgent(Agent):
                             )
                             self.client = cached_client
                     else:
-                        # No process info available, assume client is valid
-                        logger.info(
-                            f"Reusing existing Claude client for session_id: {self.session_id}"
+                        # No process info available, client may be invalid
+                        # Remove from cache and create new client to be safe
+                        logger.warning(
+                            f"No process info available for cached client session_id: {self.session_id}, "
+                            "removing from cache and creating new client"
                         )
-                        self.client = cached_client
+                        SessionManager.remove_client(self.session_id)
                 except Exception as e:
                     logger.warning(
                         f"Error checking client validity: {e}, creating new client"
