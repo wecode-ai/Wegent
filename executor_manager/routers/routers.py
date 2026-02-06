@@ -694,6 +694,46 @@ async def get_executor_load(http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@api_router.get("/executor/address")
+async def get_executor_address(executor_name: str, http_request: Request):
+    """Get container address (base URL) for a given executor.
+
+    This endpoint returns the container's HTTP base URL that can be used
+    to communicate with the envd REST API running inside the container.
+
+    Args:
+        executor_name: Name of the executor container
+
+    Returns:
+        Dict with status and address (e.g., http://localhost:49983)
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Received request to get executor address: {executor_name} from {client_ip}"
+        )
+
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        result = executor.get_container_address(executor_name)
+
+        if result.get("status") == "success":
+            return {
+                "status": "success",
+                "address": result.get("base_url"),
+                "executor_name": executor_name,
+            }
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=result.get("error_msg", "Container not found"),
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting executor address for '{executor_name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class CancelTaskRequest(BaseModel):
     task_id: int
 
