@@ -98,6 +98,42 @@ class SessionManager:
             logger.warning(f"Failed to save session ID for task {task_id}: {e}")
 
     @classmethod
+    def is_session_alive(cls, session_id: str) -> bool:
+        """Check if a session is still alive (process running).
+
+        Args:
+            session_id: Session ID to check
+
+        Returns:
+            True if session is alive, False otherwise
+        """
+        client = cls._clients.get(session_id)
+        if not client:
+            return False
+
+        # Check transport layer process
+        if hasattr(client, "_transport") and client._transport:
+            transport = client._transport
+            if hasattr(transport, "_process") and transport._process:
+                is_alive = transport._process.poll() is None
+                logger.debug(
+                    f"Session {session_id} alive check via transport: {is_alive}"
+                )
+                return is_alive
+
+        # Check direct _process attribute (fallback)
+        if hasattr(client, "_process") and client._process:
+            is_alive = client._process.poll() is None
+            logger.debug(f"Session {session_id} alive check via _process: {is_alive}")
+            return is_alive
+
+        # Cannot determine, assume alive if client exists
+        logger.debug(
+            f"Session {session_id} alive check: no process info, assuming alive"
+        )
+        return True
+
+    @classmethod
     def get_client(cls, session_id: str) -> Optional[ClaudeSDKClient]:
         """Get cached client by session_id.
 

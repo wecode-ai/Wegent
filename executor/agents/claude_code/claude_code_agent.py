@@ -585,43 +585,27 @@ class ClaudeCodeAgent(Agent):
             # Update current progress
             self._update_progress(progress)
 
-            # Check if a client connection already exists for the corresponding task_id
-            cached_client = SessionManager.get_client(self.session_id)
-            if cached_client:
-                # Verify the cached client is still valid
-                # Check if client process is still running
-                try:
-                    if hasattr(cached_client, "_process") and cached_client._process:
-                        if cached_client._process.poll() is not None:
-                            # Process has terminated, remove from cache
-                            logger.warning(
-                                f"Cached client process terminated for session_id: {self.session_id}, creating new client"
-                            )
-                            SessionManager.remove_client(self.session_id)
-                            # Proceed to create new client
-                        else:
-                            # Process is still running, reuse client
-                            logger.info(
-                                f"Reusing existing Claude client for session_id: {self.session_id}"
-                            )
-                            self.add_thinking_step(
-                                title="Reuse Existing Client",
-                                report_immediately=False,
-                                use_i18n_keys=False,
-                                details={"session_id": self.session_id},
-                            )
-                            self.client = cached_client
-                    else:
-                        # No process info available, assume client is valid
-                        logger.info(
-                            f"Reusing existing Claude client for session_id: {self.session_id}"
-                        )
-                        self.client = cached_client
-                except Exception as e:
+            # Check if a client connection already exists and is still alive
+            if SessionManager.is_session_alive(self.session_id):
+                # Session is alive, reuse client
+                cached_client = SessionManager.get_client(self.session_id)
+                logger.info(
+                    f"Reusing existing Claude client for session_id: {self.session_id}"
+                )
+                self.add_thinking_step(
+                    title="Reuse Existing Client",
+                    report_immediately=False,
+                    use_i18n_keys=False,
+                    details={"session_id": self.session_id},
+                )
+                self.client = cached_client
+            else:
+                # Session is not alive or doesn't exist, clean up if needed
+                cached_client = SessionManager.get_client(self.session_id)
+                if cached_client:
                     logger.warning(
-                        f"Error checking client validity: {e}, creating new client"
+                        f"Session {self.session_id} is not alive, removing from cache"
                     )
-                    # Remove potentially invalid client from cache
                     SessionManager.remove_client(self.session_id)
 
             # Create new client if not reusing
