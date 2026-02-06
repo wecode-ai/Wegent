@@ -281,11 +281,16 @@ def scan_git_repository(
     Scan a Git repository for skills.
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
-    Returns a list of skills found in the repository (directories containing SKILL.md).
+    Returns a list of skills found in the repository (directories containing SKILL.md)
+    along with repository authentication information.
     """
-    skills = git_skill_service.scan_repository(repo_url)
+    skills, repo_info = git_skill_service.scan_repository(
+        repo_url, user_id=current_user.id, db=db
+    )
 
     return GitScanResponse(
         repo_url=repo_url,
@@ -302,6 +307,7 @@ def scan_git_repository(
             for s in skills
         ],
         total_count=len(skills),
+        repo_info=repo_info,
     )
 
 
@@ -315,7 +321,9 @@ def import_from_git_repository(
     Import selected skills from a Git repository.
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
     Skills are imported to the user's personal namespace by default.
     If a skill with the same name already exists:
@@ -379,6 +387,10 @@ def batch_update_skills_from_git(
 
     This is more efficient than calling update-from-git for each skill individually,
     especially when multiple skills come from the same repository.
+
+    Supports both public and private repositories via:
+    - URL embedded credentials in the original repo_url
+    - Platform integration tokens configured in Settings
 
     Only skills that were imported from Git (source.type === 'git') can be updated.
     Skills that don't exist, are not from Git, or have incomplete source info will be skipped.
@@ -752,11 +764,16 @@ def scan_git_repository_for_public(
     Scan a Git repository for skills (admin only, for public skill import).
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
-    Returns a list of skills found in the repository (directories containing SKILL.md).
+    Returns a list of skills found in the repository (directories containing SKILL.md)
+    along with repository authentication information.
     """
-    skills = git_skill_service.scan_repository(repo_url)
+    skills, repo_info = git_skill_service.scan_repository(
+        repo_url, user_id=current_user.id, db=db
+    )
 
     return GitScanResponse(
         repo_url=repo_url,
@@ -773,6 +790,7 @@ def scan_git_repository_for_public(
             for s in skills
         ],
         total_count=len(skills),
+        repo_info=repo_info,
     )
 
 
@@ -786,7 +804,9 @@ def import_from_git_repository_for_public(
     Import selected skills from a Git repository as public skills (admin only).
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
     Skills are imported as public skills (user_id=0).
     If a skill with the same name already exists:

@@ -23,6 +23,8 @@ import httpx
 import yaml
 from fastapi import HTTPException
 
+from shared.utils.crypto import decrypt_git_token
+
 
 @dataclass
 class GitSkillInfo:
@@ -46,17 +48,58 @@ class GitImportResult:
     failed: List[Dict[str, Any]]  # Failed to import
 
 
+@dataclass
+class GitBatchUpdateResult:
+    """Result of batch updating skills from Git repositories"""
+
+    success: List[Dict[str, Any]]  # Successfully updated skills
+    skipped: List[Dict[str, Any]]  # Skipped (not found, not from git, etc.)
+    failed: List[Dict[str, Any]]  # Failed to update
+
+
+@dataclass
+class RepoAuthInfo:
+    """Authentication information for a repository"""
+
+    username: Optional[str] = None
+    password: Optional[str] = None  # Can be token or password
+    auth_source: str = "none"  # "url_credentials", "platform_integration", or "none"
+
+
+@dataclass
+class ParsedRepoUrl:
+    """Parsed repository URL with all components"""
+
+    provider: "GitRepoProvider"
+    owner: str
+    repo: str
+    domain: str
+    auth_info: RepoAuthInfo
+
+
 class GitRepoProvider(ABC):
     """Abstract base class for Git repository providers"""
 
     @abstractmethod
-    def get_default_branch(self, owner: str, repo: str) -> str:
+    def get_default_branch(
+        self, owner: str, repo: str, auth: Optional[RepoAuthInfo] = None
+    ) -> str:
         """Get the default branch name for a repository"""
         pass
 
     @abstractmethod
     def get_zip_download_url(self, owner: str, repo: str, branch: str) -> str:
         """Get the URL to download the repository as a ZIP file"""
+        pass
+
+    @abstractmethod
+    def get_api_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
+        """Get API headers for authentication"""
+        pass
+
+    @abstractmethod
+    def get_zip_auth(self, auth: RepoAuthInfo) -> Optional[Tuple[str, str]]:
+        """Get authentication tuple for ZIP download (username, password)"""
         pass
 
     @property
@@ -77,16 +120,40 @@ class GitHubProvider(GitRepoProvider):
     def name(self) -> str:
         return "GitHub"
 
-    def get_default_branch(self, owner: str, repo: str) -> str:
+    def get_api_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
+        """Get API headers for GitHub authentication"""
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        if auth and auth.password:
+            headers["Authorization"] = f"Bearer {auth.password}"
+        return headers
+
+    def get_zip_auth(self, auth: RepoAuthInfo) -> Optional[Tuple[str, str]]:
+        """Get authentication for ZIP download"""
+        if auth and auth.username and auth.password:
+            return (auth.username, auth.password)
+        if auth and auth.password:
+            # Use token as password with empty username for GitHub
+            return ("", auth.password)
+        return None
+
+    def get_default_branch(
+        self, owner: str, repo: str, auth: Optional[RepoAuthInfo] = None
+    ) -> str:
         """Get default branch from GitHub API"""
         url = f"https://{self.api_host}/repos/{owner}/{repo}"
+        headers = self.get_api_headers(auth) if auth else {}
         try:
             with httpx.Client(timeout=30.0) as client:
-                response = client.get(url)
+                response = client.get(url, headers=headers if headers else None)
                 if response.status_code == 404:
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or not accessible",
+                    )
+                if response.status_code == 401 or response.status_code == 403:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Authentication failed. Please check your access token.",
                     )
                 if response.status_code != 200:
                     raise HTTPException(
@@ -115,18 +182,42 @@ class GitLabProvider(GitRepoProvider):
     def name(self) -> str:
         return "GitLab"
 
-    def get_default_branch(self, owner: str, repo: str) -> str:
+    def get_api_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
+        """Get API headers for GitLab authentication"""
+        headers = {}
+        if auth and auth.password:
+            headers["PRIVATE-TOKEN"] = auth.password
+        return headers
+
+    def get_zip_auth(self, auth: RepoAuthInfo) -> Optional[Tuple[str, str]]:
+        """Get authentication for ZIP download"""
+        if auth and auth.username and auth.password:
+            return (auth.username, auth.password)
+        if auth and auth.password:
+            # For GitLab, use token as password with empty username
+            return ("", auth.password)
+        return None
+
+    def get_default_branch(
+        self, owner: str, repo: str, auth: Optional[RepoAuthInfo] = None
+    ) -> str:
         """Get default branch from GitLab API"""
         # URL encode the project path
         project_path = f"{owner}%2F{repo}"
         url = f"https://{self.host}/api/v4/projects/{project_path}"
+        headers = self.get_api_headers(auth) if auth else {}
         try:
             with httpx.Client(timeout=30.0) as client:
-                response = client.get(url)
+                response = client.get(url, headers=headers if headers else None)
                 if response.status_code == 404:
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or not accessible",
+                    )
+                if response.status_code == 401:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Authentication failed. Please check your access token.",
                     )
                 if response.status_code != 200:
                     raise HTTPException(
@@ -157,16 +248,40 @@ class GiteeProvider(GitRepoProvider):
     def name(self) -> str:
         return "Gitee"
 
-    def get_default_branch(self, owner: str, repo: str) -> str:
+    def get_api_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
+        """Get API headers for Gitee authentication"""
+        headers = {}
+        if auth and auth.password:
+            headers["Authorization"] = f"Bearer {auth.password}"
+        return headers
+
+    def get_zip_auth(self, auth: RepoAuthInfo) -> Optional[Tuple[str, str]]:
+        """Get authentication for ZIP download"""
+        if auth and auth.username and auth.password:
+            return (auth.username, auth.password)
+        if auth and auth.password:
+            # For Gitee, use token as password with empty username
+            return ("", auth.password)
+        return None
+
+    def get_default_branch(
+        self, owner: str, repo: str, auth: Optional[RepoAuthInfo] = None
+    ) -> str:
         """Get default branch from Gitee API"""
         url = f"https://{self.host}/api/v5/repos/{owner}/{repo}"
+        headers = self.get_api_headers(auth) if auth else {}
         try:
             with httpx.Client(timeout=30.0) as client:
-                response = client.get(url)
+                response = client.get(url, headers=headers if headers else None)
                 if response.status_code == 404:
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or not accessible",
+                    )
+                if response.status_code == 401:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Authentication failed. Please check your access token.",
                     )
                 if response.status_code != 200:
                     raise HTTPException(
@@ -195,16 +310,40 @@ class GiteaProvider(GitRepoProvider):
     def name(self) -> str:
         return "Gitea"
 
-    def get_default_branch(self, owner: str, repo: str) -> str:
+    def get_api_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
+        """Get API headers for Gitea authentication"""
+        headers = {}
+        if auth and auth.password:
+            headers["Authorization"] = f"token {auth.password}"
+        return headers
+
+    def get_zip_auth(self, auth: RepoAuthInfo) -> Optional[Tuple[str, str]]:
+        """Get authentication for ZIP download"""
+        if auth and auth.username and auth.password:
+            return (auth.username, auth.password)
+        if auth and auth.password:
+            # For Gitea, use token as password with empty username
+            return ("", auth.password)
+        return None
+
+    def get_default_branch(
+        self, owner: str, repo: str, auth: Optional[RepoAuthInfo] = None
+    ) -> str:
         """Get default branch from Gitea API"""
         url = f"https://{self.host}/api/v1/repos/{owner}/{repo}"
+        headers = self.get_api_headers(auth) if auth else {}
         try:
             with httpx.Client(timeout=30.0) as client:
-                response = client.get(url)
+                response = client.get(url, headers=headers if headers else None)
                 if response.status_code == 404:
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or not accessible",
+                    )
+                if response.status_code == 401:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Authentication failed. Please check your access token.",
                     )
                 if response.status_code != 200:
                     raise HTTPException(
@@ -223,15 +362,16 @@ class GiteaProvider(GitRepoProvider):
         return f"https://{self.host}/{owner}/{repo}/archive/{branch}.zip"
 
 
-def parse_repo_url(url: str) -> Tuple[GitRepoProvider, str, str]:
+def parse_repo_url(url: str) -> ParsedRepoUrl:
     """
-    Parse a Git repository URL and return the appropriate provider.
+    Parse a Git repository URL and return the appropriate provider with auth info.
 
     Args:
         url: Git repository URL (e.g., "https://github.com/owner/repo")
+               or with credentials: "https://user:pass@github.com/owner/repo"
 
     Returns:
-        Tuple of (provider, owner, repo)
+        ParsedRepoUrl with provider, owner, repo, domain, and auth_info
 
     Raises:
         HTTPException: If URL format is invalid or platform is not supported
@@ -242,7 +382,31 @@ def parse_repo_url(url: str) -> Tuple[GitRepoProvider, str, str]:
 
     try:
         parsed = urlparse(url)
-        host = parsed.netloc.lower()
+        # Use hostname instead of netloc to avoid including credentials
+        host = parsed.hostname.lower() if parsed.hostname else ""
+
+        # Extract credentials from URL (if present)
+        username = parsed.username
+        password = parsed.password
+
+        # Determine auth source
+        # Support formats:
+        # - https://user:pass@host/owner/repo (both username and password)
+        # - https://token@host/owner/repo (token as username, no password)
+        if username and password:
+            auth_source = "url_credentials"
+            auth_info = RepoAuthInfo(
+                username=username, password=password, auth_source=auth_source
+            )
+        elif username:
+            # Token-only format: https://token@host/owner/repo
+            auth_source = "url_credentials"
+            auth_info = RepoAuthInfo(
+                username="", password=username, auth_source=auth_source
+            )
+        else:
+            auth_source = "none"
+            auth_info = RepoAuthInfo(auth_source=auth_source)
 
         # Remove trailing .git if present
         path = parsed.path.rstrip("/")
@@ -262,15 +426,23 @@ def parse_repo_url(url: str) -> Tuple[GitRepoProvider, str, str]:
 
         # Determine provider based on host
         if "github.com" in host:
-            return GitHubProvider(host), owner, repo
+            provider = GitHubProvider(host)
         elif "gitlab.com" in host:
-            return GitLabProvider(host), owner, repo
+            provider = GitLabProvider(host)
         elif "gitee.com" in host:
-            return GiteeProvider(host), owner, repo
+            provider = GiteeProvider(host)
         else:
             # Try as Gitea for unknown hosts
             # Could also be self-hosted GitLab, but Gitea API is more common
-            return GiteaProvider(host), owner, repo
+            provider = GiteaProvider(host)
+
+        return ParsedRepoUrl(
+            provider=provider,
+            owner=owner,
+            repo=repo,
+            domain=host,
+            auth_info=auth_info,
+        )
 
     except HTTPException:
         raise
@@ -281,7 +453,109 @@ def parse_repo_url(url: str) -> Tuple[GitRepoProvider, str, str]:
         )
 
 
-def download_repo_zip(provider: GitRepoProvider, owner: str, repo: str) -> bytes:
+def get_user_git_token(user_id: int, domain: str, db) -> Optional[str]:
+    """
+    Get user's Git token for a specific domain.
+
+    Args:
+        user_id: User ID
+        domain: Git domain (e.g., "github.com", "gitlab.company.com")
+        db: Database session
+
+    Returns:
+        Decrypted token string or None if not found
+    """
+    from shared.models.db.user import User
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.git_info:
+        return None
+
+    # git_info is a list of GitInfo objects
+    for git_info in user.git_info:
+        if git_info.get("git_domain") == domain:
+            encrypted_token = git_info.get("git_token")
+            if encrypted_token:
+                return decrypt_git_token(encrypted_token)
+
+    return None
+
+
+def get_auth_for_repo(
+    url: str, user_id: int, db
+) -> Tuple[GitRepoProvider, str, str, RepoAuthInfo]:
+    """
+    Get authentication information for a repository.
+
+    Priority:
+    1. URL embedded credentials (highest priority)
+    2. Platform integration configured token
+    3. No authentication (lowest priority)
+
+    Args:
+        url: Git repository URL
+        user_id: User ID for looking up platform integration tokens
+        db: Database session
+
+    Returns:
+        Tuple of (provider, owner, repo, auth_info)
+
+    Raises:
+        HTTPException: If URL format is invalid
+    """
+    parsed = parse_repo_url(url)
+
+    # If URL has embedded credentials, use them directly
+    if parsed.auth_info.auth_source == "url_credentials":
+        return (parsed.provider, parsed.owner, parsed.repo, parsed.auth_info)
+
+    # Otherwise, try to get token from platform integration
+    domain = parsed.domain
+    token = get_user_git_token(user_id, domain, db)
+
+    if token:
+        auth_info = RepoAuthInfo(
+            username="git",  # Generic username for token-based auth
+            password=token,
+            auth_source="platform_integration",
+        )
+        return (parsed.provider, parsed.owner, parsed.repo, auth_info)
+
+    # No authentication available
+    return (parsed.provider, parsed.owner, parsed.repo, parsed.auth_info)
+
+
+def check_private_repo_error(domain: str, auth_source: str) -> HTTPException:
+    """
+    Create an appropriate error for private repository access failure.
+
+    Args:
+        domain: Git domain (e.g., "github.com")
+        auth_source: Current authentication source
+
+    Returns:
+        HTTPException with appropriate message
+    """
+    if auth_source == "none":
+        return HTTPException(
+            status_code=403,
+            detail=f"This repository may be private. Please configure a Git token for {domain} "
+            f"in Settings > Platform Integration, or provide credentials in the URL "
+            f"(e.g., https://token@{domain}/owner/repo)",
+        )
+    else:
+        return HTTPException(
+            status_code=403,
+            detail="Authentication failed. Please check your Git token or credentials.",
+        )
+
+
+def download_repo_zip(
+    provider: GitRepoProvider,
+    owner: str,
+    repo: str,
+    auth: Optional[RepoAuthInfo] = None,
+) -> bytes:
     """
     Download a repository as a ZIP file.
 
@@ -289,6 +563,7 @@ def download_repo_zip(provider: GitRepoProvider, owner: str, repo: str) -> bytes
         provider: Git repository provider
         owner: Repository owner
         repo: Repository name
+        auth: Optional authentication info
 
     Returns:
         ZIP file content as bytes
@@ -296,20 +571,31 @@ def download_repo_zip(provider: GitRepoProvider, owner: str, repo: str) -> bytes
     Raises:
         HTTPException: If download fails
     """
-    # Get default branch
-    branch = provider.get_default_branch(owner, repo)
+    # Get default branch with auth
+    branch = provider.get_default_branch(owner, repo, auth)
 
     # Get download URL
     download_url = provider.get_zip_download_url(owner, repo, branch)
 
+    # Get authentication for ZIP download
+    zip_auth = provider.get_zip_auth(auth) if auth else None
+
     try:
         with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-            response = client.get(download_url)
+            if zip_auth:
+                response = client.get(download_url, auth=zip_auth)
+            else:
+                response = client.get(download_url)
+
             if response.status_code == 404:
                 raise HTTPException(
                     status_code=404,
                     detail="Repository not found or not accessible",
                 )
+            if response.status_code in (401, 403):
+                auth_source = auth.auth_source if auth else "none"
+                domain = provider.host
+                raise check_private_repo_error(domain, auth_source)
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=response.status_code,
@@ -451,21 +737,29 @@ def package_skill_directory(skill_dir: str, skill_name: str) -> bytes:
 class GitSkillService:
     """Service for scanning and importing skills from Git repositories"""
 
-    def scan_repository(self, repo_url: str) -> List[GitSkillInfo]:
+    def scan_repository(
+        self, repo_url: str, user_id: int = None, db=None
+    ) -> Tuple[List[GitSkillInfo], Dict[str, Any]]:
         """
         Scan a Git repository for skills.
 
         Args:
             repo_url: Git repository URL
+            user_id: User ID for authentication (optional)
+            db: Database session (optional, required if user_id is provided)
 
         Returns:
-            List of GitSkillInfo objects for found skills
+            Tuple of (skills list, repo_info dict)
         """
-        # Parse URL and get provider
-        provider, owner, repo = parse_repo_url(repo_url)
-
-        # Download repository ZIP
-        zip_content = download_repo_zip(provider, owner, repo)
+        # Get authentication info
+        if user_id and db:
+            provider, owner, repo, auth_info = get_auth_for_repo(repo_url, user_id, db)
+        else:
+            parsed = parse_repo_url(repo_url)
+            provider = parsed.provider
+            owner = parsed.owner
+            repo = parsed.repo
+            auth_info = parsed.auth_info
 
         # Extract to temporary directory and scan
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -483,7 +777,14 @@ class GitSkillService:
             # Scan for skills
             skills = scan_skills_in_directory(temp_dir)
 
-        return skills
+        # Build repo_info
+        repo_info = {
+            "domain": provider.host,
+            "has_token_configured": auth_info.auth_source != "none",
+            "auth_source": auth_info.auth_source,
+        }
+
+        return skills, repo_info
 
     def import_skills(
         self,
@@ -515,11 +816,11 @@ class GitSkillService:
         if overwrite_names is None:
             overwrite_names = []
 
-        # Parse URL and get provider
-        provider, owner, repo = parse_repo_url(repo_url)
+        # Get authentication info
+        provider, owner, repo, auth_info = get_auth_for_repo(repo_url, user_id, db)
 
-        # Download repository ZIP
-        zip_content = download_repo_zip(provider, owner, repo)
+        # Download repository ZIP with auth
+        zip_content = download_repo_zip(provider, owner, repo, auth_info)
 
         result = GitImportResult(success=[], skipped=[], failed=[])
 
@@ -720,11 +1021,11 @@ class GitSkillService:
                 detail="Skill source information is incomplete",
             )
 
-        # Parse URL and get provider
-        provider, owner, repo = parse_repo_url(repo_url)
+        # Get authentication info
+        provider, owner, repo, auth_info = get_auth_for_repo(repo_url, user_id, db)
 
-        # Download repository ZIP
-        zip_content = download_repo_zip(provider, owner, repo)
+        # Download repository ZIP with auth
+        zip_content = download_repo_zip(provider, owner, repo, auth_info)
 
         # Extract to temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -890,11 +1191,13 @@ class GitSkillService:
         # Step 2: Process each repository once
         for repo_url, skills_info in repo_skills_map.items():
             try:
-                # Parse URL and get provider
-                provider, owner, repo = parse_repo_url(repo_url)
+                # Get authentication info
+                provider, owner, repo, auth_info = get_auth_for_repo(
+                    repo_url, user_id, db
+                )
 
                 # Download repository ZIP once for all skills from this repo
-                zip_content = download_repo_zip(provider, owner, repo)
+                zip_content = download_repo_zip(provider, owner, repo, auth_info)
 
                 # Extract to temporary directory
                 with tempfile.TemporaryDirectory() as temp_dir:
@@ -1031,15 +1334,6 @@ class GitSkillService:
                     )
 
         return result
-
-
-@dataclass
-class GitBatchUpdateResult:
-    """Result of batch updating skills from Git repositories"""
-
-    success: List[Dict[str, Any]]  # Successfully updated skills
-    skipped: List[Dict[str, Any]]  # Skipped (not found, not from git, etc.)
-    failed: List[Dict[str, Any]]  # Failed to update
 
 
 # Singleton instance
