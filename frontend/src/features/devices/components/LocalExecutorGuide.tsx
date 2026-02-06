@@ -45,10 +45,12 @@ function CopyButton({
   text,
   className,
   onCopySuccess,
+  copyFailedText,
 }: {
   text: string
   className?: string
   onCopySuccess?: () => void
+  copyFailedText?: string
 }) {
   const [copied, setCopied] = useState(false)
 
@@ -59,7 +61,7 @@ function CopyButton({
       onCopySuccess?.()
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      toast.error('Failed to copy')
+      toast.error(copyFailedText ?? 'Failed to copy')
     }
   }
 
@@ -84,11 +86,13 @@ function CommandStep({
   title,
   description,
   command,
+  copyFailedText,
 }: {
   stepNumber: number
   title: string
   description: string
   command: string
+  copyFailedText?: string
 }) {
   const stepCircles = ['①', '②', '③', '④', '⑤']
 
@@ -107,7 +111,7 @@ function CommandStep({
           <div className="flex-1 overflow-x-auto">
             <code className="text-sm font-mono whitespace-pre text-green-400">{command}</code>
           </div>
-          <CopyButton text={command} />
+          <CopyButton text={command} copyFailedText={copyFailedText} />
         </div>
       </div>
     </div>
@@ -185,18 +189,12 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
   }
 
   // Get the auth token value for the command
-  const getAuthTokenValue = () => {
-    if (authMode === 'token') {
-      return authToken
-    }
-    // API Key mode
-    if (newlyCreatedKey && newlyCreatedKey.id === selectedKeyId) {
-      return newlyCreatedKey.key
-    }
+  const authTokenValue = useMemo(() => {
+    if (authMode === 'token') return authToken
+    if (newlyCreatedKey && newlyCreatedKey.id === selectedKeyId) return newlyCreatedKey.key
     return '<YOUR_API_KEY>'
-  }
+  }, [authMode, authToken, newlyCreatedKey, selectedKeyId])
 
-  const authTokenValue = getAuthTokenValue()
   const hasRealApiKey =
     authMode === 'apikey' && newlyCreatedKey && newlyCreatedKey.id === selectedKeyId
 
@@ -234,6 +232,7 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
           title={t('step_install')}
           description={t('step_install_desc')}
           command={installCommand}
+          copyFailedText={t('copy_failed')}
         />
 
         {/* Step 2: Auth Mode Selector and Run Command */}
@@ -333,7 +332,7 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
                   )}
 
                   {/* Warning for existing key selection */}
-                  {authMode === 'apikey' && selectedKeyId && !hasRealApiKey && (
+                  {selectedKeyId && !hasRealApiKey && (
                     <div className="flex items-start gap-2 p-2 mt-3 bg-amber-50 border border-amber-200 rounded-md">
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <p className="text-xs text-amber-700">{t('apikey_existing_warning')}</p>
@@ -353,7 +352,7 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
                   {runCommand}
                 </code>
               </div>
-              <CopyButton text={runCommand} />
+              <CopyButton text={runCommand} copyFailedText={t('copy_failed')} />
             </div>
           </div>
         </div>
@@ -403,7 +402,16 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
       </div>
 
       {/* Create API Key Dialog */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={open => {
+          setCreateDialogOpen(open)
+          // Clear keyName when dialog is closed
+          if (!open) {
+            setKeyName('')
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('create_apikey_title')}</DialogTitle>
