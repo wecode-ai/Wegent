@@ -8,7 +8,7 @@
  * Discover Feed Card Component - Masonry layout card for subscription discovery
  * Displays subscription execution results in a rich, Pinterest/Xiaohongshu-style feed
  */
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Users,
@@ -88,6 +88,45 @@ const statusConfig: Record<
   },
 }
 
+const PREVIEW_CHAR_LIMIT = 600
+
+function buildPreviewText(source?: string): { text: string; truncated: boolean } {
+  if (!source) {
+    return { text: '', truncated: false }
+  }
+
+  let text = source
+    // Remove fenced code blocks
+    .replace(/```[\s\S]*?```/g, '')
+    // Remove inline code
+    .replace(/`[^`]+`/g, '')
+    // Remove images
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    // Replace links with their text
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    // Remove headings and blockquotes markers
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*>\s?/gm, '')
+    // Remove list markers
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    // Normalize whitespace
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  if (!text) {
+    text = source.replace(/\s+/g, ' ').trim()
+  }
+
+  const truncated = text.length > PREVIEW_CHAR_LIMIT
+  if (truncated) {
+    text = `${text.slice(0, PREVIEW_CHAR_LIMIT).trimEnd()}...`
+  }
+
+  return { text, truncated }
+}
+
 interface DiscoverFeedCardProps {
   subscription: DiscoverSubscriptionResponse
   latestExecution?: BackgroundExecution
@@ -100,7 +139,7 @@ interface DiscoverFeedCardProps {
 export function DiscoverFeedCard({
   subscription,
   latestExecution,
-  isFollowing: initialIsFollowing,
+  isFollowing,
   onFollow,
   onUnfollow,
   onClick,
@@ -111,18 +150,12 @@ export function DiscoverFeedCard({
   const { theme } = useTheme()
 
   const [isExpanded, setIsExpanded] = useState(false)
-  const [isFollowing, setIsFollowing] = useState(initialIsFollowing)
   const [isFollowLoading, setIsFollowLoading] = useState(false)
-  const [needsExpansion, setNeedsExpansion] = useState(false)
-  const contentRef = useRef<HTMLDivElement>(null)
-
-  // Check if content needs expansion (more than ~300px height)
-  useEffect(() => {
-    if (contentRef.current) {
-      const contentHeight = contentRef.current.scrollHeight
-      setNeedsExpansion(contentHeight > 350)
-    }
-  }, [latestExecution?.result_summary])
+  const preview = useMemo(
+    () => buildPreviewText(latestExecution?.result_summary),
+    [latestExecution?.result_summary]
+  )
+  const needsExpansion = preview.truncated
 
   // Handle follow/unfollow toggle
   const handleFollowClick = useCallback(
@@ -135,11 +168,9 @@ export function DiscoverFeedCard({
       try {
         if (isFollowing) {
           await onUnfollow(subscription.id)
-          setIsFollowing(false)
           toast.success(t('unfollow_success'))
         } else {
           await onFollow(subscription.id)
-          setIsFollowing(true)
           toast.success(t('follow_success'))
         }
       } catch (error) {
@@ -190,10 +221,7 @@ export function DiscoverFeedCard({
     <div className="discover-feed-item">
       <div className="discover-feed-card" onClick={() => onClick(subscription)}>
         {/* Content Area */}
-        <div
-          ref={contentRef}
-          className={`discover-feed-content ${!isExpanded && needsExpansion ? 'collapsed' : ''}`}
-        >
+        <div className="discover-feed-content">
           {/* Header Row: Status + Time + Follow Button */}
           <div className="flex items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -246,7 +274,11 @@ export function DiscoverFeedCard({
           {/* Markdown Content */}
           {latestExecution?.result_summary && (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <EnhancedMarkdown source={latestExecution.result_summary} theme={theme} />
+              {isExpanded ? (
+                <EnhancedMarkdown source={latestExecution.result_summary} theme={theme} />
+              ) : (
+                <p className="discover-feed-preview">{preview.text}</p>
+              )}
             </div>
           )}
 

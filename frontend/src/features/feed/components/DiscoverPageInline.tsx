@@ -8,7 +8,7 @@
  * Inline version of Discover page for embedding in tabs.
  * Uses Pinterest/Xiaohongshu-style masonry feed layout for rich content display.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, Search, Sparkles, TrendingUp, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select'
 import { subscriptionApis } from '@/apis/subscription'
 import type { DiscoverSubscriptionResponse, BackgroundExecution } from '@/types/subscription'
+import { isSafariBrowser } from '@/utils/browserDetection'
 import { DiscoverHistoryDialog } from './DiscoverHistoryDialog'
 import { DiscoverFeedCard, DiscoverFeedCardSkeleton } from './DiscoverFeedCard'
 import './discover-feed.css'
@@ -35,6 +36,7 @@ interface DiscoverPageInlineProps {
 
 export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlineProps) {
   const { t } = useTranslation('feed')
+  const isSafari = useMemo(() => isSafariBrowser(), [])
 
   // State
   const [subscriptions, setSubscriptions] = useState<DiscoverSubscriptionResponse[]>([])
@@ -233,9 +235,15 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
       </div>
 
       {/* Content - Masonry Feed */}
-      <div className="flex-1 overflow-y-auto discover-feed-scroll-container bg-base">
+      <div
+        className={`flex-1 overflow-y-auto discover-feed-scroll-container bg-base ${
+          isSafari ? 'discover-feed-scroll-container--safari' : ''
+        }`}
+      >
         {loading ? (
-          <div className="discover-feed-masonry">{renderSkeletons()}</div>
+          <div className={isSafari ? 'discover-feed-masonry--grid' : 'discover-feed-masonry'}>
+            {renderSkeletons()}
+          </div>
         ) : subscriptions.length === 0 ? (
           <div className="discover-feed-empty">
             <div className="discover-feed-empty-icon">
@@ -247,7 +255,7 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
         ) : (
           <>
             {/* Masonry Feed Grid */}
-            <div className="discover-feed-masonry">
+            <div className={isSafari ? 'discover-feed-masonry--grid' : 'discover-feed-masonry'}>
               {subscriptions.map(subscription => (
                 <DiscoverFeedCard
                   key={subscription.id}
