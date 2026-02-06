@@ -1276,8 +1276,8 @@ def delete_document(
 
 @document_router.put("/{document_id}/content")
 @mcp_tool(
-    name="update_document",
-    description="Update a document's content",
+    name="update_document_content",
+    description="Update a document's text content and trigger re-indexing",
     server="knowledge",
 )
 @trace_async("update_document_content", "knowledge.api")
