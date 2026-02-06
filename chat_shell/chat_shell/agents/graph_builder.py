@@ -28,6 +28,7 @@ from opentelemetry import trace as otel_trace
 
 from shared.telemetry.decorators import add_span_event, trace_sync
 
+from ..core.config import settings
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 
@@ -45,9 +46,6 @@ TRUNCATION_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
 # Special marker format for truncation info (similar to reasoning content markers)
 TRUNCATED_MARKER_START = "__TRUNCATED__"
 TRUNCATED_MARKER_END = "__END_TRUNCATED__"
-
-# Maximum retry attempts when tool calls are truncated
-MAX_TRUNCATION_RETRIES = 2
 
 # Error message to send to LLM when tool calls are truncated
 TOOL_CALL_TRUNCATION_ERROR_TEMPLATE = """[SYSTEM ERROR] Your previous response was truncated due to reaching the maximum token limit before completing the tool call(s).
@@ -89,6 +87,7 @@ class LangGraphAgentBuilder:
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = 10,
         enable_checkpointing: bool = False,
+        max_truncation_retries: int | None = None,
     ):
         """Initialize agent builder.
 
@@ -97,11 +96,18 @@ class LangGraphAgentBuilder:
             tool_registry: Registry of available tools (optional)
             max_iterations: Maximum tool loop iterations
             enable_checkpointing: Enable state checkpointing for resumability
+            max_truncation_retries: Maximum retry attempts when tool calls are truncated.
+                If None, uses settings.MAX_TRUNCATION_RETRIES
         """
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
         self.enable_checkpointing = enable_checkpointing
+        self.max_truncation_retries = (
+            max_truncation_retries
+            if max_truncation_retries is not None
+            else settings.MAX_TRUNCATION_RETRIES
+        )
         self._agent = None
 
         # Get all LangChain tools from registry
@@ -206,6 +212,65 @@ class LangGraphAgentBuilder:
             return new_messages
 
         return prompt_modifier
+
+    def _detect_and_handle_truncation(
+        self,
+        finish_reason: str | None,
+        output: Any,
+        model_name: str,
+        streamed_content: bool,
+        detection_mode: str = "streaming",
+    ) -> tuple[bool, bool]:
+        """Detect truncation and check for tool calls in the output.
+
+        This helper method consolidates truncation detection logic that was
+        previously duplicated across streaming and non-streaming code paths.
+
+        Args:
+            finish_reason: The finish/stop reason from model response metadata
+            output: The model output to check for tool calls (may be None for streaming)
+            model_name: Name of the model for logging
+            streamed_content: Whether content was streamed
+            detection_mode: Context of detection ("streaming", "end_event", "non_streaming_fallback")
+
+        Returns:
+            Tuple of (has_truncation, has_tool_calls):
+            - has_truncation: True if finish_reason indicates truncation
+            - has_tool_calls: True if output contains tool calls (always False if output is None)
+        """
+        # Check if finish_reason indicates truncation
+        if not finish_reason or finish_reason not in TRUNCATION_REASONS:
+            return False, False
+
+        # Check for tool calls in output (if output is provided)
+        has_tool_calls = False
+        if output is not None:
+            if hasattr(output, "tool_calls"):
+                has_tool_calls = bool(output.tool_calls)
+            elif isinstance(output, dict):
+                has_tool_calls = bool(output.get("tool_calls"))
+
+        logger.warning(
+            "[stream_tokens] Content truncated: "
+            "reason=%s, model=%s, has_tool_calls=%s, mode=%s",
+            finish_reason,
+            model_name,
+            has_tool_calls,
+            detection_mode,
+        )
+
+        add_span_event(
+            "truncation_detected",
+            {
+                "reason": finish_reason,
+                "model_name": model_name,
+                "has_tool_calls": has_tool_calls,
+                "streamed_content": streamed_content,
+                "detection_mode": detection_mode,
+            },
+        )
+
+        return True, has_tool_calls
 
     def _find_load_skill_tool(self) -> Optional[Any]:
         """Find the LoadSkillTool from registered tools.
@@ -604,26 +669,21 @@ class LangGraphAgentBuilder:
                             "stop_reason"
                         )
 
-                        if finish_reason in TRUNCATION_REASONS:
-                            model_name = event.get("name", "unknown")
-                            # Record truncation detection - we'll check for tool calls later
+                        # Use helper method to detect truncation
+                        # Note: output=None since we're in streaming mode, tool call check happens later
+                        model_name = event.get("name", "unknown")
+                        has_truncation, _ = self._detect_and_handle_truncation(
+                            finish_reason,
+                            output=None,
+                            model_name=model_name,
+                            streamed_content=streamed_content,
+                            detection_mode="streaming",
+                        )
+
+                        if has_truncation:
+                            # Record truncation detection - will check for tool calls at end
                             truncation_detected = True
                             truncation_reason = finish_reason
-
-                            logger.warning(
-                                "[stream_tokens] Content truncation detected: "
-                                "reason=%s, model=%s (will check for tool calls at end)",
-                                finish_reason,
-                                model_name,
-                            )
-                            add_span_event(
-                                "truncation_detected",
-                                {
-                                    "reason": finish_reason,
-                                    "model_name": model_name,
-                                    "streamed_content": streamed_content,
-                                },
-                            )
 
                 elif kind == "on_chat_model_end":
                     # Track LLM request completion
@@ -707,33 +767,20 @@ class LangGraphAgentBuilder:
                         finish_reason = metadata.get("finish_reason") or metadata.get(
                             "stop_reason"
                         )
-                        if finish_reason in TRUNCATION_REASONS:
-                            model_name = event.get("name", "unknown")
-                            # Check if output contains incomplete tool calls
-                            has_tool_calls = False
-                            if hasattr(output, "tool_calls"):
-                                has_tool_calls = bool(output.tool_calls)
-                            elif isinstance(output, dict):
-                                has_tool_calls = bool(output.get("tool_calls"))
 
-                            logger.warning(
-                                "[stream_tokens] Content truncated (non-streaming fallback): "
-                                "reason=%s, model=%s, has_tool_calls=%s",
+                        # Use helper method to detect truncation with tool call check
+                        model_name = event.get("name", "unknown")
+                        has_truncation, has_tool_calls = (
+                            self._detect_and_handle_truncation(
                                 finish_reason,
-                                model_name,
-                                has_tool_calls,
+                                output=output,
+                                model_name=model_name,
+                                streamed_content=streamed_content,
+                                detection_mode="non_streaming_fallback",
                             )
-                            add_span_event(
-                                "content_truncated",
-                                {
-                                    "reason": finish_reason,
-                                    "model_name": model_name,
-                                    "streamed_content": streamed_content,
-                                    "detection_mode": "non_streaming_fallback",
-                                    "has_tool_calls": has_tool_calls,
-                                },
-                            )
+                        )
 
+                        if has_truncation:
                             # If tool calls are truncated, raise exception to trigger recovery
                             if has_tool_calls:
                                 raise ToolCallTruncatedError(
@@ -832,15 +879,15 @@ class LangGraphAgentBuilder:
                 "Reporting error to LLM for recovery.",
                 e.reason,
                 _truncation_retry_count,
-                MAX_TRUNCATION_RETRIES,
+                self.max_truncation_retries,
             )
 
             # Check if we've exceeded retry limit
-            if _truncation_retry_count >= MAX_TRUNCATION_RETRIES:
+            if _truncation_retry_count >= self.max_truncation_retries:
                 logger.error(
                     "[stream_tokens] Max truncation retries exceeded (%d). "
                     "Yielding final truncation warning.",
-                    MAX_TRUNCATION_RETRIES,
+                    self.max_truncation_retries,
                 )
                 # Yield truncation marker to show warning in UI
                 yield f"{TRUNCATED_MARKER_START}{e.reason}{TRUNCATED_MARKER_END}"
@@ -850,7 +897,7 @@ class LangGraphAgentBuilder:
             error_message = TOOL_CALL_TRUNCATION_ERROR_TEMPLATE.format(
                 reason=e.reason,
                 attempt=_truncation_retry_count + 1,
-                max_attempts=MAX_TRUNCATION_RETRIES,
+                max_attempts=self.max_truncation_retries,
             )
 
             # Add error message to conversation history
@@ -862,7 +909,7 @@ class LangGraphAgentBuilder:
             logger.info(
                 "[stream_tokens] Retrying with truncation error context (attempt %d/%d)",
                 _truncation_retry_count + 1,
-                MAX_TRUNCATION_RETRIES,
+                self.max_truncation_retries,
             )
 
             # Recursively call stream_tokens with incremented retry count
