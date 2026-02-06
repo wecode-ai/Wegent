@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 REASONING_START = "__REASONING__"
 REASONING_END = "__END_REASONING__"
 
+# Constants for truncation markers (matching graph_builder.py)
+TRUNCATED_START = "__TRUNCATED__"
+TRUNCATED_END = "__END_TRUNCATED__"
+
+# Bilingual truncation warning message
+TRUNCATION_WARNING_MESSAGE = """
+
+---
+⚠️ Content Truncated: Model output reached token limit, response may be incomplete."""
+
 # Semaphore for concurrent chat limit (lazy initialized)
 _chat_semaphore: Optional[asyncio.Semaphore] = None
 _semaphore_lock = threading.Lock()
@@ -111,6 +121,10 @@ class StreamingState:
     is_silent_exit: bool = False
     silent_exit_reason: str = ""
 
+    # Truncation state (when model output reaches max_token limit)
+    is_truncated: bool = False
+    truncation_reason: str = ""
+
     # Loaded skills tracking (for persistence across conversation turns)
     loaded_skills: list = field(default_factory=list)
 
@@ -153,6 +167,19 @@ class StreamingState:
                 skill_name,
                 len(self.loaded_skills),
             )
+
+    def set_truncated(self, reason: str) -> None:
+        """Mark the response as truncated due to max_token limit.
+
+        Args:
+            reason: The truncation reason from the model (e.g., "length", "max_tokens", "MAX_TOKENS")
+        """
+        self.is_truncated = True
+        self.truncation_reason = reason
+        logger.info(
+            "[StreamingState] Response marked as truncated: reason=%s",
+            reason,
+        )
 
     def add_block(self, block: dict) -> None:
         """Add a message block (text or tool)."""
@@ -216,6 +243,11 @@ class StreamingState:
             result["silent_exit"] = True
             if self.silent_exit_reason:
                 result["silent_exit_reason"] = self.silent_exit_reason
+        # Include truncation flag if set
+        if self.is_truncated:
+            result["truncated"] = True
+            if self.truncation_reason:
+                result["truncation_reason"] = self.truncation_reason
         # Include loaded skills for persistence across conversation turns
         # This is saved to result and used by restore_from_history
         if include_value and self.loaded_skills:
@@ -520,6 +552,13 @@ class StreamingCore:
             )
             return True
 
+        # Check for truncation marker
+        if token.startswith(TRUNCATED_START) and token.endswith(TRUNCATED_END):
+            truncation_reason = token[len(TRUNCATED_START) : -len(TRUNCATED_END)]
+            self.state.set_truncated(truncation_reason)
+            # Don't yield the marker itself as content, just record the state
+            return True
+
         # Regular content
         self.state.append_content(token)
 
@@ -554,6 +593,18 @@ class StreamingCore:
 
     async def finalize(self) -> dict:
         """Finalize streaming and return results."""
+        # Handle truncation: append warning message and emit error event
+        if self.state.is_truncated:
+            # Append bilingual warning message to the response
+            self.state.append_content(TRUNCATION_WARNING_MESSAGE)
+            self.state.append_text_block(TRUNCATION_WARNING_MESSAGE)
+
+            # Emit error event for truncation
+            await self.emitter.emit_error(
+                self.state.subtask_id,
+                f"Content truncated due to max_token limit (reason: {self.state.truncation_reason})",
+            )
+
         # Finalize any remaining text block
         self.state.finalize_text_block()
 
@@ -566,9 +617,10 @@ class StreamingCore:
         )
 
         logger.debug(
-            "[BLOCK] Finalize result: subtask=%d blocks_count=%d",
+            "[BLOCK] Finalize result: subtask=%d blocks_count=%d truncated=%s",
             self.state.subtask_id,
             len(result.get("blocks", [])),
+            self.state.is_truncated,
         )
 
         # Emit done event via emitter
