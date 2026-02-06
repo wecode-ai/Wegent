@@ -9,7 +9,7 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
     mcp_servers = {
         "wegent-knowledge": {
             "type": "streamable-http",
-            "url": "${{backend_url}}/mcp/knowledge",
+            "url": "${{backend_url}}/mcp/knowledge/sse",
             "headers": {"Authorization": "Bearer ${{task_token}}"},
             "timeout": 300,
         }
@@ -21,7 +21,9 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
 
     replaced = replace_mcp_server_variables(mcp_servers, task_data)
 
-    assert replaced["wegent-knowledge"]["url"] == "http://localhost:8000/mcp/knowledge"
+    assert (
+        replaced["wegent-knowledge"]["url"] == "http://localhost:8000/mcp/knowledge/sse"
+    )
     assert (
         replaced["wegent-knowledge"]["headers"]["Authorization"] == "Bearer token-123"
     )
