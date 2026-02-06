@@ -231,9 +231,7 @@ export function FollowNotificationSettingsDialog({
                   </div>
                 )}
                 {settings.available_channels.some(c => !c.is_bound) && (
-                  <p className="text-xs text-text-muted">
-                    {t('notification_settings.bind_hint')}
-                  </p>
+                  <p className="text-xs text-text-muted">{t('notification_settings.bind_hint')}</p>
                 )}
               </div>
             )}

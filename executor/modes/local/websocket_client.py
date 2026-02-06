@@ -13,6 +13,10 @@ Authentication:
   - JWT Token: Standard JWT token with expiration
   - API Key: Personal API key starting with 'wg-' prefix (no expiration)
 
+Cross-platform support:
+- Device ID generation works on macOS, Linux, and Windows
+- File permissions use platform abstraction for security
+
 Example:
     # Using JWT Token
     export WEGENT_AUTH_TOKEN="eyJhbG..."
@@ -34,6 +38,7 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from executor.config import config
+from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
 from shared.logger import setup_logger
 
@@ -259,7 +264,10 @@ class WebSocketClient:
             DEVICE_ID_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
             DEVICE_ID_CACHE_FILE.write_text(device_id)
             # Set restrictive permissions (owner read/write only)
-            os.chmod(DEVICE_ID_CACHE_FILE, 0o600)
+            permissions_manager = get_permissions_manager()
+            permissions_manager.set_owner_only(
+                str(DEVICE_ID_CACHE_FILE), is_directory=False
+            )
             logger.debug(f"Cached device ID to {DEVICE_ID_CACHE_FILE}")
         except Exception as e:
             logger.warning(f"Failed to cache device ID: {e}")

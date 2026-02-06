@@ -25,6 +25,7 @@ import {
   getTaskViewStatus,
 } from '@/utils/taskViewStatus'
 import { useSocket } from '@/contexts/SocketContext'
+import { useDevices } from '@/contexts/DeviceContext'
 import {
   TaskCreatedPayload,
   TaskInvitedPayload,
@@ -96,6 +97,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   // WebSocket connection for real-time task updates
   const { registerTaskHandlers, isConnected, leaveTask, joinTask, onReconnect } = useSocket()
+
+  // Device context for syncing selected device with task
+  const { setSelectedDeviceId } = useDevices()
 
   // Track previous task ID for leaving WebSocket room when switching tasks
   const previousTaskIdRef = useRef<number | null>(null)
@@ -780,6 +784,17 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     selectedTaskDetail?.completed_at,
     selectedTaskDetail?.updated_at,
   ])
+
+  // Sync device selector with selected task's device
+  // When a task is selected, update the device selector to show the task's associated device
+  useEffect(() => {
+    if (selectedTaskDetail?.device_id) {
+      // Task was executed on a specific device, sync the device selector
+      setSelectedDeviceId(selectedTaskDetail.device_id)
+    }
+    // Note: We don't reset to null when device_id is undefined
+    // because the user might want to keep their manual selection
+  }, [selectedTaskDetail?.id, selectedTaskDetail?.device_id, setSelectedDeviceId])
 
   // Search tasks
   const searchTasks = async (term: string) => {
