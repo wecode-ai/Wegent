@@ -198,6 +198,8 @@
     "execution_failed": "❌ Execution Failed",
     "error_message": "Error Message",
     "execution_type": "Execution Type",
+    "error_subtype_retry": "🔄 Recoverable error detected, retrying",
+    "error_subtype_max_retries": "❌ Max retry attempts reached",
     "mcp_init_fail": "❌ MCP initialization failed. ",
     "attachments_downloaded": "📎 Attachments Downloaded",
     "generating_content": "✨ Generating Content",

@@ -176,6 +176,8 @@
     "execution_failed": "❌ 执行失败",
     "error_message": "错误信息",
     "execution_type": "执行类型",
+    "error_subtype_retry": "🔄 检测到可恢复错误，正在重试",
+    "error_subtype_max_retries": "❌ 重试次数已达上限",
     "mcp_init_fail": "❌ MCP 初始化失败。",
     "attachments_downloaded": "📎 已下载附件",
     "generating_content": "✨ 正在生成内容",
