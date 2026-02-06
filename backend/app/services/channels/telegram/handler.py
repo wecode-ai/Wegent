@@ -110,8 +110,8 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
 
             return MessageContext(
                 content=query.data or "",  # Callback data as content
-                sender_id=str(user.id),
-                sender_name=user.first_name or user.username,
+                sender_id=str(user.id) if user else "",
+                sender_name=(user.first_name or user.username) if user else None,
                 conversation_id=str(self._current_chat_id),
                 conversation_type=(
                     "private"
@@ -121,10 +121,10 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 is_mention=False,
                 raw_message=update,
                 extra_data={
-                    "telegram_user_id": user.id,
-                    "telegram_username": user.username,
-                    "telegram_first_name": user.first_name,
-                    "telegram_last_name": user.last_name,
+                    "telegram_user_id": user.id if user else 0,
+                    "telegram_username": user.username if user else None,
+                    "telegram_first_name": user.first_name if user else None,
+                    "telegram_last_name": user.last_name if user else None,
                     "is_callback_query": True,
                     "callback_query_id": query.id,
                 },
