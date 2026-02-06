@@ -453,8 +453,36 @@
     "groups": "Groups",
     "groupManager": "Group Manager",
     "api_keys": "API Keys",
+    "device_setup": "Device Setup",
     "sections": {
       "general": "General"
+    }
+  },
+  "device_setup": {
+    "title": "Device Setup",
+    "description": "Follow these steps to connect your local device to Wegent",
+    "step1": {
+      "title": "Select API Key",
+      "description": "Select an existing API Key or create a new one",
+      "select_existing": "Select existing API Key",
+      "create_new": "Create new API Key",
+      "no_keys": "No API Keys found",
+      "existing_key_warning": "You selected an existing API Key. For security reasons, the full key value is only shown once at creation. If you haven't saved this key, please create a new one.",
+      "key_name_placeholder": "My Device"
+    },
+    "step2": {
+      "title": "Copy Startup Command",
+      "description": "Run the following command in your terminal to start the local device",
+      "method1_title": "Method 1: Pass token directly",
+      "method2_title": "Method 2: Use environment variable",
+      "copy_command": "Copy Command",
+      "copied": "Copied!",
+      "hint": "Once the device is connected, you can see it in the device selector in the chat interface."
+    },
+    "actions": {
+      "next": "Next",
+      "previous": "Previous",
+      "done": "Done"
     }
   },
   "retrievers": {

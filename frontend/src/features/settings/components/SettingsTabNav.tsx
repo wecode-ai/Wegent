@@ -42,6 +42,7 @@ export type SettingsTabId =
   | 'general'
   | 'integrations'
   | 'api-keys'
+  | 'device-setup'
   | 'pet'
 
 // Scope type for resource tabs
@@ -141,13 +142,14 @@ export function SettingsTabNav({
     [t]
   )
 
-  // Other tabs (not resource-based) - order: general, integrations, api-keys, pet
+  // Other tabs (not resource-based) - order: general, integrations, api-keys, device-setup, pet
   // Note: group-manager is now accessed via the group dropdown menu
   const otherTabs: TabItem[] = useMemo(
     () => [
       { id: 'general', label: t('settings.sections.general'), category: 'other' },
       { id: 'integrations', label: t('settings.integrations'), category: 'other' },
       { id: 'api-keys', label: t('settings.api_keys'), category: 'other' },
+      { id: 'device-setup', label: t('settings.device_setup'), category: 'other' },
       { id: 'pet', label: t('pet:title'), category: 'other' },
     ],
     [t]
