@@ -6,7 +6,8 @@
 
 This module provides a unified MCP Server for Wegent Backend with two endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
-- /mcp/knowledge - Knowledge base tools available via Skill configuration
+- /mcp/knowledge - Knowledge MCP module root
+  - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
 
 The MCP Server uses FastMCP with HTTP Streamable transport and integrates
 with the existing FastAPI application.
@@ -22,6 +23,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
 from app.mcp_server.auth import (
@@ -31,6 +33,39 @@ from app.mcp_server.auth import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class EmptyPathToSlashMiddleware:
+    """Normalize empty subpaths to '/' to avoid redirect_slashes on mounted apps."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") in {"http", "websocket"} and scope.get("path") == "":
+            updated_scope = dict(scope)
+            updated_scope["path"] = "/"
+            if updated_scope.get("raw_path", b"") == b"":
+                updated_scope["raw_path"] = b"/"
+            scope = updated_scope
+
+        await self.app(scope, receive, send)
+
+
+class _ASGIPathAdapter:
+    """Adapt an ASGI app to a fixed internal path."""
+
+    def __init__(self, app: ASGIApp, target_path: str = "/") -> None:
+        self.app = app
+        self.target_path = target_path
+        self.target_raw_path = target_path.encode()
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        forwarded_scope = dict(scope)
+        forwarded_scope["path"] = self.target_path
+        forwarded_scope["raw_path"] = self.target_raw_path
+        await self.app(forwarded_scope, receive, send)
+
 
 # ============== System MCP Server ==============
 # Provides system-level tools like silent_exit
@@ -355,6 +390,7 @@ def _create_system_mcp_app() -> Starlette:
             return await system_auth_middleware(request, call_next)
 
     base_app.add_middleware(SystemAuthMiddleware)
+    base_app.add_middleware(EmptyPathToSlashMiddleware)
 
     return base_app
 
@@ -369,6 +405,19 @@ def _create_knowledge_mcp_app() -> Starlette:
 
     async def health_check(request: Request):
         return JSONResponse({"status": "healthy", "service": "wegent-knowledge-mcp"})
+
+    async def knowledge_root(request: Request):
+        """Describe available knowledge MCP endpoints."""
+        return JSONResponse(
+            {
+                "service": "wegent-knowledge-mcp",
+                "transport": "streamable-http",
+                "endpoints": {
+                    "mcp": "/mcp/knowledge/sse",
+                    "health": "/mcp/knowledge/health",
+                },
+            }
+        )
 
     async def auth_middleware(request: Request, call_next):
         """Middleware to extract and validate task token."""
@@ -399,8 +448,16 @@ def _create_knowledge_mcp_app() -> Starlette:
     base_app = Starlette(
         debug=False,
         routes=[
+            Route("/", knowledge_root, methods=["GET"]),
             Route("/health", health_check, methods=["GET"]),
-            Mount("/", app=knowledge_mcp_server.streamable_http_app()),
+            Route(
+                "/sse",
+                endpoint=_ASGIPathAdapter(
+                    knowledge_mcp_server.streamable_http_app(),
+                    target_path="/",
+                ),
+                methods=["GET", "POST", "DELETE", "OPTIONS"],
+            ),
         ],
     )
 
@@ -413,6 +470,7 @@ def _create_knowledge_mcp_app() -> Starlette:
             return await auth_middleware(request, call_next)
 
     base_app.add_middleware(AuthMiddleware)
+    base_app.add_middleware(EmptyPathToSlashMiddleware)
 
     return base_app
 
@@ -484,7 +542,7 @@ def get_mcp_knowledge_config(backend_url: str, task_token: str) -> Dict[str, Any
     return {
         "wegent-knowledge": {
             "type": "streamable-http",
-            "url": f"{backend_url}/mcp/knowledge",
+            "url": f"{backend_url}/mcp/knowledge/sse",
             "headers": {
                 "Authorization": f"Bearer {task_token}",
             },

@@ -632,12 +632,18 @@ def create_app():
     # These provide system-level tools (silent_exit) and knowledge base tools
     try:
         from app.mcp_server.server import (
+            _ASGIPathAdapter,
             _create_knowledge_mcp_app,
             _create_system_mcp_app,
         )
 
         # Mount system MCP server at /mcp/system
         system_mcp_app = _create_system_mcp_app()
+        app.add_route(
+            "/mcp/system",
+            _ASGIPathAdapter(system_mcp_app, target_path="/"),
+            methods=["GET", "POST", "DELETE", "OPTIONS"],
+        )
         app.mount("/mcp/system", system_mcp_app)
         logger.info("System MCP server mounted at /mcp/system")
 
