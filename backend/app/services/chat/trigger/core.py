@@ -1532,9 +1532,7 @@ async def _stream_deep_research(
                             try:
                                 data = json.loads(data_str)
                                 # Use event_type from data or from SSE event line
-                                event_type = data.get(
-                                    "event_type", current_event_type
-                                )
+                                event_type = data.get("event_type", current_event_type)
                                 index = data.get("index")
 
                                 # Collect thought_summary from index=0 content.delta
@@ -1669,9 +1667,7 @@ async def _stream_deep_research(
                                 continue
                             try:
                                 data = json.loads(data_str)
-                                event_type = data.get(
-                                    "event_type", current_event_type
-                                )
+                                event_type = data.get("event_type", current_event_type)
                                 index = data.get("index")
 
                                 # Only collect index=1 content (final report)
@@ -1726,11 +1722,17 @@ async def _stream_deep_research(
             logger.info(
                 "[deep_research][CREATE] Response: status=%d, body=%s",
                 create_response.status_code,
-                create_response.text[:1000] if len(create_response.text) > 1000 else create_response.text,
+                (
+                    create_response.text[:1000]
+                    if len(create_response.text) > 1000
+                    else create_response.text
+                ),
             )
 
             if create_response.status_code != 200:
-                error_msg = f"Failed to create deep research job: {create_response.text}"
+                error_msg = (
+                    f"Failed to create deep research job: {create_response.text}"
+                )
                 logger.error("[deep_research] %s", error_msg)
                 await emitter.emit_chat_error(
                     task_id=task_id,
@@ -1782,7 +1784,11 @@ async def _stream_deep_research(
                 logger.info(
                     "[deep_research][STATUS] Response: status=%d, body=%s",
                     status_response.status_code,
-                    status_response.text[:500] if len(status_response.text) > 500 else status_response.text,
+                    (
+                        status_response.text[:500]
+                        if len(status_response.text) > 500
+                        else status_response.text
+                    ),
                 )
 
                 if status_response.status_code != 200:
@@ -1816,9 +1822,7 @@ async def _stream_deep_research(
                     return
 
                 # Fetch thought summaries from stream
-                thought_summaries = await fetch_thought_summaries(
-                    client, stream_url
-                )
+                thought_summaries = await fetch_thought_summaries(client, stream_url)
 
                 # Convert thought summaries to thinking steps format
                 # Use standard Chat shell text format for consistency
