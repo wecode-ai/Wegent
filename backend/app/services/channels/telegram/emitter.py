@@ -150,7 +150,8 @@ class StreamingResponseEmitter(ChatEventEmitter):
                 )
 
                 self._pending_content = ""
-                self._last_update_time = current_time
+                # Update timestamp after successful edit to maintain accurate throttle
+                self._last_update_time = time.time()
 
             except Exception as e:
                 # Don't fail on edit errors - might be rate limited

@@ -604,6 +604,9 @@ class TelegramChannelProvider(BaseChannelProvider):
                 await update.callback_query.answer("用户未注册")
                 return
 
+            # Answer callback query to dismiss loading indicator
+            await update.callback_query.answer()
+
             response = await self._handler.handle_callback_query(update, user)
             if response:
                 # Edit the original message with the response
@@ -622,9 +625,13 @@ class TelegramChannelProvider(BaseChannelProvider):
         if not self._handler:
             return
 
+        # Early return if no message
+        if not update.message:
+            return
+
         # Deduplicate messages
-        msg_id = update.message.message_id if update.message else None
-        chat_id = update.message.chat_id if update.message else None
+        msg_id = update.message.message_id
+        chat_id = update.message.chat_id
         if msg_id and chat_id:
             dedup_key = f"{TELEGRAM_MSG_DEDUP_PREFIX}{chat_id}:{msg_id}"
             is_new = await cache_manager.setnx(
@@ -638,14 +645,10 @@ class TelegramChannelProvider(BaseChannelProvider):
                 return
 
         logger.info(
-            "[Telegram] Received message: chat_id=%s, msg_id=%s, content_preview=%s",
+            "[Telegram] Received message: chat_id=%s, msg_id=%s, content_len=%s",
             chat_id,
             msg_id,
-            (
-                update.message.text[:50]
-                if update.message and update.message.text
-                else "empty"
-            ),
+            len(update.message.text) if update.message.text else 0,
         )
 
         # Process through the channel handler
