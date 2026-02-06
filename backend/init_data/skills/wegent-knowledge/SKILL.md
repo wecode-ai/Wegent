@@ -13,7 +13,7 @@ mcpServers:
     type: streamable-http
     # NOTE: MCP client only supports ${{...}} variable substitution.
     # The platform will inject `backend_url` via task_data.
-    url: "${{backend_url}}/mcp/knowledge"
+    url: "${{backend_url}}/mcp/knowledge/sse"
     headers:
       Authorization: "Bearer ${{task_token}}"
     timeout: 300
