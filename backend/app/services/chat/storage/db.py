@@ -257,20 +257,10 @@ class DatabaseHandler:
                         f"[WS] Scheduled task:status via main loop for task={task_id}"
                     )
                 else:
-                    # Fallback: try asyncio.get_event_loop()
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(
-                            emit_task_status_update(user_id, task_id, status, progress),
-                            loop,
-                        )
-                        logger.debug(
-                            f"[WS] Scheduled task:status via fallback loop for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not emit task:status event - no running event loop available for task={task_id}"
-                        )
+                    # No running event loop available - skip emit
+                    logger.warning(
+                        f"Could not emit task:status event - no running event loop available for task={task_id}"
+                    )
             except RuntimeError:
                 logger.warning(
                     f"Could not emit task:status event - no event loop available for task={task_id}"
