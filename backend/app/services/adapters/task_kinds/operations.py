@@ -988,25 +988,20 @@ class TaskOperationsMixin:
     def create_task_id(self, db: Session, user_id: int) -> int:
         """
         Create new task id using tasks table auto increment.
-        """
-        try:
-            existing_placeholder = db.execute(
-                text(
-                    """
-                SELECT id FROM tasks
-                WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
-                LIMIT 1
-            """
-                ),
-                {"user_id": user_id},
-            ).fetchone()
 
-            if existing_placeholder:
-                return existing_placeholder[0]
+        Uses UUID-based placeholder names to avoid race conditions when
+        multiple concurrent requests from the same user try to allocate task IDs.
+        """
+        import uuid
+
+        try:
+            # Generate unique placeholder name to avoid race conditions
+            placeholder_uuid = str(uuid.uuid4())
+            placeholder_name = f"placeholder-{placeholder_uuid}"
 
             placeholder_json = {
                 "kind": "Placeholder",
-                "metadata": {"name": "temp-placeholder", "namespace": "default"},
+                "metadata": {"name": placeholder_name, "namespace": "default"},
                 "spec": {},
                 "status": {"state": "Reserved"},
             }
@@ -1015,10 +1010,14 @@ class TaskOperationsMixin:
                 text(
                     """
                 INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
-                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, NOW(), NOW())
+                VALUES (:user_id, 'Placeholder', :name, 'default', :json, false, NOW(), NOW())
             """
                 ),
-                {"user_id": user_id, "json": json_lib.dumps(placeholder_json)},
+                {
+                    "user_id": user_id,
+                    "name": placeholder_name,
+                    "json": json_lib.dumps(placeholder_json),
+                },
             )
 
             allocated_id = result.lastrowid
