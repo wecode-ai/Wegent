@@ -552,6 +552,11 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            # Reset task state to RUNNING at the start of new execution
+            # This ensures that a previously cancelled task can be re-executed
+            self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
+            logger.info(f"Task {self.task_id} state set to RUNNING for new execution")
+
             # Update current progress
             self._update_progress(60)
 
@@ -583,7 +588,7 @@ class ClaudeCodeAgent(Agent):
             # Check if task was cancelled before execution
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} was cancelled before execution")
-                return TaskStatus.COMPLETED
+                return TaskStatus.CANCELLED
 
             progress = 65
             # Update current progress
@@ -635,7 +640,7 @@ class ClaudeCodeAgent(Agent):
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled during client setup")
-                return TaskStatus.COMPLETED
+                return TaskStatus.CANCELLED
 
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
@@ -662,7 +667,7 @@ class ClaudeCodeAgent(Agent):
             # Check cancellation before sending query
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
-                return TaskStatus.COMPLETED
+                return TaskStatus.CANCELLED
 
             # If new_session is True, create a new client with subtask_id as session_id
             # This is needed because different bots may have different skills, MCP servers, etc.
@@ -709,6 +714,14 @@ class ClaudeCodeAgent(Agent):
                     error_subtype_retry_count=error_subtype_retry_count,
                 )
 
+                if result == "RETRY_RESIDUAL":
+                    # Residual interrupt message, resend query without recreating client
+                    logger.info(
+                        f"RETRY_RESIDUAL: Resending query for session {self.session_id}"
+                    )
+                    await self.client.query(prompt, session_id=self.session_id)
+                    continue
+
                 if result == "RETRY_WITH_RESUME":
                     error_subtype_retry_count += 1
                     logger.warning(
@@ -744,11 +757,18 @@ class ClaudeCodeAgent(Agent):
                 # Normal completion or non-retryable failure
                 break
 
+            if result is None:
+                # No final result received, keep RUNNING status
+                logger.warning("No final result received from process_response")
+                result = TaskStatus.RUNNING
+
             # Update task state based on result
             if result == TaskStatus.COMPLETED:
                 self.task_state_manager.set_state(self.task_id, TaskState.COMPLETED)
             elif result == TaskStatus.FAILED:
                 self.task_state_manager.set_state(self.task_id, TaskState.FAILED)
+            elif result == TaskStatus.CANCELLED:
+                self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
 
             return result
 
