@@ -1050,10 +1050,18 @@ class ChatNamespace(socketio.AsyncNamespace):
             subtask.completed_at = datetime.now()
             subtask.updated_at = datetime.now()
 
-            if payload.partial_content:
-                subtask.result = {"value": payload.partial_content}
-            else:
-                subtask.result = {"value": ""}
+            # Preserve existing thinking and workbench data from database
+            # During streaming, these are saved by _update_subtask_progress
+            existing_result = subtask.result or {}
+            thinking = existing_result.get("thinking")
+            workbench = existing_result.get("workbench")
+
+            # Update result with partial content while preserving thinking/workbench
+            subtask.result = {
+                "value": payload.partial_content or "",
+                **({"thinking": thinking} if thinking is not None else {}),
+                **({"workbench": workbench} if workbench is not None else {}),
+            }
 
             # Update task status
             task = (
@@ -1105,6 +1113,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                     ),
                     result=subtask.result or {},
                     message_id=subtask.message_id,
+                )
+
+                # Emit task:status to notify frontend of task cancellation
+                # This ensures the task status in the frontend is updated from PENDING to CANCELLED
+                await ws_emitter.emit_task_status(
+                    user_id=user_id,
+                    task_id=subtask.task_id,
+                    status="CANCELLED",
+                    progress=100,
                 )
             else:
                 logger.warning(
