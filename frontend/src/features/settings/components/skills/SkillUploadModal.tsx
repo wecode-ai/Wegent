@@ -259,7 +259,14 @@ export default function SkillUploadModal({
   const validateGitUrl = (url: string): boolean => {
     if (!url.trim()) return false
     // Basic URL validation - should contain at least host/owner/repo pattern
-    const urlPattern = /^(https?:\/\/)?[\w.-]+\/[\w.-]+\/[\w.-]+/i
+    // Supports formats:
+    // - https://host/owner/repo
+    // - https://user:pass@host/owner/repo
+    // - https://token@host/owner/repo
+    // - http://host:port/owner/repo
+    // - host/owner/repo
+    // - Multi-level paths like /group/subgroup/repo
+    const urlPattern = /^(https?:\/\/)?([\w.-]+(:[\w.-]+)?@)?[\w.-]+(:\d+)?\/[\w.-]+(\/[\w.-]+)+/i
     return urlPattern.test(url.trim())
   }
 
