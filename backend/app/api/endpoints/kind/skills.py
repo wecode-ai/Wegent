@@ -29,7 +29,7 @@ from app.schemas.kind import (
 )
 from app.services.adapters.public_skill import public_skill_service
 from app.services.adapters.skill_kinds import skill_kinds_service
-from app.services.git_skill_service import git_skill_service
+from app.services.git_skill import git_skill_service
 
 router = APIRouter()
 
