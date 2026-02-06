@@ -47,6 +47,10 @@ dependencies = [
     # Local mode dependencies (Socket.IO for WebSocket communication)
     "python-socketio[asyncio_client]>=5.11.0",
     "aiohttp>=3.9.0",
+
+    # Windows platform dependencies (ConPTY and Win32 API)
+    "pywinpty>=2.0.0; sys_platform == 'win32'",
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [dependency-groups]

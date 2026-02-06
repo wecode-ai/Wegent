@@ -30,9 +30,13 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys'
 
-// Install script URL from GitHub
-const INSTALL_SCRIPT_URL =
+// Install script URLs from GitHub
+const INSTALL_SCRIPT_URL_UNIX =
   'https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh'
+const INSTALL_SCRIPT_URL_WINDOWS =
+  'https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1'
+
+type OsType = 'macos' | 'linux' | 'windows'
 
 export interface LocalExecutorGuideProps {
   backendUrl: string
@@ -86,15 +90,18 @@ function CommandStep({
   title,
   description,
   command,
+  isWindows = false,
   copyFailedText,
 }: {
   stepNumber: number
   title: string
   description: string
   command: string
+  isWindows?: boolean
   copyFailedText?: string
 }) {
   const stepCircles = ['①', '②', '③', '④', '⑤']
+  const prompt = isWindows ? '>' : '$'
 
   return (
     <div className="mb-6">
@@ -107,7 +114,7 @@ function CommandStep({
       </div>
       <div className="bg-gray-900 rounded-lg px-5 py-4 ml-8">
         <div className="flex items-start gap-3">
-          <span className="text-gray-500 select-none pt-0.5">$</span>
+          <span className="text-gray-500 select-none pt-0.5">{prompt}</span>
           <div className="flex-1 overflow-x-auto">
             <code className="text-sm font-mono whitespace-pre text-green-400">{command}</code>
           </div>
@@ -118,16 +125,57 @@ function CommandStep({
   )
 }
 
+// OS Tab selector component
+function OsTabSelector({
+  selectedOs,
+  onSelect,
+}: {
+  selectedOs: OsType
+  onSelect: (os: OsType) => void
+}) {
+  const { t } = useTranslation('devices')
+
+  const osTabs: { id: OsType; label: string; icon: string }[] = [
+    { id: 'macos', label: t('system_macos'), icon: '' },
+    { id: 'linux', label: t('system_linux'), icon: '🐧' },
+    { id: 'windows', label: t('system_windows'), icon: '🪟' },
+  ]
+
+  return (
+    <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">
+      {osTabs.map(tab => (
+        <button
+          key={tab.id}
+          onClick={() => onSelect(tab.id)}
+          className={cn(
+            'flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all',
+            selectedOs === tab.id
+              ? 'bg-white text-text-primary shadow-sm'
+              : 'text-text-muted hover:text-text-secondary'
+          )}
+        >
+          <span>{tab.icon}</span>
+          <span>{tab.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // Auth mode type
 type AuthMode = 'token' | 'apikey'
 
 /**
- * Local Executor Guide with API Key support
+ * Local Executor Guide with API Key support and Windows support
  * Shows 2 steps: Install from GitHub -> Run with authentication
  * Supports both JWT token and API Key authentication methods
+ * Supports macOS, Linux, and Windows
  */
 export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExecutorGuideProps) {
   const { t } = useTranslation('devices')
+  const [selectedOs, setSelectedOs] = useState<OsType>('macos')
+
+  const isWindows = selectedOs === 'windows'
 
   // Auth mode state
   const [authMode, setAuthMode] = useState<AuthMode>('token')
@@ -198,15 +246,48 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
   const hasRealApiKey =
     authMode === 'apikey' && newlyCreatedKey && newlyCreatedKey.id === selectedKeyId
 
-  // Step 1: Install from GitHub
-  const installCommand = useMemo(() => `curl -fsSL ${INSTALL_SCRIPT_URL} | bash`, [])
+  // Step 1: Install from GitHub (different for Unix vs Windows)
+  const installCommand = useMemo(() => {
+    if (isWindows) {
+      return `irm ${INSTALL_SCRIPT_URL_WINDOWS} | iex`
+    }
+    return `curl -fsSL ${INSTALL_SCRIPT_URL_UNIX} | bash`
+  }, [isWindows])
 
-  // Step 2: Run with environment variables
-  const runCommand = useMemo(
-    () =>
-      `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authTokenValue} \\\n~/.wegent-executor/bin/wegent-executor`,
-    [backendUrl, authTokenValue]
-  )
+  // Step 2: Run with environment variables (different for Unix vs Windows)
+  const runCommand = useMemo(() => {
+    if (isWindows) {
+      return `$env:EXECUTOR_MODE="local"\n$env:WEGENT_BACKEND_URL="${backendUrl}"\n$env:WEGENT_AUTH_TOKEN="${authTokenValue}"\n& "$env:USERPROFILE\\.wegent-executor\\bin\\wegent-executor.exe"`
+    }
+    return `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authTokenValue} \\\n~/.wegent-executor/bin/wegent-executor`
+  }, [backendUrl, authTokenValue, isWindows])
+
+  // Get description text based on OS
+  const getDescription = () => {
+    if (isWindows) {
+      return t('local_executor_description_windows')
+    }
+    if (selectedOs === 'linux') {
+      return t('local_executor_description_linux')
+    }
+    return t('local_executor_description')
+  }
+
+  // Get install step description based on OS
+  const getInstallDesc = () => {
+    if (isWindows) {
+      return t('step_install_desc_windows')
+    }
+    return t('step_install_desc')
+  }
+
+  // Get security hint based on OS
+  const getSecurityHint = () => {
+    if (isWindows) {
+      return t('windows_security_hint')
+    }
+    return t('gatekeeper_hint')
+  }
 
   // Active API keys only
   const activeApiKeys = apiKeys.filter(key => key.is_active)
@@ -222,16 +303,20 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
           </div>
           <div>
             <h3 className="text-lg font-semibold text-text-primary">{t('local_executor_title')}</h3>
-            <p className="text-sm text-text-muted">{t('local_executor_description')}</p>
+            <p className="text-sm text-text-muted">{getDescription()}</p>
           </div>
         </div>
+
+        {/* OS Tab Selector */}
+        <OsTabSelector selectedOs={selectedOs} onSelect={setSelectedOs} />
 
         {/* Step 1: Install */}
         <CommandStep
           stepNumber={1}
           title={t('step_install')}
-          description={t('step_install_desc')}
+          description={getInstallDesc()}
           command={installCommand}
+          isWindows={isWindows}
           copyFailedText={t('copy_failed')}
         />
 
@@ -346,7 +431,7 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
           {/* Command display */}
           <div className="bg-gray-900 rounded-lg px-5 py-4 ml-8">
             <div className="flex items-start gap-3">
-              <span className="text-gray-500 select-none pt-0.5">$</span>
+              <span className="text-gray-500 select-none pt-0.5">{isWindows ? '>' : '$'}</span>
               <div className="flex-1 overflow-x-auto">
                 <code className="text-sm font-mono whitespace-pre text-green-400">
                   {runCommand}
@@ -363,10 +448,10 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
           <p className="text-sm text-amber-700">{t('security_warning')}</p>
         </div>
 
-        {/* Gatekeeper hint */}
+        {/* Platform-specific security hint */}
         <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
           <span className="text-blue-600 shrink-0">💡</span>
-          <p className="text-sm text-blue-700">{t('gatekeeper_hint')}</p>
+          <p className="text-sm text-blue-700">{getSecurityHint()}</p>
         </div>
 
         {/* Token expiry hint (only for token mode) */}
