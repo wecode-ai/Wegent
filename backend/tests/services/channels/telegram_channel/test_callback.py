@@ -233,9 +233,7 @@ class TestTelegramCallbackService:
             chat_id=123456,
         )
 
-        with patch(
-            "app.services.channels.telegram.callback.get_channel_manager"
-        ) as mock_manager:
+        with patch("app.services.channels.manager.get_channel_manager") as mock_manager:
             mock_manager.return_value.get_channel.return_value = None
 
             result = await service._create_emitter(1, 1, callback_info)
