@@ -611,12 +611,14 @@ class ClaudeCodeAgent(Agent):
                         process = cached_client._transport._process
 
                     if process is not None:
-                        poll_result = process.poll()
-                        if poll_result is not None:
+                        # For asyncio.subprocess.Process, check returncode instead of poll()
+                        # returncode is None if process is still running, contains exit code if terminated
+                        returncode = getattr(process, "returncode", None)
+                        if returncode is not None:
                             # Process has terminated, remove from cache
                             logger.warning(
                                 f"Cached client process terminated for session_id: {self.session_id}, "
-                                f"exit_code={poll_result}, creating new client"
+                                f"exit_code={returncode}, creating new client"
                             )
                             SessionManager.remove_client(self.session_id)
                             # Proceed to create new client

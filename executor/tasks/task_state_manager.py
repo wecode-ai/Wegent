@@ -47,6 +47,9 @@ class TaskStateManager:
                     cls._instance = super().__new__(cls)
                     cls._instance._states: Dict[int, TaskState] = {}
                     cls._instance._cancel_timestamps: Dict[int, datetime] = {}
+                    cls._instance._cancelled_tasks: set[int] = (
+                        set()
+                    )  # Track cancelled tasks even after cleanup
                     cls._instance._state_lock = threading.Lock()
         return cls._instance
 
@@ -62,10 +65,19 @@ class TaskStateManager:
             old_state = self._states.get(task_id)
             self._states[task_id] = state
 
+            # Clear cancelled_tasks when task starts running again
+            # This ensures is_cancelled() works for new task attempts
+            if state == TaskState.RUNNING:
+                self._cancelled_tasks.discard(task_id)
+
             if state == TaskState.CANCELLING:
                 self._cancel_timestamps[task_id] = datetime.now()
                 logger.info(f"Task {task_id} state changed: {old_state} -> {state}")
-            elif state in [TaskState.CANCELLED, TaskState.COMPLETED, TaskState.FAILED]:
+            elif state == TaskState.CANCELLED:
+                # Track cancelled tasks so is_cancelled() works even after cleanup
+                self._cancelled_tasks.add(task_id)
+                logger.info(f"Task {task_id} state changed: {old_state} -> {state}")
+            elif state in [TaskState.COMPLETED, TaskState.FAILED]:
                 logger.info(f"Task {task_id} state changed: {old_state} -> {state}")
 
     def get_state(self, task_id: int) -> Optional[TaskState]:
@@ -89,10 +101,15 @@ class TaskStateManager:
             task_id: Task ID
 
         Returns:
-            True if task is in cancelling or cancelled state
+            True if task is in cancelling or cancelled state, or was cancelled
         """
         state = self.get_state(task_id)
-        return state in [TaskState.CANCELLING, TaskState.CANCELLED]
+        # Check both current state and the cancelled_tasks set
+        # The cancelled_tasks set persists even after cleanup() is called
+        return (
+            state in [TaskState.CANCELLING, TaskState.CANCELLED]
+            or task_id in self._cancelled_tasks
+        )
 
     def should_continue(self, task_id: int) -> bool:
         """
@@ -133,6 +150,9 @@ class TaskStateManager:
         with self._state_lock:
             self._states.pop(task_id, None)
             self._cancel_timestamps.pop(task_id, None)
+            # Note: We do NOT remove task_id from _cancelled_tasks here
+            # because response_processor might still be checking is_cancelled()
+            # The cancelled_tasks set is cleared when a new task starts (in set_state RUNNING)
             logger.debug(f"Cleaned up state for task {task_id}")
 
     def get_all_states(self) -> Dict[int, TaskState]:

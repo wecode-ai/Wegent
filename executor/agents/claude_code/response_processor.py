@@ -809,35 +809,9 @@ async def _process_result_message(
             str(msg.result) if msg.result is not None else f"Task ended: {msg.subtype}"
         )
 
-        # Check if this is a residual message from a previous interrupted session
-        # When a session is interrupted and then reused, the first response may be
-        # the result of the previous interrupt, not a real error for the current request.
-        # Indicators of a residual interrupt message:
-        # - subtype is error_during_execution
-        # - result is None
-        # - usage tokens are all 0 (no actual API call was made for this)
-        is_residual_interrupt = False
-        if msg.subtype == "error_during_execution" and msg.result is None:
-            usage = msg.usage or {}
-            input_tokens = usage.get("input_tokens", 0)
-            output_tokens = usage.get("output_tokens", 0)
-            if input_tokens == 0 and output_tokens == 0:
-                is_residual_interrupt = True
-                logger.info(
-                    f"Detected residual interrupt message (usage tokens all 0), "
-                    f"this is likely from a previous cancelled session. "
-                    f"Returning None to continue processing."
-                )
-
-        if is_residual_interrupt:
-            # Residual interrupt message detected, need to resend query
-            logger.info(
-                "Returning RETRY_RESIDUAL to resend query after residual interrupt"
-            )
-            return "RETRY_RESIDUAL"
-
-        # Check if this is a user-initiated cancellation
-        # When user cancels, we get error_during_execution but it's not a real failure
+        # Check if this is a user-initiated cancellation FIRST
+        # This must come before residual interrupt check because cancelled sessions
+        # may have tokens=0 and look like residual messages
         is_user_cancellation = False
         if task_state_manager and state_manager:
             task_id = state_manager.task_data.get("task_id")
@@ -867,6 +841,33 @@ async def _process_result_message(
                 message="Task cancelled by user",
             )
             return TaskStatus.CANCELLED
+
+        # Check if this is a residual message from a previous interrupted session
+        # When a session is interrupted and then reused, the first response may be
+        # the result of the previous interrupt, not a real error for the current request.
+        # Indicators of a residual interrupt message:
+        # - subtype is error_during_execution
+        # - result is None
+        # - usage tokens are all 0 (no actual API call was made for this)
+        is_residual_interrupt = False
+        if msg.subtype == "error_during_execution" and msg.result is None:
+            usage = msg.usage or {}
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            if input_tokens == 0 and output_tokens == 0:
+                is_residual_interrupt = True
+                logger.info(
+                    f"Detected residual interrupt message (usage tokens all 0), "
+                    f"this is likely from a previous cancelled session. "
+                    f"Returning None to continue processing."
+                )
+
+        if is_residual_interrupt:
+            # Residual interrupt message detected, need to resend query
+            logger.info(
+                "Returning RETRY_RESIDUAL to resend query after residual interrupt"
+            )
+            return "RETRY_RESIDUAL"
 
         # Check if this error subtype can be retried by resuming session
         if (

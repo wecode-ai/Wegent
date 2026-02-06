@@ -169,8 +169,13 @@ class AgentService:
         try:
             agent_name = agent.get_name()
             if agent_name == "ClaudeCodeAgent":
-                await ClaudeCodeAgent.close_client(task_id)
-                logger.info(f"[{_format_task_log(task_id, -1)}] Closed Claude client")
+                # Use cleanup_task_clients instead of close_client because:
+                # 1. task_id != session_id (session_id may be "task_id:bot_id" or UUID)
+                # 2. cleanup_task_clients properly handles all session_id formats
+                count = await ClaudeCodeAgent.cleanup_task_clients(int(task_id))
+                logger.info(
+                    f"[{_format_task_log(task_id, -1)}] Cleaned up {count} Claude client(s)"
+                )
             elif agent_name == "Agno":
                 await AgnoAgent.close_client(task_id)
                 logger.info(f"[{_format_task_log(task_id, -1)}] Closed Agno client")
@@ -315,12 +320,13 @@ class AgentService:
                     f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel callback: {result}"
                 )
 
-            # Clean up task state after cancel callback is sent
-            # This allows next message to be processed without "Request interrupted" error
-            task_state_manager = TaskStateManager()
-            task_state_manager.cleanup(task_id)
+            # NOTE: We do NOT call cleanup(task_id) here anymore.
+            # The cancelled_tasks set in TaskStateManager now persists across cleanup(),
+            # so is_cancelled() will return True even after state cleanup.
+            # This prevents the RETRY_RESIDUAL issue in Docker mode.
+            # The _cancelled_tasks entry is cleared when a new task starts (set_state RUNNING).
             logger.info(
-                f"[{_format_task_log(task_id, subtask_id)}] Cleaned up task state after cancel"
+                f"[{_format_task_log(task_id, subtask_id)}] Cancel state preserved for response_processor check"
             )
 
             # Close agent client and remove session to free up slot
@@ -329,13 +335,9 @@ class AgentService:
 
         except Exception as e:
             logger.exception(f"[{task_id}] Error sending cancel callback: {e}")
-            # Still attempt to cleanup task state and session on error
+            # Still attempt to cleanup session on error
+            # NOTE: We do NOT call cleanup(task_id) anymore - see comment above
             try:
-                task_state_manager = TaskStateManager()
-                task_state_manager.cleanup(task_id)
-                logger.info(
-                    f"[{_format_task_log(task_id, -1)}] Cleaned up task state after cancel error"
-                )
                 # Try to cleanup session even on error
                 session = self._agent_sessions.get(task_id)
                 if session:
