@@ -141,7 +141,7 @@ export function SettingsTabNav({
     [t]
   )
 
-  // Other tabs (not resource-based) - order: general, integrations, api-keys, pet
+  // Other tabs (not resource-based) - order: general, integrations, api-keys, device-setup, pet
   // Note: group-manager is now accessed via the group dropdown menu
   const otherTabs: TabItem[] = useMemo(
     () => [
