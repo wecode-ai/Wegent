@@ -565,39 +565,16 @@ export default function ChatInput({
 
       // Handle text insertion if there is text content
       if (hasText && editableRef.current) {
-        // Get current selection
-        let selection = window.getSelection()
-
-        // Fallback: if no selection exists (edge case), focus the input and create a selection at the end
-        if (!selection || selection.rangeCount === 0) {
+        // Ensure the input is focused before using execCommand
+        if (document.activeElement !== editableRef.current) {
           editableRef.current.focus()
-          selection = window.getSelection()
-
-          // If still no selection after focus, create one at the end of the input
-          if (selection) {
-            const range = document.createRange()
-            range.selectNodeContents(editableRef.current)
-            range.collapse(false) // Collapse to end
-            selection.removeAllRanges()
-            selection.addRange(range)
-          }
         }
 
-        // Proceed with text insertion if we have a valid selection
-        if (selection && selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0)
-          range.deleteContents()
-
-          // Insert plain text node
-          const textNode = document.createTextNode(pastedText)
-          range.insertNode(textNode)
-
-          // Move cursor to end of inserted text
-          range.setStartAfter(textNode)
-          range.setEndAfter(textNode)
-          selection.removeAllRanges()
-          selection.addRange(range)
-        }
+        // Use execCommand to insert text - this preserves the browser's undo stack
+        // so Cmd+Z correctly undoes the paste instead of previous input
+        // Note: execCommand is deprecated but still the best way to maintain undo compatibility
+        // in contentEditable elements across all major browsers
+        document.execCommand('insertText', false, pastedText)
 
         // Update message state - use getTextWithNewlines to preserve newlines
         const newText = getTextWithNewlines(editableRef.current)
