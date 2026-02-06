@@ -115,7 +115,14 @@ class SessionManager:
         if hasattr(client, "_transport") and client._transport:
             transport = client._transport
             if hasattr(transport, "_process") and transport._process:
-                is_alive = transport._process.poll() is None
+                process = transport._process
+                # Handle both subprocess.Popen (has poll()) and
+                # asyncio.subprocess.Process (has returncode property)
+                if hasattr(process, "poll"):
+                    is_alive = process.poll() is None
+                else:
+                    # asyncio.subprocess.Process uses returncode property
+                    is_alive = process.returncode is None
                 logger.debug(
                     f"Session {session_id} alive check via transport: {is_alive}"
                 )
@@ -123,7 +130,12 @@ class SessionManager:
 
         # Check direct _process attribute (fallback)
         if hasattr(client, "_process") and client._process:
-            is_alive = client._process.poll() is None
+            process = client._process
+            # Handle both subprocess.Popen and asyncio.subprocess.Process
+            if hasattr(process, "poll"):
+                is_alive = process.poll() is None
+            else:
+                is_alive = process.returncode is None
             logger.debug(f"Session {session_id} alive check via _process: {is_alive}")
             return is_alive
 
