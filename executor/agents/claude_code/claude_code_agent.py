@@ -39,7 +39,11 @@ from executor.agents.claude_code.mode_strategy import (
     ModeStrategyFactory,
 )
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
-from executor.agents.claude_code.response_processor import process_response
+from executor.agents.claude_code.response_processor import (
+    MAX_ERROR_SUBTYPE_RETRIES,
+    RETRY_CONTINUE_MESSAGE,
+    process_response,
+)
 from executor.agents.claude_code.session_manager import (
     SessionManager,
     build_internal_session_key,
@@ -696,14 +700,54 @@ class ClaudeCodeAgent(Agent):
             await self.client.query(prompt, session_id=self.session_id)
 
             logger.info(f"Waiting for response for prompt: {prompt}")
-            # Process and handle the response using the external processor
-            result = await process_response(
-                self.client,
-                self.state_manager,
-                self.thinking_manager,
-                self.task_state_manager,
-                session_id=self.session_id,
-            )
+
+            # Error subtype retry loop
+            error_subtype_retry_count = 0
+            while True:
+                # Process and handle the response using the external processor
+                result = await process_response(
+                    self.client,
+                    self.state_manager,
+                    self.thinking_manager,
+                    self.task_state_manager,
+                    session_id=self.session_id,
+                    error_subtype_retry_count=error_subtype_retry_count,
+                )
+
+                if result == "RETRY_WITH_RESUME":
+                    error_subtype_retry_count += 1
+                    logger.warning(
+                        f"RETRY_WITH_RESUME: Attempting retry {error_subtype_retry_count}/{MAX_ERROR_SUBTYPE_RETRIES} "
+                        f"for session {self.session_id}"
+                    )
+
+                    # Store the session_id for resume before closing client
+                    resume_session_id = self.session_id
+
+                    # Close current client but preserve session_id for resume
+                    await self._close_client_for_retry()
+
+                    # Create new client with resume option
+                    # Note: We set resume option here, _create_and_connect_client will use it
+                    self.options["resume"] = resume_session_id
+                    logger.info(f"Creating new client with resume={resume_session_id}")
+                    await self._create_and_connect_client()
+
+                    # Send continue message to resume session
+                    # Use self.session_id as it may have been updated by the new client
+                    logger.info(
+                        f"Sending continue message to resume session, "
+                        f"original_session={resume_session_id}, current_session={self.session_id}"
+                    )
+                    await self.client.query(
+                        RETRY_CONTINUE_MESSAGE, session_id=self.session_id
+                    )
+
+                    # Continue loop to process response
+                    continue
+
+                # Normal completion or non-retryable failure
+                break
 
             if result is None:
                 # 没有收到最终结果，保持 RUNNING 状态
@@ -748,12 +792,14 @@ class ClaudeCodeAgent(Agent):
             )
 
         # Check if there's a saved session ID to resume
-        saved_session_id = SessionManager.load_saved_session_id(self.task_id)
-        if saved_session_id:
-            logger.info(
-                f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
-            )
-            self.options["resume"] = saved_session_id
+        # Skip if resume option is already set (e.g., from retry logic)
+        if "resume" not in self.options:
+            saved_session_id = SessionManager.load_saved_session_id(self.task_id)
+            if saved_session_id:
+                logger.info(
+                    f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
+                )
+                self.options["resume"] = saved_session_id
 
         # On Windows, write large options to files to avoid command line length limit
         # Windows has a ~8191 character limit (WinError 206 if exceeded)
@@ -800,6 +846,35 @@ class ClaudeCodeAgent(Agent):
             resource_id=f"claude_client_{self.session_id}",
             is_async=True,
         )
+
+    async def _close_client_for_retry(self) -> None:
+        """
+        Close the current client for retry purposes.
+
+        This method closes the client connection but preserves the session_id
+        so it can be used to resume the session with a new client.
+        """
+        if self.client is None:
+            logger.warning("No client to close for retry")
+            return
+
+        try:
+            # Terminate the client process
+            await SessionManager._terminate_client_process(self.client, self.session_id)
+
+            # Remove from client cache but keep session_id mapping
+            SessionManager.remove_client(self.session_id)
+
+            # Clear local client reference
+            self.client = None
+
+            logger.info(
+                f"Closed client for retry, session_id={self.session_id} preserved for resume"
+            )
+        except Exception as e:
+            logger.warning(f"Error closing client for retry: {e}")
+            # Clear client reference anyway to allow new client creation
+            self.client = None
 
     def _handle_execution_result(
         self, result_content: str, execution_type: str = "execution"
