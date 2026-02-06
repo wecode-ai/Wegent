@@ -574,7 +574,23 @@ export default function ChatInput({
         // so Cmd+Z correctly undoes the paste instead of previous input
         // Note: execCommand is deprecated but still the best way to maintain undo compatibility
         // in contentEditable elements across all major browsers
-        document.execCommand('insertText', false, pastedText)
+        const success = document.execCommand('insertText', false, pastedText)
+
+        // Fallback: If execCommand fails (e.g., some Firefox/mobile configurations),
+        // use manual DOM insertion. Note: This fallback won't preserve undo history.
+        if (!success) {
+          const selection = window.getSelection()
+          if (selection && selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0)
+            range.deleteContents()
+            const textNode = document.createTextNode(pastedText)
+            range.insertNode(textNode)
+            range.setStartAfter(textNode)
+            range.setEndAfter(textNode)
+            selection.removeAllRanges()
+            selection.addRange(range)
+          }
+        }
 
         // Update message state - use getTextWithNewlines to preserve newlines
         const newText = getTextWithNewlines(editableRef.current)
