@@ -123,6 +123,12 @@ dependencies = [
 wegent-chat-shell = { path = "../chat_shell", editable = true }
 wegent-shared = { path = "../shared", editable = true }
 
+# NOTE: DoclingReader for intelligent document parsing is NOT included
+# in default dependencies due to complex CUDA-related transitive dependencies.
+# To enable DoclingReader support, manually install:
+#   uv pip install llama-index-readers-docling>=0.1.0
+# Requires Python 3.11+ and compatible CUDA environment.
+
 [dependency-groups]
 dev = [
     # Testing related
