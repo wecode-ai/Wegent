@@ -5,7 +5,7 @@
 """Add initial skill marketplace categories
 
 Revision ID: z6a7b8c9d0e1
-Revises: y5z6a7b8c9d0
+Revises: 26e05c6de5a5
 Create Date: 2025-02-07 10:00:00.000000+08:00
 
 This migration adds the initial skill categories for the marketplace:
@@ -24,7 +24,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "z6a7b8c9d0e1"
-down_revision: Union[str, None] = "y5z6a7b8c9d0"
+down_revision: Union[str, None] = "26e05c6de5a5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
