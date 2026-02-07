@@ -12,6 +12,9 @@ import {
   PackageIcon,
   RefreshCwIcon,
   GitBranchIcon,
+  ShareIcon,
+  StoreIcon,
+  StarIcon,
 } from 'lucide-react'
 import LoadingState from '@/features/common/LoadingState'
 import {
@@ -21,12 +24,14 @@ import {
   deleteSkill,
   downloadSkill,
   updateSkillFromGit,
+  fetchSkillCategories,
 } from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Tag } from '@/components/ui/tag'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -37,6 +42,8 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { MarketplaceTab, MyCollectionsTab, PublishSkillDialog } from './marketplace'
+import type { SkillCategory } from '@/types/api'
 
 interface SkillManagementModalProps {
   open: boolean
@@ -44,6 +51,8 @@ interface SkillManagementModalProps {
   onSkillsChange?: () => void
   scope?: 'personal' | 'group' | 'all' | 'public'
   groupName?: string | null
+  /** Initial tab to show */
+  initialTab?: 'my-skills' | 'marketplace' | 'collections'
 }
 
 export default function SkillManagementModal({
@@ -52,6 +61,7 @@ export default function SkillManagementModal({
   onSkillsChange,
   scope = 'personal',
   groupName,
+  initialTab = 'my-skills',
 }: SkillManagementModalProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -63,6 +73,12 @@ export default function SkillManagementModal({
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
+  const [activeTab, setActiveTab] = useState(initialTab)
+
+  // Marketplace publish dialog state
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
+  const [skillToPublish, setSkillToPublish] = useState<UnifiedSkill | null>(null)
+  const [categories, setCategories] = useState<SkillCategory[]>([])
 
   // Determine the namespace for uploading skills
   const uploadNamespace = scope === 'group' && groupName ? groupName : 'default'
@@ -91,11 +107,21 @@ export default function SkillManagementModal({
     }
   }, [toast, scope, groupName, t])
 
+  const loadCategories = useCallback(async () => {
+    try {
+      const data = await fetchSkillCategories()
+      setCategories(data)
+    } catch {
+      // Silently fail - categories are only needed for publishing
+    }
+  }, [])
+
   useEffect(() => {
     if (open) {
       loadSkills()
+      loadCategories()
     }
-  }, [open, loadSkills])
+  }, [open, loadSkills, loadCategories])
 
   const handleCreateSkill = () => {
     setEditingSkill(null)
@@ -179,6 +205,31 @@ export default function SkillManagementModal({
     }
   }
 
+  const handlePublishSkill = (skill: UnifiedSkill) => {
+    // Only allow publishing skills with bindShells
+    if (!skill.bindShells || skill.bindShells.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: t('common:common.error'),
+        description: t('common:skills.marketplace.bind_shells_required'),
+      })
+      return
+    }
+    setSkillToPublish(skill)
+    setPublishDialogOpen(true)
+  }
+
+  const handlePublishDialogClose = (published: boolean) => {
+    setPublishDialogOpen(false)
+    setSkillToPublish(null)
+    if (published) {
+      toast({
+        title: t('common:common.success'),
+        description: t('common:skills.marketplace.publish_success'),
+      })
+    }
+  }
+
   const handleModalClose = (saved: boolean) => {
     setUploadModalOpen(false)
     setEditingSkill(null)
@@ -188,173 +239,226 @@ export default function SkillManagementModal({
     }
   }
 
+  const handleSkillCollected = () => {
+    loadSkills()
+    onSkillsChange?.()
+  }
+
+  // Render My Skills list
+  const renderMySkillsList = () => (
+    <div className="space-y-4">
+      {/* Add Button */}
+      <div className="flex justify-end">
+        <UnifiedAddButton onClick={handleCreateSkill}>
+          {t('common:skills.upload_skill')}
+        </UnifiedAddButton>
+      </div>
+
+      {/* Skills List */}
+      {skills.length === 0 ? (
+        <Card className="p-8 text-center">
+          <PackageIcon className="w-12 h-12 mx-auto text-text-muted mb-3" />
+          <h3 className="text-base font-medium text-text-primary mb-2">
+            {t('common:skills.no_skills')}
+          </h3>
+          <p className="text-sm text-text-muted mb-4">
+            {t('common:skills.no_skills_description')}
+          </p>
+          <Button onClick={handleCreateSkill}>
+            {t('common:skills.upload_first_skill')}
+          </Button>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {skills.map(skill => (
+            <Card
+              key={skill.id || skill.name}
+              className="p-4 hover:shadow-md transition-shadow"
+            >
+              <div className="flex items-start justify-between">
+                {/* Skill Info */}
+                <div className="flex items-start gap-3 min-w-0 flex-1">
+                  <PackageIcon className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-base font-medium text-text-primary truncate">
+                      {skill.displayName || skill.name}
+                    </h3>
+                    <p className="text-sm text-text-secondary mt-1 line-clamp-2">
+                      {skill.description}
+                    </p>
+
+                    {/* Tags and Metadata */}
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {skill.version && (
+                        <Tag variant="default">
+                          {t('common:skills.version', { version: skill.version })}
+                        </Tag>
+                      )}
+                      {skill.author && (
+                        <Tag variant="default">
+                          {t('common:skills.author', { author: skill.author })}
+                        </Tag>
+                      )}
+                      {skill.tags?.map(tag => (
+                        <Tag key={tag} variant="info">
+                          {tag}
+                        </Tag>
+                      ))}
+                    </div>
+
+                    {/* Bind Shells */}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      <span className="text-xs text-text-muted">
+                        {t('skills.bind_shells')}:
+                      </span>
+                      {skill.bindShells && skill.bindShells.length > 0 ? (
+                        skill.bindShells.map(shell => (
+                          <Tag key={shell} variant="success">
+                            {shell}
+                          </Tag>
+                        ))
+                      ) : (
+                        <span className="text-xs text-text-muted italic">
+                          {t('skills.no_bind_shells')}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Namespace info for group skills */}
+                    {scope === 'group' &&
+                      skill.namespace &&
+                      skill.namespace !== 'default' && (
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <span className="text-xs text-text-muted">
+                            {t('common:skills.namespace')}: {skill.namespace}
+                          </span>
+                        </div>
+                      )}
+
+                    {/* Git source info */}
+                    {skill.source?.type === 'git' && skill.source.repo_url && (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <GitBranchIcon className="w-3 h-3 text-text-muted" />
+                        <span className="text-xs text-text-muted truncate max-w-[300px]">
+                          {skill.source.repo_url}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex gap-1 flex-shrink-0 ml-4">
+                  {/* Publish to Marketplace button - only show for personal skills with bindShells */}
+                  {scope === 'personal' && skill.bindShells && skill.bindShells.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handlePublishSkill(skill)}
+                      title={t('common:skills.marketplace.publish')}
+                    >
+                      <ShareIcon className="w-4 h-4" />
+                    </Button>
+                  )}
+                  {/* Update from Git button - only show for git-imported skills */}
+                  {skill.source?.type === 'git' && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleUpdateFromGit(skill)}
+                      disabled={updatingFromGitId === skill.id}
+                      title={t('common:skills.update_from_git')}
+                    >
+                      <RefreshCwIcon
+                        className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
+                      />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => handleDownloadSkill(skill)}
+                    title={t('common:skills.download_skill')}
+                  >
+                    <DownloadIcon className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => handleEditSkill(skill)}
+                    title={t('common:skills.update_skill')}
+                  >
+                    <PencilIcon className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-error hover:text-error hover:bg-error/10"
+                    onClick={() => handleDeleteSkill(skill)}
+                    title={t('common:skills.delete_skill')}
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <>
       <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col bg-surface">
+        <DialogContent className="sm:max-w-[900px] max-h-[85vh] flex flex-col bg-surface">
           <DialogHeader>
             <DialogTitle>{t('common:skills.manage_skills')}</DialogTitle>
             <DialogDescription>{t('common:skills.manage_skills_description')}</DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto py-4">
-            {isLoading ? (
-              <LoadingState message={t('common:skills.loading')} />
-            ) : (
-              <div className="space-y-4">
-                {/* Add Button */}
-                <div className="flex justify-end">
-                  <UnifiedAddButton onClick={handleCreateSkill}>
-                    {t('common:skills.upload_skill')}
-                  </UnifiedAddButton>
-                </div>
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as typeof activeTab)}
+            className="flex-1 flex flex-col min-h-0"
+          >
+            <TabsList className="grid w-full grid-cols-3 mb-4">
+              <TabsTrigger value="my-skills" className="flex items-center gap-2">
+                <PackageIcon className="w-4 h-4" />
+                {t('common:skills.my_skills')}
+              </TabsTrigger>
+              <TabsTrigger value="marketplace" className="flex items-center gap-2">
+                <StoreIcon className="w-4 h-4" />
+                {t('common:skills.marketplace.tab_market')}
+              </TabsTrigger>
+              <TabsTrigger value="collections" className="flex items-center gap-2">
+                <StarIcon className="w-4 h-4" />
+                {t('common:skills.marketplace.tab_collections')}
+              </TabsTrigger>
+            </TabsList>
 
-                {/* Skills List */}
-                {skills.length === 0 ? (
-                  <Card className="p-8 text-center">
-                    <PackageIcon className="w-12 h-12 mx-auto text-text-muted mb-3" />
-                    <h3 className="text-base font-medium text-text-primary mb-2">
-                      {t('common:skills.no_skills')}
-                    </h3>
-                    <p className="text-sm text-text-muted mb-4">
-                      {t('common:skills.no_skills_description')}
-                    </p>
-                    <Button onClick={handleCreateSkill}>
-                      {t('common:skills.upload_first_skill')}
-                    </Button>
-                  </Card>
+            <div className="flex-1 overflow-hidden">
+              <TabsContent value="my-skills" className="h-full overflow-y-auto m-0">
+                {isLoading ? (
+                  <LoadingState message={t('common:skills.loading')} />
                 ) : (
-                  <div className="space-y-3">
-                    {skills.map(skill => (
-                      <Card
-                        key={skill.id || skill.name}
-                        className="p-4 hover:shadow-md transition-shadow"
-                      >
-                        <div className="flex items-start justify-between">
-                          {/* Skill Info */}
-                          <div className="flex items-start gap-3 min-w-0 flex-1">
-                            <PackageIcon className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
-                            <div className="min-w-0 flex-1">
-                              <h3 className="text-base font-medium text-text-primary truncate">
-                                {skill.displayName || skill.name}
-                              </h3>
-                              <p className="text-sm text-text-secondary mt-1 line-clamp-2">
-                                {skill.description}
-                              </p>
-
-                              {/* Tags and Metadata */}
-                              <div className="flex flex-wrap gap-1.5 mt-2">
-                                {skill.version && (
-                                  <Tag variant="default">
-                                    {t('common:skills.version', { version: skill.version })}
-                                  </Tag>
-                                )}
-                                {skill.author && (
-                                  <Tag variant="default">
-                                    {t('common:skills.author', { author: skill.author })}
-                                  </Tag>
-                                )}
-                                {skill.tags?.map(tag => (
-                                  <Tag key={tag} variant="info">
-                                    {tag}
-                                  </Tag>
-                                ))}
-                              </div>
-
-                              {/* Bind Shells */}
-                              <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                                <span className="text-xs text-text-muted">
-                                  {t('skills.bind_shells')}:
-                                </span>
-                                {skill.bindShells && skill.bindShells.length > 0 ? (
-                                  skill.bindShells.map(shell => (
-                                    <Tag key={shell} variant="success">
-                                      {shell}
-                                    </Tag>
-                                  ))
-                                ) : (
-                                  <span className="text-xs text-text-muted italic">
-                                    {t('skills.no_bind_shells')}
-                                  </span>
-                                )}
-                              </div>
-
-                              {/* Namespace info for group skills */}
-                              {scope === 'group' &&
-                                skill.namespace &&
-                                skill.namespace !== 'default' && (
-                                  <div className="flex items-center gap-1.5 mt-2">
-                                    <span className="text-xs text-text-muted">
-                                      {t('common:skills.namespace')}: {skill.namespace}
-                                    </span>
-                                  </div>
-                                )}
-
-                              {/* Git source info */}
-                              {skill.source?.type === 'git' && skill.source.repo_url && (
-                                <div className="flex items-center gap-1.5 mt-2">
-                                  <GitBranchIcon className="w-3 h-3 text-text-muted" />
-                                  <span className="text-xs text-text-muted truncate max-w-[300px]">
-                                    {skill.source.repo_url}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex gap-1 flex-shrink-0 ml-4">
-                            {/* Update from Git button - only show for git-imported skills */}
-                            {skill.source?.type === 'git' && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => handleUpdateFromGit(skill)}
-                                disabled={updatingFromGitId === skill.id}
-                                title={t('common:skills.update_from_git')}
-                              >
-                                <RefreshCwIcon
-                                  className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
-                                />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleDownloadSkill(skill)}
-                              title={t('common:skills.download_skill')}
-                            >
-                              <DownloadIcon className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleEditSkill(skill)}
-                              title={t('common:skills.update_skill')}
-                            >
-                              <PencilIcon className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-error hover:text-error hover:bg-error/10"
-                              onClick={() => handleDeleteSkill(skill)}
-                              title={t('common:skills.delete_skill')}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
+                  renderMySkillsList()
                 )}
-              </div>
-            )}
-          </div>
+              </TabsContent>
+
+              <TabsContent value="marketplace" className="h-full m-0">
+                <MarketplaceTab onSkillCollected={handleSkillCollected} />
+              </TabsContent>
+
+              <TabsContent value="collections" className="h-full overflow-y-auto m-0">
+                <MyCollectionsTab onCollectionChange={handleSkillCollected} />
+              </TabsContent>
+            </div>
+          </Tabs>
 
           <DialogFooter>
             <Button variant="outline" onClick={onClose}>
@@ -371,6 +475,16 @@ export default function SkillManagementModal({
           onClose={handleModalClose}
           skill={editingSkill}
           namespace={uploadNamespace}
+        />
+      )}
+
+      {/* Publish to Marketplace Dialog */}
+      {publishDialogOpen && skillToPublish && (
+        <PublishSkillDialog
+          open={publishDialogOpen}
+          onClose={handlePublishDialogClose}
+          skill={skillToPublish}
+          categories={categories}
         />
       )}
 

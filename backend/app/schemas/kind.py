@@ -566,10 +566,26 @@ class SkillProviderConfig(BaseModel):
     )
 
 
+class SkillRef(BaseModel):
+    """Reference to marketplace skill - for collected skills"""
+
+    marketplace_skill_id: int = Field(
+        ..., description="MarketplaceSkill Kind.id in the kinds table"
+    )
+    namespace: str = Field("default", description="MarketplaceSkill namespace")
+    name: str = Field(..., description="MarketplaceSkill name")
+    user_id: int = Field(..., description="Publisher's user_id")
+    collected_at: str = Field(..., description="ISO format collection timestamp")
+
+
 class SkillSpec(BaseModel):
     """Skill specification"""
 
-    description: str  # Trigger condition description (from SKILL.md YAML frontmatter)
+    description: str = Field(
+        "",
+        description="Trigger condition description (from SKILL.md YAML frontmatter). "
+        "Empty for collected skills (ref-only).",
+    )
     displayName: Optional[str] = (
         None  # Friendly display name shown when tool is being used (e.g., "正在渲染图表")
     )
@@ -612,6 +628,12 @@ class SkillSpec(BaseModel):
         "Tracks where the skill was imported from (upload or git repository). "
         "Used to enable updating skills from their original Git source.",
     )
+    ref: Optional[SkillRef] = Field(
+        None,
+        description="Reference to marketplace skill. Only present for collected skills. "
+        "When ref is present, this is a lightweight reference record - the actual skill "
+        "content is fetched from the marketplace skill at runtime.",
+    )
 
 
 class SkillStatus(Status):
@@ -638,6 +660,117 @@ class SkillList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "SkillList"
     items: List[Skill]
+
+
+# SkillCategory CRD schemas - for Skill Marketplace categories
+class SkillCategorySpec(BaseModel):
+    """SkillCategory specification - skill marketplace category"""
+
+    displayName: str = Field(..., description="Display name in Chinese (e.g., '开发工具')")
+    displayNameEn: str = Field(
+        ..., description="Display name in English (e.g., 'Development Tools')"
+    )
+    description: Optional[str] = Field(None, description="Category description in Chinese")
+    descriptionEn: Optional[str] = Field(
+        None, description="Category description in English"
+    )
+    icon: Optional[str] = Field(
+        None, description="Icon name (e.g., lucide icon name like 'code')"
+    )
+    sortOrder: int = Field(
+        default=0, description="Sort order (lower numbers appear first)"
+    )
+
+
+class SkillCategoryStatus(Status):
+    """SkillCategory status"""
+
+    state: str = "Available"  # Available, Unavailable
+
+
+class SkillCategory(BaseModel):
+    """SkillCategory CRD - skill marketplace category"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "SkillCategory"
+    metadata: ObjectMeta  # name is the category identifier (e.g., "development")
+    spec: SkillCategorySpec
+    status: Optional[SkillCategoryStatus] = None
+
+
+class SkillCategoryList(BaseModel):
+    """SkillCategory list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "SkillCategoryList"
+    items: List[SkillCategory]
+
+
+# MarketplaceSkill CRD schemas - for published skills in the marketplace
+class SourceSkillRef(BaseModel):
+    """Reference to the source skill in kinds table"""
+
+    skill_id: int = Field(..., description="Source skill Kind.id")
+    namespace: str = Field("default", description="Source skill namespace")
+    name: str = Field(..., description="Source skill name")
+    user_id: int = Field(..., description="Source skill owner (publisher) user_id")
+
+
+class MarketplaceSkillSpec(BaseModel):
+    """MarketplaceSkill specification - published skill in marketplace"""
+
+    # Fields synced from source skill
+    description: str = Field(..., description="Skill description")
+    displayName: Optional[str] = Field(None, description="Display name")
+    version: Optional[str] = Field(None, description="Version number")
+    author: Optional[str] = Field(None, description="Author name")
+    tags: Optional[List[str]] = Field(None, description="Tags for filtering")
+    bindShells: Optional[List[str]] = Field(
+        None, description="Compatible shell types (ClaudeCode, Agno, Dify, Chat)"
+    )
+
+    # Marketplace-specific fields
+    category: str = Field(
+        ..., description="Category identifier (must match a SkillCategory.metadata.name)"
+    )
+    marketDescription: Optional[str] = Field(
+        None, description="Marketplace-specific description (can differ from skill description)"
+    )
+    readme: Optional[str] = Field(
+        None, description="Detailed README content in Markdown format"
+    )
+    downloadCount: int = Field(
+        default=0, description="Number of times this skill has been collected"
+    )
+
+    # Source skill reference
+    sourceSkillRef: SourceSkillRef = Field(
+        ..., description="Reference to the original source skill"
+    )
+
+
+class MarketplaceSkillStatus(Status):
+    """MarketplaceSkill status"""
+
+    state: str = "Available"  # Available, Unavailable
+
+
+class MarketplaceSkill(BaseModel):
+    """MarketplaceSkill CRD - skill published to marketplace"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "MarketplaceSkill"
+    metadata: ObjectMeta
+    spec: MarketplaceSkillSpec
+    status: Optional[MarketplaceSkillStatus] = None
+
+
+class MarketplaceSkillList(BaseModel):
+    """MarketplaceSkill list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "MarketplaceSkillList"
+    items: List[MarketplaceSkill]
 
 
 # KnowledgeBase CRD schemas
@@ -1043,3 +1176,160 @@ class GitBatchUpdateResponse(BaseModel):
     )
     total_skipped: int = Field(0, description="Total number of skipped skills")
     total_failed: int = Field(0, description="Total number of failed updates")
+
+
+# Skill Marketplace API schemas
+class SkillCategoryCreateRequest(BaseModel):
+    """Request to create a skill category (admin only)"""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Category identifier (e.g., 'development')",
+    )
+    displayName: str = Field(
+        ..., min_length=1, max_length=100, description="Display name in Chinese"
+    )
+    displayNameEn: str = Field(
+        ..., min_length=1, max_length=100, description="Display name in English"
+    )
+    description: Optional[str] = Field(
+        None, max_length=500, description="Description in Chinese"
+    )
+    descriptionEn: Optional[str] = Field(
+        None, max_length=500, description="Description in English"
+    )
+    icon: Optional[str] = Field(None, max_length=50, description="Icon name")
+    sortOrder: int = Field(default=0, ge=0, description="Sort order")
+
+
+class SkillCategoryUpdateRequest(BaseModel):
+    """Request to update a skill category (admin only)"""
+
+    displayName: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="Display name in Chinese"
+    )
+    displayNameEn: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="Display name in English"
+    )
+    description: Optional[str] = Field(
+        None, max_length=500, description="Description in Chinese"
+    )
+    descriptionEn: Optional[str] = Field(
+        None, max_length=500, description="Description in English"
+    )
+    icon: Optional[str] = Field(None, max_length=50, description="Icon name")
+    sortOrder: Optional[int] = Field(None, ge=0, description="Sort order")
+
+
+class SkillCategoryResponse(BaseModel):
+    """Response for skill category with skill count"""
+
+    name: str
+    displayName: str
+    displayNameEn: str
+    description: Optional[str] = None
+    descriptionEn: Optional[str] = None
+    icon: Optional[str] = None
+    sortOrder: int = 0
+    skillCount: int = Field(default=0, description="Number of skills in this category")
+
+
+class SkillCategoryListResponse(BaseModel):
+    """Response for skill category list"""
+
+    items: List[SkillCategoryResponse]
+
+
+class PublishToMarketplaceRequest(BaseModel):
+    """Request to publish a skill to marketplace"""
+
+    skill_id: int = Field(..., description="Source skill Kind.id to publish")
+    category: str = Field(..., description="Category identifier (must exist)")
+    market_description: Optional[str] = Field(
+        None, max_length=2000, description="Marketplace-specific description"
+    )
+    readme: Optional[str] = Field(
+        None, max_length=50000, description="README in Markdown format"
+    )
+
+
+class PublishToMarketplaceResponse(BaseModel):
+    """Response after publishing skill to marketplace"""
+
+    marketplace_skill_id: int
+    message: str = "Skill published successfully"
+
+
+class UpdateMarketplaceSkillRequest(BaseModel):
+    """Request to update a marketplace skill"""
+
+    category: Optional[str] = Field(None, description="New category identifier")
+    market_description: Optional[str] = Field(
+        None, max_length=2000, description="New marketplace description"
+    )
+    readme: Optional[str] = Field(
+        None, max_length=50000, description="New README content"
+    )
+
+
+class MarketplacePublisherInfo(BaseModel):
+    """Publisher information for marketplace skill detail"""
+
+    id: int
+    username: str
+    avatar: Optional[str] = None
+
+
+class MarketplaceCategoryInfo(BaseModel):
+    """Category information for marketplace skill detail"""
+
+    name: str
+    displayName: str
+
+
+class MarketplaceSkillDetailResponse(BaseModel):
+    """Response for marketplace skill detail with additional info"""
+
+    skill: MarketplaceSkill
+    publisher: MarketplacePublisherInfo
+    category: MarketplaceCategoryInfo
+    is_collected: bool = Field(
+        False, description="Whether current user has collected this skill"
+    )
+
+
+class MarketplaceSkillListResponse(BaseModel):
+    """Paginated marketplace skill list response"""
+
+    items: List[MarketplaceSkill]
+    total: int
+    skip: int
+    limit: int
+
+
+class CollectSkillResponse(BaseModel):
+    """Response after collecting a skill"""
+
+    skill_id: int = Field(..., description="Created collection skill Kind.id")
+    message: str = "Collected successfully"
+
+
+class CollectionItem(BaseModel):
+    """Collection item with marketplace skill info"""
+
+    collection_id: int = Field(..., description="Collection skill Kind.id")
+    collected_at: str = Field(..., description="ISO format timestamp")
+    marketplace_skill: Optional[MarketplaceSkill] = Field(
+        None, description="Marketplace skill (None if unpublished/deleted)"
+    )
+    is_available: bool = Field(
+        True, description="Whether the marketplace skill is still available"
+    )
+
+
+class MyCollectionsResponse(BaseModel):
+    """Response for user's collected skills"""
+
+    items: List[CollectionItem]
