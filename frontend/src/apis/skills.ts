@@ -1070,3 +1070,310 @@ export async function batchUpdateSkillsFromGit(
 
   return response.json()
 }
+
+// ============================================================================
+// Skill Marketplace API
+// ============================================================================
+
+import type {
+  CollectSkillResponse,
+  CollectionItem,
+  MarketplaceSkill,
+  MarketplaceSkillDetailResponse,
+  MarketplaceSkillListResponse,
+  MyCollectionsResponse,
+  PublishToMarketplaceRequest,
+  PublishToMarketplaceResponse,
+  SkillCategory,
+  SkillCategoryListResponse,
+  UpdateMarketplaceSkillRequest,
+} from '@/types/api'
+
+// ==================== Skill Categories ====================
+
+/**
+ * Fetch all skill categories with skill counts
+ */
+export async function fetchSkillCategories(): Promise<SkillCategory[]> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/skill-categories`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to fetch skill categories')
+  }
+
+  const data: SkillCategoryListResponse = await response.json()
+  return data.items
+}
+
+// ==================== Marketplace Browse ====================
+
+/**
+ * Fetch marketplace skills with filtering and pagination
+ */
+export async function fetchMarketplaceSkills(params?: {
+  skip?: number
+  limit?: number
+  search?: string
+  category?: string
+  tags?: string[]
+  bind_shells?: string[]
+  sort_by?: 'downloadCount' | 'createdAt' | 'name'
+  sort_order?: 'asc' | 'desc'
+}): Promise<MarketplaceSkillListResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const queryParams = new URLSearchParams()
+  if (params?.skip !== undefined) queryParams.append('skip', params.skip.toString())
+  if (params?.limit !== undefined) queryParams.append('limit', params.limit.toString())
+  if (params?.search) queryParams.append('search', params.search)
+  if (params?.category) queryParams.append('category', params.category)
+  if (params?.tags) {
+    params.tags.forEach((tag) => queryParams.append('tags', tag))
+  }
+  if (params?.bind_shells) {
+    params.bind_shells.forEach((shell) => queryParams.append('bind_shells', shell))
+  }
+  if (params?.sort_by) queryParams.append('sort_by', params.sort_by)
+  if (params?.sort_order) queryParams.append('sort_order', params.sort_order)
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace?${queryParams.toString()}`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to fetch marketplace skills')
+  }
+
+  return response.json()
+}
+
+/**
+ * Fetch marketplace skill detail
+ */
+export async function fetchMarketplaceSkillDetail(
+  marketplaceSkillId: number
+): Promise<MarketplaceSkillDetailResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/${marketplaceSkillId}`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to fetch marketplace skill detail')
+  }
+
+  return response.json()
+}
+
+// ==================== Publish Management ====================
+
+/**
+ * Publish a skill to the marketplace
+ */
+export async function publishToMarketplace(
+  request: PublishToMarketplaceRequest
+): Promise<PublishToMarketplaceResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/publish`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to publish skill to marketplace')
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        throw new Error(error || 'Failed to publish skill to marketplace')
+      }
+      throw e
+    }
+  }
+
+  return response.json()
+}
+
+/**
+ * Update a marketplace skill
+ */
+export async function updateMarketplaceSkill(
+  marketplaceSkillId: number,
+  request: UpdateMarketplaceSkillRequest
+): Promise<MarketplaceSkill> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/${marketplaceSkillId}`
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to update marketplace skill')
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        throw new Error(error || 'Failed to update marketplace skill')
+      }
+      throw e
+    }
+  }
+
+  return response.json()
+}
+
+/**
+ * Unpublish (remove) a skill from the marketplace
+ */
+export async function unpublishFromMarketplace(marketplaceSkillId: number): Promise<void> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/${marketplaceSkillId}`
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to unpublish skill from marketplace')
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        throw new Error(error || 'Failed to unpublish skill from marketplace')
+      }
+      throw e
+    }
+  }
+}
+
+/**
+ * Fetch skills published by the current user
+ */
+export async function fetchMyPublishedSkills(): Promise<MarketplaceSkill[]> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/my-published`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to fetch my published skills')
+  }
+
+  return response.json()
+}
+
+// ==================== Collection Management ====================
+
+/**
+ * Collect (favorite) a marketplace skill
+ */
+export async function collectSkill(marketplaceSkillId: number): Promise<CollectSkillResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/${marketplaceSkillId}/collect`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to collect skill')
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        throw new Error(error || 'Failed to collect skill')
+      }
+      throw e
+    }
+  }
+
+  return response.json()
+}
+
+/**
+ * Remove a skill from user's collection
+ */
+export async function uncollectSkill(marketplaceSkillId: number): Promise<void> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/${marketplaceSkillId}/collect`
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to remove skill from collection')
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        throw new Error(error || 'Failed to remove skill from collection')
+      }
+      throw e
+    }
+  }
+}
+
+/**
+ * Fetch user's collected skills
+ */
+export async function fetchMyCollections(): Promise<CollectionItem[]> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/marketplace/my-collections`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to fetch my collections')
+  }
+
+  const data: MyCollectionsResponse = await response.json()
+  return data.items
+}
