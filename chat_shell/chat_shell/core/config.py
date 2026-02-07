@@ -68,9 +68,9 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
 
     # ========== Default Model Configuration ==========
-    DEFAULT_MODEL: str = "claude-3-5-sonnet-20241022"
-    DEFAULT_TEMPERATURE: float = 0.7
-    DEFAULT_MAX_TOKENS: int = 4096
+    DEFAULT_MODEL: str = "claude-opus-4-5-20251101"
+    DEFAULT_TEMPERATURE: float = 1.0
+    DEFAULT_MAX_TOKENS: int = 64000
 
     # ========== Chat Configuration ==========
     MAX_CONCURRENT_CHATS: int = 50
