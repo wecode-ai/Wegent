@@ -763,7 +763,7 @@ class ChatContext:
         from chat_shell.tools.builtin import get_filesystem_tools
 
         # Get sandbox mode from settings (default: "remote")
-        sandbox_mode = settings.SANDBOX_MODE if hasattr(settings, "SANDBOX_MODE") else "remote"
+        sandbox_mode = getattr(settings, "SANDBOX_MODE", "remote")
 
         # Get local mode configuration
         workspace_root = getattr(settings, "LOCAL_WORKSPACE_ROOT", "/workspace")
@@ -782,9 +782,7 @@ class ChatContext:
             subtask_id=self._request.subtask_id,
             user_id=self._request.user_id,
             user_name=self._request.user_name,
-            # Note: ws_emitter, bot_config, auth_token would need to be passed
-            # if we want full sandbox functionality in remote mode
-            # For now, we'll use basic configuration
+            auth_token=getattr(self._request, "auth_token", ""),
         )
 
         extra_tools.extend(fs_tools)

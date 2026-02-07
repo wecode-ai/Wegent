@@ -222,17 +222,34 @@ class TestWriteFileTool:
         assert test_file.exists()
 
     @pytest.mark.asyncio
-    async def test_write_empty_content_error(self, local_tool, tmp_path: Path):
-        """Test that empty content returns error."""
+    async def test_write_none_content_error(self, local_tool, tmp_path: Path):
+        """Test that None content returns error."""
         # Act
         result = await local_tool._arun(
-            file_path=str(tmp_path / "file.txt"), content=""
+            file_path=str(tmp_path / "file.txt"), content=None
         )
 
         # Assert
         result_data = json.loads(result)
         assert result_data["success"] is False
         assert "content" in result_data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_write_empty_string_succeeds(self, local_tool, tmp_path: Path):
+        """Test that empty string content succeeds."""
+        # Arrange
+        test_file = tmp_path / "empty.txt"
+        local_tool.workspace_root = str(tmp_path)
+
+        # Act
+        result = await local_tool._arun(
+            file_path=str(test_file), content=""
+        )
+
+        # Assert
+        result_data = json.loads(result)
+        assert result_data["success"] is True
+        assert test_file.read_text() == ""
 
 
 class TestListFilesTool:

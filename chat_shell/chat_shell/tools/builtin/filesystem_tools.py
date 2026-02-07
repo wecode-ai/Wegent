@@ -402,8 +402,8 @@ Example:
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Write file to filesystem or sandbox."""
-        # Validate content
-        if not content:
+        # Validate content - only reject None, allow empty string
+        if content is None:
             error_msg = (
                 "Missing required parameter 'content'. "
                 "You MUST provide content to write to the file."
