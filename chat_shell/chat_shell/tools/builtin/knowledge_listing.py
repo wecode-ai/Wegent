@@ -13,12 +13,13 @@ knowledge_base_search tool to prevent excessive knowledge base access.
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from .knowledge_base_abc import KnowledgeBaseToolABC
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 logger = logging.getLogger(__name__)
@@ -352,13 +353,15 @@ class KbHeadInput(BaseModel):
     )
 
 
-class KbHeadTool(BaseTool):
+class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
     """Read document content with offset/limit pagination.
 
     Similar to 'head -c' command. Returns partial content starting from
     the specified offset. Use has_more flag to check if more content exists.
 
     This tool shares call limits with kb_ls via a shared counter.
+
+    Inherits from KnowledgeBaseToolABC to ensure consistent persistence behavior.
     """
 
     name: str = "kb_head"
@@ -371,6 +374,9 @@ class KbHeadTool(BaseTool):
 
     # Knowledge base IDs this tool can access (set when creating the tool)
     knowledge_base_ids: list[int] = Field(default_factory=list)
+
+    # User ID for context creation when auto-creating records
+    user_id: int = 0
 
     # Database session (optional, used in package mode)
     db_session: Optional[Any] = None
@@ -707,8 +713,26 @@ class KbHeadTool(BaseTool):
             )
 
             if context is None:
-                logger.warning(
-                    f"[KbHeadTool] No context found for subtask_id={self.user_subtask_id}, kb_id={kb_id}"
+                # Context doesn't exist - create with result in one operation
+                logger.info(
+                    f"[KbHeadTool] Context not found, creating new for "
+                    f"subtask_id={self.user_subtask_id}, kb_id={kb_id}"
+                )
+                context = context_service.create_knowledge_base_context_with_result(
+                    db=self.db_session,
+                    subtask_id=self.user_subtask_id,
+                    knowledge_id=kb_id,
+                    user_id=self.user_id,
+                    tool_type="kb_head",
+                    result_data={
+                        "document_ids": document_ids,
+                        "offset": offset,
+                        "limit": limit,
+                    },
+                )
+                logger.info(
+                    f"[KbHeadTool] Created new context with kb_head result: "
+                    f"context_id={context.id}, subtask_id={self.user_subtask_id}, kb_id={kb_id}"
                 )
                 return
 
@@ -753,6 +777,7 @@ class KbHeadTool(BaseTool):
                     json={
                         "user_subtask_id": self.user_subtask_id,
                         "knowledge_base_id": kb_id,
+                        "user_id": self.user_id,
                         "tool_type": "kb_head",
                         "document_ids": document_ids,
                         "offset": offset,
@@ -782,3 +807,25 @@ class KbHeadTool(BaseTool):
             logger.warning(
                 f"[KbHeadTool] HTTP persist error for kb_id={kb_id}: {e}"
             )
+
+    async def _persist_result(
+        self,
+        kb_id: int,
+        result_data: Dict[str, Any],
+    ) -> None:
+        """Implement abstract method from KnowledgeBaseToolABC.
+
+        Delegates to the existing _persist_kb_head_result implementation.
+
+        Args:
+            kb_id: Knowledge base ID for this result
+            result_data: Tool-specific result data containing:
+                - document_ids: List of document IDs that were read
+                - offset: Start position in characters
+                - limit: Max characters to return
+        """
+        document_ids = result_data.get("document_ids", [])
+        offset = result_data.get("offset", 0)
+        limit = result_data.get("limit", 50000)
+
+        await self._persist_kb_head_result(kb_id, document_ids, offset, limit)

@@ -129,6 +129,7 @@ async def prepare_knowledge_base_tools(
 
     kb_head_tool = KbHeadTool(
         knowledge_base_ids=knowledge_base_ids,
+        user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
     )

@@ -342,6 +342,9 @@ class SaveKbToolResultRequest(BaseModel):
     knowledge_base_id: int = Field(
         ..., description="Knowledge base ID that was accessed"
     )
+    user_id: int = Field(
+        ..., description="User ID for context creation if needed"
+    )
     tool_type: Literal["rag", "kb_head"] = Field(
         ..., description="Tool type: 'rag' for knowledge_base_search, 'kb_head' for kb_head"
     )
@@ -395,6 +398,10 @@ async def save_kb_tool_result(
     This endpoint handles both RAG retrieval results (knowledge_base_search tool)
     and kb_head tool usage tracking in a single API call.
 
+    If context doesn't exist for the subtask+KB combination, it will be
+    created with result data in one operation. This supports the case where
+    task-level bound KBs are used in a subtask that didn't explicitly select them.
+
     The tool_type field determines which service method to use:
     - 'rag': Stores retrieval results (extracted_text, sources, injection_mode, etc.)
     - 'kb_head': Tracks usage statistics (count, chars read, document IDs)
@@ -409,7 +416,7 @@ async def save_kb_tool_result(
     try:
         from app.services.context.context_service import context_service
 
-        # Find the context record for this subtask and knowledge base
+        # First try to find existing context
         context = context_service.get_knowledge_base_context_by_subtask_and_kb_id(
             db=db,
             subtask_id=request.user_subtask_id,
@@ -417,17 +424,65 @@ async def save_kb_tool_result(
         )
 
         if context is None:
-            logger.warning(
-                "[internal_rag] No context found for %s: subtask_id=%d, kb_id=%d",
+            # Context doesn't exist - create with result data in one operation
+            logger.info(
+                "[internal_rag] Context not found, creating new for %s: subtask_id=%d, kb_id=%d",
                 request.tool_type,
                 request.user_subtask_id,
                 request.knowledge_base_id,
             )
-            return SaveKbToolResultResponse(
-                success=False,
-                message=f"No context found for subtask_id={request.user_subtask_id}, kb_id={request.knowledge_base_id}",
+
+            # Validate required fields based on tool_type before creating
+            if request.tool_type == "rag":
+                if (
+                    request.injection_mode is None
+                    or request.query is None
+                    or request.chunks_count is None
+                ):
+                    return SaveKbToolResultResponse(
+                        success=False,
+                        message="Missing required fields for RAG: injection_mode, query, chunks_count",
+                    )
+                result_data = {
+                    "extracted_text": request.extracted_text or "",
+                    "sources": request.sources or [],
+                    "injection_mode": request.injection_mode,
+                    "query": request.query,
+                    "chunks_count": request.chunks_count,
+                }
+            else:  # kb_head
+                result_data = {
+                    "document_ids": request.document_ids,
+                    "offset": request.offset,
+                    "limit": request.limit,
+                }
+
+            # Create context with result in one operation
+            context = context_service.create_knowledge_base_context_with_result(
+                db=db,
+                subtask_id=request.user_subtask_id,
+                knowledge_id=request.knowledge_base_id,
+                user_id=request.user_id,
+                tool_type=request.tool_type,
+                result_data=result_data,
             )
 
+            logger.info(
+                "[internal_rag] Created new context with %s result: context_id=%d, subtask_id=%d, kb_id=%d",
+                request.tool_type,
+                context.id,
+                request.user_subtask_id,
+                request.knowledge_base_id,
+            )
+
+            return SaveKbToolResultResponse(
+                success=True,
+                context_id=context.id,
+                message=f"{request.tool_type} result saved (new context created)",
+                kb_head_count=1 if request.tool_type == "kb_head" else None,
+            )
+
+        # Context exists - use existing update logic
         if request.tool_type == "rag":
             # Validate RAG-specific required fields
             if request.injection_mode is None or request.query is None or request.chunks_count is None:

@@ -950,6 +950,124 @@ class ContextService:
 
         return context
 
+    @trace_sync(
+        span_name="create_knowledge_base_context_with_result",
+        tracer_name="context_service",
+    )
+    def create_knowledge_base_context_with_result(
+        self,
+        db: Session,
+        subtask_id: int,
+        knowledge_id: int,
+        user_id: int,
+        tool_type: str,
+        result_data: Dict[str, Any],
+        kb_name: Optional[str] = None,
+    ) -> SubtaskContext:
+        """
+        Create new KB context with result data in one operation.
+
+        This is used when a task-level KB is used in a subtask that
+        didn't explicitly select it. Creates context and writes result
+        in a single transaction, avoiding the need for separate create
+        and update calls.
+
+        Args:
+            db: Database session
+            subtask_id: Current user subtask ID
+            knowledge_id: Knowledge base ID
+            user_id: User ID for ownership
+            tool_type: "rag" or "kb_head"
+            result_data: Tool-specific result data:
+                - For RAG: {"extracted_text", "sources", "injection_mode", "query", "chunks_count"}
+                - For kb_head: {"document_ids", "offset", "limit"}
+            kb_name: Optional KB name (will be fetched from Kind table if not provided)
+
+        Returns:
+            Newly created SubtaskContext record with result data
+
+        Raises:
+            ValueError: If tool_type is not "rag" or "kb_head"
+        """
+        # If kb_name not provided, fetch from Kind table
+        if not kb_name:
+            from app.models.kind import Kind
+
+            kind = db.query(Kind).filter(Kind.id == knowledge_id).first()
+            kb_name = kind.name if kind else f"Knowledge Base {knowledge_id}"
+
+        # Build type_data based on tool_type
+        type_data: Dict[str, Any] = {
+            "knowledge_id": knowledge_id,
+            "auto_created": True,  # Mark as auto-created for observability
+        }
+
+        # Determine status and extracted_text based on tool_type and result
+        if tool_type == "rag":
+            # RAG result structure
+            rag_result = {
+                "sources": result_data.get("sources", []),
+                "injection_mode": result_data.get("injection_mode", "rag_retrieval"),
+                "query": result_data.get("query", ""),
+                "chunks_count": result_data.get("chunks_count", 0),
+                "retrieval_count": 1,
+            }
+            type_data["rag_result"] = rag_result
+            # Also store flat fields for backward compatibility
+            type_data.update(
+                {
+                    "sources": rag_result["sources"],
+                    "injection_mode": rag_result["injection_mode"],
+                    "query": rag_result["query"],
+                    "chunks_count": rag_result["chunks_count"],
+                    "retrieval_count": 1,
+                }
+            )
+            extracted_text = result_data.get("extracted_text", "")
+            status = (
+                ContextStatus.READY.value
+                if rag_result["chunks_count"] > 0
+                else ContextStatus.EMPTY.value
+            )
+
+        elif tool_type == "kb_head":
+            # kb_head result structure
+            kb_head_result = {
+                "usage_count": 1,
+                "document_ids": result_data.get("document_ids", []),
+                "offset": result_data.get("offset", 0),
+                "limit": result_data.get("limit", 50000),
+            }
+            type_data["kb_head_result"] = kb_head_result
+            extracted_text = ""
+            status = ContextStatus.READY.value
+        else:
+            raise ValueError(f"Unknown tool_type: {tool_type}")
+
+        # Create new context record
+        new_context = SubtaskContext(
+            subtask_id=subtask_id,
+            user_id=user_id,
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            name=kb_name,
+            status=status,
+            type_data=type_data,
+            extracted_text=extracted_text,
+            text_length=len(extracted_text) if extracted_text else 0,
+        )
+
+        db.add(new_context)
+        db.commit()
+        db.refresh(new_context)
+
+        logger.info(
+            f"[context_service] Created KB context with {tool_type} result: "
+            f"id={new_context.id}, subtask_id={subtask_id}, kb_id={knowledge_id}, "
+            f"auto_created=True, status={status}"
+        )
+
+        return new_context
+
     def build_knowledge_base_text_prefix(
         self,
         context: SubtaskContext,

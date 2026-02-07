@@ -1290,3 +1290,264 @@ class TestContextServiceOverwrite:
         assert saved_key == storage_key
         assert saved_data == new_binary_data
         assert saved_metadata["file_size"] == len(new_binary_data)
+
+
+class TestContextServiceCreateKnowledgeBaseContextWithResult:
+    """Test create_knowledge_base_context_with_result functionality."""
+
+    def test_create_knowledge_base_context_with_rag_result(self):
+        """Test creating KB context with RAG result in one operation."""
+        from app.models.subtask_context import ContextStatus, ContextType
+        from app.services.context import context_service
+
+        # Arrange
+        mock_db = Mock()
+        mock_kind = Mock()
+        mock_kind.name = "Test KB"
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_kind
+
+        result_data = {
+            "extracted_text": "Retrieved content from RAG",
+            "sources": [{"index": 1, "title": "doc1.pdf", "kb_id": 123}],
+            "injection_mode": "rag_retrieval",
+            "query": "test query",
+            "chunks_count": 5,
+        }
+
+        # Act
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=123,
+            user_id=1,
+            tool_type="rag",
+            result_data=result_data,
+        )
+
+        # Assert
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
+        added_context = mock_db.add.call_args[0][0]
+        assert added_context.subtask_id == 100
+        assert added_context.user_id == 1
+        assert added_context.context_type == ContextType.KNOWLEDGE_BASE.value
+        assert added_context.name == "Test KB"
+        assert added_context.status == ContextStatus.READY.value
+        assert added_context.extracted_text == "Retrieved content from RAG"
+        assert added_context.type_data["knowledge_id"] == 123
+        assert added_context.type_data["auto_created"] is True
+        assert added_context.type_data["rag_result"]["chunks_count"] == 5
+        assert added_context.type_data["rag_result"]["query"] == "test query"
+        assert added_context.type_data["rag_result"]["injection_mode"] == "rag_retrieval"
+
+    def test_create_knowledge_base_context_with_kb_head_result(self):
+        """Test creating KB context with kb_head result in one operation."""
+        from app.models.subtask_context import ContextStatus, ContextType
+        from app.services.context import context_service
+
+        # Arrange
+        mock_db = Mock()
+        mock_kind = Mock()
+        mock_kind.name = "Test KB"
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_kind
+
+        result_data = {
+            "document_ids": [1, 2, 3],
+            "offset": 0,
+            "limit": 50000,
+        }
+
+        # Act
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=456,
+            user_id=2,
+            tool_type="kb_head",
+            result_data=result_data,
+        )
+
+        # Assert
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
+        added_context = mock_db.add.call_args[0][0]
+        assert added_context.subtask_id == 100
+        assert added_context.user_id == 2
+        assert added_context.context_type == ContextType.KNOWLEDGE_BASE.value
+        assert added_context.name == "Test KB"
+        assert added_context.status == ContextStatus.READY.value
+        assert added_context.extracted_text == ""
+        assert added_context.type_data["knowledge_id"] == 456
+        assert added_context.type_data["auto_created"] is True
+        assert added_context.type_data["kb_head_result"]["usage_count"] == 1
+        assert added_context.type_data["kb_head_result"]["document_ids"] == [1, 2, 3]
+
+    def test_create_knowledge_base_context_with_empty_rag_result(self):
+        """Test creating KB context with empty RAG result sets EMPTY status."""
+        from app.models.subtask_context import ContextStatus, ContextType
+        from app.services.context import context_service
+
+        # Arrange
+        mock_db = Mock()
+        mock_kind = Mock()
+        mock_kind.name = "Test KB"
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_kind
+
+        result_data = {
+            "extracted_text": "",
+            "sources": [],
+            "injection_mode": "rag_retrieval",
+            "query": "test query",
+            "chunks_count": 0,  # No chunks found
+        }
+
+        # Act
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=123,
+            user_id=1,
+            tool_type="rag",
+            result_data=result_data,
+        )
+
+        # Assert
+        added_context = mock_db.add.call_args[0][0]
+        assert added_context.status == ContextStatus.EMPTY.value
+
+    def test_create_knowledge_base_context_fetches_kb_name(self):
+        """Test that KB name is fetched from Kind table when not provided."""
+        from app.models.subtask_context import ContextType
+        from app.services.context import context_service
+
+        # Arrange
+        mock_db = Mock()
+        mock_kind = Mock()
+        mock_kind.name = "Auto-fetched KB Name"
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_kind
+
+        result_data = {
+            "document_ids": [1],
+            "offset": 0,
+            "limit": 50000,
+        }
+
+        # Act
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=789,
+            user_id=1,
+            tool_type="kb_head",
+            result_data=result_data,
+        )
+
+        # Assert
+        added_context = mock_db.add.call_args[0][0]
+        assert added_context.name == "Auto-fetched KB Name"
+
+    def test_create_knowledge_base_context_with_custom_kb_name(self):
+        """Test that custom KB name is used when provided."""
+        from app.services.context import context_service
+
+        # Arrange
+        mock_db = Mock()
+
+        result_data = {
+            "document_ids": [1],
+            "offset": 0,
+            "limit": 50000,
+        }
+
+        # Act
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=789,
+            user_id=1,
+            tool_type="kb_head",
+            result_data=result_data,
+            kb_name="Custom KB Name",
+        )
+
+        # Assert
+        added_context = mock_db.add.call_args[0][0]
+        assert added_context.name == "Custom KB Name"
+        # Should not query Kind table when kb_name is provided
+        # Note: The Kind query is only for fetching name when not provided
+
+    def test_create_knowledge_base_context_invalid_tool_type(self):
+        """Test that invalid tool_type raises ValueError."""
+        from app.services.context import context_service
+
+        # Arrange
+        mock_db = Mock()
+
+        result_data = {"some": "data"}
+
+        # Act & Assert
+        with pytest.raises(ValueError) as exc_info:
+            context_service.create_knowledge_base_context_with_result(
+                db=mock_db,
+                subtask_id=100,
+                knowledge_id=789,
+                user_id=1,
+                tool_type="invalid_type",
+                result_data=result_data,
+            )
+
+        assert "Unknown tool_type: invalid_type" in str(exc_info.value)
+
+    def test_create_knowledge_base_context_marks_auto_created(self):
+        """Test that auto_created flag is set in type_data."""
+        from app.services.context import context_service
+
+        # Arrange
+        mock_db = Mock()
+        mock_kind = Mock()
+        mock_kind.name = "Test KB"
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_kind
+
+        result_data = {
+            "document_ids": [1],
+            "offset": 0,
+            "limit": 50000,
+        }
+
+        # Act
+        result = context_service.create_knowledge_base_context_with_result(
+            db=mock_db,
+            subtask_id=100,
+            knowledge_id=789,
+            user_id=1,
+            tool_type="kb_head",
+            result_data=result_data,
+        )
+
+        # Assert
+        added_context = mock_db.add.call_args[0][0]
+        assert added_context.type_data["auto_created"] is True
