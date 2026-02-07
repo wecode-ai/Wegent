@@ -8,6 +8,14 @@ from .create_subscription import CreateSubscriptionTool
 from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
+from .filesystem_tools import (
+    BaseFilesystemTool,
+    ExecuteCommandTool,
+    ListFilesTool,
+    ReadFileTool,
+    WriteFileTool,
+    get_filesystem_tools,
+)
 from .knowledge_base import KnowledgeBaseTool
 from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
 from .load_skill import LoadSkillTool
@@ -27,4 +35,11 @@ __all__ = [
     "SubmitEvaluationResultTool",
     "LoadSkillTool",
     "SilentExitException",  # Keep exception for backward compatibility
+    # Filesystem tools
+    "ReadFileTool",
+    "WriteFileTool",
+    "ListFilesTool",
+    "ExecuteCommandTool",
+    "BaseFilesystemTool",
+    "get_filesystem_tools",
 ]

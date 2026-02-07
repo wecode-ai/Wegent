@@ -106,6 +106,22 @@ class Settings(BaseSettings):
     ENABLE_SKILLS: bool = True
     ENABLE_CHECKPOINTING: bool = False
 
+    # ========== Sandbox Mode Configuration ==========
+    # "local" - Use local filesystem operations (direct access to host filesystem)
+    # "remote" - Use remote E2B sandbox (default, backward compatible)
+    # Env: CHAT_SHELL_SANDBOX_MODE
+    SANDBOX_MODE: str = "remote"
+
+    # Local mode configuration
+    # Default working directory for local file operations
+    LOCAL_WORKSPACE_ROOT: str = "/workspace"
+    # Command execution timeout in seconds
+    LOCAL_COMMAND_TIMEOUT: int = 300
+    # Maximum command output size in bytes (64KB)
+    LOCAL_MAX_OUTPUT_SIZE: int = 65536
+    # Maximum file read size in bytes (100KB)
+    LOCAL_MAX_FILE_SIZE: int = 102400
+
     # Attachment/Context configuration
     MAX_EXTRACTED_TEXT_LENGTH: int = 100000
 
