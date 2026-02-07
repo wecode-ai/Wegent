@@ -44,10 +44,18 @@ class ContextType(str, PyEnum):
 
 
 class ContextStatus(str, PyEnum):
-    """Context processing status."""
+    """Context processing status.
+
+    For knowledge_base type contexts:
+    - PENDING: Retrieval not yet executed
+    - READY: Retrieval successful with results
+    - EMPTY: Retrieval successful but no results found
+    - FAILED: Retrieval execution failed
+    """
 
     PENDING = "pending"
     UPLOADING = "uploading"
     PARSING = "parsing"
     READY = "ready"
     FAILED = "failed"
+    EMPTY = "empty"  # Retrieval successful but no results
