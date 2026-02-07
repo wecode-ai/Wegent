@@ -719,6 +719,7 @@
     "types": {
       "dingtalk": "钉钉",
       "feishu": "飞书",
+      "telegram": "Telegram",
       "not_supported": "暂不支持"
     },
     "status": {
@@ -738,6 +739,9 @@
       "client_secret": "Client Secret",
       "client_secret_placeholder": "请输入平台 Client Secret",
       "client_secret_edit_placeholder": "请输入新的 Client Secret（留空保持不变）",
+      "bot_token": "Bot Token",
+      "bot_token_placeholder": "请输入 Telegram Bot Token",
+      "bot_token_edit_placeholder": "请输入新的 Bot Token（留空保持不变）",
       "leave_empty_to_keep": "留空保持不变",
       "default_team": "默认智能体",
       "default_team_placeholder": "选择默认智能体",
@@ -779,6 +783,7 @@
       "restart_failed": "重启 IM 渠道失败",
       "name_required": "渠道名称不能为空",
       "config_required": "Client ID 和 Client Secret 不能为空",
+      "bot_token_required": "Bot Token 不能为空",
       "team_required": "必须选择一个默认智能体",
       "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
       "target_user_required": "使用指定用户模式时必须选择一个目标用户"

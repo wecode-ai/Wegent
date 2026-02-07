@@ -4394,6 +4394,18 @@ wheels = [
 ]
 
 [[package]]
+name = "python-telegram-bot"
+version = "22.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cd/9b/8df90c85404166a6631e857027866263adb27440d8af1dbeffbdc4f0166c/python_telegram_bot-22.6.tar.gz", hash = "sha256:50ae8cc10f8dff01445628687951020721f37956966b92a91df4c1bf2d113742", size = 1503761, upload-time = "2026-01-24T13:57:00.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/97/7298f0e1afe3a1ae52ff4c5af5087ed4de319ea73eb3b5c8c4dd4e76e708/python_telegram_bot-22.6-py3-none-any.whl", hash = "sha256:e598fe171c3dde2dfd0f001619ee9110eece66761a677b34719fb18934935ce0", size = 737267, upload-time = "2026-01-24T13:56:58.06Z" },
+]
+
+[[package]]
 name = "pytokens"
 version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5747,6 +5759,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "python-pptx" },
     { name = "python-socketio" },
+    { name = "python-telegram-bot" },
     { name = "pyyaml" },
     { name = "redis" },
     { name = "regex" },
@@ -5845,6 +5858,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "python-pptx", specifier = ">=0.6.23" },
     { name = "python-socketio", specifier = ">=5.10.0" },
+    { name = "python-telegram-bot", specifier = ">=21.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "redis", specifier = ">=5.0.1" },
     { name = "regex", specifier = ">=2023.8.8" },
