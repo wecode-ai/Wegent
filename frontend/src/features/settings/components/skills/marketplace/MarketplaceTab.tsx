@@ -27,11 +27,7 @@ import {
   collectSkill,
   uncollectSkill,
 } from '@/apis/skills'
-import type {
-  SkillCategory,
-  MarketplaceSkill,
-  MarketplaceSkillListResponse,
-} from '@/types/api'
+import type { SkillCategory, MarketplaceSkill } from '@/types/api'
 
 interface MarketplaceTabProps {
   onSkillCollected?: () => void
@@ -130,10 +126,10 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
   }
 
   const handleCollect = async (skillId: number) => {
-    setCollectingIds((prev) => new Set(prev).add(skillId))
+    setCollectingIds(prev => new Set(prev).add(skillId))
     try {
       await collectSkill(skillId)
-      setCollectedIds((prev) => new Set(prev).add(skillId))
+      setCollectedIds(prev => new Set(prev).add(skillId))
       toast({
         title: t('common:common.success'),
         description: t('common:skills.marketplace.collect_success'),
@@ -147,7 +143,7 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
         description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       })
     } finally {
-      setCollectingIds((prev) => {
+      setCollectingIds(prev => {
         const next = new Set(prev)
         next.delete(skillId)
         return next
@@ -156,10 +152,10 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
   }
 
   const handleUncollect = async (skillId: number) => {
-    setCollectingIds((prev) => new Set(prev).add(skillId))
+    setCollectingIds(prev => new Set(prev).add(skillId))
     try {
       await uncollectSkill(skillId)
-      setCollectedIds((prev) => {
+      setCollectedIds(prev => {
         const next = new Set(prev)
         next.delete(skillId)
         return next
@@ -177,7 +173,7 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
         description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       })
     } finally {
-      setCollectingIds((prev) => {
+      setCollectingIds(prev => {
         const next = new Set(prev)
         next.delete(skillId)
         return next
@@ -207,11 +203,11 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
             <Input
               placeholder={t('common:skills.marketplace.search_placeholder')}
               value={search}
-              onChange={(e) => handleSearchChange(e.target.value)}
+              onChange={e => handleSearchChange(e.target.value)}
               className="pl-9"
             />
           </div>
-          <Select value={sortBy} onValueChange={(v) => handleSortChange(v as SortOption)}>
+          <Select value={sortBy} onValueChange={v => handleSortChange(v as SortOption)}>
             <SelectTrigger className="w-[180px]">
               <SortAscIcon className="w-4 h-4 mr-2" />
               <SelectValue />
@@ -223,9 +219,7 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
               <SelectItem value="createdAt">
                 {t('common:skills.marketplace.sort_newest')}
               </SelectItem>
-              <SelectItem value="name">
-                {t('common:skills.marketplace.sort_name')}
-              </SelectItem>
+              <SelectItem value="name">{t('common:skills.marketplace.sort_name')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -248,7 +242,7 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {skills.map((skill) => {
+              {skills.map(skill => {
                 const skillId = parseInt(skill.metadata.labels?.id || '0', 10)
                 return (
                   <MarketplaceSkillCard
@@ -272,7 +266,7 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              onClick={() => setPage(p => Math.max(0, p - 1))}
               disabled={page === 0}
             >
               {t('common:actions.previous')}
@@ -283,7 +277,7 @@ export default function MarketplaceTab({ onSkillCollected }: MarketplaceTabProps
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}
             >
               {t('common:actions.next')}

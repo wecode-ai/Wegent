@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, StarIcon, UserIcon, DownloadIcon, ExternalLinkIcon } from 'lucide-react'
+import { StarIcon, UserIcon, DownloadIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tag } from '@/components/ui/tag'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -32,7 +32,7 @@ export default function MarketplaceSkillDetail({
   onCollect,
   onUncollect,
 }: MarketplaceSkillDetailProps) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { toast } = useToast()
   const [detail, setDetail] = useState<MarketplaceSkillDetailResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -72,14 +72,10 @@ export default function MarketplaceSkillDetail({
     try {
       if (detail.is_collected) {
         await onUncollect(skillId)
-        setDetail((prev) =>
-          prev ? { ...prev, is_collected: false } : prev
-        )
+        setDetail(prev => (prev ? { ...prev, is_collected: false } : prev))
       } else {
         await onCollect(skillId)
-        setDetail((prev) =>
-          prev ? { ...prev, is_collected: true } : prev
-        )
+        setDetail(prev => (prev ? { ...prev, is_collected: true } : prev))
       }
     } finally {
       setIsCollecting(false)
@@ -94,7 +90,9 @@ export default function MarketplaceSkillDetail({
       <SheetContent className="w-[500px] sm:max-w-[500px] overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="flex items-center justify-between pr-8">
-            <span>{spec?.displayName || skill?.metadata.name || t('common:skills.marketplace.title')}</span>
+            <span>
+              {spec?.displayName || skill?.metadata.name || t('common:skills.marketplace.title')}
+            </span>
           </SheetTitle>
         </SheetHeader>
 
@@ -124,8 +122,8 @@ export default function MarketplaceSkillDetail({
               {/* Tags */}
               {spec.tags && spec.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1">
-                  {spec.tags.map((tag) => (
-                    <Tag key={tag} variant="outline">
+                  {spec.tags.map(tag => (
+                    <Tag key={tag} variant="default">
                       {tag}
                     </Tag>
                   ))}
@@ -138,7 +136,7 @@ export default function MarketplaceSkillDetail({
                   <span className="text-xs text-text-muted">
                     {t('common:skills.marketplace.bind_shells')}:
                   </span>
-                  {spec.bindShells.map((shell) => (
+                  {spec.bindShells.map(shell => (
                     <Tag key={shell} variant="success">
                       {shell}
                     </Tag>
@@ -173,9 +171,7 @@ export default function MarketplaceSkillDetail({
               onClick={handleCollectClick}
               disabled={isCollecting}
             >
-              <StarIcon
-                className={`w-4 h-4 mr-2 ${detail.is_collected ? 'fill-current' : ''}`}
-              />
+              <StarIcon className={`w-4 h-4 mr-2 ${detail.is_collected ? 'fill-current' : ''}`} />
               {detail.is_collected
                 ? t('common:skills.marketplace.uncollect')
                 : t('common:skills.marketplace.collect')}
@@ -184,13 +180,9 @@ export default function MarketplaceSkillDetail({
             {/* README section */}
             {spec.readme && (
               <div className="space-y-2">
-                <h3 className="text-base font-medium">
-                  {t('common:skills.marketplace.readme')}
-                </h3>
+                <h3 className="text-base font-medium">{t('common:skills.marketplace.readme')}</h3>
                 <div className="prose prose-sm max-w-none dark:prose-invert">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {spec.readme}
-                  </ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{spec.readme}</ReactMarkdown>
                 </div>
               </div>
             )}

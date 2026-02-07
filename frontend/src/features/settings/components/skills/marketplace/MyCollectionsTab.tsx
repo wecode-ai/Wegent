@@ -19,9 +19,7 @@ interface MyCollectionsTabProps {
   onCollectionChange?: () => void
 }
 
-export default function MyCollectionsTab({
-  onCollectionChange,
-}: MyCollectionsTabProps) {
+export default function MyCollectionsTab({ onCollectionChange }: MyCollectionsTabProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
 
@@ -38,8 +36,7 @@ export default function MyCollectionsTab({
       toast({
         variant: 'destructive',
         title: t('common:common.error'),
-        description:
-          error instanceof Error ? error.message : t('common:common.unknown_error'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       })
     } finally {
       setIsLoading(false)
@@ -53,17 +50,12 @@ export default function MyCollectionsTab({
   const handleRemove = async (item: CollectionItem) => {
     if (!item.marketplace_skill) return
 
-    const skillId = parseInt(
-      item.marketplace_skill.metadata.labels?.id || '0',
-      10
-    )
-    setRemovingIds((prev) => new Set(prev).add(skillId))
+    const skillId = parseInt(item.marketplace_skill.metadata.labels?.id || '0', 10)
+    setRemovingIds(prev => new Set(prev).add(skillId))
 
     try {
       await uncollectSkill(skillId)
-      setCollections((prev) =>
-        prev.filter((c) => c.collection_id !== item.collection_id)
-      )
+      setCollections(prev => prev.filter(c => c.collection_id !== item.collection_id))
       toast({
         title: t('common:common.success'),
         description: t('common:skills.marketplace.uncollect_success'),
@@ -73,11 +65,10 @@ export default function MyCollectionsTab({
       toast({
         variant: 'destructive',
         title: t('common:common.error'),
-        description:
-          error instanceof Error ? error.message : t('common:common.unknown_error'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       })
     } finally {
-      setRemovingIds((prev) => {
+      setRemovingIds(prev => {
         const next = new Set(prev)
         next.delete(skillId)
         return next
@@ -105,12 +96,10 @@ export default function MyCollectionsTab({
 
   return (
     <div className="space-y-3">
-      {collections.map((item) => {
+      {collections.map(item => {
         const skill = item.marketplace_skill
         const spec = skill?.spec
-        const skillId = skill
-          ? parseInt(skill.metadata.labels?.id || '0', 10)
-          : 0
+        const skillId = skill ? parseInt(skill.metadata.labels?.id || '0', 10) : 0
         const isRemoving = removingIds.has(skillId)
 
         return (
@@ -134,9 +123,7 @@ export default function MyCollectionsTab({
                           {spec.displayName || skill.metadata.name}
                         </h3>
                         {!item.is_available && (
-                          <Tag variant="destructive">
-                            {t('common:skills.marketplace.unavailable')}
-                          </Tag>
+                          <Tag variant="error">{t('common:skills.marketplace.unavailable')}</Tag>
                         )}
                       </div>
                       <p className="text-sm text-text-secondary mt-1 line-clamp-2">
@@ -146,7 +133,7 @@ export default function MyCollectionsTab({
                       {/* Tags */}
                       {spec.tags && spec.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
-                          {spec.tags.slice(0, 4).map((tag) => (
+                          {spec.tags.slice(0, 4).map(tag => (
                             <Tag key={tag} variant="info">
                               {tag}
                             </Tag>
@@ -159,9 +146,7 @@ export default function MyCollectionsTab({
                         <StarIcon className="w-3 h-3" />
                         <span>
                           {t('common:skills.marketplace.collected_at', {
-                            date: new Date(
-                              item.collected_at
-                            ).toLocaleDateString(),
+                            date: new Date(item.collected_at).toLocaleDateString(),
                           })}
                         </span>
                       </div>

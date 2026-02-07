@@ -28,7 +28,7 @@ export default function MarketplaceSkillCard({
   onUncollect,
   onClick,
 }: MarketplaceSkillCardProps) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const spec = skill.spec
 
   const handleCollectClick = (e: React.MouseEvent) => {
@@ -41,10 +41,7 @@ export default function MarketplaceSkillCard({
   }
 
   return (
-    <Card
-      className="p-4 hover:shadow-md transition-shadow cursor-pointer"
-      onClick={onClick}
-    >
+    <Card className="p-4 hover:shadow-md transition-shadow cursor-pointer" onClick={onClick}>
       <div className="flex flex-col h-full">
         {/* Header with name and version */}
         <div className="flex items-start justify-between mb-2">
@@ -52,9 +49,7 @@ export default function MarketplaceSkillCard({
             <h3 className="text-base font-medium text-text-primary truncate">
               {spec.displayName || skill.metadata.name}
             </h3>
-            {spec.version && (
-              <span className="text-xs text-text-muted">v{spec.version}</span>
-            )}
+            {spec.version && <span className="text-xs text-text-muted">v{spec.version}</span>}
           </div>
           <Button
             variant={isCollected ? 'default' : 'outline'}
@@ -63,9 +58,7 @@ export default function MarketplaceSkillCard({
             onClick={handleCollectClick}
             disabled={isCollecting}
           >
-            <StarIcon
-              className={`w-4 h-4 mr-1 ${isCollected ? 'fill-current' : ''}`}
-            />
+            <StarIcon className={`w-4 h-4 mr-1 ${isCollected ? 'fill-current' : ''}`} />
             {isCollected
               ? t('common:skills.marketplace.collected')
               : t('common:skills.marketplace.collect')}
@@ -80,14 +73,12 @@ export default function MarketplaceSkillCard({
         {/* Tags */}
         {spec.tags && spec.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-3">
-            {spec.tags.slice(0, 3).map((tag) => (
+            {spec.tags.slice(0, 3).map(tag => (
               <Tag key={tag} variant="info">
                 {tag}
               </Tag>
             ))}
-            {spec.tags.length > 3 && (
-              <Tag variant="default">+{spec.tags.length - 3}</Tag>
-            )}
+            {spec.tags.length > 3 && <Tag variant="default">+{spec.tags.length - 3}</Tag>}
           </div>
         )}
 

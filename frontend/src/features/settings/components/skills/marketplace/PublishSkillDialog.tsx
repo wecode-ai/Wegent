@@ -14,7 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -48,9 +47,7 @@ export default function PublishSkillDialog({
   const isEnglish = i18n.language === 'en'
 
   const [selectedCategory, setSelectedCategory] = useState<string>('')
-  const [marketDescription, setMarketDescription] = useState<string>(
-    skill.description || ''
-  )
+  const [marketDescription, setMarketDescription] = useState<string>(skill.description || '')
   const [readme, setReadme] = useState<string>('')
   const [isPublishing, setIsPublishing] = useState(false)
 
@@ -85,10 +82,7 @@ export default function PublishSkillDialog({
       toast({
         variant: 'destructive',
         title: t('common:common.error'),
-        description:
-          error instanceof Error
-            ? error.message
-            : t('common:common.unknown_error'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       })
     } finally {
       setIsPublishing(false)
@@ -111,20 +105,14 @@ export default function PublishSkillDialog({
           {/* Category Selection */}
           <div className="space-y-2">
             <Label htmlFor="category">
-              {t('common:skills.marketplace.category')}{' '}
-              <span className="text-error">*</span>
+              {t('common:skills.marketplace.category')} <span className="text-error">*</span>
             </Label>
-            <Select
-              value={selectedCategory}
-              onValueChange={setSelectedCategory}
-            >
+            <Select value={selectedCategory} onValueChange={setSelectedCategory}>
               <SelectTrigger>
-                <SelectValue
-                  placeholder={t('common:skills.marketplace.select_category')}
-                />
+                <SelectValue placeholder={t('common:skills.marketplace.select_category')} />
               </SelectTrigger>
               <SelectContent>
-                {categories.map((category) => (
+                {categories.map(category => (
                   <SelectItem key={category.name} value={category.name}>
                     {getCategoryDisplayName(category)}
                   </SelectItem>
@@ -141,23 +129,19 @@ export default function PublishSkillDialog({
             <Textarea
               id="marketDescription"
               value={marketDescription}
-              onChange={(e) => setMarketDescription(e.target.value)}
-              placeholder={t(
-                'common:skills.marketplace.market_description_placeholder'
-              )}
+              onChange={e => setMarketDescription(e.target.value)}
+              placeholder={t('common:skills.marketplace.market_description_placeholder')}
               rows={3}
             />
           </div>
 
           {/* README */}
           <div className="space-y-2">
-            <Label htmlFor="readme">
-              {t('common:skills.marketplace.readme')}
-            </Label>
+            <Label htmlFor="readme">{t('common:skills.marketplace.readme')}</Label>
             <Textarea
               id="readme"
               value={readme}
-              onChange={(e) => setReadme(e.target.value)}
+              onChange={e => setReadme(e.target.value)}
               placeholder={t('common:skills.marketplace.readme_placeholder')}
               rows={5}
               className="font-mono text-sm"
@@ -166,11 +150,7 @@ export default function PublishSkillDialog({
         </div>
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onClose(false)}
-            disabled={isPublishing}
-          >
+          <Button variant="outline" onClick={() => onClose(false)} disabled={isPublishing}>
             {t('common:actions.cancel')}
           </Button>
           <Button
