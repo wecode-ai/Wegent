@@ -67,7 +67,23 @@
     "loading_diff_message": "Loading diff...",
     "no_changes_between_branches": "No changes found between branches",
     "execution_timeline": "Execution Timeline",
-    "no_repository": "This task is not associated with a code repository"
+    "no_repository": "This task is not associated with a code repository",
+    "workspace_files": {
+      "title": "Workspace Files",
+      "loading": "Loading files...",
+      "no_files": "No files generated",
+      "download_all": "Download All",
+      "files_count": "files",
+      "truncated": "File count exceeds limit, showing partial",
+      "container_not_found": "Executor container not found",
+      "container_stopped": "Execution environment stopped",
+      "container_stopped_hint": "The task execution environment has been stopped. You can re-run the task to view generated files.",
+      "timeout": "Request timed out",
+      "connection_error": "Network connection error",
+      "list_files_failed": "Failed to list files",
+      "unknown_error": "An unknown error occurred",
+      "error_hint": "Please check your network connection and try again."
+    }
   },
   "thinking": {
     "execution_completed": "Execution Completed",

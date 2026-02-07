@@ -297,6 +297,7 @@ export function CodePageDesktop() {
               }
               taskTitle={selectedTaskDetail?.title}
               taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
+              taskId={selectedTaskDetail?.id}
               thinking={thinkingData}
               app={selectedTaskDetail?.app}
             />

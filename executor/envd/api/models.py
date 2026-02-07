@@ -5,9 +5,27 @@
 Pydantic models for envd REST API
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
+
+
+class WorkspaceFile(BaseModel):
+    """File entry information for workspace file listing"""
+
+    name: str  # File/directory name
+    path: str  # Relative path from workspace root
+    type: str  # 'file' or 'directory'
+    size: Optional[int] = None  # File size in bytes (only for files)
+    children: Optional[List["WorkspaceFile"]] = None  # Children (only for directories)
+
+
+class WorkspaceFilesResponse(BaseModel):
+    """Response model for /files/list endpoint"""
+
+    files: List[WorkspaceFile]
+    total_count: int
+    truncated: bool = False  # True if file count exceeds limit
 
 
 class InitRequest(BaseModel):
