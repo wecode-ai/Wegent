@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
-import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
+import { parseError, getErrorDisplayMessage, type TaskExpiredInfo } from '@/utils/errorParser'
 import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
@@ -121,6 +121,15 @@ export interface ChatStreamHandlers {
 
   // State
   isCancelling: boolean
+
+  // Task restore state and handlers
+  restoreDialogOpen: boolean
+  setRestoreDialogOpen: (open: boolean) => void
+  restoreTaskInfo: TaskExpiredInfo | null
+  pendingRestoreMessage: string
+  isRestoring: boolean
+  handleConfirmRestore: () => Promise<void>
+  handleCancelRestore: () => void
 }
 
 /**
@@ -189,6 +198,12 @@ export function useChatStreamHandlers({
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
+
+  // Task restore state
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false)
+  const [restoreTaskInfo, setRestoreTaskInfo] = useState<TaskExpiredInfo | null>(null)
+  const [pendingRestoreMessage, setPendingRestoreMessage] = useState('')
+  const [isRestoring, setIsRestoring] = useState(false)
 
   // Refs
   const lastFailedMessageRef = useRef<string | null>(null)
@@ -328,6 +343,14 @@ export function useChatStreamHandlers({
       resetStreamingState()
       const parsedError = parseError(error)
       lastFailedMessageRef.current = message
+
+      // Check for task expired restorable error - open restore dialog instead of showing toast
+      if (parsedError.type === 'task_expired_restorable' && parsedError.taskExpiredInfo) {
+        setPendingRestoreMessage(message)
+        setRestoreTaskInfo(parsedError.taskExpiredInfo)
+        setRestoreDialogOpen(true)
+        return // Don't show error toast for restorable errors
+      }
 
       // Use getErrorDisplayMessage for consistent error display logic
       const errorMessage = getErrorDisplayMessage(error, (key: string) => t(`chat:${key}`))
@@ -1001,6 +1024,56 @@ export function useChatStreamHandlers({
     }
   }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail])
 
+  // Task restore handlers
+  const handleConfirmRestore = useCallback(async () => {
+    if (!restoreTaskInfo) return
+
+    setIsRestoring(true)
+
+    try {
+      // Call restore API
+      const response = await taskApis.restoreTask(restoreTaskInfo.taskId)
+
+      if (response.success) {
+        // Close dialog
+        setRestoreDialogOpen(false)
+
+        // Show success toast
+        toast({
+          title: t('chat:restore.success'),
+        })
+
+        // Refresh task detail to get updated status
+        await refreshSelectedTaskDetail()
+
+        // Resend the pending message after successful restoration
+        if (pendingRestoreMessage && handleSendMessageRef.current) {
+          // Small delay to ensure task state is updated
+          setTimeout(() => {
+            if (pendingRestoreMessage && handleSendMessageRef.current) {
+              handleSendMessageRef.current(pendingRestoreMessage)
+            }
+          }, 500)
+        }
+      }
+    } catch (error) {
+      console.error('[useChatStreamHandlers] Failed to restore task:', error)
+
+      toast({
+        variant: 'destructive',
+        title: t('chat:restore.failed'),
+      })
+    } finally {
+      setIsRestoring(false)
+    }
+  }, [restoreTaskInfo, pendingRestoreMessage, toast, t, refreshSelectedTaskDetail])
+
+  const handleCancelRestore = useCallback(() => {
+    setRestoreDialogOpen(false)
+    setRestoreTaskInfo(null)
+    setPendingRestoreMessage('')
+  }, [])
+
   return {
     // Stream state
     pendingTaskId,
@@ -1024,6 +1097,15 @@ export function useChatStreamHandlers({
 
     // State
     isCancelling,
+
+    // Task restore state and handlers
+    restoreDialogOpen,
+    setRestoreDialogOpen,
+    restoreTaskInfo,
+    pendingRestoreMessage,
+    isRestoring,
+    handleConfirmRestore,
+    handleCancelRestore,
   }
 }
 

@@ -396,6 +396,8 @@ class WorkspaceStatus(Status):
     """Workspace status"""
 
     state: str = "Available"  # Available, Unavailable
+    archivedAt: Optional[datetime] = None  # Timestamp when workspace was archived to S3
+    archiveKey: Optional[str] = None  # S3 key where workspace archive is stored
 
 
 class Workspace(BaseModel):

@@ -208,6 +208,9 @@ class Agent:
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] Project cloned to {project_path}"
                 )
+
+                # Check if workspace needs to be restored from archive
+                self._restore_workspace_if_needed()
             else:
                 error_detail = f": {error_msg}" if error_msg else ""
                 error_msg = f"Agent[{self.get_name()}][{self.task_id}] Failed to clone project to {project_path}{error_detail}"
@@ -262,6 +265,59 @@ class Agent:
         else:
             logger.warning(
                 f"Agent[{self.get_name()}][{self.task_id}] Missing git_login or git_email, skip git config"
+            )
+
+    def _restore_workspace_if_needed(self) -> None:
+        """
+        Check if workspace needs to be restored from archive and restore it.
+
+        This is called after cloning the repository. If the task has a pending
+        workspace restore (indicated by workspaceRestorePending label), the
+        workspace files will be restored from the S3 archive.
+        """
+        # Check for workspace restore pending flag in task_data
+        workspace_restore_pending = self.task_data.get("workspace_restore_pending")
+        workspace_archive_url = self.task_data.get("workspace_archive_url")
+
+        if not workspace_restore_pending or workspace_restore_pending != "true":
+            return
+
+        if not workspace_archive_url:
+            logger.warning(
+                f"Agent[{self.get_name()}][{self.task_id}] workspace_restore_pending=true "
+                f"but no workspace_archive_url provided"
+            )
+            return
+
+        logger.info(
+            f"Agent[{self.get_name()}][{self.task_id}] Restoring workspace from archive"
+        )
+
+        try:
+            from executor.services.workspace_service import (
+                restore_workspace_from_archive,
+            )
+
+            success, error = restore_workspace_from_archive(
+                self.task_id, workspace_archive_url
+            )
+
+            if success:
+                logger.info(
+                    f"Agent[{self.get_name()}][{self.task_id}] "
+                    f"Workspace restored successfully from archive"
+                )
+            else:
+                logger.warning(
+                    f"Agent[{self.get_name()}][{self.task_id}] "
+                    f"Failed to restore workspace from archive: {error}. "
+                    f"Continuing with fresh clone."
+                )
+        except Exception as e:
+            logger.warning(
+                f"Agent[{self.get_name()}][{self.task_id}] "
+                f"Exception while restoring workspace: {e}. "
+                f"Continuing with fresh clone."
             )
 
     def _record_error_thinking(self, title: str, error_message: str) -> None:
