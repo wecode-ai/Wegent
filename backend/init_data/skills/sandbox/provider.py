@@ -81,15 +81,23 @@ class SandboxToolProvider(SkillToolProvider):
     def supported_tools(self) -> list[str]:
         """Return the list of tools this provider can create.
 
+        Note: read_file, write_file, list_files, exec have been moved to
+        Chat Shell builtin tools (chat_shell/tools/builtin/filesystem_tools.py).
+        These tools are now automatically available without loading the sandbox skill.
+
         Returns:
             List containing supported tool names
         """
         return [
-            "exec",
+            # Deprecated: These tools are now builtin in Chat Shell
+            # Keep them here for backward compatibility during transition
+            # They will be removed in a future version
+            "exec",  # DEPRECATED: Use builtin exec tool
+            "list_files",  # DEPRECATED: Use builtin list_files tool
+            "read_file",  # DEPRECATED: Use builtin read_file tool
+            "write_file",  # DEPRECATED: Use builtin write_file tool
+            # Active tools (sandbox-specific, not available as builtin)
             "sub_claude_agent",
-            "list_files",
-            "read_file",
-            "write_file",
             "upload_attachment",
             "download_attachment",
         ]

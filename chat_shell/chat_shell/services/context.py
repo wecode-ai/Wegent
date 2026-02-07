@@ -729,6 +729,10 @@ class ChatContext:
             self._request.subtask_id,
         )
 
+        # Add filesystem tools (read_file, write_file, list_files, exec)
+        # These are builtin tools that support both local and remote sandbox modes
+        self._add_filesystem_tools(extra_tools)
+
         # === External Tools ===
 
         # Add KB tools
@@ -746,3 +750,46 @@ class ChatContext:
             extra_tools.extend(mcp_tools)
 
         return extra_tools
+
+    def _add_filesystem_tools(self, extra_tools: list) -> None:
+        """Add filesystem tools based on SANDBOX_MODE configuration.
+
+        This method adds builtin filesystem tools (read_file, write_file, list_files, exec)
+        that support both local and remote sandbox modes.
+
+        Args:
+            extra_tools: List to append filesystem tools to
+        """
+        from chat_shell.tools.builtin import get_filesystem_tools
+
+        # Get sandbox mode from settings (default: "remote")
+        sandbox_mode = settings.SANDBOX_MODE if hasattr(settings, "SANDBOX_MODE") else "remote"
+
+        # Get local mode configuration
+        workspace_root = getattr(settings, "LOCAL_WORKSPACE_ROOT", "/workspace")
+        command_timeout = getattr(settings, "LOCAL_COMMAND_TIMEOUT", 300)
+        max_output_size = getattr(settings, "LOCAL_MAX_OUTPUT_SIZE", 65536)
+        max_file_size = getattr(settings, "LOCAL_MAX_FILE_SIZE", 102400)
+
+        # Create filesystem tools
+        fs_tools = get_filesystem_tools(
+            sandbox_mode=sandbox_mode,
+            workspace_root=workspace_root,
+            max_file_size=max_file_size,
+            max_output_size=max_output_size,
+            command_timeout=command_timeout,
+            task_id=self._request.task_id,
+            subtask_id=self._request.subtask_id,
+            user_id=self._request.user_id,
+            user_name=self._request.user_name,
+            # Note: ws_emitter, bot_config, auth_token would need to be passed
+            # if we want full sandbox functionality in remote mode
+            # For now, we'll use basic configuration
+        )
+
+        extra_tools.extend(fs_tools)
+        logger.info(
+            "[CHAT_CONTEXT] Added %d filesystem tools (mode=%s)",
+            len(fs_tools),
+            sandbox_mode,
+        )
