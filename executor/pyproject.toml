@@ -25,6 +25,7 @@ dependencies = [
     "requests==2.31.0",
     "sqlalchemy==2.0.43",
     "uvicorn==0.25.0",
+    "pyyaml>=6.0.0",
 
     # envd Connect RPC dependencies
     "grpcio>=1.68.0",
