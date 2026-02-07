@@ -5,6 +5,7 @@
 """
 Skill Marketplace API endpoints for browsing, publishing, and collecting skills.
 """
+
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,8 +15,8 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.kind import (
-    CollectSkillResponse,
     CollectionItem,
+    CollectSkillResponse,
     MarketplaceSkill,
     MarketplaceSkillDetailResponse,
     MarketplaceSkillListResponse,
@@ -185,6 +186,43 @@ def list_marketplace_skills(
     )
 
 
+# Static routes must be defined BEFORE parameterized routes to avoid capture
+@router.get(
+    "/marketplace/my-published",
+    response_model=List[MarketplaceSkill],
+    summary="Get my published skills",
+)
+def get_my_published_skills(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> List[MarketplaceSkill]:
+    """
+    Get all skills published by the current user.
+    """
+    return marketplace_skill_service.get_my_published_skills(
+        db, user_id=current_user.id
+    )
+
+
+@router.get(
+    "/marketplace/my-collections",
+    response_model=MyCollectionsResponse,
+    summary="Get my collected skills",
+)
+def get_my_collections(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> MyCollectionsResponse:
+    """
+    Get all skills collected by the current user.
+
+    Includes availability status (whether the marketplace skill is still available).
+    """
+    items = skill_collection_service.get_my_collections(db, user_id=current_user.id)
+    return MyCollectionsResponse(items=items)
+
+
+# Parameterized routes after static routes
 @router.get(
     "/marketplace/{marketplace_skill_id}",
     response_model=MarketplaceSkillDetailResponse,
@@ -282,23 +320,6 @@ def unpublish_from_marketplace(
     )
 
 
-@router.get(
-    "/marketplace/my-published",
-    response_model=List[MarketplaceSkill],
-    summary="Get my published skills",
-)
-def get_my_published_skills(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> List[MarketplaceSkill]:
-    """
-    Get all skills published by the current user.
-    """
-    return marketplace_skill_service.get_my_published_skills(
-        db, user_id=current_user.id
-    )
-
-
 # ==================== Collection Management ====================
 
 
@@ -343,21 +364,3 @@ def uncollect_skill(
         marketplace_skill_id=marketplace_skill_id,
         user_id=current_user.id,
     )
-
-
-@router.get(
-    "/marketplace/my-collections",
-    response_model=MyCollectionsResponse,
-    summary="Get my collected skills",
-)
-def get_my_collections(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-) -> MyCollectionsResponse:
-    """
-    Get all skills collected by the current user.
-
-    Includes availability status (whether the marketplace skill is still available).
-    """
-    items = skill_collection_service.get_my_collections(db, user_id=current_user.id)
-    return MyCollectionsResponse(items=items)
