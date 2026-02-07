@@ -1394,10 +1394,11 @@ class KnowledgeBaseTool(BaseTool):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{backend_url}/api/internal/rag/save-result",
+                    f"{backend_url}/api/internal/rag/save-tool-result",
                     json={
                         "user_subtask_id": self.user_subtask_id,
                         "knowledge_base_id": kb_id,
+                        "tool_type": "rag",
                         "extracted_text": extracted_text,
                         "sources": kb_sources,
                         "injection_mode": injection_mode,

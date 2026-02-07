@@ -328,44 +328,6 @@ async def get_knowledge_base_info(
     )
 
 
-class SaveRagResultRequest(BaseModel):
-    """Request for saving RAG retrieval results to context database.
-
-    DEPRECATED: Use SaveKbToolResultRequest with tool_type='rag' instead.
-    """
-
-    user_subtask_id: int = Field(..., description="User subtask ID")
-    knowledge_base_id: int = Field(
-        ..., description="Knowledge base ID that was searched"
-    )
-    extracted_text: str = Field(
-        ..., description="Concatenated retrieval text (empty for direct injection)"
-    )
-    sources: list[dict] = Field(
-        default_factory=list,
-        description="List of source info dicts with title, kb_id, score",
-    )
-    # New fields for RAG observability
-    injection_mode: Literal["direct_injection", "rag_retrieval"] = Field(
-        ..., description="Injection mode: 'direct_injection' or 'rag_retrieval'"
-    )
-    query: str = Field(..., description="Original search query")
-    chunks_count: int = Field(
-        ..., ge=0, description="Number of chunks retrieved/injected"
-    )
-
-
-class SaveRagResultResponse(BaseModel):
-    """Response for save RAG result endpoint.
-
-    DEPRECATED: Use SaveKbToolResultResponse instead.
-    """
-
-    success: bool
-    context_id: Optional[int] = None
-    message: str = ""
-
-
 # ============== Unified KB Tool Result Persistence API ==============
 
 
@@ -545,46 +507,6 @@ async def save_kb_tool_result(
             exc_info=True,
         )
         raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.post("/save-result", response_model=SaveRagResultResponse)
-async def save_rag_result(
-    request: SaveRagResultRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Save RAG retrieval results to context database.
-
-    DEPRECATED: Use /save-tool-result with tool_type='rag' instead.
-
-    This endpoint is called by chat_shell in HTTP mode after RAG retrieval
-    to persist the results for historical context.
-
-    Args:
-        request: Request with subtask ID, KB ID, and retrieval results
-        db: Database session
-
-    Returns:
-        Success status and context ID if saved
-    """
-    # Delegate to unified endpoint
-    unified_request = SaveKbToolResultRequest(
-        user_subtask_id=request.user_subtask_id,
-        knowledge_base_id=request.knowledge_base_id,
-        tool_type="rag",
-        extracted_text=request.extracted_text,
-        sources=request.sources,
-        injection_mode=request.injection_mode,
-        query=request.query,
-        chunks_count=request.chunks_count,
-    )
-    result = await save_kb_tool_result(unified_request, db)
-
-    return SaveRagResultResponse(
-        success=result.success,
-        context_id=result.context_id,
-        message=result.message,
-    )
 
 
 class AllChunksRequest(BaseModel):

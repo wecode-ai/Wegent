@@ -8,7 +8,6 @@ from .create_subscription import CreateSubscriptionTool
 from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
-from .kb_base import DEFAULT_KB_HEAD_LIMIT, KnowledgeBaseToolMixin
 from .knowledge_base import KnowledgeBaseTool
 from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
 from .load_skill import LoadSkillTool
@@ -19,8 +18,6 @@ __all__ = [
     "CreateSubscriptionTool",
     "WebSearchTool",
     "KnowledgeBaseTool",
-    "KnowledgeBaseToolMixin",
-    "DEFAULT_KB_HEAD_LIMIT",
     "KbLsTool",
     "KbHeadTool",
     "KBToolCallCounter",

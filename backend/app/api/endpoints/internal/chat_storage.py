@@ -537,7 +537,7 @@ def _fetch_kb_head_documents_content(
     if not document_ids:
         return ""
 
-    # Query documents by IDs
+    # Query documents by IDs (without ordering, we'll preserve input order)
     documents = (
         db.query(KnowledgeDocument)
         .filter(
@@ -545,7 +545,6 @@ def _fetch_kb_head_documents_content(
             KnowledgeDocument.is_active.is_(True),
             KnowledgeDocument.attachment_id > 0,
         )
-        .order_by(KnowledgeDocument.created_at)
         .all()
     )
 
@@ -556,8 +555,15 @@ def _fetch_kb_head_documents_content(
         )
         return ""
 
-    # Collect attachment IDs
-    attachment_ids = [doc.attachment_id for doc in documents]
+    # Build document_id -> document mapping for order preservation
+    documents_by_id = {doc.id: doc for doc in documents}
+
+    # Collect attachment IDs (preserving input order)
+    attachment_ids = [
+        documents_by_id[doc_id].attachment_id
+        for doc_id in document_ids
+        if doc_id in documents_by_id
+    ]
 
     # Query attachment contexts to get extracted_text
     attachment_contexts = (
@@ -575,9 +581,12 @@ def _fetch_kb_head_documents_content(
         ctx.id: ctx.extracted_text for ctx in attachment_contexts if ctx.extracted_text
     }
 
-    # Build document content with offset/limit applied
+    # Build document content with offset/limit applied (preserving input order)
     content_parts = []
-    for doc in documents:
+    for doc_id in document_ids:
+        if doc_id not in documents_by_id:
+            continue
+        doc = documents_by_id[doc_id]
         if doc.attachment_id in attachment_text_map:
             full_text = attachment_text_map[doc.attachment_id]
             # Apply offset and limit to match original kb_head read behavior

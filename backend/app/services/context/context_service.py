@@ -935,9 +935,9 @@ class ContextService:
             "kb_head_result": kb_head_result,
         }
 
-        # Only update status to READY if it's still PENDING
-        # Don't overwrite existing status (e.g., from RAG retrieval)
-        if context.status == ContextStatus.PENDING.value:
+        # Update status to READY if it's PENDING or EMPTY
+        # EMPTY can occur when RAG retrieval returned 0 chunks
+        if context.status in (ContextStatus.PENDING.value, ContextStatus.EMPTY.value):
             context.status = ContextStatus.READY.value
 
         db.commit()
