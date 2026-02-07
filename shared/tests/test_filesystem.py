@@ -382,7 +382,7 @@ class TestExecuteCommand:
 
         assert result["success"] is False
         assert result.get("timed_out") is True
-        assert "timeout" in result["error"].lower()
+        assert "timed out" in result["error"].lower()
 
     @pytest.mark.asyncio
     async def test_execute_command_with_shell_operators(self):
