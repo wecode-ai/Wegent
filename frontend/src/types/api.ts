@@ -517,7 +517,7 @@ export interface MultiAttachmentUploadState {
 
 // Subtask Context Types (unified context system)
 export type ContextType = 'attachment' | 'knowledge_base' | 'table'
-export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed'
+export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
 export interface SubtaskContextBrief {
   id: number

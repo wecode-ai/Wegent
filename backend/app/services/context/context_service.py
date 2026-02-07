@@ -28,6 +28,7 @@ from app.services.attachment.parser import (
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
+from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
 logger = logging.getLogger(__name__)
@@ -734,21 +735,35 @@ class ContextService:
 
         return context
 
+    @trace_sync(
+        span_name="update_knowledge_base_retrieval_result",
+        tracer_name="context_service",
+    )
     def update_knowledge_base_retrieval_result(
         self,
         db: Session,
         context_id: int,
         extracted_text: str,
         sources: List[Dict[str, Any]],
+        injection_mode: str,
+        query: str,
+        chunks_count: int,
     ) -> Optional[SubtaskContext]:
         """
         Update knowledge base context with RAG retrieval results.
 
+        For direct_injection mode, extracted_text is not stored (empty string)
+        since the full content is injected into context and doesn't need to be
+        persisted for observability.
+
         Args:
             db: Database session
             context_id: Context ID to update
-            extracted_text: Concatenated retrieval text from RAG
+            extracted_text: Concatenated retrieval text from RAG (ignored for direct injection)
             sources: List of source info dicts with document_name, chunk_id, score
+            injection_mode: "direct_injection" or "rag_retrieval"
+            query: Original search query
+            chunks_count: Number of chunks retrieved/injected
 
         Returns:
             Updated SubtaskContext or None if not found
@@ -764,15 +779,47 @@ class ContextService:
             )
             return None
 
-        # Update extracted_text and text_length
-        context.extracted_text = extracted_text
-        context.text_length = len(extracted_text) if extracted_text else 0
+        # For direct_injection mode, don't store extracted_text (save storage space)
+        # For rag_retrieval mode, store the extracted text normally
+        if injection_mode == "direct_injection":
+            context.extracted_text = ""
+            context.text_length = 0
+        else:
+            context.extracted_text = extracted_text
+            context.text_length = len(extracted_text) if extracted_text else 0
 
-        # Update type_data with sources info
+        # Set status based on chunks_count
+        if chunks_count > 0:
+            context.status = ContextStatus.READY.value
+        else:
+            context.status = ContextStatus.EMPTY.value
+
+        # Update type_data with rag_result sub-object for better structure
         current_type_data = context.type_data or {}
+        existing_rag_result = current_type_data.get("rag_result", {})
+
+        # Increment retrieval_count to track multiple tool calls
+        retrieval_count = existing_rag_result.get("retrieval_count", 0) + 1
+
+        # Build rag_result sub-object
+        rag_result = {
+            "sources": sources,
+            "injection_mode": injection_mode,
+            "query": query,
+            "chunks_count": chunks_count,
+            "retrieval_count": retrieval_count,
+        }
+
+        # Preserve existing fields (like kb_head_result) and update rag_result
         context.type_data = {
             **current_type_data,
+            "rag_result": rag_result,
+            # Keep flat fields for backward compatibility during transition
             "sources": sources,
+            "injection_mode": injection_mode,
+            "query": query,
+            "chunks_count": chunks_count,
+            "retrieval_count": retrieval_count,
         }
 
         db.commit()
@@ -780,7 +827,9 @@ class ContextService:
 
         logger.info(
             f"Knowledge base context {context_id} updated with RAG results: "
-            f"text_length={context.text_length}, sources_count={len(sources)}"
+            f"injection_mode={injection_mode}, chunks_count={chunks_count}, "
+            f"status={context.status}, sources_count={len(sources)}, "
+            f"retrieval_count={retrieval_count}"
         )
 
         return context
@@ -814,6 +863,89 @@ class ContextService:
 
         logger.warning(
             f"Knowledge base context {context_id} marked as failed: {error_message}"
+        )
+
+        return context
+
+    @trace_sync(
+        span_name="update_knowledge_base_kb_head_result",
+        tracer_name="context_service",
+    )
+    def update_knowledge_base_kb_head_result(
+        self,
+        db: Session,
+        context_id: int,
+        document_ids: List[int],
+        offset: int = 0,
+        limit: int = 50000,
+    ) -> Optional[SubtaskContext]:
+        """
+        Update knowledge base context with kb_head usage tracking.
+
+        This method tracks kb_head tool usage for cross-turn persistence.
+        It stores the KbHeadInput parameters (document_ids, offset, limit)
+        so the content can be re-fetched when loading history.
+
+        IMPORTANT: This method uses APPEND mode - it preserves existing data
+        (like RAG retrieval results) and only updates kb_head-specific fields.
+
+        Args:
+            db: Database session
+            context_id: Context ID to update
+            document_ids: List of document IDs that were read
+            offset: Start position in characters (from KbHeadInput)
+            limit: Max characters to return (from KbHeadInput)
+
+        Returns:
+            Updated SubtaskContext or None if not found
+        """
+        context = self.get_context_optional(db, context_id)
+        if context is None:
+            logger.warning(f"Context {context_id} not found for kb_head update")
+            return None
+
+        if context.context_type != ContextType.KNOWLEDGE_BASE.value:
+            logger.warning(
+                f"Context {context_id} is not a knowledge_base type, skipping kb_head update"
+            )
+            return None
+
+        # APPEND mode: preserve existing type_data and only update kb_head fields
+        current_type_data = context.type_data or {}
+        existing_kb_head_result = current_type_data.get("kb_head_result", {})
+
+        # Increment usage_count
+        usage_count = existing_kb_head_result.get("usage_count", 0) + 1
+
+        # Merge document_ids (deduplicate with existing)
+        existing_doc_ids = set(existing_kb_head_result.get("document_ids", []))
+        existing_doc_ids.update(document_ids)
+
+        # Build kb_head_result sub-object with KbHeadInput params
+        kb_head_result = {
+            "usage_count": usage_count,
+            "document_ids": list(existing_doc_ids),
+            "offset": offset,
+            "limit": limit,
+        }
+
+        # Update type_data (preserve all existing fields like rag_result)
+        context.type_data = {
+            **current_type_data,
+            "kb_head_result": kb_head_result,
+        }
+
+        # Only update status to READY if it's still PENDING
+        # Don't overwrite existing status (e.g., from RAG retrieval)
+        if context.status == ContextStatus.PENDING.value:
+            context.status = ContextStatus.READY.value
+
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Knowledge base context {context_id} updated with kb_head results: "
+            f"usage_count={usage_count}, document_ids={list(existing_doc_ids)}"
         )
 
         return context
