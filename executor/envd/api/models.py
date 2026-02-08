@@ -46,3 +46,21 @@ class ErrorResponse(BaseModel):
 
     message: str
     code: int
+
+
+class WorkspaceFile(BaseModel):
+    """Workspace file information with recursive structure"""
+
+    name: str  # File or directory name
+    path: str  # Relative path from workspace root
+    type: str  # 'file' or 'directory'
+    size: Optional[int] = None  # File size in bytes (only for files)
+    children: Optional[list["WorkspaceFile"]] = None  # Child items (only for directories)
+
+
+class WorkspaceFileListResponse(BaseModel):
+    """Response model for workspace file listing"""
+
+    files: list[WorkspaceFile]
+    total_count: int
+    filtered_count: int  # Count after applying filters
