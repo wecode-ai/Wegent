@@ -131,6 +131,29 @@ wegent-executor --mode local
 3. 选择您想使用的设备
 4. 像往常一样发送消息
 
+### 会话工作目录（可选）
+
+当你使用**本地设备执行器**（例如 ClaudeCode）创建新任务时，可以为该会话选择一个首选工作目录（Workdir），用于决定 AI 在本机上执行时的 `cwd`。
+
+工作目录策略：
+
+1) **托管目录（Managed）**：使用执行器托管的工作区（默认）
+2) **本地已有目录（Existing Directory）**：使用你电脑上的一个已有目录（需要输入绝对路径）
+
+安全限制（重要）：
+
+- 为避免路径滥用/逃逸，本地执行器会对 workdir 做 allowlist 校验
+- 仅允许访问 `LOCAL_WORKDIR_ALLOWED_ROOTS` 指定的根目录列表之下的路径
+- 若校验失败，会自动回退到托管目录（Managed），并在任务思考步骤中提示原因与修复建议
+
+示例（允许访问你的 Projects 目录）：
+
+```bash
+export LOCAL_WORKDIR_ALLOWED_ROOTS="~/.wegent-executor/workspace,~/Projects"
+```
+
+> 当前版本主要用于设置 Claude 的运行目录（`cwd`）。根据策略不同，代码仓库的 clone 位置也可能跟随变化；附件与部分会话文件仍可能保留在执行器托管目录下。
+
 ### 设备状态指示
 
 | 状态 | 图标 | 描述 |

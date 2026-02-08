@@ -446,6 +446,9 @@ spec:
 | `spec.prompt` | string | Yes | Task description |
 | `spec.teamRef` | object | Yes | Team reference |
 | `spec.workspaceRef` | object | Yes | Workspace reference |
+| `spec.device_id` | string | No | device_id used for local device execution (for history/reuse) |
+| `spec.workdir` | string | No | Preferred local workdir (absolute path or `~`-prefixed path) |
+| `spec.workdir_policy` | string | No | Workdir policy: `managed` / `existing` / `repo_bound` |
 
 ### Task Status
 

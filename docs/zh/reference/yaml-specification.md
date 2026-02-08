@@ -446,6 +446,9 @@ spec:
 | `spec.prompt` | string | 是 | 任务描述 |
 | `spec.teamRef` | object | 是 | Team 引用 |
 | `spec.workspaceRef` | object | 是 | Workspace 引用 |
+| `spec.device_id` | string | 否 | 本地设备执行的 device_id（用于任务历史/复用） |
+| `spec.workdir` | string | 否 | 本地设备执行的首选工作目录（绝对路径或 `~` 开头） |
+| `spec.workdir_policy` | string | 否 | 工作目录策略：`managed` / `existing` / `repo_bound` |
 
 ### 任务状态
 
