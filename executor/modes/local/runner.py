@@ -24,7 +24,9 @@ from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.progress_reporter import WebSocketProgressReporter
 from executor.modes.local.websocket_client import WebSocketClient
+from executor.utils.auth_token import is_supported_auth_token, normalize_auth_token
 from shared.logger import setup_logger
+from shared.logger import shutdown_logging
 from shared.status import TaskStatus
 
 logger = setup_logger("local_runner")
@@ -101,22 +103,42 @@ class LocalRunner:
         logger.info(f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}")
         logger.info(f"Workspace Root: {config.LOCAL_WORKSPACE_ROOT}")
         self._running = True
-
-        # Ensure workspace directory exists
-        workspace_root = config.LOCAL_WORKSPACE_ROOT
-        if not os.path.exists(workspace_root):
-            os.makedirs(workspace_root, exist_ok=True)
-            logger.info(f"Created workspace directory: {workspace_root}")
-
-        # Setup signal handlers in the event loop
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, lambda s=sig: self._handle_signal(s, None))
-            except NotImplementedError:
-                signal.signal(sig, self._handle_signal)
-
         try:
+            # Basic configuration validation (fail fast with actionable errors)
+            if not config.WEGENT_BACKEND_URL:
+                logger.error("WEGENT_BACKEND_URL is not set")
+                return
+            if not config.WEGENT_AUTH_TOKEN:
+                logger.error("WEGENT_AUTH_TOKEN is not set")
+                return
+
+            normalized_token = normalize_auth_token(config.WEGENT_AUTH_TOKEN)
+            if not is_supported_auth_token(normalized_token):
+                logger.error(
+                    "WEGENT_AUTH_TOKEN is invalid. Expected a JWT (3 dot-separated segments) "
+                    "or an API key starting with 'wg-'."
+                )
+                logger.error(
+                    "If you redacted it as '...', replace it with the real token from your login."
+                )
+                return
+
+            # Ensure workspace directory exists
+            workspace_root = config.LOCAL_WORKSPACE_ROOT
+            if not os.path.exists(workspace_root):
+                os.makedirs(workspace_root, exist_ok=True)
+                logger.info(f"Created workspace directory: {workspace_root}")
+
+            # Setup signal handlers in the event loop
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.add_signal_handler(
+                        sig, lambda s=sig: self._handle_signal(s, None)
+                    )
+                except NotImplementedError:
+                    signal.signal(sig, self._handle_signal)
+
             # Register WebSocket event handlers
             self._register_handlers()
 
@@ -171,6 +193,9 @@ class LocalRunner:
 
         # Flush file logging handler
         self._cleanup_file_logging()
+
+        # Stop background logging listener threads to avoid noisy tracebacks on exit.
+        shutdown_logging()
 
     def _register_handlers(self) -> None:
         """Register WebSocket event handlers."""

@@ -318,6 +318,44 @@ class ClaudeCodeAgent(Agent):
                 title_key="thinking.initialize_agent", report_immediately=False
             )
 
+            # Report effective working directory if user requested a custom workdir but it was rejected.
+            try:
+                requested_workdir = self.task_data.get("workdir")
+                requested_policy = self.task_data.get("workdir_policy")
+                if requested_policy is None:
+                    requested_policy = self.task_data.get("workdirPolicy")
+
+                if requested_workdir or requested_policy:
+                    from executor.utils.workdir_resolver import (
+                        ALLOWED_ROOTS_ENV,
+                        resolve_task_workdir_details,
+                    )
+
+                    resolution = resolve_task_workdir_details(
+                        self.task_data, self.options.get("cwd")
+                    )
+                    if resolution.effective_cwd:
+                        self.options["cwd"] = resolution.effective_cwd
+
+                    if resolution.fell_back and resolution.reason:
+                        self.add_thinking_step(
+                            title="Working Directory Fallback",
+                            report_immediately=True,
+                            use_i18n_keys=False,
+                            details={
+                                "requested_workdir": requested_workdir,
+                                "requested_policy": requested_policy,
+                                "effective_cwd": resolution.effective_cwd,
+                                "reason": resolution.reason,
+                                "hint": (
+                                    f"Set {ALLOWED_ROOTS_ENV} to include the requested path "
+                                    f"(e.g. {ALLOWED_ROOTS_ENV}='~/Projects,~/Downloads')."
+                                ),
+                            },
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to resolve/report workdir: {e}")
+
             # Check if bot config is available
             if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
                 bot_config = self.task_data["bot"][0]

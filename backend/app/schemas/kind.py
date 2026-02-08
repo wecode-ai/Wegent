@@ -465,6 +465,8 @@ class TaskSpec(BaseModel):
         None  # Bound knowledge bases for group chat
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
+    workdir: Optional[str] = None  # Preferred local working directory for executor
+    workdir_policy: Optional[str] = None  # Workdir policy (managed/existing/repo_bound)
 
 
 class TaskApp(BaseModel):

@@ -55,6 +55,7 @@ logs/
 coverage.xml
 htmlcov/
 .pytest_cache/
+pytest-of-*/
 
 # Database
 *.db

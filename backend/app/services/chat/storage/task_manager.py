@@ -58,6 +58,8 @@ class TaskCreationParams:
     knowledge_base_id: Optional[int] = (
         None  # Knowledge base ID for knowledge type tasks
     )
+    workdir: Optional[str] = None
+    workdir_policy: Optional[str] = None
     # Skill selection - backend determines preload vs download based on executor type
     additional_skills: Optional[List[Dict[str, Any]]] = None
 
@@ -296,6 +298,12 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
+            **({"workdir": params.workdir} if params.workdir else {}),
+            **(
+                {"workdir_policy": params.workdir_policy}
+                if params.workdir_policy
+                else {}
+            ),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}
                 if knowledge_base_refs
@@ -926,6 +934,8 @@ async def create_chat_task(
             model_id=params.model_id,
             force_override_bot_model=params.force_override_bot_model,
             force_override_bot_model_type=params.force_override_bot_model_type,
+            workdir=params.workdir,
+            workdir_policy=params.workdir_policy,
             additional_skills=additional_skills_refs,
         )
 

@@ -128,6 +128,8 @@ class TestCreateChatTaskRouting:
         params = TaskCreationParams(
             message="Test message",
             title="Test Task",
+            workdir="/Users/test/Projects/demo",
+            workdir_policy="existing",
         )
 
         mock_result = TaskCreationResult(
@@ -180,6 +182,8 @@ class TestCreateChatTaskRouting:
         params = TaskCreationParams(
             message="Test message",
             title="Test Task",
+            workdir="/Users/test/Projects/demo",
+            workdir_policy="existing",
         )
 
         mock_task_dict = {"id": 100}
@@ -218,4 +222,8 @@ class TestCreateChatTaskRouting:
 
             # Verify task_kinds_service.create_task_or_append was called (Executor path)
             mock_service.create_task_or_append.assert_called_once()
+            call_kwargs = mock_service.create_task_or_append.call_args.kwargs
+            task_create = call_kwargs["obj_in"]
+            assert task_create.workdir == "/Users/test/Projects/demo"
+            assert task_create.workdir_policy == "existing"
             assert result.ai_triggered is True

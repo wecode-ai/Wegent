@@ -188,6 +188,11 @@ class TaskOperationsMixin:
             )
 
         # Update existing task status to PENDING
+        if obj_in.workdir is not None:
+            task_crd.spec.workdir = obj_in.workdir
+        if obj_in.workdir_policy is not None:
+            task_crd.spec.workdir_policy = obj_in.workdir_policy
+
         if task_crd.status:
             task_crd.status.status = "PENDING"
             task_crd.status.progress = 0
@@ -275,6 +280,12 @@ class TaskOperationsMixin:
                     "user_id": team.user_id,
                 },
                 "workspaceRef": {"name": workspace_name, "namespace": "default"},
+                **({"workdir": obj_in.workdir} if obj_in.workdir else {}),
+                **(
+                    {"workdir_policy": obj_in.workdir_policy}
+                    if obj_in.workdir_policy
+                    else {}
+                ),
             },
             "status": {
                 "state": "Available",

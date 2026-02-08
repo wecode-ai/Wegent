@@ -67,6 +67,9 @@ ls -la dist/wegent-executor
 ### 3. 运行二进制
 
 ```bash
+# 注意：`wegent-executor` 是二进制可执行文件，不要用 `sh xxx` 来运行（会报 “cannot execute binary file”）。
+# ✅ 直接执行（推荐）
+#
 # 方式 1: 直接运行
 EXECUTOR_MODE=local \
 WEGENT_BACKEND_URL=http://localhost:8000 \
@@ -81,6 +84,15 @@ WEGENT_AUTH_TOKEN=your-auth-token
 EOF
 
 source ~/.wegent-executor/config.env && ./dist/wegent-executor
+```
+
+如果你把二进制安装到了 `~/.wegent-executor/bin/`，那么在**任意目录**都可以直接用绝对路径运行：
+
+```bash
+EXECUTOR_MODE=local \
+WEGENT_BACKEND_URL=http://localhost:8000 \
+WEGENT_AUTH_TOKEN=your-auth-token \
+~/.wegent-executor/bin/wegent-executor
 ```
 
 ### 4. 安装二进制
@@ -134,6 +146,22 @@ sudo cp dist/wegent-executor /usr/local/bin/
 |----------|--------|------|
 | `ANTHROPIC_API_KEY` | - | Anthropic API Key |
 | `SKILL_CLEAR_CACHE` | `true` | 是否清理 Skills 缓存 |
+
+### macOS 运行注意事项（重要）
+
+本地执行器的发布二进制是 PyInstaller `--onefile` 模式，启动时会先解压到系统临时目录（`$TMPDIR`）。
+如果系统盘空间不足，可能出现进程直接被系统杀掉（终端只看到 `killed`）或启动卡住。
+
+建议：
+
+1) 确保系统盘（`/System/Volumes/Data`）至少留出 **10GB+** 可用空间
+2) 或者把临时目录和执行器数据目录放到空间充足的磁盘（例如外接盘）：
+
+```bash
+export TMPDIR=/Volumes/hardDisk/.tmp-wegent-executor
+export WEGENT_EXECUTOR_HOME=/Volumes/hardDisk/.wegent-executor
+mkdir -p "$TMPDIR" "$WEGENT_EXECUTOR_HOME"
+```
 
 ## 测试
 

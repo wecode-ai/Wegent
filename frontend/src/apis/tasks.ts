@@ -15,6 +15,8 @@ export interface CreateTaskRequest {
   git_repo_id: number
   git_domain: string
   branch_name: string
+  workdir?: string
+  workdir_policy?: 'managed' | 'existing' | 'repo_bound'
   prompt: string
   task_type?: string
   batch: number

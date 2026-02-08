@@ -618,6 +618,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 git_repo_id=payload.git_repo_id,
                 git_domain=payload.git_domain,
                 branch_name=payload.branch_name,
+                workdir=payload.workdir,
+                workdir_policy=payload.workdir_policy,
             )
             logger.info(f"[WS] chat:send StreamChatRequest created")
 
@@ -660,6 +662,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 branch_name=payload.branch_name,
                 task_type=payload.task_type,
                 knowledge_base_id=payload.knowledge_base_id,
+                workdir=payload.workdir,
+                workdir_policy=payload.workdir_policy,
                 additional_skills=additional_skills_dicts,
             )
 

@@ -30,18 +30,19 @@ def _handle_version_flag() -> None:
     If the flag is present, print version and exit immediately.
     This is done before any heavy imports to ensure fast response.
 
-    Note: In PyInstaller builds, version flag is handled earlier by the
-    runtime hook (hooks/rthook_version.py) to avoid cleanup errors.
-    This function serves as a fallback for non-frozen (development) mode.
+    Note: In PyInstaller builds, a runtime hook (hooks/rthook_version.py) also
+    handles --version/-v. This function provides a robust fallback path in case
+    the hook fails or is not included.
     """
-    # Skip if already handled by PyInstaller runtime hook
-    if getattr(sys, "frozen", False):
-        return
-
     if "--version" in sys.argv or "-v" in sys.argv:
         from executor.version import get_version
 
         print(get_version(), flush=True)
+        if getattr(sys, "frozen", False):
+            import os
+
+            os._exit(0)
+            return
         sys.exit(0)
 
 

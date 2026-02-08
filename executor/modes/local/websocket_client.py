@@ -39,6 +39,7 @@ import socketio
 
 from executor.config import config
 from executor.platform_compat import get_permissions_manager
+from executor.utils.auth_token import normalize_auth_token
 from executor.version import get_version
 from shared.logger import setup_logger
 
@@ -83,7 +84,7 @@ class WebSocketClient:
             reconnection_delay_max: Maximum reconnection delay in seconds.
         """
         self.backend_url = backend_url or config.WEGENT_BACKEND_URL
-        self.auth_token = self._normalize_token(auth_token or config.WEGENT_AUTH_TOKEN)
+        self.auth_token = normalize_auth_token(auth_token or config.WEGENT_AUTH_TOKEN)
 
         # Device identification
         self.device_id = self._generate_device_id()
@@ -120,15 +121,6 @@ class WebSocketClient:
 
         # Setup internal event handlers
         self._setup_internal_handlers()
-
-    def _normalize_token(self, token: str) -> str:
-        """Normalize JWT token by stripping optional Bearer prefix."""
-        if not token:
-            return ""
-        token = token.strip()
-        if token.lower().startswith("bearer "):
-            return token.split(" ", 1)[1]
-        return token
 
     def _generate_device_id(self) -> str:
         """Generate stable unique device ID.
@@ -486,12 +478,17 @@ class WebSocketClient:
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket server."""
-        if self._connected:
-            try:
-                await self.sio.disconnect()
+        try:
+            # Always attempt disconnect to ensure Engine.IO monitor threads are stopped,
+            # even if we never reached the "connected" state.
+            await self.sio.disconnect()
+            if self._connected:
                 logger.info("WebSocket disconnected gracefully")
-            except Exception as e:
+        except Exception as e:
+            if self._connected:
                 logger.warning(f"Error during WebSocket disconnect: {e}")
+            else:
+                logger.debug(f"Ignoring disconnect error while not connected: {e}")
         self._connected = False
         self._registered = False
 
