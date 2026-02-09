@@ -50,10 +50,10 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
 
     if not has_access and context.subtask_id > 0:
         # Check if user is a task owner or member
-        from app.models.subtask import Subtask
-        from app.models.task import TaskResource
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
+        from app.models.subtask import Subtask
+        from app.models.task import TaskResource
 
         subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
         if subtask:
