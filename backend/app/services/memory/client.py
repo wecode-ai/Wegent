@@ -299,6 +299,9 @@ class LongTermMemoryClient:
         if not response.success:
             return MemorySearchResponse(results=[])
 
+        if response.data is None:
+            return MemorySearchResponse(results=[])
+
         result = MemorySearchResponse(**response.data)
         logger.info(
             "Found %d memories for user %s",
