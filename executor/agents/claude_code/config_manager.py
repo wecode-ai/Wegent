@@ -273,7 +273,6 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         if mcp_servers:
             # Replace placeholders in MCP servers config with actual values
             mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
-            logger.info(f"Detected MCP servers configuration: {mcp_servers}")
             bot_config["mcp_servers"] = mcp_servers
 
         # Add wegent MCP server for subscription tasks

@@ -26,6 +26,7 @@ class TaskState(Enum):
     RUNNING = "running"
     CANCELLING = "cancelling"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"  # Task interrupted but resumable
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -65,7 +66,12 @@ class TaskStateManager:
             if state == TaskState.CANCELLING:
                 self._cancel_timestamps[task_id] = datetime.now()
                 logger.info(f"Task {task_id} state changed: {old_state} -> {state}")
-            elif state in [TaskState.CANCELLED, TaskState.COMPLETED, TaskState.FAILED]:
+            elif state in [
+                TaskState.CANCELLED,
+                TaskState.INTERRUPTED,
+                TaskState.COMPLETED,
+                TaskState.FAILED,
+            ]:
                 logger.info(f"Task {task_id} state changed: {old_state} -> {state}")
 
     def get_state(self, task_id: int) -> Optional[TaskState]:
@@ -83,16 +89,36 @@ class TaskStateManager:
 
     def is_cancelled(self, task_id: int) -> bool:
         """
-        Check if task has been cancelled
+        Check if task has been cancelled or interrupted
 
         Args:
             task_id: Task ID
 
         Returns:
-            True if task is in cancelling or cancelled state
+            True if task is in cancelling, cancelled, or interrupted state
         """
         state = self.get_state(task_id)
-        return state in [TaskState.CANCELLING, TaskState.CANCELLED]
+        return state in [
+            TaskState.CANCELLING,
+            TaskState.CANCELLED,
+            TaskState.INTERRUPTED,
+        ]
+
+    def set_interrupted(self, task_id: int) -> None:
+        """
+        Mark task as interrupted (resumable)
+
+        Args:
+            task_id: Task ID
+        """
+        with self._state_lock:
+            old_state = self._states.get(task_id)
+            self._states[task_id] = TaskState.INTERRUPTED
+            if task_id not in self._cancel_timestamps:
+                self._cancel_timestamps[task_id] = datetime.now()
+            logger.info(
+                f"Task {task_id} state changed: {old_state} -> TaskState.INTERRUPTED"
+            )
 
     def should_continue(self, task_id: int) -> bool:
         """

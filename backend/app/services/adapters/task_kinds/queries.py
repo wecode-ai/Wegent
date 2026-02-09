@@ -184,7 +184,10 @@ class TaskQueryMixin:
         member_counts = {}
         if task_ids_for_members:
             member_count_results = (
-                db.query(ResourceMember.resource_id, func.count(ResourceMember.id).label("count"))
+                db.query(
+                    ResourceMember.resource_id,
+                    func.count(ResourceMember.id).label("count"),
+                )
                 .filter(
                     ResourceMember.resource_type == ResourceType.TASK,
                     ResourceMember.resource_id.in_(task_ids_for_members),
@@ -484,7 +487,10 @@ class TaskQueryMixin:
         member_counts = {}
         if task_ids_for_members:
             member_count_results = (
-                db.query(ResourceMember.resource_id, func.count(ResourceMember.id).label("count"))
+                db.query(
+                    ResourceMember.resource_id,
+                    func.count(ResourceMember.id).label("count"),
+                )
                 .filter(
                     ResourceMember.resource_type == ResourceType.TASK,
                     ResourceMember.resource_id.in_(task_ids_for_members),
