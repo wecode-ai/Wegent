@@ -8,8 +8,6 @@
 1. **Task Restoration（任务恢复）** - 允许过期任务继续对话
 2. **Workspace Archive（工作区归档）** - 为 Code 任务提供文件备份和恢复
 
-后续简化（`wegent/remove-db-session-id-persistence` 分支）移除了数据库 Session ID 持久化机制，统一使用 Workspace 归档作为唯一的会话恢复来源。
-
 ## 问题背景
 
 在 Wegent 中，任务使用 Docker 容器（执行器）来处理 AI 对话。这些容器有生命周期限制：
@@ -251,7 +249,7 @@ flowchart TB
         L --> M
     end
 
-    subgraph 过期处理["会话过期自动降级"]:::new
+    subgraph 过期处理["会话过期自动降级"]
         N[Claude SDK.connect 失败] --> O{Session 相关错误?}:::new
         O -->|是| P[移除 resume 参数]:::new
         O -->|否| Q[抛出异常]
@@ -377,8 +375,7 @@ flowchart LR
     D --> E[更新 Task metadata]:::new
     E --> F[新容器启动]
 
-    rect rgb(212, 237, 218)
-        Note over F,I: ✅ 新增：恢复流程
+    subgraph 恢复流程["✅ 新增：恢复流程"]
         F --> G[_restore_workspace_if_needed]:::new
         G --> H[检查 workspaceRestorePending]:::new
         H --> I{有 workspaceArchiveUrl?}:::new
@@ -516,13 +513,6 @@ flowchart TB
 | 文件 | 职责 | 状态 |
 |------|------|------|
 | `executor_manager/routers/routers.py` | POST /executor/address 端点 | 🔧 修改 |
-
-### 数据库迁移
-
-| 文件 | 职责 | 状态 |
-|------|------|------|
-| `backend/alembic/versions/2607db2c2be9_drop_claude_session_id_column_from_.py` | 删除 claude_session_id 列 | ✅ 新增 |
-| `backend/alembic/versions/x4y5z6a7b8c9_add_claude_session_id_to_subtasks.py` | 添加 claude_session_id 列（已废弃） | 🗑️ 删除 |
 
 ## 测试
 

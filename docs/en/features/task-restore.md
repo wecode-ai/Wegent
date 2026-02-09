@@ -8,8 +8,6 @@ This implementation includes two core features:
 1. **Task Restoration** - Allows continuing conversations on expired tasks
 2. **Workspace Archive** - Provides file backup and restore for Code tasks
 
-Subsequent simplification (branch `wegent/remove-db-session-id-persistence`) removed the database Session ID persistence mechanism, unifying Workspace archive as the sole source for session recovery.
-
 ## Problem Background
 
 In Wegent, tasks use Docker containers (executors) to process AI conversations. These containers have lifecycle limits:
@@ -251,7 +249,7 @@ flowchart TB
         L --> M
     end
 
-    subgraph ExpiryHandling["Session expiry auto-fallback"]:::new
+    subgraph ExpiryHandling["Session expiry auto-fallback"]
         N[Claude SDK.connect fails] --> O{Session related error?}:::new
         O -->|Yes| P[Remove resume parameter]:::new
         O -->|No| Q[Throw exception]
@@ -377,8 +375,7 @@ flowchart LR
     D --> E[Update Task metadata]:::new
     E --> F[New container starts]
 
-    rect rgb(212, 237, 218)
-        Note over F,I: ✅ New: Restore flow
+    subgraph 恢复流程["✅ New: Restore flow"]
         F --> G[_restore_workspace_if_needed]:::new
         G --> H[Check workspaceRestorePending]:::new
         H --> I{Has workspaceArchiveUrl?}:::new
@@ -516,14 +513,6 @@ flowchart TB
 | File | Responsibility | Status |
 |------|----------------|--------|
 | `executor_manager/routers/routers.py` | POST /executor/address endpoint | 🔧 Modified |
-
-### Database Migration
-
-| File | Responsibility | Status |
-|------|----------------|--------|
-| `backend/alembic/versions/2607db2c2be9_drop_claude_session_id_column_from_.py` | Drop claude_session_id column | ✅ New |
-| `backend/alembic/versions/x4y5z6a7b8c9_add_claude_session_id_to_subtasks.py` | Add claude_session_id column (deprecated) | 🗑️ Deleted |
-
 ## Tests
 
 ### Unit Tests
