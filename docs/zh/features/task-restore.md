@@ -4,7 +4,11 @@
 
 任务恢复功能允许用户在任务过期或执行器容器被清理后继续对话，同时保留完整的会话上下文。
 
-本次重构（`wegent/remove-db-session-id-persistence` 分支）移除了数据库 Session ID 持久化机制，简化为仅使用 Workspace 归档恢复方案，降低了系统复杂度并减少了数据库依赖。
+本次实现包含两个核心功能：
+1. **Task Restoration（任务恢复）** - 允许过期任务继续对话
+2. **Workspace Archive（工作区归档）** - 为 Code 任务提供文件备份和恢复
+
+后续简化（`wegent/remove-db-session-id-persistence` 分支）移除了数据库 Session ID 持久化机制，统一使用 Workspace 归档作为唯一的会话恢复来源。
 
 ## 问题背景
 
@@ -18,7 +22,7 @@
 当容器过期被清理后，用户尝试继续对话会遇到两个问题：
 
 1. **容器不存在** - 原执行器容器已被删除
-2. **会话上下文丢失** - Claude SDK 的 session ID 保存在容器内，随容器一起丢失
+2. **会话上下文丢失** - Claude SDK 的 session ID 和工作区文件随容器一起丢失
 
 ## 解决方案概览
 
@@ -26,25 +30,46 @@
 flowchart TB
     subgraph 问题["❌ 原有问题"]
         A[容器过期] --> B[容器被清理]
-        B --> C[Session ID 丢失]
+        B --> C[会话上下文丢失]
         C --> D[AI 失去对话记忆]
+        C --> E[工作区文件丢失]
     end
 
     subgraph 方案["✅ 解决方案"]
-        E[检测过期/已删除] --> F[提示用户恢复]
-        F --> G[重置容器状态]
-        G -.->|❌ 已废弃: 数据库持久化| H[从数据库读取 Session ID]
-        G --> H2[从 Workspace 归档恢复 Session ID]:::current
-        H2 --> I[SessionManager 恢复会话]:::current
-        I --> J[恢复 Workspace 文件]:::current
+        F[检测过期/已删除] --> G[提示用户恢复]
+        G --> H[重置容器状态]
+        H --> I{任务类型?}
+        I -->|Chat| J[会话恢复流程]
+        I -->|Code| K[会话+工作区恢复流程]
+
+        subgraph Chat恢复["Chat 任务恢复"]
+            J1[标记 Workspace 待恢复]:::new
+            J1 --> J2[新容器启动]
+            J2 --> J3[下载 Workspace 归档]:::new
+            J3 --> J4[恢复 .claude_session_id]:::new
+            J4 --> J5[SessionManager 加载会话]:::new
+        end
+
+        subgraph Code恢复["Code 任务恢复"]
+            K1[标记 Workspace 待恢复]:::new
+            K1 --> K2[生成 S3 预签名 URL]:::new
+            K2 --> K3[新容器启动]
+            K3 --> K4[下载 Workspace 归档]:::new
+            K4 --> K5[解压到工作区]:::new
+            K5 --> K6[恢复 .claude_session_id]:::new
+            K6 --> K7[SessionManager 加载会话]:::new
+        end
+
+        J --> L[AI 继续对话]
+        K --> L
     end
 
     问题 -.->|任务恢复功能| 方案
 
-    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
-> 💡 **图例**：绿色节点为当前实现（Workspace 归档），灰色节点为已废弃的数据库持久化方案
+> 💡 **图例**：绿色节点为新增功能实现
 
 ## 用户操作流程
 
@@ -53,7 +78,7 @@ sequenceDiagram
     actor 用户
     participant 前端
     participant 后端
-    participant 数据库
+    participant S3 as S3 存储
     participant 新容器
 
     用户->>前端: 向过期任务发送消息
@@ -64,27 +89,48 @@ sequenceDiagram
     alt 选择继续对话
         用户->>前端: 点击"继续对话"
         前端->>后端: POST /tasks/{id}/restore
-        后端->>后端: 重置任务状态
-        后端->>后端: 标记 Workspace 待恢复
+
+        rect rgb(212, 237, 218)
+            Note over 后端: 后端恢复流程
+            后端->>后端: 验证任务权限和状态
+            后端->>后端: 清除 executor_deleted_at
+            后端->>后端: 清除所有 executor_name
+
+            alt Code 任务
+                后端->>后端: 查找 S3 归档
+                后端->>后端: 标记 workspaceRestorePending=true:::new
+                后端->>后端: 生成 S3 预签名 URL:::new
+                后端->>后端: 标记 workspaceArchiveUrl:::new
+            end
+
+            后端->>后端: 重置 updated_at
+        end
+
         后端-->>前端: 恢复成功
         前端->>后端: 重发消息
+        后端->>后端: 创建新执行器
+
         rect rgb(212, 237, 218)
-            Note over 后端,S3: Workspace 归档恢复
-            后端->>后端: 标记 Workspace 待恢复
-            后端-.->|❌ 已废弃| 数据库: 读取 claude_session_id
-            新容器->>S3: 下载 Workspace 归档
-            S3-->>新容器: 返回 .claude_session_id
+            Note over 后端,S3: 归档恢复流程
+            后端->>S3: 检查归档是否存在:::new
+            S3-->>后端: 返回归档信息
+
+            新容器->>S3: 下载 Workspace 归档:::new
+            S3-->>新容器: 返回 .claude_session_id 和文件
+
+            新容器->>新容器: 解压到工作区:::new
+            新容器->>新容器: SessionManager 加载会话:::new
         end
-        新容器->>新容器: SessionManager 加载会话
-        新容器->>新容器: 解压 Workspace 文件
+
         新容器-->>用户: AI 继续对话（保留上下文）
+
     else 选择新建对话
         用户->>前端: 点击"新建对话"
         前端->>后端: 创建新任务
     end
 ```
 
-> 💡 **图例**：灰色虚线操作为已废弃的数据库读取方案
+> 💡 **图例**：绿色标注为新增的 Workspace 归档相关操作
 
 ## 核心机制
 
@@ -111,6 +157,22 @@ sequenceDiagram
 }
 ```
 
+**容器不存在检测** (`executor_kinds.py`):
+```python
+# 当收到 "container not found" 错误时，标记 executor_deleted_at
+if (
+    subtask_update.status == SubtaskStatus.FAILED
+    and subtask_update.error_message
+):
+    error_msg = subtask_update.error_message.lower()
+    if "container" in error_msg and "not found" in error_msg:
+        logger.info(
+            f"Container not found error detected, "
+            f"marking executor_deleted_at=True"
+        )
+        subtask.executor_deleted_at = True  # ✅ 新增
+```
+
 ### 2. 任务恢复 API
 
 **端点**: `POST /api/v1/tasks/{task_id}/restore`
@@ -129,6 +191,7 @@ interface RestoreTaskResponse {
   task_id: number
   task_type: string
   executor_rebuilt: boolean
+  workspace_restore_pending: boolean  // ✅ 新增：Workspace 待恢复标记
   message: string
 }
 ```
@@ -140,10 +203,18 @@ flowchart LR
     A[验证任务] --> B[清除 executor_deleted_at]
     B --> C[清除所有 executor_name]
     C --> D{是 Code 任务?}
-    D -->|是| E[标记 Workspace 待恢复]
+    D -->|是| E[查找 S3 归档]:::new
     D -->|否| F[重置 updated_at]
-    E --> F
-    F --> G[返回成功]
+    E --> G{归档存在?}:::new
+    G -->|是| H[标记 workspaceRestorePending=true]:::new
+    G -->|否| I[记录警告]:::new
+    H --> J[生成 S3 预签名 URL]:::new
+    J --> K[标记 workspaceArchiveUrl]:::new
+    K --> F
+    I --> F
+    F --> L[返回成功]
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
 | 步骤 | 说明 |
@@ -151,7 +222,9 @@ flowchart LR
 | 验证任务 | 检查任务存在、用户权限、任务状态可恢复 |
 | 清除 executor_deleted_at | 允许任务接收新消息 |
 | 清除 executor_name | 清除**所有** ASSISTANT subtask 的 executor_name，强制创建新容器 |
-| 标记 Workspace 待恢复 | Code 任务：在元数据中标记 S3 归档 URL |
+| 查找 S3 归档 | ✅ Code 任务：检查 S3 中是否存在归档 |
+| 标记待恢复 | ✅ Code 任务：在元数据中标记 `workspaceRestorePending=true` 和 `workspaceArchiveUrl` |
+| 生成预签名 URL | ✅ 生成 S3 预签名 URL 供 Executor 下载 |
 
 **可恢复的任务状态**：`COMPLETED`、`FAILED`、`CANCELLED`、`PENDING_CONFIRMATION`
 
@@ -164,7 +237,7 @@ flowchart TB
     subgraph SessionManager["SessionManager 职责"]
         A[客户端连接缓存] --> B["_clients: session_id → Client"]
         C[Session ID 映射] --> D["_session_id_map: internal_key → actual_id"]
-        E[本地文件持久化] --> F[".claude_session_id"]:::current
+        E[本地文件持久化] --> F[".claude_session_id"]
     end
 
     subgraph 解析逻辑["resolve_session_id()"]
@@ -178,17 +251,18 @@ flowchart TB
         L --> M
     end
 
-    subgraph 已废弃["❌ 已废弃的数据库持久化"]
-        direction TB
-        N[subtasks.claude_session_id 列] --> O[数据库存储 session_id]
-        O -.->|不再使用| P[Backend 传递到 Executor]
+    subgraph 过期处理["会话过期自动降级"]:::new
+        N[Claude SDK.connect 失败] --> O{Session 相关错误?}:::new
+        O -->|是| P[移除 resume 参数]:::new
+        O -->|否| Q[抛出异常]
+        P --> R[创建新会话]:::new
+        R --> S[重新连接]:::new
     end
 
-    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
-    classDef deprecated fill:#f8d7da,stroke:#dc3545,stroke-width:2px,stroke-dasharray: 5 5
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
-> 💡 **图例**：绿色为当前实现，红色为已废弃的数据库持久化方案
+> 💡 **图例**：绿色节点为新增的会话过期处理逻辑
 
 **Session ID 解析优先级**：
 
@@ -197,7 +271,32 @@ flowchart TB
 | 1 | 本地文件 `.claude_session_id` | 从 Workspace 归档恢复，用于跨容器恢复 |
 | 2 | internal_key | 格式为 `task_id:bot_id`，同容器内标识 |
 | 3 | 新建会话 | 无历史记录时创建新会话 |
-| ❌ | 数据库 `subtasks.claude_session_id` | 已废弃，不再使用 |
+
+**会话过期自动降级** (`claude_code_agent.py`):
+```python
+# ✅ 新增：Session 过期自动降级处理
+try:
+    await self.client.connect()
+except Exception as e:
+    error_msg = str(e).lower()
+    # 检测 session 相关错误
+    session_error_keywords = ["session", "expired", "invalid", "resume"]
+    if any(keyword in error_msg for keyword in session_error_keywords):
+        logger.warning(
+            f"Session error detected, creating new session. "
+            f"Original error: {e}"
+        )
+        # 移除 resume 参数，创建新会话
+        self.options.pop("resume", None)
+        if self.options:
+            code_options = ClaudeAgentOptions(**self.options)
+            self.client = ClaudeSDKClient(options=code_options)
+        else:
+            self.client = ClaudeSDKClient()
+        await self.client.connect()
+    else:
+        raise
+```
 
 ### 4. Workspace 归档恢复
 
@@ -205,63 +304,117 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A[任务恢复] --> B{executor_rebuilt?}
+    A[任务恢复 API] --> B{executor_rebuilt?}
     B -->|是| C{是 Code 任务?}
     B -->|否| D[跳过]
-    C -->|是| E[查找 S3 归档]
+    C -->|是| E[调用 S3 检查归档]:::new
     C -->|否| D
-    E --> F{归档存在?}
-    F -->|是| G[标记待恢复]
-    F -->|否| H[记录警告]
-    G --> I[新容器启动时下载]
+    E --> F{归档存在?}:::new
+    F -->|是| G[标记 workspaceRestorePending=true]:::new
+    F -->|否| H[记录警告]:::new
+    G --> I[生成预签名 URL]:::new
+    I --> J[标记 workspaceArchiveUrl]:::new
+    J --> K[更新 Task metadata]:::new
+    K --> L[新容器启动时下载]:::new
+    H --> D
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
 **实现位置**：`backend/app/services/adapters/workspace_archive.py` 中的 `mark_for_restore()` 方法
 
 ## 数据流详解
 
-### 任务恢复时（Workspace 归档 → Executor）
+### Workspace 归档流程（清理前）
+
+```mermaid
+sequenceDiagram
+    participant Backend
+    participant Executor
+    participant ExecutorManager
+    participant S3 as S3 存储
+
+    Note over Backend: 执行器清理触发
+    Backend->>Backend: 检测任务过期或容器清理
+    Backend->>Backend: 检查任务类型和归档配置
+
+    rect rgb(212, 237, 218)
+        Note over Backend,ExecutorManager: ✅ 新增：归档流程
+        Backend->>ExecutorManager: 获取容器地址:::new
+        ExecutorManager-->>Backend: 返回 base_url:::new
+
+        Backend->>Executor: POST /api/workspace/archive:::new
+        Executor->>Executor: 创建 tar.gz 归档:::new
+        Note over Executor: - Git 追踪文件<br/>- .claude_session_id<br/>- 排除 node_modules 等
+        Executor-->>Backend: 返回归档数据:::new
+
+        Backend->>S3: 上传归档:::new
+        S3-->>Backend: 上传成功:::new
+
+        Backend->>Backend: 更新 Workspace CRD status:::new
+        Note over Backend: - archiveUrl<br/>- archiveSize<br/>- archivedAt
+    end
+
+    Backend->>Backend: 清理执行器
+```
+
+**归档内容**：
+- Git 追踪的代码文件（`git ls-files`）
+- `.claude_session_id` 会话 ID 文件
+
+**排除的目录**：
+- `node_modules`, `__pycache__`, `.venv`, `venv`
+- `.env`, `.git`, `dist`, `build`, `.next`, `.nuxt`
+- `target`, `vendor`, `.cache`, `.npm`, `.yarn`
+
+### Workspace 恢复流程（任务恢复时）
 
 ```mermaid
 flowchart LR
-    A[任务恢复 API] --> B[标记 Workspace 待恢复]:::current
-    B --> C[生成 S3 预签名 URL]:::current
-    C --> D[更新 Task 元数据]:::current
-    D --> E[新容器启动]
-    E --> F[下载 Workspace 归档]:::current
-    F --> G[解压到工作区]:::current
-    G --> H[恢复 .claude_session_id]:::current
-    H --> I[SessionManager 加载会话]:::current
+    A[任务恢复 API] --> B[标记 workspaceRestorePending=true]:::new
+    B --> C[生成 S3 预签名 URL]:::new
+    C --> D[标记 workspaceArchiveUrl]:::new
+    D --> E[更新 Task metadata]:::new
+    E --> F[新容器启动]
 
-    subgraph 已废弃["❌ 已废弃的数据库路径"]
-        A -.->|不再使用| B2[从数据库读取 session_id]
-        B2 -.-> C2[Backend 传递给 Executor]
+    rect rgb(212, 237, 218)
+        Note over F,I: ✅ 新增：恢复流程
+        F --> G[_restore_workspace_if_needed]:::new
+        G --> H[检查 workspaceRestorePending]:::new
+        H --> I{有 workspaceArchiveUrl?}:::new
+        I -->|是| J[下载归档]:::new
+        I -->|否| K[跳过]:::new
+        J --> L[解压到工作区]:::new
+        L --> M[恢复 .claude_session_id]:::new
     end
 
-    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
-    classDef deprecated fill:#f8d7da,stroke:#dc3545,stroke-width:2px,stroke-dasharray: 5 5
+    M --> N[SessionManager 加载会话]
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
-**Workspace 归档包含**：
-- Git 追踪的代码文件
-- `.claude_session_id` 会话 ID 文件
+**实现位置**：
+- Backend: `backend/app/services/adapters/workspace_archive.py::mark_for_restore()`
+- Executor: `executor/agents/base.py::_restore_workspace_if_needed()`
+- Executor: `executor/services/workspace_service.py::restore_workspace_from_archive()`
 
 ### 任务完成时（Session ID 保存）
 
 ```mermaid
 flowchart LR
-    A[Claude SDK 返回 session_id] --> B[SessionManager 保存]:::current
-    B --> C[写入本地文件]:::current
-    C --> D[.claude_session_id]:::current
+    A[Claude SDK 返回 session_id] --> B[SessionManager 保存]:::existing
+    B --> C[写入本地文件]:::existing
+    C --> D[.claude_session_id]:::existing
 
-    subgraph 已废弃["❌ 已废弃的数据库保存"]
-        A -.->|不再写入| B2[添加到 result 字典]
-        B2 -.-> C2[Backend 提取保存到 subtasks 表]
-    end
+    E[任务完成/清理] --> F[创建 Workspace 归档]:::new
+    F --> G[上传到 S3]:::new
+    G --> H[更新 Workspace CRD]:::new
 
-    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
-    classDef deprecated fill:#f8d7da,stroke:#dc3545,stroke-width:2px,stroke-dasharray: 5 5
+    classDef existing fill:#e7f3ff,stroke:#2196f3,stroke-width:2px
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
+
+> 💡 **图例**：蓝色为原有逻辑，绿色为新增的归档逻辑
 
 **代码示例**（SessionManager）：
 
@@ -275,33 +428,28 @@ if saved_session_id:
     self.options["resume"] = saved_session_id
 ```
 
-**代码变更说明**：
-
-本次改动移除了以下代码路径：
-- ❌ `shared/models/db/subtask.py`: 删除 `claude_session_id` 数据库列
-- ❌ `backend/app/services/adapters/executor_kinds.py`: 移除从数据库读取和传递 session_id 的逻辑
-- ❌ `executor/agents/claude_code/response_processor.py`: 移除将 session_id 写入 result 的逻辑
-- ❌ `executor/agents/claude_code/claude_code_agent.py`: 简化为仅从本地文件加载 session_id
-
 ## Session 过期处理
 
 当尝试恢复会话失败时，系统自动降级处理：
 
 ```mermaid
 flowchart TB
-    A[尝试恢复会话] --> B{可重试错误?}
-    B -->|是| C[获取实际 session_id]
-    C --> D[返回 RETRY_WITH_RESUME]
-    D --> E[使用 session resume 重试]
-    E --> F{重试成功?}
-    F -->|是| G[继续使用恢复的会话]
-    F -->|否| H[创建新会话]
-    B -->|否| I[抛出异常]
+    A[Claude SDK.connect] --> B{连接成功?}:::new
+    B -->|是| C[继续使用连接的会话]:::existing
+    B -->|否| D{Session 相关错误?}:::new
+    D -->|是| E[移除 resume 参数]:::new
+    D -->|否| F[抛出异常]
+    E --> G[创建新会话]:::new
+    G --> H[重新连接]:::new
+    H --> I{重试成功?}:::new
+    I -->|是| J[继续使用新会话]:::new
+    I -->|否| F
+
+    classDef existing fill:#e7f3ff,stroke:#2196f3,stroke-width:2px
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
-**可重试错误类型**：通过 `is_retryable_error_subtype()` 函数判断
-
-**重试限制**：`MAX_ERROR_SUBTYPE_RETRIES` 次
+**可重试错误类型**：包含 `session`, `expired`, `invalid`, `resume` 等关键词
 
 ## 配置
 
@@ -310,97 +458,91 @@ flowchart TB
 | `APPEND_CHAT_TASK_EXPIRE_HOURS` | Chat 任务过期小时数 | 2 |
 | `APPEND_CODE_TASK_EXPIRE_HOURS` | Code 任务过期小时数 | 24 |
 
-## 重构说明：移除数据库 Session ID 持久化
+### Workspace Archive 配置 ✅ 新增
 
-### 改动动机
-
-原有的 Session ID 持久化方案同时使用了数据库和 Workspace 归档两种机制，存在以下问题：
-
-1. **双重存储冗余**：Session ID 同时存储在数据库 `subtasks.claude_session_id` 和 Workspace 归档 `.claude_session_id` 文件中
-2. **数据一致性风险**：数据库和归档文件可能不一致，增加维护复杂度
-3. **不必要的数据库依赖**：Workspace 归档已经包含完整恢复所需信息
-
-### 本次改动
-
-本次重构移除了数据库持久化路径，统一使用 Workspace 归档作为唯一的 Session ID 恢复来源。
-
-**移除的文件**：
-- ❌ 删除数据库迁移文件：`backend/alembic/versions/x4y5z6a7b8c9_add_claude_session_id_to_subtasks.py`
-- ✅ 新增数据库迁移文件：`backend/alembic/versions/2607db2c2be9_drop_claude_session_id_column_from_.py`
-
-**修改的文件**：
-
-| 文件 | 改动内容 |
-|------|----------|
-| `shared/models/db/subtask.py` | 删除 `claude_session_id` 数据库列 |
-| `backend/app/services/adapters/executor_kinds.py` | 移除从数据库读取和传递 session_id 的逻辑 |
-| `executor/agents/claude_code/response_processor.py` | 移除将 session_id 写入 result 的逻辑 |
-| `executor/agents/claude_code/claude_code_agent.py` | 简化为仅从本地文件加载 session_id |
-
-**改动前后对比**：
-
-```mermaid
-flowchart LR
-    subgraph 改动前["❌ 改动前：双重存储"]
-        A1[Claude SDK] --> B1[写入本地文件]
-        A1 --> C1[写入 result]
-        C1 --> D1[Backend 保存到数据库]
-        B1 --> E1[Workspace 归档]
-
-        D1 --> F1{任务恢复时}
-        E1 --> F1
-        F1 --> G1[优先使用数据库值]
-        F1 --> H1[备用本地文件]
-    end
-
-    subgraph 改动后["✅ 改动后：单一来源"]
-        A2[Claude SDK] --> B2[写入本地文件]
-        B2 --> C2[Workspace 归档]
-
-        C2 --> D2{任务恢复时}
-        D2 --> E2[从 Workspace 归档恢复]
-    end
-```
-
-### 影响评估
-
-**兼容性**：
-- ⚠️ 需要执行数据库迁移，删除 `subtasks.claude_session_id` 列
-- ✅ 对用户功能无影响，恢复逻辑保持一致
-
-**性能**：
-- ✅ 减少一次数据库查询（不再从 subtasks 表读取 session_id）
-- ✅ 简化代码路径，降低维护成本
+| 环境变量 | 说明 | 默认值 |
+|---------|------|-------|
+| `WORKSPACE_ARCHIVE_ENABLED` | 启用/禁用工作区归档功能 | `False` |
+| `WORKSPACE_ARCHIVE_MAX_SIZE_MB` | 归档最大大小（MB），超过则跳过 | `500` |
+| `WORKSPACE_ARCHIVE_S3_ENDPOINT` | S3 兼容存储端点 | 空 |
+| `WORKSPACE_ARCHIVE_S3_BUCKET` | S3 存储桶名称 | `workspace-archives` |
+| `WORKSPACE_ARCHIVE_S3_ACCESS_KEY` | S3 访问密钥 | 空 |
+| `WORKSPACE_ARCHIVE_S3_SECRET_KEY` | S3 访问密钥 | 空 |
+| `WORKSPACE_ARCHIVE_S3_REGION` | S3 区域 | `us-east-1` |
+| `WORKSPACE_ARCHIVE_S3_USE_SSL` | 是否使用 SSL | `True` |
 
 ## 相关文件
 
 ### 后端
 
-| 文件 | 职责 |
-|------|------|
-| `backend/app/api/endpoints/adapter/task_restore.py` | 恢复 API 端点 |
-| `backend/app/services/adapters/task_restore.py` | 恢复服务逻辑、验证、状态重置 |
-| `backend/app/services/adapters/workspace_archive.py` | Workspace 归档恢复标记 |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `backend/app/api/endpoints/adapter/task_restore.py` | 恢复 API 端点 | ✅ 新增 |
+| `backend/app/services/adapters/task_restore.py` | 恢复服务逻辑、验证、状态重置 | ✅ 新增 |
+| `backend/app/services/adapters/workspace_archive.py` | Workspace 归档和恢复服务 | ✅ 新增 |
+| `backend/app/services/adapters/executor_kinds.py` | 执行器调度、过期检测、executor_name 继承 | 🔧 修改 |
+| `backend/app/services/adapters/task_kinds/operations.py` | 消息追加前过期检测 | 🔧 修改 |
+| `backend/app/services/adapters/executor_job.py` | 执行器清理前归档调用 | 🔧 修改 |
 
 ### Executor
 
-| 文件 | 职责 |
-|------|------|
-| `executor/agents/claude_code/session_manager.py` | Session 管理、缓存、本地文件持久化 |
-| `executor/agents/claude_code/claude_code_agent.py` | Session ID 初始化、从本地文件加载 |
-| `executor/services/workspace_service.py` | Workspace 归档创建、恢复 |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `executor/services/workspace_service.py` | Workspace 归档创建、S3 下载、解压 | ✅ 新增 |
+| `executor/app.py` | POST /api/workspace/archive 端点 | 🔧 修改 |
+| `executor/agents/base.py` | `_restore_workspace_if_needed()` 方法 | 🔧 修改 |
+| `executor/agents/claude_code/claude_code_agent.py` | Session 过期自动降级 | 🔧 修改 |
 
 ### 前端
 
-| 文件 | 职责 |
-|------|------|
-| `frontend/src/features/tasks/components/chat/TaskRestoreDialog.tsx` | 恢复对话框 UI |
-| `frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx` | 恢复流程处理 |
-| `frontend/src/utils/errorParser.ts` | 解析 TASK_EXPIRED_RESTORABLE 错误 |
-| `frontend/src/apis/tasks.ts` | restoreTask API 客户端 |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `frontend/src/features/tasks/components/chat/TaskRestoreDialog.tsx` | 恢复对话框 UI | ✅ 新增 |
+| `frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx` | 恢复流程处理 | 🔧 修改 |
+| `frontend/src/utils/errorParser.ts` | 解析 TASK_EXPIRED_RESTORABLE 错误 | 🔧 修改 |
+| `frontend/src/apis/tasks.ts` | restoreTask API 客户端 | 🔧 修改 |
+| `frontend/src/i18n/locales/en/chat.json` | 英文翻译 | 🔧 修改 |
+| `frontend/src/i18n/locales/zh-CN/chat.json` | 中文翻译 | 🔧 修改 |
 
 ### Shared
 
-| 文件 | 职责 |
-|------|------|
-| (无) | 无共享模型修改 |
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `shared/utils/s3_client.py` | S3 兼容存储客户端 | ✅ 新增 |
+| `shared/models/db/subtask.py` | Subtask 模型 | 🗑️ 删除 claude_session_id 列 |
+
+### Executor Manager
+
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `executor_manager/routers/routers.py` | POST /executor/address 端点 | 🔧 修改 |
+
+### 数据库迁移
+
+| 文件 | 职责 | 状态 |
+|------|------|------|
+| `backend/alembic/versions/2607db2c2be9_drop_claude_session_id_column_from_.py` | 删除 claude_session_id 列 | ✅ 新增 |
+| `backend/alembic/versions/x4y5z6a7b8c9_add_claude_session_id_to_subtasks.py` | 添加 claude_session_id 列（已废弃） | 🗑️ 删除 |
+
+## 测试
+
+### 单元测试
+
+| 测试文件 | 覆盖内容 |
+|---------|----------|
+| `shared/tests/utils/test_s3_client.py` | S3 客户端上传、下载、删除操作 |
+| `executor/tests/services/test_workspace_service.py` | Workspace 归档创建、Git 文件获取、排除逻辑 |
+
+### 集成测试场景
+
+1. **任务完整生命周期**
+   - 创建任务 → 发送消息 → 过期 → 恢复 → 继续对话
+
+2. **Workspace 归档恢复**
+   - Code 任务 → 归档 → 清理 → 恢复 → 验证文件
+
+3. **Session ID 恢复**
+   - Chat 任务 → 保存 session → 过期 → 恢复 → 验证上下文
+
+4. **Session 过期降级**
+   - 恢复会话失败 → 自动创建新会话 → 继续对话
