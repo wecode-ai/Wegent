@@ -97,8 +97,8 @@ export function useMessagePagination({
         setLoadedCount(state.messages.size)
 
         // Check if we've loaded all messages
-        if (state.messages.size >= totalMessages) {
-          setHasLoadedAll(true)
+        if (totalMessages > 0) {
+          setHasLoadedAll(state.messages.size >= totalMessages)
         }
       }
 
