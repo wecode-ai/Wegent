@@ -220,6 +220,7 @@ class PendingRequestResponse(BaseModel):
     id: int
     user_id: int
     user_name: Optional[str] = None
+    user_email: Optional[str] = None
     requested_permission_level: str
     requested_at: datetime
 

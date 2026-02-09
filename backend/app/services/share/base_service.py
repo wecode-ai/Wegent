@@ -726,12 +726,18 @@ class UnifiedShareService(ABC):
         if self.resource_type.value == "KnowledgeBase":
             resource_type_variants.append("KNOWLEDGE_BASE")
 
+        # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+        approved_status_variants = [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
+
         members = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(approved_status_variants),
             )
             .all()
         )
@@ -741,9 +747,7 @@ class UnifiedShareService(ABC):
             f"[get_members] Query params: resource_type_variants={resource_type_variants}, "
             f"resource_id={resource_id}, status={MemberStatus.APPROVED.value}"
         )
-        logger.info(
-            f"[get_members] Found {len(members)} members"
-        )
+        logger.info(f"[get_members] Found {len(members)} members")
         for member in members:
             logger.info(
                 f"[get_members] Member detail: id={member.id}, resource_type={member.resource_type}, "
@@ -800,7 +804,7 @@ class UnifiedShareService(ABC):
         )
         if not target_user:
             raise HTTPException(status_code=404, detail="Target user not found")
-        
+
         # LOGGING: Log user information to verify email is available in User model
         logger.info(
             f"[add_member] Target user found: user_id={target_user_id}, "
@@ -927,9 +931,7 @@ class UnifiedShareService(ABC):
         )
         # LOGGING: Verify user_map contains email field
         user_map = {u.id: u for u in users}
-        logger.info(
-            f"[add_member] User map created with {len(user_map)} users"
-        )
+        logger.info(f"[add_member] User map created with {len(user_map)} users")
 
         return self._member_to_response(member, user_map)
 
@@ -957,12 +959,17 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to update members"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         # Find member
         member = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.id == member_id,
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
             )
             .first()
@@ -1012,12 +1019,17 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to remove members"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         # Find member
         member = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.id == member_id,
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
             )
             .first()
@@ -1049,7 +1061,9 @@ class UnifiedShareService(ABC):
         reviewed_by_user_name = None
         if member.reviewed_by_user_id:
             reviewed_by_user = user_map.get(member.reviewed_by_user_id)
-            reviewed_by_user_name = reviewed_by_user.user_name if reviewed_by_user else None
+            reviewed_by_user_name = (
+                reviewed_by_user.user_name if reviewed_by_user else None
+            )
 
         return ResourceMemberResponse(
             id=member.id,
@@ -1094,13 +1108,25 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to view pending requests"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to query both formats to handle legacy data
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "PENDING" vs "pending")
+        pending_status_variants = [
+            MemberStatus.PENDING.value,
+            MemberStatus.PENDING.value.upper(),
+        ]
+
         # Get pending members
         pending_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.status == MemberStatus.PENDING.value,
+                ResourceMember.status.in_(pending_status_variants),
             )
             .all()
         )
@@ -1114,7 +1140,14 @@ class UnifiedShareService(ABC):
             PendingRequestResponse(
                 id=m.id,
                 user_id=m.user_id,
-                user_name=user_map.get(m.user_id),
+                user_name=(
+                    user_map.get(m.user_id).user_name
+                    if user_map.get(m.user_id)
+                    else None
+                ),
+                user_email=(
+                    user_map.get(m.user_id).email if user_map.get(m.user_id) else None
+                ),
                 requested_permission_level=m.permission_level,
                 requested_at=m.requested_at,
             )
@@ -1148,14 +1181,25 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to review requests"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "PENDING" vs "pending")
+        pending_status_variants = [
+            MemberStatus.PENDING.value,
+            MemberStatus.PENDING.value.upper(),
+        ]
+
         # Find pending member
         member = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.id == request_id,
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.status == MemberStatus.PENDING.value,
+                ResourceMember.status.in_(pending_status_variants),
             )
             .first()
         )
@@ -1208,13 +1252,24 @@ class UnifiedShareService(ABC):
 
         Permission hierarchy: manage > edit > view
         """
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+        approved_status_variants = [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
+
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(approved_status_variants),
             )
             .first()
         )
@@ -1231,13 +1286,24 @@ class UnifiedShareService(ABC):
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[str]:
         """Get user's permission level for a resource."""
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+        approved_status_variants = [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
+
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(approved_status_variants),
             )
             .first()
         )
