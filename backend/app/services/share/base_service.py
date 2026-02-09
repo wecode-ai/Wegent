@@ -778,6 +778,12 @@ class UnifiedShareService(ABC):
         )
         if not target_user:
             raise HTTPException(status_code=404, detail="Target user not found")
+        
+        # LOGGING: Log user information to verify email is available in User model
+        logger.info(
+            f"[add_member] Target user found: user_id={target_user_id}, "
+            f"user_name={target_user.user_name}, email={target_user.email}"
+        )
 
         # Check for existing member
         existing = (
@@ -897,7 +903,11 @@ class UnifiedShareService(ABC):
         users = (
             db.query(User).filter(User.id.in_([target_user_id, current_user_id])).all()
         )
-        user_map = {u.id: u.user_name for u in users}
+        # LOGGING: Verify user_map contains email field
+        user_map = {u.id: {"user_name": u.user_name, "email": u.email} for u in users}
+        logger.info(
+            f"[add_member] User map created: {user_map}"
+        )
 
         return self._member_to_response(member, user_map)
 
