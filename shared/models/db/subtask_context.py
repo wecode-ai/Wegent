@@ -189,6 +189,10 @@ class SubtaskContext(Base):
             "direct_injection" or "rag_retrieval", or None if not set.
         """
         if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("injection_mode")
             return self.type_data.get("injection_mode")
         return None
 
@@ -200,6 +204,10 @@ class SubtaskContext(Base):
             Original search query used for RAG retrieval.
         """
         if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("query")
             return self.type_data.get("query")
         return None
 
@@ -211,6 +219,10 @@ class SubtaskContext(Base):
             Number of chunks retrieved/injected.
         """
         if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("chunks_count", 0)
             return self.type_data.get("chunks_count", 0)
         return 0
 
@@ -226,6 +238,10 @@ class SubtaskContext(Base):
             Number of times retrieval was executed (1 = first call, >1 = multiple calls).
         """
         if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("retrieval_count", 0)
             return self.type_data.get("retrieval_count", 0)
         return 0
 

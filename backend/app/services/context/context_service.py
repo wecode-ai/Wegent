@@ -811,15 +811,10 @@ class ContextService:
         }
 
         # Preserve existing fields (like kb_head_result) and update rag_result
+        # Note: Flat fields removed to avoid duplication - use rag_result sub-object
         context.type_data = {
             **current_type_data,
             "rag_result": rag_result,
-            # Keep flat fields for backward compatibility during transition
-            "sources": sources,
-            "injection_mode": injection_mode,
-            "query": query,
-            "chunks_count": chunks_count,
-            "retrieval_count": retrieval_count,
         }
 
         db.commit()
@@ -1013,16 +1008,7 @@ class ContextService:
                 "retrieval_count": 1,
             }
             type_data["rag_result"] = rag_result
-            # Also store flat fields for backward compatibility
-            type_data.update(
-                {
-                    "sources": rag_result["sources"],
-                    "injection_mode": rag_result["injection_mode"],
-                    "query": rag_result["query"],
-                    "chunks_count": rag_result["chunks_count"],
-                    "retrieval_count": 1,
-                }
-            )
+            # Note: Flat fields removed to avoid duplication - use rag_result sub-object
             extracted_text = result_data.get("extracted_text", "")
             status = (
                 ContextStatus.READY.value

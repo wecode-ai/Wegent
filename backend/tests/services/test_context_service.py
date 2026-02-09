@@ -62,10 +62,11 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result.extracted_text == extracted_text
         assert result.text_length == len(extracted_text)
         assert result.status == ContextStatus.READY.value
-        assert result.type_data["injection_mode"] == "rag_retrieval"
-        assert result.type_data["query"] == "test query"
-        assert result.type_data["chunks_count"] == 5
-        assert result.type_data["sources"] == sources
+        # RAG result fields are now stored in rag_result sub-object
+        assert result.type_data["rag_result"]["injection_mode"] == "rag_retrieval"
+        assert result.type_data["rag_result"]["query"] == "test query"
+        assert result.type_data["rag_result"]["chunks_count"] == 5
+        assert result.type_data["rag_result"]["sources"] == sources
 
     def test_update_knowledge_base_retrieval_result_direct_injection_mode(self) -> None:
         """Test updating context with direct injection results - extracted_text should be empty."""
@@ -111,9 +112,10 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result.extracted_text == ""
         assert result.text_length == 0
         assert result.status == ContextStatus.READY.value
-        assert result.type_data["injection_mode"] == "direct_injection"
-        assert result.type_data["query"] == "test query"
-        assert result.type_data["chunks_count"] == 10
+        # RAG result fields are now stored in rag_result sub-object
+        assert result.type_data["rag_result"]["injection_mode"] == "direct_injection"
+        assert result.type_data["rag_result"]["query"] == "test query"
+        assert result.type_data["rag_result"]["chunks_count"] == 10
 
     def test_update_knowledge_base_retrieval_result_empty_status(self) -> None:
         """Test updating context with no results sets EMPTY status."""
@@ -155,7 +157,8 @@ class TestContextServiceKnowledgeBaseRetrieval:
         # Assert - status should be EMPTY
         assert result is not None
         assert result.status == ContextStatus.EMPTY.value
-        assert result.type_data["chunks_count"] == 0
+        # RAG result fields are now stored in rag_result sub-object
+        assert result.type_data["rag_result"]["chunks_count"] == 0
 
     def test_update_knowledge_base_retrieval_result_increments_retrieval_count(
         self,
@@ -198,7 +201,8 @@ class TestContextServiceKnowledgeBaseRetrieval:
 
         # Assert - First call should set retrieval_count to 1
         assert result is not None
-        assert result.type_data["retrieval_count"] == 1
+        # RAG result fields are now stored in rag_result sub-object
+        assert result.type_data["rag_result"]["retrieval_count"] == 1
 
         # Act - Second call (simulating another tool call)
         result2 = context_service.update_knowledge_base_retrieval_result(
@@ -213,9 +217,10 @@ class TestContextServiceKnowledgeBaseRetrieval:
 
         # Assert - Second call should increment retrieval_count to 2
         assert result2 is not None
-        assert result2.type_data["retrieval_count"] == 2
-        assert result2.type_data["query"] == "second query"
-        assert result2.type_data["chunks_count"] == 3
+        # RAG result fields are now stored in rag_result sub-object
+        assert result2.type_data["rag_result"]["retrieval_count"] == 2
+        assert result2.type_data["rag_result"]["query"] == "second query"
+        assert result2.type_data["rag_result"]["chunks_count"] == 3
 
     def test_update_knowledge_base_retrieval_result_not_found(self) -> None:
         """Test updating non-existent context returns None."""
