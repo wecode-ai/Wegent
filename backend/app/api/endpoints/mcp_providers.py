@@ -96,12 +96,24 @@ async def update_mcp_provider_keys(
         # Parse existing preferences from JSON string
         existing_prefs = _parse_user_preferences(current_user.preferences)
 
-        # Update MCP provider keys
-        existing_prefs.mcp_provider_keys = MCPProviderKeys(
-            bailian=keys.bailian,
-            modelscope=keys.modelscope,
-            mcp_router=keys.mcp_router,
+        # Get existing keys or create new
+        existing_keys = existing_prefs.mcp_provider_keys or MCPProviderKeys()
+
+        # Update only provided keys (merge with existing)
+        updated_keys = MCPProviderKeys(
+            bailian=keys.bailian if keys.bailian is not None else existing_keys.bailian,
+            modelscope=(
+                keys.modelscope
+                if keys.modelscope is not None
+                else existing_keys.modelscope
+            ),
+            mcp_router=(
+                keys.mcp_router
+                if keys.mcp_router is not None
+                else existing_keys.mcp_router
+            ),
         )
+        existing_prefs.mcp_provider_keys = updated_keys
 
         # Update user via service
         user_update = UserUpdate(preferences=existing_prefs)

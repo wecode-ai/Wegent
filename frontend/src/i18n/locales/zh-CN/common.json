@@ -1217,5 +1217,30 @@
     "already_selected": "已选择",
     "skill_button_tooltip": "选择要在此消息中使用的技能",
     "manage_skills": "管理技能"
+  },
+  "mcpProviders": {
+    "title": "MCP 提供商",
+    "provider_button": "提供商",
+    "configured": "已配置",
+    "api_key": "API 密钥",
+    "api_key_placeholder": "请输入您的 API 密钥",
+    "save": "保存",
+    "get_api_key": "获取 API 密钥",
+    "discover": "浏览市场",
+    "mcp_servers": "MCP 服务器",
+    "no_servers_found": "未找到 MCP 服务器",
+    "loading_servers": "加载中...",
+    "no_servers_hint": "保存 API 密钥后将自动加载 MCP 服务器列表",
+    "select_provider": "请选择提供商",
+    "has_token_hint": "已保存 API 密钥，保存新密钥后将重新加载服务器列表",
+    "add": "添加",
+    "added": "已添加",
+    "refresh": "刷新",
+    "server_added": "已添加: {{name}}",
+    "errors": {
+      "load_providers_failed": "加载提供商列表失败",
+      "save_api_key_failed": "保存 API 密钥失败",
+      "sync_failed": "同步服务器失败"
+    }
   }
 }

@@ -1223,5 +1223,30 @@
     "already_selected": "Already selected",
     "skill_button_tooltip": "Select skills to use with this message",
     "manage_skills": "Manage"
+  },
+  "mcpProviders": {
+    "title": "MCP Providers",
+    "provider_button": "Providers",
+    "configured": "Configured",
+    "api_key": "API Key",
+    "api_key_placeholder": "Enter your API key",
+    "save": "Save",
+    "get_api_key": "Get API Key",
+    "discover": "Browse Market",
+    "mcp_servers": "MCP Servers",
+    "no_servers_found": "No MCP servers found",
+    "loading_servers": "Loading...",
+    "no_servers_hint": "Save API key to load MCP server list automatically",
+    "select_provider": "Please select a provider",
+    "has_token_hint": "API key saved. Save a new key to reload server list.",
+    "add": "Add",
+    "added": "Added",
+    "refresh": "Refresh",
+    "server_added": "Added: {{name}}",
+    "errors": {
+      "load_providers_failed": "Failed to load providers",
+      "save_api_key_failed": "Failed to save API key",
+      "sync_failed": "Failed to sync servers"
+    }
   }
 }
