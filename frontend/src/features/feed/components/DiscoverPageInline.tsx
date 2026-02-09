@@ -8,7 +8,7 @@
  * Inline version of Discover page for embedding in tabs.
  * Uses Pinterest/Xiaohongshu-style masonry feed layout for rich content display.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 import { Loader2, Search, Sparkles, TrendingUp, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -26,11 +26,22 @@ import type { DiscoverSubscriptionResponse, BackgroundExecution } from '@/types/
 import { DiscoverHistoryDialog } from './DiscoverHistoryDialog'
 import { DiscoverFeedCard, DiscoverFeedCardSkeleton } from './DiscoverFeedCard'
 import './discover-feed.css'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 
 type SortBy = 'popularity' | 'recent'
 
 interface DiscoverPageInlineProps {
   onInvitationHandled?: () => void
+}
+
+// Distribute items into columns for masonry layout
+function distributeToColumns<T>(items: T[], columnCount: number): T[][] {
+  const columns: T[][] = Array.from({ length: columnCount }, () => [])
+  items.forEach((item, index) => {
+    const columnIndex = index % columnCount
+    columns[columnIndex].push(item)
+  })
+  return columns
 }
 
 export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlineProps) {
@@ -46,6 +57,24 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [followingIds, setFollowingIds] = useState<Set<number>>(new Set())
+
+  // Get column count based on screen size
+  const isMobile = useMediaQuery('(max-width: 767px)')
+  const isTablet = useMediaQuery('(min-width: 768px) and (max-width: 1279px)')
+  const isDesktop = useMediaQuery('(min-width: 1280px) and (max-width: 1535px)')
+
+  const columnCount = useMemo(() => {
+    if (isMobile) return 1
+    if (isTablet) return 2
+    if (isDesktop) return 3
+    return 4
+  }, [isMobile, isTablet, isDesktop])
+
+  // Distribute subscriptions to columns
+  const columnData = useMemo(
+    () => distributeToColumns(subscriptions, columnCount),
+    [subscriptions, columnCount]
+  )
 
   // State for latest execution preview
   const [executionHistory, setExecutionHistory] = useState<Record<number, BackgroundExecution>>({})
@@ -246,18 +275,22 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
           </div>
         ) : (
           <>
-            {/* Masonry Feed Grid */}
+            {/* Masonry Feed Grid - Balanced Columns */}
             <div className="discover-feed-masonry">
-              {subscriptions.map(subscription => (
-                <DiscoverFeedCard
-                  key={subscription.id}
-                  subscription={subscription}
-                  latestExecution={executionHistory[subscription.id]}
-                  isFollowing={followingIds.has(subscription.id)}
-                  onFollow={handleFollow}
-                  onUnfollow={handleUnfollow}
-                  onClick={handleCardClick}
-                />
+              {columnData.map((column, columnIndex) => (
+                <div key={columnIndex} className="discover-feed-column">
+                  {column.map(subscription => (
+                    <DiscoverFeedCard
+                      key={subscription.id}
+                      subscription={subscription}
+                      latestExecution={executionHistory[subscription.id]}
+                      isFollowing={followingIds.has(subscription.id)}
+                      onFollow={handleFollow}
+                      onUnfollow={handleUnfollow}
+                      onClick={handleCardClick}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
 
