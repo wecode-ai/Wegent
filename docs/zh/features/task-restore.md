@@ -4,6 +4,8 @@
 
 任务恢复功能允许用户在任务过期或执行器容器被清理后继续对话，同时保留完整的会话上下文。
 
+本次重构（`wegent/remove-db-session-id-persistence` 分支）移除了数据库 Session ID 持久化机制，简化为仅使用 Workspace 归档恢复方案，降低了系统复杂度并减少了数据库依赖。
+
 ## 问题背景
 
 在 Wegent 中，任务使用 Docker 容器（执行器）来处理 AI 对话。这些容器有生命周期限制：
@@ -31,13 +33,18 @@ flowchart TB
     subgraph 方案["✅ 解决方案"]
         E[检测过期/已删除] --> F[提示用户恢复]
         F --> G[重置容器状态]
-        G --> H[从 Workspace 归档恢复 Session ID]
-        H --> I[SessionManager 恢复会话]
-        I --> J[恢复 Workspace 文件]
+        G -.->|❌ 已废弃: 数据库持久化| H[从数据库读取 Session ID]
+        G --> H2[从 Workspace 归档恢复 Session ID]:::current
+        H2 --> I[SessionManager 恢复会话]:::current
+        I --> J[恢复 Workspace 文件]:::current
     end
 
     问题 -.->|任务恢复功能| 方案
+
+    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
+
+> 💡 **图例**：绿色节点为当前实现（Workspace 归档），灰色节点为已废弃的数据库持久化方案
 
 ## 用户操作流程
 
@@ -64,6 +71,7 @@ sequenceDiagram
         rect rgb(212, 237, 218)
             Note over 后端,S3: Workspace 归档恢复
             后端->>后端: 标记 Workspace 待恢复
+            后端-.->|❌ 已废弃| 数据库: 读取 claude_session_id
             新容器->>S3: 下载 Workspace 归档
             S3-->>新容器: 返回 .claude_session_id
         end
@@ -75,6 +83,8 @@ sequenceDiagram
         前端->>后端: 创建新任务
     end
 ```
+
+> 💡 **图例**：灰色虚线操作为已废弃的数据库读取方案
 
 ## 核心机制
 
@@ -154,7 +164,7 @@ flowchart TB
     subgraph SessionManager["SessionManager 职责"]
         A[客户端连接缓存] --> B["_clients: session_id → Client"]
         C[Session ID 映射] --> D["_session_id_map: internal_key → actual_id"]
-        E[本地文件持久化] --> F[".claude_session_id"]
+        E[本地文件持久化] --> F[".claude_session_id"]:::current
     end
 
     subgraph 解析逻辑["resolve_session_id()"]
@@ -167,7 +177,18 @@ flowchart TB
         K --> M
         L --> M
     end
+
+    subgraph 已废弃["❌ 已废弃的数据库持久化"]
+        direction TB
+        N[subtasks.claude_session_id 列] --> O[数据库存储 session_id]
+        O -.->|不再使用| P[Backend 传递到 Executor]
+    end
+
+    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
+    classDef deprecated fill:#f8d7da,stroke:#dc3545,stroke-width:2px,stroke-dasharray: 5 5
 ```
+
+> 💡 **图例**：绿色为当前实现，红色为已废弃的数据库持久化方案
 
 **Session ID 解析优先级**：
 
@@ -176,6 +197,7 @@ flowchart TB
 | 1 | 本地文件 `.claude_session_id` | 从 Workspace 归档恢复，用于跨容器恢复 |
 | 2 | internal_key | 格式为 `task_id:bot_id`，同容器内标识 |
 | 3 | 新建会话 | 无历史记录时创建新会话 |
+| ❌ | 数据库 `subtasks.claude_session_id` | 已废弃，不再使用 |
 
 ### 4. Workspace 归档恢复
 
@@ -202,14 +224,22 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A[任务恢复 API] --> B[标记 Workspace 待恢复]
-    B --> C[生成 S3 预签名 URL]
-    C --> D[更新 Task 元数据]
+    A[任务恢复 API] --> B[标记 Workspace 待恢复]:::current
+    B --> C[生成 S3 预签名 URL]:::current
+    C --> D[更新 Task 元数据]:::current
     D --> E[新容器启动]
-    E --> F[下载 Workspace 归档]
-    F --> G[解压到工作区]
-    G --> H[恢复 .claude_session_id]
-    H --> I[SessionManager 加载会话]
+    E --> F[下载 Workspace 归档]:::current
+    F --> G[解压到工作区]:::current
+    G --> H[恢复 .claude_session_id]:::current
+    H --> I[SessionManager 加载会话]:::current
+
+    subgraph 已废弃["❌ 已废弃的数据库路径"]
+        A -.->|不再使用| B2[从数据库读取 session_id]
+        B2 -.-> C2[Backend 传递给 Executor]
+    end
+
+    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
+    classDef deprecated fill:#f8d7da,stroke:#dc3545,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
 **Workspace 归档包含**：
@@ -220,9 +250,17 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A[Claude SDK 返回 session_id] --> B[SessionManager 保存]
-    B --> C[写入本地文件]
-    C --> D[.claude_session_id]
+    A[Claude SDK 返回 session_id] --> B[SessionManager 保存]:::current
+    B --> C[写入本地文件]:::current
+    C --> D[.claude_session_id]:::current
+
+    subgraph 已废弃["❌ 已废弃的数据库保存"]
+        A -.->|不再写入| B2[添加到 result 字典]
+        B2 -.-> C2[Backend 提取保存到 subtasks 表]
+    end
+
+    classDef current fill:#d4edda,stroke:#28a745,stroke-width:2px
+    classDef deprecated fill:#f8d7da,stroke:#dc3545,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
 **代码示例**（SessionManager）：
@@ -236,6 +274,14 @@ saved_session_id = SessionManager.load_saved_session_id(self.task_id)
 if saved_session_id:
     self.options["resume"] = saved_session_id
 ```
+
+**代码变更说明**：
+
+本次改动移除了以下代码路径：
+- ❌ `shared/models/db/subtask.py`: 删除 `claude_session_id` 数据库列
+- ❌ `backend/app/services/adapters/executor_kinds.py`: 移除从数据库读取和传递 session_id 的逻辑
+- ❌ `executor/agents/claude_code/response_processor.py`: 移除将 session_id 写入 result 的逻辑
+- ❌ `executor/agents/claude_code/claude_code_agent.py`: 简化为仅从本地文件加载 session_id
 
 ## Session 过期处理
 
@@ -263,6 +309,68 @@ flowchart TB
 |---------|------|-------|
 | `APPEND_CHAT_TASK_EXPIRE_HOURS` | Chat 任务过期小时数 | 2 |
 | `APPEND_CODE_TASK_EXPIRE_HOURS` | Code 任务过期小时数 | 24 |
+
+## 重构说明：移除数据库 Session ID 持久化
+
+### 改动动机
+
+原有的 Session ID 持久化方案同时使用了数据库和 Workspace 归档两种机制，存在以下问题：
+
+1. **双重存储冗余**：Session ID 同时存储在数据库 `subtasks.claude_session_id` 和 Workspace 归档 `.claude_session_id` 文件中
+2. **数据一致性风险**：数据库和归档文件可能不一致，增加维护复杂度
+3. **不必要的数据库依赖**：Workspace 归档已经包含完整恢复所需信息
+
+### 本次改动
+
+本次重构移除了数据库持久化路径，统一使用 Workspace 归档作为唯一的 Session ID 恢复来源。
+
+**移除的文件**：
+- ❌ 删除数据库迁移文件：`backend/alembic/versions/x4y5z6a7b8c9_add_claude_session_id_to_subtasks.py`
+- ✅ 新增数据库迁移文件：`backend/alembic/versions/2607db2c2be9_drop_claude_session_id_column_from_.py`
+
+**修改的文件**：
+
+| 文件 | 改动内容 |
+|------|----------|
+| `shared/models/db/subtask.py` | 删除 `claude_session_id` 数据库列 |
+| `backend/app/services/adapters/executor_kinds.py` | 移除从数据库读取和传递 session_id 的逻辑 |
+| `executor/agents/claude_code/response_processor.py` | 移除将 session_id 写入 result 的逻辑 |
+| `executor/agents/claude_code/claude_code_agent.py` | 简化为仅从本地文件加载 session_id |
+
+**改动前后对比**：
+
+```mermaid
+flowchart LR
+    subgraph 改动前["❌ 改动前：双重存储"]
+        A1[Claude SDK] --> B1[写入本地文件]
+        A1 --> C1[写入 result]
+        C1 --> D1[Backend 保存到数据库]
+        B1 --> E1[Workspace 归档]
+
+        D1 --> F1{任务恢复时}
+        E1 --> F1
+        F1 --> G1[优先使用数据库值]
+        F1 --> H1[备用本地文件]
+    end
+
+    subgraph 改动后["✅ 改动后：单一来源"]
+        A2[Claude SDK] --> B2[写入本地文件]
+        B2 --> C2[Workspace 归档]
+
+        C2 --> D2{任务恢复时}
+        D2 --> E2[从 Workspace 归档恢复]
+    end
+```
+
+### 影响评估
+
+**兼容性**：
+- ⚠️ 需要执行数据库迁移，删除 `subtasks.claude_session_id` 列
+- ✅ 对用户功能无影响，恢复逻辑保持一致
+
+**性能**：
+- ✅ 减少一次数据库查询（不再从 subtasks 表读取 session_id）
+- ✅ 简化代码路径，降低维护成本
 
 ## 相关文件
 
