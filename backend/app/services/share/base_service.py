@@ -718,23 +718,31 @@ class UnifiedShareService(ABC):
         if not resource:
             raise HTTPException(status_code=404, detail="Resource not found")
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to query both formats to handle legacy data
+        resource_type_variants = [self.resource_type.value]
+
+        # Add underscore variant for KnowledgeBase -> KNOWLEDGE_BASE
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
-        
+
         # LOGGING: Log query parameters and results to verify resource_type matching
         logger.info(
-            f"[get_members] Query params: resource_type={self.resource_type.value}, "
+            f"[get_members] Query params: resource_type_variants={resource_type_variants}, "
             f"resource_id={resource_id}, status={MemberStatus.APPROVED.value}"
         )
         logger.info(
-            f"[get_members] Found {len(members)} members with resource_type={self.resource_type.value}"
+            f"[get_members] Found {len(members)} members"
         )
         for member in members:
             logger.info(
@@ -752,7 +760,7 @@ class UnifiedShareService(ABC):
                 user_ids.add(m.reviewed_by_user_id)
 
         users = db.query(User).filter(User.id.in_(user_ids)).all()
-        user_map = {u.id: u.user_name for u in users}
+        user_map = {u.id: u for u in users}
 
         member_responses = [self._member_to_response(m, user_map) for m in members]
 
@@ -918,9 +926,9 @@ class UnifiedShareService(ABC):
             db.query(User).filter(User.id.in_([target_user_id, current_user_id])).all()
         )
         # LOGGING: Verify user_map contains email field
-        user_map = {u.id: {"user_name": u.user_name, "email": u.email} for u in users}
+        user_map = {u.id: u for u in users}
         logger.info(
-            f"[add_member] User map created: {user_map}"
+            f"[add_member] User map created with {len(user_map)} users"
         )
 
         return self._member_to_response(member, user_map)
@@ -977,7 +985,7 @@ class UnifiedShareService(ABC):
             user_ids.add(member.reviewed_by_user_id)
 
         users = db.query(User).filter(User.id.in_(user_ids)).all()
-        user_map = {u.id: u.user_name for u in users}
+        user_map = {u.id: u for u in users}
 
         return self._member_to_response(member, user_map)
 
@@ -1025,25 +1033,37 @@ class UnifiedShareService(ABC):
         return True
 
     def _member_to_response(
-        self, member: ResourceMember, user_map: Dict[int, str]
+        self, member: ResourceMember, user_map: Dict[int, User]
     ) -> ResourceMemberResponse:
         """Convert ResourceMember model to response schema."""
+        # Get user name and email from map
+        user = user_map.get(member.user_id)
+        user_name = user.user_name if user else None
+        user_email = user.email if user else None
+
+        # Get invited by user name
+        invited_by_user = user_map.get(member.invited_by_user_id)
+        invited_by_user_name = invited_by_user.user_name if invited_by_user else None
+
+        # Get reviewed by user name
+        reviewed_by_user_name = None
+        if member.reviewed_by_user_id:
+            reviewed_by_user = user_map.get(member.reviewed_by_user_id)
+            reviewed_by_user_name = reviewed_by_user.user_name if reviewed_by_user else None
+
         return ResourceMemberResponse(
             id=member.id,
             resource_type=member.resource_type,
             resource_id=member.resource_id,
             user_id=member.user_id,
-            user_name=user_map.get(member.user_id),
+            user_name=user_name,
+            user_email=user_email,
             permission_level=member.permission_level,
             status=member.status,
             invited_by_user_id=member.invited_by_user_id,
-            invited_by_user_name=user_map.get(member.invited_by_user_id),
+            invited_by_user_name=invited_by_user_name,
             reviewed_by_user_id=member.reviewed_by_user_id,
-            reviewed_by_user_name=(
-                user_map.get(member.reviewed_by_user_id)
-                if member.reviewed_by_user_id
-                else None
-            ),
+            reviewed_by_user_name=reviewed_by_user_name,
             reviewed_at=member.reviewed_at,
             copied_resource_id=member.copied_resource_id,
             requested_at=member.requested_at,
@@ -1088,7 +1108,7 @@ class UnifiedShareService(ABC):
         # Get user names
         user_ids = {m.user_id for m in pending_members}
         users = db.query(User).filter(User.id.in_(user_ids)).all()
-        user_map = {u.id: u.user_name for u in users}
+        user_map = {u.id: u for u in users}
 
         requests = [
             PendingRequestResponse(
