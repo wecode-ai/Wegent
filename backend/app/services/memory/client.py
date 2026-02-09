@@ -224,6 +224,7 @@ class LongTermMemoryClient:
             method="post",
             endpoint="/memories",
             json_data=request.model_dump(exclude_none=True),
+            timeout=settings.MEMORY_WRITE_TIMEOUT_SECONDS,
             operation="store memory",
             context=f"user_id={user_id}",
         )
