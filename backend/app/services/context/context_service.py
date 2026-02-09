@@ -15,7 +15,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.models.subtask_context import (
+    ContextStatus,
+    ContextType,
+    InjectionMode,
+    SubtaskContext,
+)
 from app.schemas.subtask_context import (
     KnowledgeBaseContextCreate,
     SubtaskContextBrief,
@@ -781,7 +786,7 @@ class ContextService:
 
         # For direct_injection mode, don't store extracted_text (save storage space)
         # For rag_retrieval mode, store the extracted text normally
-        if injection_mode == "direct_injection":
+        if injection_mode == InjectionMode.DIRECT_INJECTION.value:
             context.extracted_text = ""
             context.text_length = 0
         else:

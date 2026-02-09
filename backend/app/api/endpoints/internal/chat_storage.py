@@ -24,7 +24,12 @@ from app.api.dependencies import get_db
 from app.core.config import settings
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.models.subtask_context import (
+    ContextStatus,
+    ContextType,
+    InjectionMode,
+    SubtaskContext,
+)
 from app.models.user import User
 from shared.telemetry.decorators import trace_sync
 
@@ -32,8 +37,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["internal-chat"])
 
-# Knowledge base injection mode constants
-INJECTION_MODE_DIRECT = "direct_injection"
+# Knowledge base injection mode constant for kb_head (not in enum as it's tool-specific)
 INJECTION_MODE_KB_HEAD = "kb_head"
 
 
@@ -350,7 +354,7 @@ def _build_user_message_content(
             kb_head_offset = kb_head_result.get("offset", 0)
             kb_head_limit = kb_head_result.get("limit", 50000)
 
-            if injection_mode == INJECTION_MODE_DIRECT and knowledge_id:
+            if injection_mode == InjectionMode.DIRECT_INJECTION.value and knowledge_id:
                 logger.debug(
                     f"[history] Loading documents for direct_injection KB: "
                     f"id={kb_ctx.id}, kb_id={knowledge_id}"

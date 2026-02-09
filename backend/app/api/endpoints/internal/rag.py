@@ -536,7 +536,9 @@ async def save_kb_tool_result(
             )
 
             if updated_context:
-                kb_head_result = updated_context.type_data.get("kb_head_result") or {}
+                kb_head_result = (updated_context.type_data or {}).get(
+                    "kb_head_result"
+                ) or {}
                 usage_count = kb_head_result.get("usage_count", 0)
                 logger.info(
                     "[internal_rag] Saved kb_head result via unified API: context_id=%d, subtask_id=%d, kb_id=%d, "
