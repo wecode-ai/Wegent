@@ -79,7 +79,7 @@ dependencies = [
     "python-pptx>=0.6.23",
     "openpyxl>=3.1.2",
     "chardet>=5.0.0",
-    "pillow>=12.0.0",
+    "pillow>=10.0.0,<12.0.0",
     "python-magic>=0.4.27",
     # OCR support for scanned PDFs
     "pytesseract>=0.3.10",
@@ -110,6 +110,7 @@ dependencies = [
     "llama-index-vector-stores-qdrant>=0.9.0", # Includes qdrant-client as dependency
     "llama-index-embeddings-openai>=0.3.0",
     "llama-index-readers-file>=0.4.0",
+    "llama-index-readers-docling>=0.1.0", # DoclingReader for intelligent document parsing (PDF, DOCX, PPTX, etc.)
     "docx2txt>=0.8", # Required by llama-index-readers-file for Word document parsing
     # Chat Shell (local workspace dependency for Package mode)
     "wegent-chat-shell",
@@ -120,12 +121,6 @@ dependencies = [
 [tool.uv.sources]
 wegent-chat-shell = { path = "../chat_shell", editable = true }
 wegent-shared = { path = "../shared", editable = true }
-
-# NOTE: DoclingReader for intelligent document parsing is NOT included
-# in default dependencies due to complex CUDA-related transitive dependencies.
-# To enable DoclingReader support, manually install:
-#   uv pip install llama-index-readers-docling>=0.1.0
-# Requires Python 3.11+ and compatible CUDA environment.
 
 [dependency-groups]
 dev = [
@@ -170,6 +165,15 @@ exclude = '''
   | alembic
 )/
 '''
+
+[tool.uv]
+# Exclude macOS x86_64 from resolution to avoid torch compatibility issues
+# torch 2.10.0 doesn't have wheels for macosx_12_0_x86_64
+required-environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'win32'",
+]
 
 [[tool.uv.index]]
 url = "https://pypi.org/simple"

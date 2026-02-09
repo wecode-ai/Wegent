@@ -28,8 +28,9 @@ COPY frontend .
 # Disable Next.js telemetry to speed up build
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Build Next.js application
-RUN npm run build
+# Build Next.js application with increased memory limit
+# Using 4GB to ensure enough memory for large builds
+RUN NODE_OPTIONS='--max-old-space-size=4096' npm run build
 
 # ---- Production Stage ----
 FROM node:22-slim AS runner

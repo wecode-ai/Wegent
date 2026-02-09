@@ -46,7 +46,7 @@ import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
 
 // Smart splitter supported file extensions
-const SMART_SUPPORTED_EXTENSIONS = ['.pdf', '.txt', '.doc', '.docx', '.md']
+const SMART_SUPPORTED_EXTENSIONS = ['.md', '.pdf', '.doc', '.docx', '.ppt', '.pptx']
 
 /**
  * Check if a file extension is supported by smart splitter

@@ -26,29 +26,15 @@ from app.services.rag.storage.base import BaseStorageBackend
 from shared.telemetry.decorators import add_span_event
 
 # Lazy import for DoclingReader to avoid heavy dependency loading at module level
-# DoclingReader has large CUDA-related dependencies that may not be installed
+# DoclingReader has large CUDA-related dependencies
 if TYPE_CHECKING:
     from llama_index.readers.docling import DoclingReader
-
-# Check if DoclingReader is available (optional dependency)
-def _is_docling_available() -> bool:
-    """Check if llama-index-readers-docling is installed."""
-    try:
-        from llama_index.readers.docling import DoclingReader
-        return True
-    except ImportError:
-        return False
-
-DOCLING_AVAILABLE = _is_docling_available()
 
 logger = logging.getLogger(__name__)
 
 # File extensions supported by DoclingReader for intelligent document parsing
 # These file types will use DoclingReader + IngestionPipeline for better structure preservation
-DOCLING_EXTENSIONS = {".md", ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
-
-# Excel file extensions that require special JSON export format
-EXCEL_EXTENSIONS = {".xls", ".xlsx"}
+DOCLING_EXTENSIONS = {".md", ".pdf", ".doc", ".docx", ".ppt", ".pptx"}
 
 
 def should_use_docling(file_extension: str) -> bool:
@@ -58,32 +44,14 @@ def should_use_docling(file_extension: str) -> bool:
     DoclingReader provides better structure preservation for complex documents
     like PDF, DOCX, PPTX compared to SimpleDirectoryReader.
 
-    Note: Returns False if llama-index-readers-docling is not installed.
-
     Args:
         file_extension: File extension (e.g., '.pdf', '.docx')
 
     Returns:
-        True if DoclingReader should be used (and is available), False otherwise
+        True if DoclingReader should be used for this file type, False otherwise
     """
-    if not DOCLING_AVAILABLE:
-        return False
     return file_extension.lower() in DOCLING_EXTENSIONS
 
-
-def is_excel_file(file_extension: str) -> bool:
-    """
-    Check if the file is an Excel file requiring JSON export format.
-
-    Excel files use JSON export with special separator for better row-based chunking.
-
-    Args:
-        file_extension: File extension (e.g., '.xlsx', '.xls')
-
-    Returns:
-        True if the file is an Excel file, False otherwise
-    """
-    return file_extension.lower() in EXCEL_EXTENSIONS
 
 # Metadata keys to preserve during indexing
 # These are simple string/number fields that won't cause ES mapping conflicts
@@ -199,7 +167,7 @@ class DocumentIndexer:
         Index a document from binary data (synchronous).
 
         This method supports two processing modes based on file type:
-        1. Docling mode (for .md, .pdf, .doc, .docx, .ppt, .pptx, .xls, .xlsx):
+        1. Docling mode (for .md, .pdf, .doc, .docx, .ppt, .pptx):
            - Uses DoclingReader for intelligent document parsing
            - Uses IngestionPipeline for structure-aware chunking
         2. Standard mode (for .txt and other types):
@@ -268,7 +236,7 @@ class DocumentIndexer:
         Process document using DoclingReader and IngestionPipeline.
 
         DoclingReader provides intelligent document parsing with better
-        structure preservation for complex documents.
+        structure preservation for complex documents (PDF, DOCX, PPTX, MD).
 
         Args:
             binary_data: File binary data
@@ -279,12 +247,26 @@ class DocumentIndexer:
             Tuple of (documents, pre-split nodes, docling config)
 
         Raises:
-            Exception: If DoclingReader processing fails
+            ImportError: If llama-index-readers-docling is not installed
+            RuntimeError: If DoclingReader processing fails
         """
-        # Lazy import DoclingReader to avoid loading heavy CUDA dependencies at module level
-        from llama_index.readers.docling import DoclingReader
+        # Lazy import DoclingReader - will raise ImportError if not installed
+        try:
+            from llama_index.readers.docling import DoclingReader
+        except ImportError as e:
+            raise ImportError(
+                "llama-index-readers-docling is required but not installed. "
+                "Please install it with: pip install llama-index-readers-docling"
+            ) from e
 
-        is_excel = is_excel_file(file_extension)
+        # Import docling pipeline options for disabling layout and figure analysis
+        try:
+            from docling.datamodel.base_models import InputFormat
+        except ImportError as e:
+            raise ImportError(
+                "docling is required but not installed. "
+                "Please install it with: pip install docling"
+            ) from e
 
         # Create temporary file for DoclingReader
         with tempfile.NamedTemporaryFile(
@@ -294,17 +276,15 @@ class DocumentIndexer:
             tmp_file_path = tmp_file.name
 
         try:
-            # Configure DoclingReader based on file type
-            if is_excel:
-                # Excel files use JSON export format for row-based processing
-                export_type = DoclingReader.ExportType.JSON
-                export_type_str = "json"
-                logger.info(f"Configuring DoclingReader with JSON export for Excel file")
-            else:
-                # General documents use Markdown export format
-                export_type = DoclingReader.ExportType.MARKDOWN
-                export_type_str = "markdown"
-                logger.info(f"Configuring DoclingReader with Markdown export for general document")
+            # General documents use Markdown export format
+            export_type = DoclingReader.ExportType.MARKDOWN
+            logger.info(f"Configuring DoclingReader with Markdown export for general document")
+
+            # Configure pipeline options for faster processing
+            # Note: Layout analysis cannot be disabled in StandardPdfPipeline (it's a core feature)
+            # The following options are disabled for performance:
+            # - do_ocr=False: Disable OCR (we set this via DoclingReader.ocr=False as well)
+        
 
             reader = DoclingReader(
                 export_type=export_type,
@@ -336,46 +316,26 @@ class DocumentIndexer:
                 doc.metadata["filename"] = filename_without_ext
                 doc.metadata = sanitize_metadata(doc.metadata)
 
-            # Configure IngestionPipeline based on file type
-            if is_excel:
-                # Excel: Use SentenceSplitter with Chinese semicolon separator
-                separator = "；\n"
-                pipeline = IngestionPipeline(
-                    transformations=[
-                        SentenceSplitter(
-                            chunk_size=1024,
-                            chunk_overlap=50,
-                            separator=separator,
-                        ),
-                    ]
-                )
-                heading_level_limit = None
-                logger.info(
-                    "Configured Excel pipeline with separator='；\\n', "
-                    "chunk_size=1024, chunk_overlap=50"
-                )
-            else:
-                # General documents: Two-stage pipeline (Markdown + Sentence)
-                separator = None
-                heading_level_limit = 3
-                pipeline = IngestionPipeline(
-                    transformations=[
-                        # Stage 1: Split by Markdown heading structure
-                        MarkdownNodeParser(
-                            include_metadata=True,
-                            include_prev_next_rel=True,
-                        ),
-                        # Stage 2: Further split large chunks by sentence
-                        SentenceSplitter(
-                            chunk_size=1024,
-                            chunk_overlap=50,
-                        ),
-                    ]
-                )
-                logger.info(
-                    "Configured Markdown pipeline with heading_level_limit=3, "
-                    "chunk_size=1024, chunk_overlap=50"
-                )
+            # General documents: Two-stage pipeline (Markdown + Sentence)
+            heading_level_limit = 3
+            pipeline = IngestionPipeline(
+                transformations=[
+                    # Stage 1: Split by Markdown heading structure
+                    MarkdownNodeParser(
+                        include_metadata=True,
+                        include_prev_next_rel=True,
+                    ),
+                    # Stage 2: Further split large chunks by sentence
+                    SentenceSplitter(
+                        chunk_size=1024,
+                        chunk_overlap=50,
+                    ),
+                ]
+            )
+            logger.info(
+                "Configured Markdown pipeline with heading_level_limit=3, "
+                "chunk_size=1024, chunk_overlap=50"
+            )
 
             # Execute pipeline to get split nodes
             nodes = pipeline.run(documents=documents)
@@ -384,13 +344,12 @@ class DocumentIndexer:
             # Build config for database storage
             docling_config = DoclingPipelineConfig(
                 type="docling",
-                export_type=export_type_str,
+                export_type="markdown",
                 ocr=False,
                 export_images=False,
                 heading_level_limit=heading_level_limit,
                 chunk_size=1024,
                 chunk_overlap=50,
-                separator=separator,
                 file_extension=file_extension,
             )
 
@@ -506,7 +465,7 @@ class DocumentIndexer:
             nodes = pre_split_nodes
             splitter_type_name = "DoclingPipeline"
             logger.info(
-                f"Using pre-split nodes from DoclingReader: {len(nodes)} nodes"
+                f"Using pre-split nodes from {splitter_type_name}: {len(nodes)} nodes"
             )
         else:
             nodes = self.splitter.split_documents(documents)
@@ -617,11 +576,7 @@ class DocumentIndexer:
         if docling_config is not None:
             # Docling processing mode
             splitter_type = "docling"
-            # Determine subtype based on export format
-            if docling_config.export_type == "json":
-                splitter_subtype = "excel_json"
-            else:
-                splitter_subtype = "markdown_pipeline"
+            splitter_subtype = "markdown_pipeline"
         elif isinstance(self.splitter, SmartSplitter):
             splitter_type = "smart"
             splitter_subtype = self.splitter._get_subtype()

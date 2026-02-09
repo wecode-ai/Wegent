@@ -110,25 +110,24 @@ class DoclingPipelineConfig(BaseModel):
     """Configuration for Docling-based intelligent document parsing.
 
     DoclingReader provides advanced document parsing with support for
-    various formats (PDF, DOCX, PPTX, XLSX, MD) with better structure
+    various formats (PDF, DOCX, PPTX, MD) with better structure
     preservation compared to SimpleDirectoryReader.
 
     Attributes:
         type: Fixed value "docling" for config identification
-        export_type: Output format - "markdown" for general docs, "json" for Excel
+        export_type: Output format - "markdown" for general docs
         ocr: Whether to enable OCR for scanned documents (default: False)
         export_images: Whether to include base64 images in output (default: False)
         heading_level_limit: Max heading level for MarkdownNodeParser (1-6, default: 3)
         chunk_size: Maximum chunk size in characters (128-8192, default: 1024)
         chunk_overlap: Number of characters to overlap between chunks (0-2048, default: 50)
-        separator: Custom separator for splitting (only used for Excel files)
         file_extension: Original file extension for strategy selection
     """
 
     type: Literal["docling"] = "docling"
-    export_type: Literal["markdown", "json"] = Field(
+    export_type: Literal["markdown"] = Field(
         "markdown",
-        description="Export format: 'markdown' for general documents, 'json' for Excel files",
+        description="Export format: 'markdown' for general documents",
     )
     ocr: bool = Field(False, description="Enable OCR for scanned documents")
     export_images: bool = Field(False, description="Include base64 images in output")
@@ -147,13 +146,9 @@ class DoclingPipelineConfig(BaseModel):
         le=2048,
         description="Number of characters to overlap between chunks",
     )
-    separator: Optional[str] = Field(
-        None,
-        description="Custom separator for splitting (only for Excel files, default: '；\\n')",
-    )
     file_extension: str = Field(
         ...,
-        description="Original file extension (e.g., '.pdf', '.docx', '.xlsx')",
+        description="Original file extension (e.g., '.pdf', '.docx')",
     )
 
     @field_validator("chunk_overlap")
