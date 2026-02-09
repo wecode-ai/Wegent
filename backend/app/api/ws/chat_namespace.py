@@ -35,6 +35,7 @@ from app.api.ws.events import (
     GenericAck,
     HistorySyncAck,
     HistorySyncPayload,
+    SkillUpdatePayload,
     TaskJoinAck,
     TaskJoinPayload,
     TaskLeavePayload,
@@ -102,6 +103,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:close-session": "on_task_close_session",
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
+            "skill:update": "on_skill_update",
         }
 
     async def _check_token_expiry(self, sid: str) -> bool:
@@ -1627,6 +1629,125 @@ class ChatNamespace(socketio.AsyncNamespace):
     # ============================================================
     # Generic Skill Events
     # ============================================================
+
+    async def on_skill_update(self, sid: str, data: dict) -> dict:
+        """
+        Handle skill:update event for dynamically updating task skills.
+
+        This allows Chat Shell tasks to modify their skill configuration
+        during an active conversation. The skills are stored in the task's
+        metadata and will be used for subsequent AI responses.
+
+        Only supported for Chat Shell tasks.
+
+        Args:
+            sid: Socket ID
+            data: SkillUpdatePayload fields (task_id, skills)
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        # Check token expiry first
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
+
+        try:
+            payload = SkillUpdatePayload.model_validate(data)
+        except Exception as e:
+            logger.error(f"[WS] skill:update validation error: {e}")
+            return {"success": False, "error": str(e)}
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        if not user_id:
+            return {"success": False, "error": "Not authenticated"}
+
+        db = SessionLocal()
+        try:
+            # Get task and verify access
+            task = (
+                db.query(TaskResource)
+                .filter(TaskResource.id == payload.task_id)
+                .first()
+            )
+            if not task:
+                return {"success": False, "error": "Task not found"}
+
+            # Verify user has access to this task
+            if not can_access_task(db, task, user_id):
+                return {"success": False, "error": "Access denied"}
+
+            # Get team to verify it's Chat Shell type
+            team = db.query(Kind).filter(Kind.id == task.team_id).first()
+            if not team:
+                return {"success": False, "error": "Team not found"}
+
+            team_crd = Team.model_validate(team.json)
+            # Check if this is a Chat Shell by looking at the agent_type
+            # agent_type is stored in team metadata, not in Kind
+            is_chat_shell = getattr(task, "agent_type", None) == "chat"
+
+            # Alternative: Check through bot's shell type if agent_type not available
+            if not is_chat_shell and team_crd.spec.members:
+                from app.schemas.kind import Bot, Shell
+
+                first_member = team_crd.spec.members[0]
+                bot = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == team.user_id,
+                        Kind.kind == "Bot",
+                        Kind.name == first_member.botRef.name,
+                        Kind.namespace == first_member.botRef.namespace,
+                        Kind.is_active,
+                    )
+                    .first()
+                )
+                if bot:
+                    bot_crd = Bot.model_validate(bot.json)
+                    if bot_crd.spec and bot_crd.spec.shellRef:
+                        shell = (
+                            db.query(Kind)
+                            .filter(
+                                Kind.kind == "Shell",
+                                Kind.name == bot_crd.spec.shellRef.name,
+                                Kind.is_active,
+                            )
+                            .first()
+                        )
+                        if shell:
+                            shell_crd = Shell.model_validate(shell.json)
+                            is_chat_shell = (
+                                shell_crd.spec and shell_crd.spec.shellType == "Chat"
+                            )
+
+            if not is_chat_shell:
+                return {
+                    "success": False,
+                    "error": "Dynamic skill update is only supported for Chat Shell tasks",
+                }
+
+            # Update task metadata with new skills
+            metadata = task.metadata or {}
+            metadata["additional_skills"] = [
+                {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
+                for s in payload.skills
+            ]
+            task.metadata = metadata
+            db.commit()
+
+            logger.info(
+                f"[WS] skill:update: task_id={payload.task_id}, "
+                f"skills={[s.name for s in payload.skills]}"
+            )
+
+            return {"success": True}
+
+        except Exception as e:
+            logger.exception(f"[WS] skill:update error: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
 
     async def on_skill_response(self, sid: str, data: dict) -> dict:
         """

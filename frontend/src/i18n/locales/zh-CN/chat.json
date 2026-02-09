@@ -510,5 +510,7 @@
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
     "no_task_id": "没有可用的任务 ID"
-  }
+  },
+  "skill_update_success": "技能配置已更新",
+  "skill_update_error": "更新技能失败"
 }

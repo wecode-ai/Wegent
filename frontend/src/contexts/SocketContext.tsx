@@ -131,6 +131,11 @@ interface SocketContextType {
   registerBackgroundExecutionHandlers: (handlers: BackgroundExecutionEventHandlers) => () => void
   /** Register a callback to be called when WebSocket reconnects */
   onReconnect: (callback: ReconnectCallback) => () => void
+  /** Update task skills dynamically (for Chat Shell) */
+  updateTaskSkills: (
+    taskId: number,
+    skills: Array<{ name: string; namespace: string; is_public: boolean }>
+  ) => Promise<{ success: boolean; error?: string }>
 }
 
 /** Chat event handlers for streaming */
@@ -627,6 +632,45 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   )
 
   /**
+   * Update task skills dynamically via WebSocket (for Chat Shell)
+   * Allows modifying skill configuration during an active conversation
+   */
+  const updateTaskSkills = useCallback(
+    async (
+      taskId: number,
+      skills: Array<{ name: string; namespace: string; is_public: boolean }>
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!socket?.connected) {
+        console.error('[Socket.IO] updateTaskSkills failed - not connected')
+        return { success: false, error: 'Not connected to server' }
+      }
+
+      return new Promise(resolve => {
+        socket.emit(
+          'skill:update',
+          { task_id: taskId, skills },
+          (response: { success?: boolean; error?: string } | undefined) => {
+            if (!response) {
+              console.error('[Socket.IO] skill:update received undefined response')
+              resolve({
+                success: false,
+                error: 'No response from server',
+              })
+              return
+            }
+
+            resolve({
+              success: response.success ?? false,
+              error: response.error,
+            })
+          }
+        )
+      })
+    },
+    [socket]
+  )
+
+  /**
    * Register chat event handlers
    * Returns a cleanup function to unregister handlers
    */
@@ -882,6 +926,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerCorrectionHandlers,
         registerBackgroundExecutionHandlers,
         onReconnect,
+        updateTaskSkills,
       }}
     >
       {children}

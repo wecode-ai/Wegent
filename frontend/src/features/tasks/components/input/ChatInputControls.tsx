@@ -323,7 +323,8 @@ export function ChatInputControls({
         )}
 
         {/* Skill Selector - show when skills are available */}
-        {/* Skill selection is read-only after task creation (hasMessages) */}
+        {/* Skill selection is read-only after task creation (hasMessages) - except for Chat Shell */}
+        {/* Chat Shell supports dynamic skill update during conversation */}
         {availableSkills.length > 0 && onToggleSkill && (
           <SkillSelectorPopover
             ref={skillSelectorRef}
@@ -334,7 +335,7 @@ export function ChatInputControls({
             onToggleSkill={onToggleSkill}
             isChatShell={isChatShell(selectedTeam)}
             disabled={isLoading || isStreaming}
-            readOnly={hasMessages}
+            readOnly={hasMessages && !isChatShell(selectedTeam)}
           />
         )}
 

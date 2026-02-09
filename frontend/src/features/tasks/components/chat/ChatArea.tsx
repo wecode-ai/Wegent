@@ -31,6 +31,7 @@ import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
+import { useSkillUpdate } from '../../hooks/useSkillUpdate'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -106,6 +107,13 @@ function ChatAreaContent({
   const skillSelector = useSkillSelector({
     team: chatState.selectedTeam,
     enabled: true,
+  })
+
+  // Skill update hook - handles WebSocket synchronization for Chat Shell
+  const skillUpdate = useSkillUpdate({
+    taskId: selectedTaskDetail?.id,
+    isChatShellType: skillSelector.isChatShellType,
+    skillSelector,
   })
 
   // Compute subtask info for scroll management
@@ -650,7 +658,8 @@ function ChatAreaContent({
     teamSkillNames: skillSelector.teamSkillNames,
     preloadedSkillNames: skillSelector.preloadedSkillNames,
     selectedSkillNames: skillSelector.selectedSkillNames,
-    onToggleSkill: skillSelector.toggleSkill,
+    // Use skillUpdate.toggleSkill for Chat Shell to enable WebSocket sync on active tasks
+    onToggleSkill: skillUpdate.toggleSkill,
   }
 
   return (

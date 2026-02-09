@@ -257,8 +257,9 @@ export function ChatInputCard({
               selectedSkillNames={selectedSkillNames}
               onSkillSelect={onToggleSkill}
               isChatShell={selectedTeam?.agent_type === 'chat'}
-              // Skill selection is read-only after task creation (hasMessages)
-              skillSelectorReadOnly={hasMessages}
+              // Skill selection is read-only after task creation (hasMessages) - except for Chat Shell
+              // Chat Shell supports dynamic skill update during conversation
+              skillSelectorReadOnly={hasMessages && selectedTeam?.agent_type !== 'chat'}
               // Pass skill button ref for fly animation
               skillButtonRef={
                 { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>

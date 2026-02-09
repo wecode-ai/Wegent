@@ -18,6 +18,7 @@ export const ClientEvents = {
   TASK_JOIN: 'task:join',
   TASK_LEAVE: 'task:leave',
   HISTORY_SYNC: 'history:sync',
+  SKILL_UPDATE: 'skill:update',
 } as const
 
 // ============================================================
@@ -161,6 +162,15 @@ export interface TaskLeavePayload {
 export interface HistorySyncPayload {
   task_id: number
   after_message_id: number
+}
+
+export interface SkillUpdatePayload {
+  task_id: number
+  skills: Array<{
+    name: string
+    namespace: string
+    is_public: boolean
+  }>
 }
 
 // ============================================================
@@ -551,6 +561,11 @@ export interface HistorySyncAck {
 }
 
 export interface GenericAck {
+  success: boolean
+  error?: string
+}
+
+export interface SkillUpdateAck {
   success: boolean
   error?: string
 }
