@@ -251,27 +251,6 @@ def upgrade() -> None:
             server_default='0',
         )
 
-    # 6. Add foreign key constraint using portable Alembic API
-    # Check if constraint exists first (MySQL-specific check wrapped in dialect guard)
-    constraint_exists = False
-    if dialect == 'mysql':
-        result = conn.execute(sa.text("""
-            SELECT COUNT(*)
-            FROM information_schema.TABLE_CONSTRAINTS
-            WHERE CONSTRAINT_SCHEMA = DATABASE()
-            AND TABLE_NAME = 'resource_members'
-            AND CONSTRAINT_NAME = 'fk_resource_members_user_id'
-        """))
-        constraint_exists = result.scalar() > 0
-
-    if not constraint_exists:
-        op.create_foreign_key(
-            'fk_resource_members_user_id',
-            'resource_members',
-            'users',
-            ['user_id'],
-            ['id'],
-        )
 
 
 def downgrade() -> None:
