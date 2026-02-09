@@ -101,19 +101,21 @@ export const knowledgePermissionApi = {
     }>(`/share/KnowledgeBase/${kbId}/requests`)
 
     // Transform pending requests
+    // Normalize permission_level to lowercase to handle legacy data (e.g., VIEW -> view)
     const pending = pendingResponse.requests.map(r => ({
       id: r.id,
       user_id: r.user_id,
       username: r.user_name || '',
       email: r.user_email || '',
-      permission_level: r.requested_permission_level as 'view' | 'edit' | 'manage',
+      permission_level: r.requested_permission_level.toLowerCase() as 'view' | 'edit' | 'manage',
       requested_at: r.requested_at,
     }))
 
     // Transform approved members
+    // Normalize permission_level to lowercase to handle legacy data (e.g., VIEW -> view)
     const approved = membersResponse.members.reduce(
       (acc, m) => {
-        const level = m.permission_level as 'view' | 'edit' | 'manage'
+        const level = m.permission_level.toLowerCase() as 'view' | 'edit' | 'manage'
         if (!acc[level]) acc[level] = []
         const member: {
           id: number
