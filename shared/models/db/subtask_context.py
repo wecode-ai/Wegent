@@ -293,6 +293,21 @@ class SubtaskContext(Base):
         return {}
 
     @property
+    def sources(self) -> List[dict]:
+        """Get sources from type_data (knowledge_base type).
+
+        Returns:
+            List of source references [{index, title, kb_id, score?}].
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("sources", [])
+            return self.type_data.get("sources", [])
+        return []
+
+    @property
     def kb_head_result(self) -> dict:
         """Get kb_head result sub-object from type_data (knowledge_base type).
 

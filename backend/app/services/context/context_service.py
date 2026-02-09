@@ -1078,9 +1078,8 @@ class ContextService:
 
         # Get knowledge base name and sources info
         kb_name = context.name or "Knowledge Base"
-        sources = []
-        if context.type_data and isinstance(context.type_data, dict):
-            sources = context.type_data.get("sources", [])
+        # Use property which handles rag_result sub-object with legacy fallback
+        sources = context.sources
 
         # Build source names list (up to 5 for brevity)
         source_names = [s.get("document_name", "Unknown") for s in sources[:5]]
