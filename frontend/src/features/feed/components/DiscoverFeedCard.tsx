@@ -8,6 +8,7 @@
  * Discover Feed Card Component - Masonry layout card for subscription discovery
  * Displays subscription execution results in a rich, Pinterest/Xiaohongshu-style feed
  */
+import './discover-feed.css'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
