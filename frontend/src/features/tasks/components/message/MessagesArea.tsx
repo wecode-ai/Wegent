@@ -225,7 +225,7 @@ export default function MessagesArea({
     loadedCount,
     totalCount,
     loadMoreMessages,
-    error: paginationError,
+    error: _paginationError,
   } = useMessagePagination({
     taskId: selectedTaskDetail?.id,
     totalMessages: selectedTaskDetail?.total_messages ?? 0,
