@@ -86,7 +86,19 @@ export default function CodePage() {
         hasShareId={hasShareId}
       />
       {/* Route to mobile or desktop component based on screen size */}
-      {isMobile ? <CodePageMobile /> : <CodePageDesktop />}
+      {isMobile ? (
+        <CodePageMobile
+          teams={teams}
+          isTeamsLoading={isTeamsLoading}
+          refreshTeams={handleRefreshTeams}
+        />
+      ) : (
+        <CodePageDesktop
+          teams={teams}
+          isTeamsLoading={isTeamsLoading}
+          refreshTeams={handleRefreshTeams}
+        />
+      )}
     </>
   )
 }

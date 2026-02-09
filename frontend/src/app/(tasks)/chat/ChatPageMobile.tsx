@@ -174,7 +174,12 @@ export function ChatPageMobile({ teams, isTeamsLoading, refreshTeams }: ChatPage
         />
       </div>
       {/* Create Group Chat Dialog */}
-      <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
+      <CreateGroupChatDialog
+        open={isCreateGroupChatOpen}
+        onOpenChange={setIsCreateGroupChatOpen}
+        teams={teams}
+        isTeamsLoading={isTeamsLoading}
+      />
       {/* Search Dialog - rendered at page level for global shortcut support */}
       <SearchDialog
         open={isSearchDialogOpen}
