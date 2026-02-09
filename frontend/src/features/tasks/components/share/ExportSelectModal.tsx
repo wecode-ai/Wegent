@@ -154,7 +154,7 @@ export default function ExportSelectModal({
                 knowledgeBases.push({
                   id: ctx.id,
                   name: ctx.name,
-                  document_count: ctx.document_count,
+                  document_count: ctx.document_count ?? undefined,
                 })
               }
             }
