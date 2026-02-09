@@ -24,7 +24,6 @@ from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 
 # Import all models to ensure they are registered with Base
 from app.models.kind import Kind
-from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User

@@ -5,6 +5,8 @@
 """
 SharedTeam reader - read-only queries with optional extension.
 
+Uses the unified ResourceMember model instead of the legacy SharedTeam table.
+
 Usage:
     from app.services.readers.shared_teams import sharedTeamReader
 
@@ -21,7 +23,8 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.shared_team import SharedTeam
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class ISharedTeamReader(ABC):
-    """Abstract interface for SharedTeam reader."""
+    """Abstract interface for SharedTeam reader (uses ResourceMember)."""
 
     @abstractmethod
     def is_shared_to_user(self, db: Session, team_id: int, user_id: int) -> bool:
@@ -47,8 +50,8 @@ class ISharedTeamReader(ABC):
     @abstractmethod
     def get_by_team_and_user(
         self, db: Session, team_id: int, user_id: int
-    ) -> Optional[SharedTeam]:
-        """Get SharedTeam record by team_id and user_id."""
+    ) -> Optional[ResourceMember]:
+        """Get ResourceMember record by team_id and user_id."""
         pass
 
     @abstractmethod
@@ -63,15 +66,16 @@ class ISharedTeamReader(ABC):
 
 
 class SharedTeamReader(ISharedTeamReader):
-    """SharedTeam reader with direct database queries."""
+    """SharedTeam reader with direct database queries using ResourceMember."""
 
     def is_shared_to_user(self, db: Session, team_id: int, user_id: int) -> bool:
         return (
-            db.query(SharedTeam)
+            db.query(ResourceMember)
             .filter(
-                SharedTeam.team_id == team_id,
-                SharedTeam.user_id == user_id,
-                SharedTeam.is_active == True,
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_id == team_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
             is not None
@@ -79,10 +83,11 @@ class SharedTeamReader(ISharedTeamReader):
 
     def get_shared_team_ids(self, db: Session, user_id: int) -> List[int]:
         results = (
-            db.query(SharedTeam.team_id)
+            db.query(ResourceMember.resource_id)
             .filter(
-                SharedTeam.user_id == user_id,
-                SharedTeam.is_active == True,
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()
         )
@@ -90,13 +95,14 @@ class SharedTeamReader(ISharedTeamReader):
 
     def get_by_team_and_user(
         self, db: Session, team_id: int, user_id: int
-    ) -> Optional[SharedTeam]:
+    ) -> Optional[ResourceMember]:
         return (
-            db.query(SharedTeam)
+            db.query(ResourceMember)
             .filter(
-                SharedTeam.team_id == team_id,
-                SharedTeam.user_id == user_id,
-                SharedTeam.is_active == True,
+                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_id == team_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )
