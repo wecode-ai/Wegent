@@ -120,8 +120,12 @@ function SubscriptionPageContent() {
     <div className="h-full bg-surface/30 flex flex-col">
       {/* Tab navigation */}
       <div className="border-b border-border px-4 pt-3 bg-base flex items-end justify-between">
-        <Tabs value={activeTab} onValueChange={value => setActiveTab(value as FeedTabValue)}>
-          <TabsList className="bg-transparent p-0 h-auto gap-4">
+        <Tabs
+          value={activeTab}
+          onValueChange={value => setActiveTab(value as FeedTabValue)}
+          className="w-fit"
+        >
+          <TabsList className="bg-transparent p-0 h-auto gap-4 w-fit">
             <TabsTrigger
               value="all"
               className="px-1 pb-3 pt-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent"
