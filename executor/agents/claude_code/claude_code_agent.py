@@ -803,25 +803,8 @@ class ClaudeCodeAgent(Agent):
         # Check if there's a saved session ID to resume
         # Skip if resume option is already set (e.g., from retry logic)
         if "resume" not in self.options:
-            # Priority: task_data (from database) > local file (backup)
-            saved_session_id = None
-
-            # 1. First try to get claude_session_id from task_data (comes from database via dispatch_tasks)
-            if self.task_data:
-                saved_session_id = self.task_data.get("claude_session_id")
-                if saved_session_id:
-                    logger.info(
-                        f"Using claude_session_id from task data (database): {saved_session_id}"
-                    )
-
-            # 2. Fallback to local file (backup storage in same container)
-            if not saved_session_id:
-                saved_session_id = SessionManager.load_saved_session_id(self.task_id)
-                if saved_session_id:
-                    logger.info(
-                        f"Using claude_session_id from local file (fallback): {saved_session_id}"
-                    )
-
+            # Load saved session ID from local file
+            saved_session_id = SessionManager.load_saved_session_id(self.task_id)
             if saved_session_id:
                 logger.info(
                     f"Resuming Claude session for task {self.task_id}: {saved_session_id}"

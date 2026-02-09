@@ -31,9 +31,9 @@ flowchart TB
     subgraph 方案["✅ 解决方案"]
         E[检测过期/已删除] --> F[提示用户恢复]
         F --> G[重置容器状态]
-        G --> H[从数据库读取 Session ID]
+        G --> H[从 Workspace 归档恢复 Session ID]
         H --> I[SessionManager 恢复会话]
-        I --> J[恢复 Workspace 归档]
+        I --> J[恢复 Workspace 文件]
     end
 
     问题 -.->|任务恢复功能| 方案
@@ -62,13 +62,13 @@ sequenceDiagram
         后端-->>前端: 恢复成功
         前端->>后端: 重发消息
         rect rgb(212, 237, 218)
-            Note over 后端,数据库: Session ID 持久化
-            后端->>数据库: 读取 claude_session_id
-            数据库-->>后端: 返回 session_id
+            Note over 后端,S3: Workspace 归档恢复
+            后端->>后端: 标记 Workspace 待恢复
+            新容器->>S3: 下载 Workspace 归档
+            S3-->>新容器: 返回 .claude_session_id
         end
-        后端->>新容器: 创建容器 + 传递 Session ID
         新容器->>新容器: SessionManager 加载会话
-        新容器->>新容器: 从 S3 恢复 Workspace
+        新容器->>新容器: 解压 Workspace 文件
         新容器-->>用户: AI 继续对话（保留上下文）
     else 选择新建对话
         用户->>前端: 点击"新建对话"
@@ -145,39 +145,7 @@ flowchart LR
 
 **可恢复的任务状态**：`COMPLETED`、`FAILED`、`CANCELLED`、`PENDING_CONFIRMATION`
 
-### 3. Claude Session ID 持久化
-
-为了让新容器能恢复之前的会话上下文，Session ID 被持久化到数据库：
-
-```mermaid
-flowchart TB
-    subgraph 保存流程["保存 Session ID"]
-        direction LR
-        A1[Claude SDK 返回 session_id] --> A2[写入 result 字典]
-        A2 --> A3[Backend 提取保存到 DB]
-        A2 --> A4[本地文件备份]
-    end
-
-    subgraph 读取流程["读取 Session ID"]
-        direction LR
-        B1[任务下发] --> B2{数据库有值?}
-        B2 -->|是| B3[传递给 Executor]
-        B2 -->|否| B4[session_id = null]
-        B3 --> B5[SessionManager 解析]
-        B4 --> B5
-    end
-
-    保存流程 --> 读取流程
-```
-
-**存储策略**：
-
-| 存储位置 | 用途 | 优先级 |
-|---------|------|-------|
-| 数据库 `subtasks.claude_session_id` | 主存储，支持跨容器恢复 | 高 |
-| 本地文件 `.claude_session_id` | 备份，同容器内快速读取 | 低 |
-
-### 4. Session Manager 模块
+### 3. Session Manager 模块
 
 Executor 端使用 `SessionManager` 统一管理会话：
 
@@ -201,15 +169,15 @@ flowchart TB
     end
 ```
 
-**Session ID 解析三级优先级**：
+**Session ID 解析优先级**：
 
 | 优先级 | 来源 | 说明 |
 |-------|------|------|
-| 1 | 缓存的 session_id | 从数据库传递，用于跨容器恢复 |
+| 1 | 本地文件 `.claude_session_id` | 从 Workspace 归档恢复，用于跨容器恢复 |
 | 2 | internal_key | 格式为 `task_id:bot_id`，同容器内标识 |
 | 3 | 新建会话 | 无历史记录时创建新会话 |
 
-### 5. Workspace 归档恢复
+### 4. Workspace 归档恢复
 
 对于 Code 任务，恢复时需要同时恢复工作区文件：
 
@@ -230,60 +198,43 @@ flowchart LR
 
 ## 数据流详解
 
-### 任务下发时（Backend → Executor）
+### 任务恢复时（Workspace 归档 → Executor）
 
 ```mermaid
 flowchart LR
-    A[dispatch_tasks] --> B[查询 related_subtasks]
-    B --> C{找到 ASSISTANT<br/>且有 session_id?}
-    C -->|是| D[取最新的 session_id]
-    C -->|否| E[session_id = null]
-    D --> F{new_session?}
-    E --> G[返回任务数据]
-    F -->|是| H[清空 session_id]
-    F -->|否| G
-    H --> G
+    A[任务恢复 API] --> B[标记 Workspace 待恢复]
+    B --> C[生成 S3 预签名 URL]
+    C --> D[更新 Task 元数据]
+    D --> E[新容器启动]
+    E --> F[下载 Workspace 归档]
+    F --> G[解压到工作区]
+    G --> H[恢复 .claude_session_id]
+    H --> I[SessionManager 加载会话]
 ```
 
-### 任务完成时（Executor → Backend）
+**Workspace 归档包含**：
+- Git 追踪的代码文件
+- `.claude_session_id` 会话 ID 文件
+
+### 任务完成时（Session ID 保存）
 
 ```mermaid
 flowchart LR
-    A[Claude SDK<br/>返回 ResultMessage] --> B[提取 session_id]
-    B --> C[添加到 result 字典]
-    C --> D[report_progress]
-    D --> E[Backend update_subtask]
-    E --> F[保存到数据库]
+    A[Claude SDK 返回 session_id] --> B[SessionManager 保存]
+    B --> C[写入本地文件]
+    C --> D[.claude_session_id]
 ```
 
-**代码示例**（response_processor.py）：
+**代码示例**（SessionManager）：
 
 ```python
-# 将 session_id 添加到结果中
-if session_id:
-    result_dict["claude_session_id"] = session_id
-```
+# 保存 session ID 到本地文件
+SessionManager.save_session_id(self.task_id, session_id)
 
-## Pipeline 模式处理
-
-在 Pipeline 模式下，当用户确认进入下一阶段时：
-
-```mermaid
-flowchart LR
-    A[Stage 1 完成] --> B[用户确认]
-    B --> C[new_session = true]
-    C --> D[不传递旧 session_id]
-    D --> E[Stage 2 创建新会话]
-```
-
-**原因**：每个 Pipeline 阶段可能使用不同的 Bot，需要独立的会话上下文。
-
-**实现代码**：
-
-```python
-# Pipeline 新阶段不继承旧 session_id
-if new_session:
-    latest_claude_session_id = None
+# 从本地文件加载 session ID
+saved_session_id = SessionManager.load_saved_session_id(self.task_id)
+if saved_session_id:
+    self.options["resume"] = saved_session_id
 ```
 
 ## Session 过期处理
@@ -321,18 +272,15 @@ flowchart TB
 |------|------|
 | `backend/app/api/endpoints/adapter/task_restore.py` | 恢复 API 端点 |
 | `backend/app/services/adapters/task_restore.py` | 恢复服务逻辑、验证、状态重置 |
-| `backend/app/services/adapters/executor_kinds.py` | Session ID 读取/保存 |
-| `backend/app/services/adapters/task_kinds/operations.py` | 追加前过期检查 |
 | `backend/app/services/adapters/workspace_archive.py` | Workspace 归档恢复标记 |
-| `backend/alembic/versions/x4y5z6a7b8c9_*.py` | 数据库迁移（添加 claude_session_id） |
 
 ### Executor
 
 | 文件 | 职责 |
 |------|------|
-| `executor/agents/claude_code/session_manager.py` | Session 管理、缓存、持久化 |
-| `executor/agents/claude_code/claude_code_agent.py` | Session ID 初始化、resolve_session_id 调用 |
-| `executor/agents/claude_code/response_processor.py` | Session ID 添加到结果、重试逻辑 |
+| `executor/agents/claude_code/session_manager.py` | Session 管理、缓存、本地文件持久化 |
+| `executor/agents/claude_code/claude_code_agent.py` | Session ID 初始化、从本地文件加载 |
+| `executor/services/workspace_service.py` | Workspace 归档创建、恢复 |
 
 ### 前端
 
@@ -347,4 +295,4 @@ flowchart TB
 
 | 文件 | 职责 |
 |------|------|
-| `shared/models/db/subtask.py` | Subtask 模型（含 claude_session_id 字段） |
+| (无) | 无共享模型修改 |

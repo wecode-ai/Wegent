@@ -42,13 +42,6 @@ class Subtask(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime, nullable=False, default="1970-01-01 00:00:00")
 
-    # Claude session ID for conversation resume after task restore
-    claude_session_id = Column(
-        String(255),
-        nullable=True,
-        comment="Claude SDK session ID for conversation resume",
-    )
-
     # Group chat fields
     sender_type = Column(
         String(20), nullable=False, default=""

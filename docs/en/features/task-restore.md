@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Task Restoration feature allows users to continue conversations on expired tasks or tasks whose executor containers have been cleaned up, while preserving the full conversation context.
+The Task Restoration feature allows users to continue conversations on expired tasks or tasks whose executor containers have been cleaned up, while preserving full conversation context.
 
 ## Problem Background
 
@@ -13,10 +13,10 @@ In Wegent, tasks use Docker containers (executors) to process AI conversations. 
 | Chat | 2 hours | Daily conversations |
 | Code | 24 hours | Code development |
 
-When containers expire and get cleaned up, users attempting to continue the conversation face two problems:
+When containers expire and get cleaned up, users attempting to continue conversation face two problems:
 
 1. **Container doesn't exist** - The original executor container has been deleted
-2. **Session context lost** - Claude SDK's session ID was stored in the container and lost with it
+2. **Session context lost** - Claude SDK's session ID was stored in container and lost with it
 
 ## Solution Overview
 
@@ -31,16 +31,13 @@ flowchart TB
     subgraph Solution["✅ Solution"]
         E[Detect expired/deleted] --> F[Prompt user to restore]
         F --> G[Reset container state]
-        G --> H[Read Session ID from database]:::new
-        H --> I[New container resumes session]:::new
+        G --> H[Restore Session ID from Workspace archive]
+        H --> I[SessionManager loads session]
+        I --> J[Restore Workspace files]
     end
 
     Problem -.->|Task Restoration Feature| Solution
-
-    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
-
-> 💡 **Legend**: Green nodes are new functionality (Session ID Persistence)
 
 ## User Flow
 
@@ -49,7 +46,7 @@ sequenceDiagram
     actor User
     participant Frontend
     participant Backend
-    participant Database
+    participant S3
     participant NewContainer as New Container
 
     User->>Frontend: Send message to expired task
@@ -61,15 +58,17 @@ sequenceDiagram
         User->>Frontend: Click "Continue Chat"
         Frontend->>Backend: POST /tasks/{id}/restore
         Backend->>Backend: Reset task state
+        Backend->>Backend: Mark Workspace pending restore
         Backend-->>Frontend: Restore successful
         Frontend->>Backend: Resend message
         rect rgb(212, 237, 218)
-            Note over Backend,Database: 🆕 New: Session ID Persistence
-            Backend->>Database: Read claude_session_id
-            Database-->>Backend: Return session_id
+            Note over Backend,S3: Workspace Archive Restoration
+            Backend->>Backend: Mark Workspace pending restore
+            NewContainer->>S3: Download Workspace archive
+            S3-->>NewContainer: Return .claude_session_id
         end
-        Backend->>NewContainer: Create container + pass Session ID
-        NewContainer->>NewContainer: Resume session using Session ID
+        NewContainer->>NewContainer: SessionManager loads session
+        NewContainer->>NewContainer: Extract Workspace files
         NewContainer-->>User: AI continues conversation (context preserved)
     else Choose new chat
         User->>Frontend: Click "New Chat"
@@ -81,143 +80,182 @@ sequenceDiagram
 
 ### 1. Expiration Detection
 
-When processing message append requests, the backend checks the following conditions:
+When processing message append requests, backend checks the following conditions:
 
 | Check | Condition | Result |
 |-------|-----------|--------|
 | executor_deleted_at | Last ASSISTANT subtask marked as true | Return 409 |
 | Expiration time | Exceeds configured expiration hours | Return 409 |
 
+**Error Response Format**:
+
+```json
+{
+  "code": "TASK_EXPIRED_RESTORABLE",
+  "task_id": 123,
+  "task_type": "chat",
+  "expire_hours": 2,
+  "last_updated_at": "2024-01-01T12:00:00Z",
+  "message": "chat task has expired but can be restored",
+  "reason": "expired"
+}
+```
+
 ### 2. Task Restore API
 
 **Endpoint**: `POST /api/v1/tasks/{task_id}/restore`
+
+**Request/Response Types**:
+
+```typescript
+// Request
+interface RestoreTaskRequest {
+  message?: string  // Message to send after restore (optional)
+}
+
+// Response
+interface RestoreTaskResponse {
+  success: boolean
+  task_id: number
+  task_type: string
+  executor_rebuilt: boolean
+  message: string
+}
+```
 
 The restore operation performs these steps:
 
 ```mermaid
 flowchart LR
-    A[Validate task] --> B[Reset updated_at]
-    B --> C[Clear executor_deleted_at]
-    C --> D[Clear executor_name]
-    D --> E[Return success]
+    A[Validate task] --> B[Clear executor_deleted_at]
+    B --> C[Clear all executor_name]
+    C --> D{Is Code task?}
+    D -->|Yes| E[Mark Workspace pending restore]
+    D -->|No| F[Reset updated_at]
+    E --> F
+    F --> G[Return success]
 ```
 
 | Step | Purpose |
 |------|---------|
+| Validate task | Check task exists, user permission, task is restorable |
 | Clear executor_deleted_at | Allow task to receive new messages |
-| Clear executor_name | Force new container creation (don't reuse old container name) |
+| Clear executor_name | Clear **all** ASSISTANT subtask's executor_name, force new container creation |
+| Mark Workspace pending restore | Code task: mark S3 archive URL in metadata |
 
-### 3. Claude Session ID Persistence 🆕
+**Restorable task states**: `COMPLETED`, `FAILED`, `CANCELLED`, `PENDING_CONFIRMATION`
 
-> ⚠️ **New Feature**: This section describes the newly added Session ID persistence mechanism
+### 3. Session Manager Module
 
-To enable new containers to restore previous conversation context, Session IDs are persisted to the database:
+Executor uses `SessionManager` for unified session management:
 
 ```mermaid
 flowchart TB
-    subgraph SaveFlow["🆕 Save Session ID"]
-        direction LR
-        A1[Claude SDK returns session_id]:::new --> A2[Write to result dict]:::new
-        A2 --> A3[Backend extracts and saves to DB]:::new
-        A2 --> A4[Local file backup]
+    subgraph SessionManager["SessionManager Responsibilities"]
+        A[Client connection cache] --> B["_clients: session_id → Client"]
+        C[Session ID mapping] --> D["_session_id_map: internal_key → actual_id"]
+        E[Local file persistence] --> F[".claude_session_id"]
     end
 
-    subgraph ReadFlow["🆕 Read Session ID"]
-        direction LR
-        B1[Task dispatch]:::new --> B2{Database has value?}:::new
-        B2 -->|Yes| B3[Use database value]:::new
-        B2 -->|No| B4{Local file has value?}
-        B4 -->|Yes| B5[Use local file value]
-        B4 -->|No| B6[Create new session]
+    subgraph ResolveLogic["resolve_session_id()"]
+        G[Input: task_id, bot_id, new_session] --> H{Has cached session_id?}
+        H -->|Yes| I{new_session?}
+        H -->|No| J[Use internal_key]
+        I -->|Yes| K[Create new session]
+        I -->|No| L[Use cached value]
+        J --> M[Return session_id]
+        K --> M
+        L --> M
     end
-
-    SaveFlow --> ReadFlow
-
-    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
-> 💡 **Legend**: Green nodes are new logic, white nodes are existing logic (local file backup)
+**Session ID Resolution Priority**:
 
-**Storage Strategy**:
+| Priority | Source | Description |
+|----------|---------|-------------|
+| 1 | Local file `.claude_session_id` | From Workspace archive, for cross-container restore |
+| 2 | internal_key | Format: `task_id:bot_id`, identifier within same container |
+| 3 | Create new session | No history available, create fresh session |
 
-| Storage Location | Purpose | Priority | Status |
-|-----------------|---------|----------|--------|
-| Database `subtasks.claude_session_id` | Primary storage, supports cross-container restore | High | 🆕 New |
-| Local file `.claude_session_id` | Backup, fast read within same container | Low | Existing |
+### 4. Workspace Archive Restoration
+
+For Code tasks, restoration requires recovering workspace files:
+
+```mermaid
+flowchart LR
+    A[Task restore] --> B{executor_rebuilt?}
+    B -->|Yes| C{Is Code task?}
+    B -->|No| D[Skip]
+    C -->|Yes| E[Find S3 archive]
+    C -->|No| D
+    E --> F{Archive exists?}
+    F -->|Yes| G[Mark pending restore]
+    F -->|No| H[Log warning]
+    G --> I[New container downloads on startup]
+```
+
+**Implementation**: `mark_for_restore()` method in `backend/app/services/adapters/workspace_archive.py`
+
+**Workspace Archive Contains**:
+- Git-tracked code files
+- `.claude_session_id` session ID file
 
 ## Data Flow Details
 
-### Task Dispatch (Backend → Executor)
+### Task Restoration (Workspace Archive → Executor)
 
 ```mermaid
 flowchart LR
-    A[dispatch_tasks] --> B[Query related_subtasks]
-    B --> C{Found ASSISTANT<br/>with session_id?}:::new
-    C -->|Yes| D[Get latest session_id]:::new
-    C -->|No| E[session_id = null]
-    D --> F{new_session?}:::new
-    E --> G[Return task data]
-    F -->|Yes| H[Clear session_id]:::new
-    F -->|No| G
-    H --> G
-
-    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+    A[Task restore API] --> B[Mark Workspace pending restore]
+    B --> C[Generate S3 presigned URL]
+    C --> D[Update Task metadata]
+    D --> E[New container starts]
+    E --> F[Download Workspace archive]
+    F --> G[Extract to workspace]
+    G --> H[Restore .claude_session_id]
+    H --> I[SessionManager loads session]
 ```
 
-> 💡 **Legend**: Green nodes are the new Session ID lookup and processing logic
-
-### Task Completion (Executor → Backend)
+### Task Completion (Session ID Saving)
 
 ```mermaid
 flowchart LR
-    A[Claude SDK<br/>returns ResultMessage] --> B[Extract session_id]:::new
-    B --> C[Add to result dict]:::new
-    C --> D[report_progress]
-    D --> E[Backend update_subtask]
-    E --> F[Save to database]:::new
-
-    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+    A[Claude SDK returns session_id] --> B[SessionManager saves]
+    B --> C[Write to local file]
+    C --> D[.claude_session_id]
 ```
 
-> 💡 **Legend**: Green nodes are the new Session ID passing and saving logic
+**Code Example** (SessionManager):
 
-## Pipeline Mode Handling 🆕
+```python
+# Save session ID to local file
+SessionManager.save_session_id(self.task_id, session_id)
 
-> ⚠️ **New Feature**: Session ID isolation handling in Pipeline mode
-
-In Pipeline mode, when user confirms to proceed to the next stage:
-
-```mermaid
-flowchart LR
-    A[Stage 1 complete] --> B[User confirms]
-    B --> C[new_session = true]
-    C --> D[Don't pass old session_id]:::new
-    D --> E[Stage 2 creates new session]:::new
-
-    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+# Load session ID from local file
+saved_session_id = SessionManager.load_saved_session_id(self.task_id)
+if saved_session_id:
+    self.options["resume"] = saved_session_id
 ```
 
-**Reason**: Each Pipeline stage may use different Bots, requiring independent session contexts.
+## Session Expiry Handling
 
-## Session Expiry Handling 🆕
-
-> ⚠️ **New Feature**: Automatic fallback handling when session expires
-
-When Claude SDK returns session-related errors, automatic fallback occurs:
+When attempting to restore a session fails, automatic fallback occurs:
 
 ```mermaid
 flowchart TB
-    A[Attempt to resume session]:::new --> B{Connection successful?}:::new
-    B -->|Yes| C[Continue with resumed session]:::new
-    B -->|No| D{Is session error?}:::new
-    D -->|Yes| E[Remove resume parameter]:::new
-    E --> F[Create new session]:::new
-    D -->|No| G[Throw exception]
-
-    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+    A[Attempt to restore session] --> B{Retryable error?}
+    B -->|Yes| C[Get actual session_id]
+    C --> D[Return RETRY_WITH_RESUME]
+    D --> E[Retry with session resume]
+    E --> F{Retry success?}
+    F -->|Yes| G[Continue with restored session]
+    F -->|No| H[Create new session]
+    B -->|No| I[Throw exception]
 ```
 
-**Detection Keywords**: `session`, `expired`, `invalid`, `resume`
+**Retryable error types**: Determined by `is_retryable_error_subtype()` function
+
+**Retry limit**: `MAX_ERROR_SUBTYPE_RETRIES` times
 
 ## Configuration
 
@@ -230,31 +268,31 @@ flowchart TB
 
 ### Backend
 
-| File | Responsibility | Status |
-|------|----------------|--------|
-| `backend/app/api/endpoints/adapter/task_restore.py` | Restore API endpoint | Existing |
-| `backend/app/services/adapters/task_restore.py` | Restore service logic | Existing |
-| `backend/app/services/adapters/executor_kinds.py` | Session ID read/save, executor_deleted_at marking | 🆕 Modified |
-| `backend/app/services/adapters/task_kinds/operations.py` | Pre-append expiration check | Existing |
-| `backend/alembic/versions/x4y5z6a7b8c9_*.py` | Database migration (add claude_session_id) | 🆕 New |
+| File | Responsibility |
+|------|----------------|
+| `backend/app/api/endpoints/adapter/task_restore.py` | Restore API endpoint |
+| `backend/app/services/adapters/task_restore.py` | Restore service logic, validation, state reset |
+| `backend/app/services/adapters/workspace_archive.py` | Workspace archive restore marking |
 
 ### Executor
 
-| File | Responsibility | Status |
-|------|----------------|--------|
-| `executor/agents/claude_code/claude_code_agent.py` | Session ID reading, expiry handling | 🆕 Modified |
-| `executor/agents/claude_code/response_processor.py` | Add Session ID to result | 🆕 Modified |
+| File | Responsibility |
+|------|----------------|
+| `executor/agents/claude_code/session_manager.py` | Session management, caching, local file persistence |
+| `executor/agents/claude_code/claude_code_agent.py` | Session ID initialization, load from local file |
+| `executor/services/workspace_service.py` | Workspace archive creation, restoration |
 
 ### Frontend
 
-| File | Responsibility | Status |
-|------|----------------|--------|
-| `frontend/src/features/tasks/components/chat/TaskRestoreDialog.tsx` | Restore dialog | Existing |
-| `frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx` | Restore flow handling | Existing |
-| `frontend/src/utils/errorParser.ts` | Parse TASK_EXPIRED_RESTORABLE error | Existing |
+| File | Responsibility |
+|------|----------------|
+| `frontend/src/features/tasks/components/chat/TaskRestoreDialog.tsx` | Restore dialog UI |
+| `frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx` | Restore flow handling |
+| `frontend/src/utils/errorParser.ts` | Parse TASK_EXPIRED_RESTORABLE error |
+| `frontend/src/apis/tasks.ts` | restoreTask API client |
 
 ### Shared
 
-| File | Responsibility | Status |
-|------|----------------|--------|
-| `shared/models/db/subtask.py` | Subtask model (includes claude_session_id field) | 🆕 Modified |
+| File | Responsibility |
+|------|----------------|
+| (None) | No shared model modifications |

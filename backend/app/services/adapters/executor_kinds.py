@@ -1321,26 +1321,6 @@ class ExecutorKindsService(
                         )
                         break
 
-            # Find latest claude_session_id from previous assistant subtasks
-            # related_subtasks is sorted ascending (old→new), so iterate in reverse
-            latest_claude_session_id = None
-            for related in reversed(related_subtasks):
-                if (
-                    related.role == SubtaskRole.ASSISTANT
-                    and related.claude_session_id
-                ):
-                    latest_claude_session_id = related.claude_session_id
-                    logger.debug(
-                        f"Found claude_session_id={latest_claude_session_id} "
-                        f"from subtask {related.id}"
-                    )
-                    break
-
-            # Pipeline new stage should not inherit old session_id
-            # Ensures new stage creates an independent conversation
-            if new_session:
-                latest_claude_session_id = None
-
             formatted_subtasks.append(
                 {
                     "subtask_id": subtask.id,
@@ -1388,8 +1368,6 @@ class ExecutorKindsService(
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
-                    # Claude session ID for conversation resume after task restore
-                    "claude_session_id": latest_claude_session_id,
                     # Workspace restore fields for code task recovery
                     "workspace_restore_pending": workspace_restore_pending,
                     "workspace_archive_url": workspace_archive_url,
@@ -1559,15 +1537,6 @@ class ExecutorKindsService(
             if isinstance(raw_thinking, list) and raw_thinking:
                 merged_thinking = merge_thinking_steps(raw_thinking)
                 subtask_update.result["thinking"] = merged_thinking
-
-            # Extract and save claude_session_id from result for conversation resume
-            # This enables task restore to resume Claude sessions after container restart
-            claude_session_id = subtask_update.result.get("claude_session_id")
-            if claude_session_id:
-                subtask.claude_session_id = claude_session_id
-                logger.info(
-                    f"Saved Claude session ID for subtask {subtask.id}: {claude_session_id}"
-                )
 
         # Update other subtask fields
         update_data = subtask_update.model_dump(
