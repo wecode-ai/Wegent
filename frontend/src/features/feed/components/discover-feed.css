@@ -56,7 +56,6 @@
 .discover-feed-card:hover {
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
   border-color: rgb(var(--color-primary) / 0.3);
-  transform: translateY(-2px);
 }
 
 /* Content Area */
@@ -66,10 +65,17 @@
   max-width: 100%;
 }
 
+/* Collapsed state - limit height with gradient fade */
 .discover-feed-content.collapsed {
   max-height: 400px;
   overflow: hidden;
   position: relative;
+}
+
+/* Expanded state - limit max height and add scroll */
+.discover-feed-content:not(.collapsed) {
+  max-height: 600px;
+  overflow-y: auto;
 }
 
 /* Fade out effect for collapsed content */
