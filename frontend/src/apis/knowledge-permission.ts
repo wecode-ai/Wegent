@@ -27,6 +27,7 @@ interface ResourceMemberResponse {
   resource_id: number
   user_id: number
   user_name: string | null
+  user_email: string | null
   permission_level: string
   status: string
   invited_by_user_id: number
@@ -92,6 +93,7 @@ export const knowledgePermissionApi = {
         id: number
         user_id: number
         user_name: string | null
+        user_email: string | null
         requested_permission_level: string
         requested_at: string
       }[]
@@ -103,7 +105,7 @@ export const knowledgePermissionApi = {
       id: r.id,
       user_id: r.user_id,
       username: r.user_name || '',
-      email: '',
+      email: r.user_email || '',
       permission_level: r.requested_permission_level as 'view' | 'edit' | 'manage',
       requested_at: r.requested_at,
     }))
@@ -126,7 +128,7 @@ export const knowledgePermissionApi = {
           id: m.id,
           user_id: m.user_id,
           username: m.user_name || '',
-          email: '',
+          email: m.user_email || '',
           permission_level: level,
           requested_at: m.requested_at,
         }

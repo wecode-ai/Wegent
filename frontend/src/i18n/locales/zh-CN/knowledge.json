@@ -298,6 +298,8 @@
       "confirmRemove": "确定要移除该用户的访问权限吗？此操作无法撤销。",
       "userName": "用户名",
       "enterUserName": "请输入用户名",
+      "searchUserPlaceholder": "搜索用户名或邮箱...",
+      "selectUser": "请选择用户",
       "invalidUserName": "请输入有效的用户名",
       "invalidShareLink": "分享链接无效或已过期",
       "noLinkToCopy": "没有可复制的链接",

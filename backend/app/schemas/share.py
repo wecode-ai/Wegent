@@ -140,6 +140,7 @@ class ResourceMemberResponse(BaseModel):
     resource_id: int
     user_id: int
     user_name: Optional[str] = None  # Populated from user lookup
+    user_email: Optional[str] = None  # Populated from user lookup
     permission_level: str
     status: str
     invited_by_user_id: int
@@ -219,6 +220,7 @@ class PendingRequestResponse(BaseModel):
     id: int
     user_id: int
     user_name: Optional[str] = None
+    user_email: Optional[str] = None
     requested_permission_level: str
     requested_at: datetime
 

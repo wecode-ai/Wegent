@@ -5,7 +5,6 @@
 'use client'
 
 import { FormEvent } from 'react'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -15,21 +14,23 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
+import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import type { PermissionLevel } from '@/types/knowledge'
+import type { SearchUser } from '@/types/api'
 
 interface AddUserFormProps {
-  userName: string
+  selectedUsers: SearchUser[]
   permissionLevel: PermissionLevel
-  onUserNameChange: (value: string) => void
+  onSelectedUsersChange: (users: SearchUser[]) => void
   onPermissionLevelChange: (level: PermissionLevel) => void
   onSubmit: (e: FormEvent) => void
   error: string | null
 }
 
 export function AddUserForm({
-  userName,
+  selectedUsers,
   permissionLevel,
-  onUserNameChange,
+  onSelectedUsersChange,
   onPermissionLevelChange,
   onSubmit,
   error,
@@ -39,16 +40,14 @@ export function AddUserForm({
   return (
     <form onSubmit={onSubmit}>
       <div className="space-y-4 py-4">
-        {/* User Name Input */}
+        {/* User Search Select */}
         <div className="space-y-2">
-          <Label htmlFor="userName">{t('document.permission.userName')}</Label>
-          <Input
-            id="userName"
-            type="text"
-            placeholder={t('document.permission.enterUserName')}
-            value={userName}
-            onChange={e => onUserNameChange(e.target.value)}
-            required
+          <Label>{t('document.permission.userName')}</Label>
+          <UserSearchSelect
+            selectedUsers={selectedUsers}
+            onSelectedUsersChange={onSelectedUsersChange}
+            placeholder={t('document.permission.searchUserPlaceholder')}
+            multiple={false}
           />
         </div>
 
