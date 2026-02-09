@@ -127,8 +127,21 @@ const nextConfig = {
       'lodash-es',
     ],
   },
-  // Note: API proxying is now handled by /api/[...path]/route.ts
-  // This allows RUNTIME_INTERNAL_API_URL to be read at runtime instead of build time
+  // API proxy using rewrites (more efficient than API Route)
+  // For runtime URL configuration, set NEXT_PUBLIC_INTERNAL_API_URL environment variable
+  async rewrites() {
+    const backendUrl =
+      process.env.RUNTIME_INTERNAL_API_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      'http://localhost:8000'
+    console.log('[next.config.js] API proxy target:', backendUrl)
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${backendUrl}/api/:path*`,
+      },
+    ]
+  },
 
   // Configure cache headers to prevent Safari aggressive caching issues
   async headers() {
