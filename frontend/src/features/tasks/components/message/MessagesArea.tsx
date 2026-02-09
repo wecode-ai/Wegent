@@ -238,48 +238,71 @@ export default function MessagesArea({
   // Ref for scroll container observation
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLElement | null>(null)
 
   // Scroll position preservation for loading more messages
   const [isPreservingScroll, setIsPreservingScroll] = useState(false)
   const prevScrollHeightRef = useRef<number>(0)
 
+  // Find and cache the scroll container on mount
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      // Try data-scroll-container first, then fallback to parent with overflow scroll
+      let container: HTMLElement | null =
+        messagesContainerRef.current.closest('[data-scroll-container]')
+      if (!container) {
+        // Fallback: find parent with scrollable overflow
+        let parent = messagesContainerRef.current.parentElement
+        while (parent) {
+          const overflow = window.getComputedStyle(parent).overflowY
+          if (overflow === 'auto' || overflow === 'scroll') {
+            container = parent
+            break
+          }
+          parent = parent.parentElement
+        }
+      }
+      scrollContainerRef.current = container
+    }
+  }, [])
+
   // IntersectionObserver for infinite scroll - trigger when top sentinel becomes visible
   useEffect(() => {
-    if (!loadMoreTriggerRef.current || !hasMoreMessages || isLoadingMore) return
+    const triggerEl = loadMoreTriggerRef.current
+    const containerEl = messagesContainerRef.current
+    if (!triggerEl || !containerEl || !hasMoreMessages || isLoadingMore) return
 
     const observer = new IntersectionObserver(
       entries => {
         const [entry] = entries
         if (entry.isIntersecting && hasMoreMessages && !isLoadingMore) {
           // Save scroll height before loading
-          if (messagesContainerRef.current) {
-            prevScrollHeightRef.current = messagesContainerRef.current.scrollHeight
+          if (containerEl) {
+            prevScrollHeightRef.current = containerEl.scrollHeight
             setIsPreservingScroll(true)
           }
           loadMoreMessages()
         }
       },
       {
+        root: scrollContainerRef.current, // Use the scroll container as root
         threshold: 0.1,
         rootMargin: '100px 0px 0px 0px', // Trigger 100px before reaching the top
       }
     )
 
-    observer.observe(loadMoreTriggerRef.current)
+    observer.observe(triggerEl)
     return () => observer.disconnect()
   }, [hasMoreMessages, isLoadingMore, loadMoreMessages])
 
   // Preserve scroll position after loading more messages
-  useEffect(() => {
+  // Use useLayoutEffect to run synchronously before paint
+  useLayoutEffect(() => {
     if (isPreservingScroll && !isLoadingMore && messagesContainerRef.current) {
       const newScrollHeight = messagesContainerRef.current.scrollHeight
       const scrollDiff = newScrollHeight - prevScrollHeightRef.current
-      if (scrollDiff > 0) {
-        // Find the scroll container (parent element)
-        const scrollContainer = messagesContainerRef.current.closest('[data-scroll-container]')
-        if (scrollContainer) {
-          scrollContainer.scrollTop += scrollDiff
-        }
+      if (scrollDiff > 0 && scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop += scrollDiff
       }
       setIsPreservingScroll(false)
     }

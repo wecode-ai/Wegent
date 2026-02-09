@@ -64,6 +64,8 @@ export function useMessagePagination({
   const [hasLoadedAll, setHasLoadedAll] = useState(false)
   const [loadedCount, setLoadedCount] = useState(0)
 
+  // Use ref to prevent concurrent calls (more reliable than state for race conditions)
+  const isLoadingMoreRef = useRef(false)
   // Track the oldest message ID we've loaded
   const oldestMessageIdRef = useRef<number | null>(null)
   // Track last task ID to reset state when task changes
@@ -77,6 +79,7 @@ export function useMessagePagination({
       setError(null)
       oldestMessageIdRef.current = null
       setLoadedCount(0)
+      isLoadingMoreRef.current = false
     }
   }, [taskId])
 
@@ -112,8 +115,11 @@ export function useMessagePagination({
    * Load more (older) messages
    */
   const loadMoreMessages = useCallback(async () => {
-    if (!taskId || isLoadingMore || hasLoadedAll) return
+    // Use ref to prevent concurrent calls
+    if (!taskId || isLoadingMoreRef.current || hasLoadedAll) return
 
+    // Set ref synchronously to prevent races
+    isLoadingMoreRef.current = true
     setIsLoadingMore(true)
     setError(null)
 
@@ -181,9 +187,10 @@ export function useMessagePagination({
       console.error('[useMessagePagination] Failed to load more messages:', err)
       setError(err instanceof Error ? err.message : 'Failed to load messages')
     } finally {
+      isLoadingMoreRef.current = false
       setIsLoadingMore(false)
     }
-  }, [taskId, isLoadingMore, hasLoadedAll, teamName, isGroupChat, currentUserId, currentUserName])
+  }, [taskId, hasLoadedAll, teamName, isGroupChat, currentUserId, currentUserName])
 
   /**
    * Reset pagination state (when task changes)

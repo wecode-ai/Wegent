@@ -107,8 +107,11 @@ export default function ExportSelectModal({
   useEffect(() => {
     if (!open || !taskId) {
       setAllMessages([])
+      setLoadError(null)
       return
     }
+
+    const controller = new AbortController()
 
     const fetchAllMessages = async () => {
       setIsLoadingAllMessages(true)
@@ -121,6 +124,9 @@ export default function ExportSelectModal({
           limit: 10000, // Large limit to get all messages
           fromLatest: false, // Get in chronological order
         })
+
+        // Check if aborted before updating state
+        if (controller.signal.aborted) return
 
         // Convert subtasks to SelectableMessage format
         const messages: SelectableMessage[] = response.items.map(subtask => {
@@ -185,17 +191,24 @@ export default function ExportSelectModal({
         // Select all by default
         setSelectedIds(new Set(validMessages.map(msg => msg.id)))
       } catch (error) {
+        // Check if aborted before updating state
+        if (controller.signal.aborted) return
+
         console.error('[ExportSelectModal] Failed to fetch all messages:', error)
         setLoadError(error instanceof Error ? error.message : 'Failed to load messages')
         // Fallback to initial messages from props
         setAllMessages(initialMessages)
         setSelectedIds(new Set(initialMessages.map(msg => msg.id)))
       } finally {
-        setIsLoadingAllMessages(false)
+        if (!controller.signal.aborted) {
+          setIsLoadingAllMessages(false)
+        }
       }
     }
 
     fetchAllMessages()
+
+    return () => controller.abort()
   }, [open, taskId, initialMessages])
 
   // Use allMessages (fetched) or initialMessages (fallback)
@@ -622,7 +635,7 @@ export default function ExportSelectModal({
             {t('chat:export.cancel') || 'Cancel'}
           </Button>
           <Button
-            variant="default"
+            variant="primary"
             size="sm"
             onClick={fontLoadError ? handleRetryFontLoad : handleConfirmExport}
             disabled={
@@ -631,7 +644,7 @@ export default function ExportSelectModal({
               selectionCount === 0 ||
               isExporting
             }
-            className="text-sm bg-primary hover:bg-primary/90"
+            className="text-sm"
           >
             {fontLoadError ? (
               <RefreshCw className="w-4 h-4 mr-1" />

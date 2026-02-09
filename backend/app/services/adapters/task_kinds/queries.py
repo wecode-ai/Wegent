@@ -627,21 +627,12 @@ class TaskQueryMixin:
 
         # Get total message count for pagination
         from app.models.subtask import Subtask as SubtaskModel
-        from app.services.task_member_service import task_member_service
 
-        is_member = task_member_service.is_member(db, task_id, user_id)
-        if is_member:
-            total_messages = (
-                db.query(SubtaskModel).filter(SubtaskModel.task_id == task_id).count()
-            )
-        else:
-            total_messages = (
-                db.query(SubtaskModel)
-                .filter(
-                    SubtaskModel.task_id == task_id, SubtaskModel.user_id == user_id
-                )
-                .count()
-            )
+        # Note: User is guaranteed to be a member at this point since get_task_by_id
+        # already validates membership and raises 404 if not a member.
+        total_messages = (
+            db.query(SubtaskModel).filter(SubtaskModel.task_id == task_id).count()
+        )
 
         # Get related subtasks (limit to 50 for initial load, pagination supported via /subtasks API)
         subtasks = subtask_service.get_by_task(
