@@ -342,11 +342,10 @@ class SaveKbToolResultRequest(BaseModel):
     knowledge_base_id: int = Field(
         ..., description="Knowledge base ID that was accessed"
     )
-    user_id: int = Field(
-        ..., description="User ID for context creation if needed"
-    )
+    user_id: int = Field(..., description="User ID for context creation if needed")
     tool_type: Literal["rag", "kb_head"] = Field(
-        ..., description="Tool type: 'rag' for knowledge_base_search, 'kb_head' for kb_head"
+        ...,
+        description="Tool type: 'rag' for knowledge_base_search, 'kb_head' for kb_head",
     )
 
     # RAG-specific fields (required when tool_type='rag')
@@ -359,7 +358,9 @@ class SaveKbToolResultRequest(BaseModel):
     injection_mode: Optional[Literal["direct_injection", "rag_retrieval"]] = Field(
         default=None, description="Injection mode (for RAG only)"
     )
-    query: Optional[str] = Field(default=None, description="Search query (for RAG only)")
+    query: Optional[str] = Field(
+        default=None, description="Search query (for RAG only)"
+    )
     chunks_count: Optional[int] = Field(
         default=None, ge=0, description="Number of chunks (for RAG only)"
     )
@@ -485,7 +486,11 @@ async def save_kb_tool_result(
         # Context exists - use existing update logic
         if request.tool_type == "rag":
             # Validate RAG-specific required fields
-            if request.injection_mode is None or request.query is None or request.chunks_count is None:
+            if (
+                request.injection_mode is None
+                or request.query is None
+                or request.chunks_count is None
+            ):
                 return SaveKbToolResultResponse(
                     success=False,
                     message="Missing required fields for RAG: injection_mode, query, chunks_count",

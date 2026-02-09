@@ -538,21 +538,19 @@ def _fetch_kb_head_documents_content(
         return ""
 
     # Query documents by IDs (without ordering, we'll preserve input order)
+    # NOTE: kb_head tool (`/api/internal/rag/read-doc`) does NOT require is_active=True.
+    # Cross-turn injection should match tool behavior; otherwise documents that are not
+    # indexed yet (is_active=False) will never be injected from history.
     documents = (
         db.query(KnowledgeDocument)
         .filter(
             KnowledgeDocument.id.in_(document_ids),
-            KnowledgeDocument.is_active.is_(True),
             KnowledgeDocument.attachment_id > 0,
         )
         .all()
     )
 
     if not documents:
-        logger.debug(
-            f"[_fetch_kb_head_documents_content] No active documents found "
-            f"for document_ids={document_ids}"
-        )
         return ""
 
     # Build document_id -> document mapping for order preservation
