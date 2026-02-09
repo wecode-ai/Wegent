@@ -45,6 +45,17 @@ import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
 
+// Unsupported file extensions that need friendly error message (images are not supported for RAG)
+const KB_UNSUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+
+/**
+ * Check if a file extension is in the unsupported list (images)
+ */
+function isKBUnsupportedExtension(filename: string): boolean {
+  const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'))
+  return KB_UNSUPPORTED_EXTENSIONS.includes(ext)
+}
+
 // Smart splitter supported file extensions
 const SMART_SUPPORTED_EXTENSIONS = ['.pdf', '.txt', '.doc', '.docx', '.md']
 
@@ -161,13 +172,26 @@ export function DocumentUpload({
     (files: File[]) => {
       if (files.length === 0) return
 
-      const result = addFiles(files)
+      // Filter out unsupported files (images) with friendly error message
+      const unsupportedFiles = files.filter(f => isKBUnsupportedExtension(f.name))
+      const supportedFiles = files.filter(f => !isKBUnsupportedExtension(f.name))
+
+      // Show friendly error if any unsupported files were selected
+      if (unsupportedFiles.length > 0) {
+        setValidationError(t('document.upload.unsupportedFileType'))
+        setTimeout(() => setValidationError(null), 5000)
+      }
+
+      // Only add supported files
+      if (supportedFiles.length === 0) return
+
+      const result = addFiles(supportedFiles)
       if (result.rejected > 0 && result.reason) {
         setValidationError(result.reason)
         setTimeout(() => setValidationError(null), 5000)
       }
     },
-    [addFiles]
+    [addFiles, t]
   )
 
   const handleFileChange = useCallback(
@@ -758,7 +782,7 @@ export function DocumentUpload({
             type="file"
             className="hidden"
             multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.jpg,.jpeg,.png,.gif,.bmp,.webp"
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md"
             onChange={handleFileChange}
             disabled={state.isUploading}
           />

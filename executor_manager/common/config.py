@@ -68,6 +68,9 @@ class TimeoutConfig:
 
     # Redis TTL
     redis_ttl: int = 86400  # 24 hours
+    # Session hash TTL must be longer than redis_ttl to ensure GC can load sandbox data
+    # Formula: redis_ttl + GC_INTERVAL + buffer (default: 86400 + 3600 + 3600 = 93600)
+    session_hash_ttl: int = 93600
 
 
 @dataclass(frozen=True)

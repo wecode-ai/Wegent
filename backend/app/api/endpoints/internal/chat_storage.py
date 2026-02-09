@@ -22,13 +22,23 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
+from app.models.knowledge import KnowledgeDocument
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.models.subtask_context import (
+    ContextStatus,
+    ContextType,
+    InjectionMode,
+    SubtaskContext,
+)
 from app.models.user import User
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["internal-chat"])
+
+# Knowledge base injection mode constant for kb_head (not in enum as it's tool-specific)
+INJECTION_MODE_KB_HEAD = "kb_head"
 
 
 # ==================== Request/Response Schemas ====================
@@ -325,10 +335,46 @@ def _build_user_message_content(
             logger.debug(f"No remaining space for knowledge base context {kb_ctx.id}")
             break
 
-        if kb_ctx.extracted_text:
+        # Get content from extracted_text or fetch from documents for injection modes
+        kb_content = kb_ctx.extracted_text
+        if not kb_content:
+            # Check if this is direct_injection or kb_head mode - need to load from documents
+            type_data = kb_ctx.type_data or {}
+            knowledge_id = type_data.get("knowledge_id")
+
+            # Try rag_result sub-object first, then fall back to flat field
+            rag_result = type_data.get("rag_result", {})
+            injection_mode = rag_result.get("injection_mode") or type_data.get(
+                "injection_mode"
+            )
+
+            # Try kb_head_result sub-object
+            kb_head_result = type_data.get("kb_head_result", {})
+            kb_head_document_ids = kb_head_result.get("document_ids", [])
+            kb_head_offset = kb_head_result.get("offset", 0)
+            kb_head_limit = kb_head_result.get("limit", 50000)
+
+            if injection_mode == InjectionMode.DIRECT_INJECTION.value and knowledge_id:
+                logger.debug(
+                    f"[history] Loading documents for direct_injection KB: "
+                    f"id={kb_ctx.id}, kb_id={knowledge_id}"
+                )
+                kb_content = _fetch_kb_documents_content(db, knowledge_id)
+            elif kb_head_document_ids:
+                # kb_head mode: load specific documents by IDs
+                logger.debug(
+                    f"[history] Loading documents for kb_head: "
+                    f"id={kb_ctx.id}, document_ids={kb_head_document_ids}, "
+                    f"offset={kb_head_offset}, limit={kb_head_limit}"
+                )
+                kb_content = _fetch_kb_head_documents_content(
+                    db, kb_head_document_ids, kb_head_offset, kb_head_limit
+                )
+
+        if kb_content:
             kb_name = kb_ctx.name or "Knowledge Base"
             kb_id = kb_ctx.knowledge_id or "unknown"
-            kb_prefix = f"[Knowledge Base: {kb_name} (ID: {kb_id})]\n{kb_ctx.extracted_text}\n\n"
+            kb_prefix = f"[Knowledge Base: {kb_name} (ID: {kb_id})]\n{kb_content}\n\n"
 
             prefix_length = len(kb_prefix)
             if current_kb_length + prefix_length <= remaining_space:
@@ -383,6 +429,186 @@ def _build_user_message_content(
         text_content = f"{combined_prefix}{text_content}"
 
     return text_content
+
+
+@trace_sync(
+    span_name="fetch_kb_documents_content",
+    tracer_name="internal.chat_storage",
+)
+def _fetch_kb_documents_content(
+    db: Session,
+    knowledge_id: int,
+) -> str:
+    """
+    Fetch all document content from a knowledge base for direct injection mode.
+
+    When a knowledge_base context uses direct_injection mode, extracted_text is empty
+    to save storage space. This function loads content from the original documents:
+    KnowledgeDocument.attachment_id → SubtaskContext (ATTACHMENT type) → extracted_text
+
+    Args:
+        db: Database session
+        knowledge_id: Knowledge base ID (Kind.id)
+
+    Returns:
+        Concatenated text content from all active documents
+    """
+    # Query all active documents in this knowledge base
+    documents = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.kind_id == knowledge_id,
+            KnowledgeDocument.is_active.is_(True),
+            KnowledgeDocument.attachment_id > 0,
+        )
+        .order_by(KnowledgeDocument.created_at)
+        .all()
+    )
+
+    if not documents:
+        logger.debug(
+            f"[_fetch_kb_documents_content] No active documents found for kb_id={knowledge_id}"
+        )
+        return ""
+
+    # Collect attachment IDs
+    attachment_ids = [doc.attachment_id for doc in documents]
+
+    # Query attachment contexts to get extracted_text
+    attachment_contexts = (
+        db.query(SubtaskContext)
+        .filter(
+            SubtaskContext.id.in_(attachment_ids),
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+            SubtaskContext.status == ContextStatus.READY.value,
+        )
+        .all()
+    )
+
+    # Build attachment_id -> extracted_text mapping
+    attachment_text_map = {
+        ctx.id: ctx.extracted_text for ctx in attachment_contexts if ctx.extracted_text
+    }
+
+    # Build document content
+    content_parts = []
+    for doc in documents:
+        if doc.attachment_id in attachment_text_map:
+            text = attachment_text_map[doc.attachment_id]
+            doc_header = f"## Document: {doc.name}"
+            if doc.file_extension:
+                doc_header += f" ({doc.file_extension})"
+            content_parts.append(f"{doc_header}\n\n{text}")
+
+    if content_parts:
+        logger.debug(
+            f"[_fetch_kb_documents_content] Loaded {len(content_parts)} documents "
+            f"for kb_id={knowledge_id}, total_chars={sum(len(p) for p in content_parts)}"
+        )
+
+    return "\n\n".join(content_parts)
+
+
+@trace_sync(
+    span_name="fetch_kb_head_documents_content",
+    tracer_name="internal.chat_storage",
+)
+def _fetch_kb_head_documents_content(
+    db: Session,
+    document_ids: list[int],
+    offset: int = 0,
+    limit: int = 50000,
+) -> str:
+    """
+    Fetch document content for kb_head cross-turn injection.
+
+    When a knowledge_base context uses kb_head tool, extracted_text may be empty
+    to save storage space. This function loads content from the specified documents
+    using the stored document_ids, offset, and limit parameters.
+
+    The offset and limit are applied to each document's content to match the
+    original kb_head tool behavior.
+
+    Args:
+        db: Database session
+        document_ids: List of KnowledgeDocument IDs to load
+        offset: Character offset for content extraction
+        limit: Maximum characters to return per document
+
+    Returns:
+        Concatenated text content from specified documents (with offset/limit applied)
+    """
+    if not document_ids:
+        return ""
+
+    # Query documents by IDs (without ordering, we'll preserve input order)
+    # NOTE: kb_head tool (`/api/internal/rag/read-doc`) does NOT require is_active=True.
+    # Cross-turn injection should match tool behavior; otherwise documents that are not
+    # indexed yet (is_active=False) will never be injected from history.
+    documents = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id.in_(document_ids),
+            KnowledgeDocument.attachment_id > 0,
+        )
+        .all()
+    )
+
+    if not documents:
+        return ""
+
+    # Build document_id -> document mapping for order preservation
+    documents_by_id = {doc.id: doc for doc in documents}
+
+    # Collect attachment IDs (preserving input order)
+    attachment_ids = [
+        documents_by_id[doc_id].attachment_id
+        for doc_id in document_ids
+        if doc_id in documents_by_id
+    ]
+
+    # Query attachment contexts to get extracted_text
+    attachment_contexts = (
+        db.query(SubtaskContext)
+        .filter(
+            SubtaskContext.id.in_(attachment_ids),
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+            SubtaskContext.status == ContextStatus.READY.value,
+        )
+        .all()
+    )
+
+    # Build attachment_id -> extracted_text mapping
+    attachment_text_map = {
+        ctx.id: ctx.extracted_text for ctx in attachment_contexts if ctx.extracted_text
+    }
+
+    # Build document content with offset/limit applied (preserving input order)
+    content_parts = []
+    for doc_id in document_ids:
+        if doc_id not in documents_by_id:
+            continue
+        doc = documents_by_id[doc_id]
+        if doc.attachment_id in attachment_text_map:
+            full_text = attachment_text_map[doc.attachment_id]
+            # Apply offset and limit to match original kb_head read behavior
+            start = min(offset, len(full_text))
+            end = min(start + limit, len(full_text))
+            text = full_text[start:end]
+
+            doc_header = f"## Document: {doc.name}"
+            if doc.file_extension:
+                doc_header += f" ({doc.file_extension})"
+            content_parts.append(f"{doc_header}\n\n{text}")
+
+    if content_parts:
+        logger.debug(
+            f"[_fetch_kb_head_documents_content] Loaded {len(content_parts)} documents "
+            f"for document_ids={document_ids}, offset={offset}, limit={limit}, "
+            f"total_chars={sum(len(p) for p in content_parts)}"
+        )
+
+    return "\n\n".join(content_parts)
 
 
 # ==================== API Endpoints ====================

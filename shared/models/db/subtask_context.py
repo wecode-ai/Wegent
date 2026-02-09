@@ -8,6 +8,8 @@ Subtask context model for storing various context types.
 Supports multiple context types including attachments, knowledge bases, etc.
 """
 
+from typing import List, Optional
+
 from sqlalchemy import Column, DateTime, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.mysql import JSON, LONGBLOB, LONGTEXT
 from sqlalchemy.sql import func
@@ -76,6 +78,18 @@ class SubtaskContext(Base):
     # - storage_key: Storage key for retrieving binary data
     # - is_encrypted: Whether binary_data is encrypted (bool, default: False)
     # - encryption_version: Encryption version for future key rotation (int, 0 = unencrypted, 1 = AES-256-CBC)
+    #
+    # For knowledge_base type, includes:
+    # - knowledge_id: Knowledge base ID
+    # - document_count: Number of documents in knowledge base
+    # - sources: List of source references [{index, title, kb_id, score?}]
+    # - injection_mode: "direct_injection" or "rag_retrieval" (RAG observability)
+    # - query: Original search query (RAG observability)
+    # - chunks_count: Number of chunks retrieved/injected (RAG observability)
+    # - retrieval_count: Number of times retrieval was executed (for duration calculation)
+    # - kb_head_count: Number of times kb_head tool was used (kb_head observability)
+    # - kb_head_total_chars: Total characters read via kb_head (kb_head observability)
+    # - kb_head_document_ids: List of document IDs accessed via kb_head (kb_head observability)
     type_data = Column(JSON, nullable=False, default=dict)
 
     # Timestamps
@@ -166,6 +180,143 @@ class SubtaskContext(Base):
         if self.type_data and isinstance(self.type_data, dict):
             return self.type_data.get("document_count", 0)
         return 0
+
+    @property
+    def injection_mode(self) -> Optional[str]:
+        """Get injection mode from type_data (knowledge_base type).
+
+        Returns:
+            "direct_injection" or "rag_retrieval", or None if not set.
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("injection_mode")
+            return self.type_data.get("injection_mode")
+        return None
+
+    @property
+    def query(self) -> Optional[str]:
+        """Get query from type_data (knowledge_base type).
+
+        Returns:
+            Original search query used for RAG retrieval.
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("query")
+            return self.type_data.get("query")
+        return None
+
+    @property
+    def chunks_count(self) -> int:
+        """Get chunks count from type_data (knowledge_base type).
+
+        Returns:
+            Number of chunks retrieved/injected.
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("chunks_count", 0)
+            return self.type_data.get("chunks_count", 0)
+        return 0
+
+    @property
+    def retrieval_count(self) -> int:
+        """Get retrieval count from type_data (knowledge_base type).
+
+        Tracks how many times the RAG tool was called for this context.
+        Used for duration calculation when updated_at timestamp is overwritten
+        by multiple tool calls.
+
+        Returns:
+            Number of times retrieval was executed (1 = first call, >1 = multiple calls).
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("retrieval_count", 0)
+            return self.type_data.get("retrieval_count", 0)
+        return 0
+
+    @property
+    def kb_head_count(self) -> int:
+        """Get kb_head usage count from type_data (knowledge_base type).
+
+        Tracks how many times the kb_head tool was called for this context.
+        Used for observability and cross-turn content injection.
+
+        Returns:
+            Number of times kb_head was executed.
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new structure first, then fall back to legacy flat field
+            kb_head_result = self.type_data.get("kb_head_result", {})
+            if kb_head_result:
+                return kb_head_result.get("usage_count", 0)
+            return self.type_data.get("kb_head_count", 0)
+        return 0
+
+    @property
+    def kb_head_document_ids(self) -> List[int]:
+        """Get document IDs accessed via kb_head from type_data (knowledge_base type).
+
+        Returns the list of document IDs that were read using kb_head tool.
+        Used for cross-turn content injection.
+
+        Returns:
+            List of document IDs accessed via kb_head.
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new structure first, then fall back to legacy flat field
+            kb_head_result = self.type_data.get("kb_head_result", {})
+            if kb_head_result:
+                return kb_head_result.get("document_ids", [])
+            return self.type_data.get("kb_head_document_ids", [])
+        return []
+
+    @property
+    def rag_result(self) -> dict:
+        """Get RAG result sub-object from type_data (knowledge_base type).
+
+        Returns:
+            Dict with sources, injection_mode, query, chunks_count, retrieval_count.
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            return self.type_data.get("rag_result", {})
+        return {}
+
+    @property
+    def sources(self) -> List[dict]:
+        """Get sources from type_data (knowledge_base type).
+
+        Returns:
+            List of source references [{index, title, kb_id, score?}].
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            # Try new rag_result structure first, then fall back to legacy flat field
+            rag_result = self.type_data.get("rag_result", {})
+            if rag_result:
+                return rag_result.get("sources", [])
+            return self.type_data.get("sources", [])
+        return []
+
+    @property
+    def kb_head_result(self) -> dict:
+        """Get kb_head result sub-object from type_data (knowledge_base type).
+
+        Returns:
+            Dict with usage_count, document_ids, offset, limit.
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            return self.type_data.get("kb_head_result", {})
+        return {}
 
     # === Common helper properties ===
 

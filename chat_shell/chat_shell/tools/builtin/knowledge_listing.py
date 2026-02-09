@@ -13,12 +13,13 @@ knowledge_base_search tool to prevent excessive knowledge base access.
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from .knowledge_base_abc import KnowledgeBaseToolABC
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 logger = logging.getLogger(__name__)
@@ -352,13 +353,15 @@ class KbHeadInput(BaseModel):
     )
 
 
-class KbHeadTool(BaseTool):
+class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
     """Read document content with offset/limit pagination.
 
     Similar to 'head -c' command. Returns partial content starting from
     the specified offset. Use has_more flag to check if more content exists.
 
     This tool shares call limits with kb_ls via a shared counter.
+
+    Inherits from KnowledgeBaseToolABC to ensure consistent persistence behavior.
     """
 
     name: str = "kb_head"
@@ -372,8 +375,14 @@ class KbHeadTool(BaseTool):
     # Knowledge base IDs this tool can access (set when creating the tool)
     knowledge_base_ids: list[int] = Field(default_factory=list)
 
+    # User ID for context creation when auto-creating records
+    user_id: int = 0
+
     # Database session (optional, used in package mode)
     db_session: Optional[Any] = None
+
+    # User subtask ID for persistence (optional, enables kb_head tracking)
+    user_subtask_id: Optional[int] = None
 
     # Shared call counter (set when creating the tool, shared with kb_ls)
     _call_counter: Optional[KBToolCallCounter] = PrivateAttr(default=None)
@@ -430,10 +439,46 @@ class KbHeadTool(BaseTool):
 
             # Try package mode first (direct DB access)
             try:
-                return await self._read_docs_package_mode(document_ids, offset, limit)
+                result = await self._read_docs_package_mode(document_ids, offset, limit)
             except ImportError:
                 # Fall back to HTTP mode
-                return await self._read_docs_http_mode(document_ids, offset, limit)
+                result = await self._read_docs_http_mode(document_ids, offset, limit)
+
+            # Persist kb_head usage if user_subtask_id is available
+            # Note: Errors in persistence should not affect the tool response
+            if self.user_subtask_id and self.knowledge_base_ids:
+                try:
+                    result_data = json.loads(result)
+                    docs = result_data.get("documents", [])
+
+                    # Group documents by KB ID for accurate per-KB persistence
+                    kb_doc_ids: dict[int, list[int]] = {}  # kb_id -> [doc_ids]
+                    for d in docs:
+                        if "error" in d:
+                            continue
+                        doc_id = d.get("id")
+                        kb_id = d.get("kb_id")
+
+                        if not doc_id or not kb_id:
+                            continue
+                        # Only persist to KBs in our allowed list
+                        if kb_id not in self.knowledge_base_ids:
+                            continue
+
+                        if kb_id not in kb_doc_ids:
+                            kb_doc_ids[kb_id] = []
+                        kb_doc_ids[kb_id].append(doc_id)
+
+                    # Persist to each KB with KbHeadInput params
+                    for kb_id, doc_ids in kb_doc_ids.items():
+                        await self._persist_kb_head_result(
+                            kb_id, doc_ids, offset, limit
+                        )
+                except Exception as e:
+                    # Log but don't fail the tool response
+                    logger.warning(f"[KbHeadTool] Failed to persist kb_head result: {e}")
+
+            return result
 
         except Exception as e:
             logger.error(f"[KbHeadTool] Failed to read documents: {e}", exc_info=True)
@@ -519,6 +564,7 @@ class KbHeadTool(BaseTool):
                 "total_length": total_length,
                 "returned_length": returned_length,
                 "has_more": has_more,
+                "kb_id": document.kind_id,  # Include KB ID for persistence routing
             }
 
         results = []
@@ -596,6 +642,7 @@ class KbHeadTool(BaseTool):
                             "total_length": data.get("total_length", 0),
                             "returned_length": data.get("returned_length", 0),
                             "has_more": data.get("has_more", False),
+                            "kb_id": data.get("kb_id"),  # Include KB ID for persistence routing
                         }
                     )
 
@@ -610,3 +657,175 @@ class KbHeadTool(BaseTool):
         logger.info(f"[KbHeadTool] Read {len(results)} documents (HTTP mode)")
 
         return json.dumps({"documents": results}, ensure_ascii=False)
+
+    @trace_async(
+        span_name="kb_head_persist_result", tracer_name="chat_shell.tools.kb_head"
+    )
+    async def _persist_kb_head_result(
+        self,
+        kb_id: int,
+        document_ids: list[int],
+        offset: int,
+        limit: int,
+    ) -> None:
+        """Persist kb_head usage tracking to context database.
+
+        This method saves kb_head tool usage for cross-turn content injection.
+        It stores the KbHeadInput parameters so content can be re-fetched when loading history.
+
+        Supports both package mode (direct DB access) and HTTP mode (via API).
+
+        Args:
+            kb_id: Knowledge base ID
+            document_ids: List of document IDs that were read
+            offset: Start position in characters (from KbHeadInput)
+            limit: Max characters to return (from KbHeadInput)
+        """
+        # Try package mode first (direct DB access)
+        try:
+            await self._persist_kb_head_package_mode(kb_id, document_ids, offset, limit)
+            return
+        except ImportError:
+            # HTTP mode: use HTTP API
+            await self._persist_kb_head_http_mode(kb_id, document_ids, offset, limit)
+
+    @trace_async(
+        span_name="kb_head_persist_package_mode", tracer_name="chat_shell.tools.kb_head"
+    )
+    async def _persist_kb_head_package_mode(
+        self,
+        kb_id: int,
+        document_ids: list[int],
+        offset: int,
+        limit: int,
+    ) -> None:
+        """Persist kb_head result using direct database access (package mode)."""
+        import asyncio
+
+        from app.services.context.context_service import context_service
+
+        def _persist():
+            # Find context record for this subtask and KB
+            context = context_service.get_knowledge_base_context_by_subtask_and_kb_id(
+                db=self.db_session,
+                subtask_id=self.user_subtask_id,
+                knowledge_id=kb_id,
+            )
+
+            if context is None:
+                # Context doesn't exist - create with result in one operation
+                logger.info(
+                    f"[KbHeadTool] Context not found, creating new for "
+                    f"subtask_id={self.user_subtask_id}, kb_id={kb_id}"
+                )
+                context = context_service.create_knowledge_base_context_with_result(
+                    db=self.db_session,
+                    subtask_id=self.user_subtask_id,
+                    knowledge_id=kb_id,
+                    user_id=self.user_id,
+                    tool_type="kb_head",
+                    result_data={
+                        "document_ids": document_ids,
+                        "offset": offset,
+                        "limit": limit,
+                    },
+                )
+                logger.info(
+                    f"[KbHeadTool] Created new context with kb_head result: "
+                    f"context_id={context.id}, subtask_id={self.user_subtask_id}, kb_id={kb_id}"
+                )
+                return
+
+            # Update context with kb_head usage (stores KbHeadInput params)
+            context_service.update_knowledge_base_kb_head_result(
+                db=self.db_session,
+                context_id=context.id,
+                document_ids=document_ids,
+                offset=offset,
+                limit=limit,
+            )
+
+            logger.info(
+                f"[KbHeadTool] Persisted kb_head result: context_id={context.id}, "
+                f"subtask_id={self.user_subtask_id}, kb_id={kb_id}, "
+                f"docs={len(document_ids)}, offset={offset}, limit={limit}"
+            )
+
+        # Run synchronous database operation in thread pool
+        await asyncio.to_thread(_persist)
+
+    @trace_async(
+        span_name="kb_head_persist_http_mode", tracer_name="chat_shell.tools.kb_head"
+    )
+    async def _persist_kb_head_http_mode(
+        self,
+        kb_id: int,
+        document_ids: list[int],
+        offset: int,
+        limit: int,
+    ) -> None:
+        """Persist kb_head result via HTTP API (HTTP mode)."""
+        import httpx
+
+        backend_url = _get_backend_url()
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Use unified save-tool-result endpoint with KbHeadInput params
+                response = await client.post(
+                    f"{backend_url}/api/internal/rag/save-tool-result",
+                    json={
+                        "user_subtask_id": self.user_subtask_id,
+                        "knowledge_base_id": kb_id,
+                        "user_id": self.user_id,
+                        "tool_type": "kb_head",
+                        "document_ids": document_ids,
+                        "offset": offset,
+                        "limit": limit,
+                    },
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success"):
+                        logger.info(
+                            f"[KbHeadTool] Persisted kb_head result via HTTP: "
+                            f"context_id={data.get('context_id')}, subtask_id={self.user_subtask_id}, "
+                            f"kb_id={kb_id}, usage_count={data.get('kb_head_count')}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[KbHeadTool] Failed to persist kb_head result: {data.get('message')}"
+                        )
+                else:
+                    logger.warning(
+                        f"[KbHeadTool] HTTP persist failed: status={response.status_code}, "
+                        f"body={response.text[:200]}"
+                    )
+
+        except Exception as e:
+            logger.warning(
+                f"[KbHeadTool] HTTP persist error for kb_id={kb_id}: {e}"
+            )
+
+    async def _persist_result(
+        self,
+        kb_id: int,
+        result_data: Dict[str, Any],
+    ) -> None:
+        """Implement abstract method from KnowledgeBaseToolABC.
+
+        Delegates to the existing _persist_kb_head_result implementation.
+
+        Args:
+            kb_id: Knowledge base ID for this result
+            result_data: Tool-specific result data containing:
+                - document_ids: List of document IDs that were read
+                - offset: Start position in characters
+                - limit: Max characters to return
+        """
+        document_ids = result_data.get("document_ids", [])
+        offset = result_data.get("offset", 0)
+        limit = result_data.get("limit", 50000)
+
+        await self._persist_kb_head_result(kb_id, document_ids, offset, limit)
