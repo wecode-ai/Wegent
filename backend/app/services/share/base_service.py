@@ -727,6 +727,20 @@ class UnifiedShareService(ABC):
             )
             .all()
         )
+        
+        # LOGGING: Log query parameters and results to verify resource_type matching
+        logger.info(
+            f"[get_members] Query params: resource_type={self.resource_type.value}, "
+            f"resource_id={resource_id}, status={MemberStatus.APPROVED.value}"
+        )
+        logger.info(
+            f"[get_members] Found {len(members)} members with resource_type={self.resource_type.value}"
+        )
+        for member in members:
+            logger.info(
+                f"[get_members] Member detail: id={member.id}, resource_type={member.resource_type}, "
+                f"resource_id={member.resource_id}, user_id={member.user_id}"
+            )
 
         # Populate user names
         user_ids = set()
