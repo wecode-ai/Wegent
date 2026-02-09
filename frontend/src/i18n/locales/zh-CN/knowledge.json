@@ -119,7 +119,7 @@
       "namePlaceholder": "输入文档名称",
       "updateFailed": "更新文档失败",
       "dropzone": "拖拽文件到此处或点击浏览",
-      "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 {{maxSize}}MB）",
+      "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD 文件（最大 {{maxSize}}MB）",
       "uploading": "上传中...",
       "uploadSuccess": "文件上传成功",
       "batch": {
@@ -200,6 +200,7 @@
       "textRequired": "请输入文本内容",
       "insert": "插入",
       "clickToRename": "点击修改文件名",
+      "unsupportedFileType": "暂不支持图片文件，后续版本将支持",
       "addTable": "添加数据表",
       "tableHint": "输入数据表的链接和名称，即可将其添加到知识库。",
       "tableUrlHint": "请输入有效的多维表URL，确保链接可访问且有读取权限。目前支持钉钉多维表。",
