@@ -1634,11 +1634,17 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         Handle skill:update event for dynamically updating task skills.
 
-        This allows Chat Shell tasks to modify their skill configuration
-        during an active conversation. The skills are stored in the task's
-        metadata and will be used for subsequent AI responses.
+        This allows tasks to modify their skill configuration during an
+        active conversation. The skills are stored in the task's metadata
+        and will be used for subsequent AI responses.
 
-        Only supported for Chat Shell tasks.
+        For Chat Shell tasks:
+        - Skills are stored in metadata and read at next AI response
+        - No additional action needed (Chat Shell reads from metadata)
+
+        For other shell types (ClaudeCode, Agno) running on local devices:
+        - Skills are stored in metadata
+        - A skill:sync event is emitted to the device to download new skills
 
         Args:
             sid: Socket ID
@@ -1677,18 +1683,19 @@ class ChatNamespace(socketio.AsyncNamespace):
             if not can_access_task(db, task, user_id):
                 return {"success": False, "error": "Access denied"}
 
-            # Get team to verify it's Chat Shell type
+            # Get team to determine shell type
             team = db.query(Kind).filter(Kind.id == task.team_id).first()
             if not team:
                 return {"success": False, "error": "Team not found"}
 
             team_crd = Team.model_validate(team.json)
-            # Check if this is a Chat Shell by looking at the agent_type
-            # agent_type is stored in team metadata, not in Kind
-            is_chat_shell = getattr(task, "agent_type", None) == "chat"
 
-            # Alternative: Check through bot's shell type if agent_type not available
-            if not is_chat_shell and team_crd.spec.members:
+            # Determine shell type
+            shell_type = None
+            team_namespace = (
+                team_crd.metadata.namespace if team_crd.metadata else "default"
+            )
+            if team_crd.spec.members:
                 from app.schemas.kind import Bot, Shell
 
                 first_member = team_crd.spec.members[0]
@@ -1717,29 +1724,35 @@ class ChatNamespace(socketio.AsyncNamespace):
                         )
                         if shell:
                             shell_crd = Shell.model_validate(shell.json)
-                            is_chat_shell = (
-                                shell_crd.spec and shell_crd.spec.shellType == "Chat"
+                            shell_type = (
+                                shell_crd.spec.shellType if shell_crd.spec else None
                             )
-
-            if not is_chat_shell:
-                return {
-                    "success": False,
-                    "error": "Dynamic skill update is only supported for Chat Shell tasks",
-                }
 
             # Update task metadata with new skills
             metadata = task.metadata or {}
-            metadata["additional_skills"] = [
+            skills_data = [
                 {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
                 for s in payload.skills
             ]
+            metadata["additional_skills"] = skills_data
             task.metadata = metadata
             db.commit()
 
             logger.info(
                 f"[WS] skill:update: task_id={payload.task_id}, "
-                f"skills={[s.name for s in payload.skills]}"
+                f"shell_type={shell_type}, skills={[s.name for s in payload.skills]}"
             )
+
+            # For non-Chat Shell tasks running on local devices, emit skill:sync
+            # to download new skills to the executor
+            if shell_type and shell_type != "Chat":
+                await self._emit_skill_sync_to_device(
+                    db=db,
+                    task=task,
+                    user_id=user_id,
+                    skills=skills_data,
+                    team_namespace=team_namespace,
+                )
 
             return {"success": True}
 
@@ -1748,6 +1761,76 @@ class ChatNamespace(socketio.AsyncNamespace):
             return {"success": False, "error": str(e)}
         finally:
             db.close()
+
+    async def _emit_skill_sync_to_device(
+        self,
+        db,
+        task: TaskResource,
+        user_id: int,
+        skills: list,
+        team_namespace: str,
+    ) -> None:
+        """
+        Emit skill:sync event to the local device running the task.
+
+        This triggers the device to download new/updated skills.
+
+        Args:
+            db: Database session
+            task: Task resource
+            user_id: User ID
+            skills: List of skill references [{name, namespace, is_public}]
+            team_namespace: Team namespace for skill lookup
+        """
+        from app.core.socketio import get_sio
+        from app.schemas.kind import Task as TaskCRD
+        from app.services.chat.access import generate_jwt_for_user
+
+        try:
+            # Get device_id from task CRD
+            task_crd = TaskCRD.model_validate(task.json)
+            device_id = task_crd.spec.device_id if task_crd.spec else None
+
+            if not device_id:
+                logger.debug(
+                    f"[WS] No device_id for task {task.id}, "
+                    "skipping skill:sync (task may be running on Docker executor)"
+                )
+                return
+
+            # Generate auth token for skill download
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                logger.warning(
+                    f"[WS] User {user_id} not found, cannot generate auth token"
+                )
+                return
+
+            auth_token = generate_jwt_for_user(user)
+
+            # Emit skill:sync to device
+            sio = get_sio()
+            device_room = f"device:{user_id}:{device_id}"
+
+            await sio.emit(
+                "skill:sync",
+                {
+                    "task_id": task.id,
+                    "skills": skills,
+                    "auth_token": auth_token,
+                    "team_namespace": team_namespace,
+                },
+                room=device_room,
+                namespace="/local-executor",
+            )
+
+            logger.info(
+                f"[WS] skill:sync emitted to device {device_id} for task {task.id}, "
+                f"skills={[s.get('name') for s in skills]}"
+            )
+
+        except Exception as e:
+            logger.exception(f"[WS] Error emitting skill:sync to device: {e}")
 
     async def on_skill_response(self, sid: str, data: dict) -> dict:
         """

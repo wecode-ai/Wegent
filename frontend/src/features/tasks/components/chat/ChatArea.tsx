@@ -109,10 +109,9 @@ function ChatAreaContent({
     enabled: true,
   })
 
-  // Skill update hook - handles WebSocket synchronization for Chat Shell
+  // Skill update hook - handles WebSocket synchronization for all shell types
   const skillUpdate = useSkillUpdate({
     taskId: selectedTaskDetail?.id,
-    isChatShellType: skillSelector.isChatShellType,
     skillSelector,
   })
 

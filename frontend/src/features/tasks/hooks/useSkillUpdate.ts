@@ -13,8 +13,6 @@ import type { SkillRef, UseSkillSelectorReturn } from './useSkillSelector'
 interface UseSkillUpdateOptions {
   /** Current task ID (undefined for new chats) */
   taskId: number | undefined
-  /** Whether the team is Chat Shell type (supports dynamic skill update) */
-  isChatShellType: boolean
   /** Skill selector instance */
   skillSelector: UseSkillSelectorReturn
 }
@@ -31,15 +29,19 @@ interface UseSkillUpdateReturn {
 /**
  * Hook for managing skill updates with WebSocket synchronization.
  *
- * For Chat Shell tasks, when skills are modified in an active conversation,
- * this hook automatically emits a `skill:update` WebSocket event to sync
- * the skill configuration with the backend.
+ * When skills are modified in an active conversation, this hook automatically
+ * emits a `skill:update` WebSocket event to sync the skill configuration
+ * with the backend.
  *
- * For non-Chat Shell tasks, skills are only sent when a new message is sent.
+ * For Chat Shell tasks:
+ * - Skills are stored in task metadata and read at next AI response
+ *
+ * For other shell types (ClaudeCode, Agno) on local devices:
+ * - Skills are stored in task metadata
+ * - Backend emits skill:sync to device to download new skills
  */
 export function useSkillUpdate({
   taskId,
-  isChatShellType,
   skillSelector,
 }: UseSkillUpdateOptions): UseSkillUpdateReturn {
   const { t } = useTranslation('chat')
@@ -56,7 +58,7 @@ export function useSkillUpdate({
    */
   const sendSkillUpdate = useCallback(
     async (skills: SkillRef[]) => {
-      if (!taskId || !isChatShellType || !isConnected) {
+      if (!taskId || !isConnected) {
         return
       }
 
@@ -79,13 +81,13 @@ export function useSkillUpdate({
         })
       }
     },
-    [taskId, isChatShellType, isConnected, updateTaskSkills, toast, t]
+    [taskId, isConnected, updateTaskSkills, toast, t]
   )
 
-  // Monitor skill changes and emit update for active Chat Shell tasks
+  // Monitor skill changes and emit update for active tasks
   useEffect(() => {
-    // Skip if no task or not Chat Shell
-    if (!taskId || !isChatShellType) {
+    // Skip if no task
+    if (!taskId) {
       initialSyncDoneRef.current = false
       prevSkillsRef.current = []
       return
@@ -112,7 +114,7 @@ export function useSkillUpdate({
       sendSkillUpdate(currentSkills)
       prevSkillsRef.current = currentSkills
     }
-  }, [taskId, isChatShellType, skillSelector.selectedSkills, sendSkillUpdate])
+  }, [taskId, skillSelector.selectedSkills, sendSkillUpdate])
 
   // Reset initial sync flag when task changes
   useEffect(() => {
