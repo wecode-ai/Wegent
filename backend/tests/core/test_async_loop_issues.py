@@ -57,7 +57,9 @@ class TestCrossLoopExecution:
         results = []
 
         async def async_func(value: int) -> int:
-            results.append(f"executed in loop: {asyncio.get_running_loop() is main_loop}")
+            results.append(
+                f"executed in loop: {asyncio.get_running_loop() is main_loop}"
+            )
             return value * 2
 
         # When in the same loop, should execute directly
@@ -120,8 +122,6 @@ class TestAsyncSessionManager:
         This ensures each request gets a session bound to its own loop,
         avoiding cross-loop issues.
         """
-        current_loop = asyncio.get_running_loop()
-
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session = AsyncMock()
             mock_session.close = AsyncMock()
@@ -143,7 +143,7 @@ class TestAsyncSessionManager:
                 mock_session.close = AsyncMock()
                 mock_session_class.return_value = mock_session
 
-                async with AsyncSessionManager(timeout=60.0) as session:
+                async with AsyncSessionManager(timeout=60.0) as _:
                     pass
 
                 # Timeout should be created with correct value
@@ -214,6 +214,7 @@ class TestOriginalBugReproduction:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
+
                 async def request_1():
                     async with AsyncSessionManager(timeout=10.0) as session:
                         results.append("loop1: session created")
@@ -229,6 +230,7 @@ class TestOriginalBugReproduction:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
+
                 async def request_2():
                     # With AsyncSessionManager, this works fine
                     # because a NEW session is created in THIS loop

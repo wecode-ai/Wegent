@@ -299,7 +299,10 @@ class LongTermMemoryClient:
         if not response.success:
             return MemorySearchResponse(results=[])
 
-        result = MemorySearchResponse(**response.data)
+        if not response.data:
+            result = MemorySearchResponse(results=[])
+        else:
+            result = MemorySearchResponse(**response.data)
         logger.info(
             "Found %d memories for user %s",
             len(result.results),
