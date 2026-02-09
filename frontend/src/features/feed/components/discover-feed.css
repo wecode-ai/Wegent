@@ -3,43 +3,50 @@
 
 /**
  * Discover Feed Masonry Layout Styles
- * CSS Columns based waterfall layout for subscription discovery feed
+ * CSS Grid based masonry layout with balanced columns
  */
 
-/* Masonry Grid Container */
+/* Masonry Grid Container - using CSS Grid for better column alignment */
 .discover-feed-masonry {
-  columns: 1;
-  column-gap: 1rem;
+  display: grid;
+  grid-template-columns: repeat(1, 1fr);
+  gap: 1rem;
   padding: 1rem;
+  align-items: start;
 }
 
 @media (min-width: 768px) {
   .discover-feed-masonry {
-    columns: 2;
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
 @media (min-width: 1280px) {
   .discover-feed-masonry {
-    columns: 3;
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
 @media (min-width: 1536px) {
   .discover-feed-masonry {
-    columns: 4;
+    grid-template-columns: repeat(4, 1fr);
     max-width: 1440px;
     margin-left: auto;
     margin-right: auto;
   }
 }
 
-/* Masonry Item - prevents breaking inside columns */
+/* Masonry Item */
 .discover-feed-item {
-  break-inside: avoid;
-  margin-bottom: 1rem;
-  page-break-inside: avoid;
-  -webkit-column-break-inside: avoid;
+  margin-bottom: 0;
+  height: fit-content;
+}
+
+/* Masonry Column Container */
+.discover-feed-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 /* Card Base Styles */
