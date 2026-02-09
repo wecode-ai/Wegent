@@ -64,6 +64,8 @@ class ProgressStateManager:
             None  # Periodic monitoring task
         )
         self._is_monitoring: bool = False  # Monitoring status flag
+        self._current_status: str = TaskStatus.RUNNING.value  # Current task status
+        self._status_lock = threading.Lock()  # Lock for status updates
 
     def initialize_workbench(self, status: str = "running") -> None:
         """
@@ -82,26 +84,113 @@ class ProgressStateManager:
 
         logger.info(f"Initialized workbench data with status: {status}")
 
+    def update_workbench_summary(self, summary: str) -> None:
+        """
+        Update workbench summary (partial result content)
+
+        Args:
+            summary: Summary text to update
+        """
+        if self.workbench_data:
+            self.workbench_data["summary"] = summary
+            self.workbench_data["lastUpdated"] = datetime.now().isoformat()
+            logger.debug(f"Updated workbench summary: {len(summary)} chars")
+
     def update_workbench_status(self, status: str, result_value: str = None) -> None:
         """
-        Update workbench status
+        DEPRECATED: Use set_task_status() for status updates, or update_workbench_summary() for summary updates.
+
+        This method is kept for backward compatibility but should not be used in new code.
 
         Args:
             status: New status ("running" | "completed" | "failed")
             result_value: Optional result value for updating summary
         """
-        if self.workbench_data is None:
-            self.initialize_workbench(status)
-        else:
-            self.workbench_data["status"] = status
-            if status == "completed":
-                self.workbench_data["completedTime"] = datetime.now().isoformat()
-                self._stop_monitoring()
-            if result_value:
-                self.workbench_data["summary"] = result_value
-            self.workbench_data["lastUpdated"] = datetime.now().isoformat()
+        logger.warning(
+            "update_workbench_status() is deprecated. Use set_task_status() for status updates "
+            "or update_workbench_summary() for summary updates."
+        )
 
-            logger.info(f"Updated workbench status to: {status}")
+        # Map workbench status to task status
+        task_status_map = {
+            "running": TaskStatus.RUNNING.value,
+            "completed": TaskStatus.COMPLETED.value,
+            "failed": TaskStatus.FAILED.value,
+        }
+        task_status = task_status_map.get(status, TaskStatus.RUNNING.value)
+
+        # Use unified state management
+        self.set_task_status(task_status, workbench_status=status)
+
+        # Update summary if provided
+        if result_value:
+            self.update_workbench_summary(result_value)
+
+    def set_task_status(
+        self, status: str, workbench_status: Optional[str] = None
+    ) -> None:
+        """
+        Unified method to set task status - updates internal state, workbench, and blocks conflicting reports
+
+        Args:
+            status: Task status (RUNNING, CANCELLED, COMPLETED, FAILED)
+            workbench_status: Optional explicit workbench status, defaults to mapping from task status
+        """
+        with self._status_lock:
+            old_status = self._current_status
+            self._current_status = status
+
+            # Determine workbench status
+            if workbench_status is None:
+                # Map task status to workbench status
+                if status == TaskStatus.CANCELLED.value:
+                    workbench_status = (
+                        "completed"  # Cancellation is a form of completion
+                    )
+                elif status == TaskStatus.RUNNING.value:
+                    workbench_status = "running"
+                elif status == TaskStatus.COMPLETED.value:
+                    workbench_status = "completed"
+                elif status == TaskStatus.FAILED.value:
+                    workbench_status = "failed"
+                else:
+                    workbench_status = "running"  # Default fallback
+
+            # Update workbench
+            if self.workbench_data:
+                self.workbench_data["status"] = workbench_status
+                if workbench_status in ["completed", "failed"]:
+                    self.workbench_data["completedTime"] = datetime.now().isoformat()
+                    self._stop_monitoring()
+                self.workbench_data["lastUpdated"] = datetime.now().isoformat()
+
+            logger.info(
+                f"Task status updated: {old_status} -> {status}, workbench: {workbench_status}"
+            )
+
+    def mark_cancelling(self) -> None:
+        """Mark that cancellation is in progress"""
+        self.set_task_status(TaskStatus.CANCELLED.value)
+        logger.info("Task marked as cancelled")
+
+    def can_report_status(self, status: str) -> bool:
+        """
+        Check if a status can be reported given current task status
+
+        Args:
+            status: Status to report
+
+        Returns:
+            True if status can be reported, False otherwise
+        """
+        with self._status_lock:
+            # Don't report RUNNING if task is CANCELLED
+            if (
+                self._current_status == TaskStatus.CANCELLED.value
+                and status == TaskStatus.RUNNING.value
+            ):
+                return False
+            return True
 
     def report_progress(
         self,
@@ -123,6 +212,13 @@ class ProgressStateManager:
             include_workbench: Whether to include workbench data (default True)
             extra_result: Additional result data (optional)
         """
+        # Check if this status can be reported
+        if not self.can_report_status(status):
+            logger.debug(
+                f"Skipping progress report with status={status} - conflicts with current status={self._current_status}"
+            )
+            return
+
         # Build result dictionary
         result = extra_result.copy() if extra_result else {}
 
@@ -329,12 +425,9 @@ class ProgressStateManager:
                         commit_lines.append("\n---\n")
                     result_value = "\n".join(commit_lines)
 
-                # Get task execution status
-                status = "running"
-                if self.workbench_data:
-                    status = self.workbench_data.get("status", "running")
-
-                self.update_workbench_status(status, result_value)
+                # Update summary with commit information
+                if result_value:
+                    self.update_workbench_summary(result_value)
 
                 self.workbench_data["git_info"]["task_commits"] = task_commits
                 logger.debug(
