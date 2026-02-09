@@ -633,6 +633,12 @@ async def _process_result_message(
                         f"🔇 Adding silent_exit flag to result: reason={silent_exit_reason}"
                     )
 
+                # Add claude_session_id to result for database persistence
+                # This enables task restore to resume Claude sessions after container restart
+                if session_id:
+                    result_dict["claude_session_id"] = session_id
+                    logger.debug(f"Added claude_session_id to result: {session_id}")
+
                 # Update workbench status to completed
                 state_manager.update_workbench_status("completed")
 
@@ -663,9 +669,18 @@ async def _process_result_message(
             # Update workbench status to completed
             state_manager.update_workbench_status("completed")
 
+            # Build extra_result to pass claude_session_id even when result is None
+            extra_result = None
+            if session_id:
+                extra_result = {"claude_session_id": session_id}
+                logger.debug(f"Added claude_session_id to empty result: {session_id}")
+
             # Report progress using state manager
             state_manager.report_progress(
-                progress=100, status=TaskStatus.COMPLETED.value, message=result_str
+                progress=100,
+                status=TaskStatus.COMPLETED.value,
+                message=result_str,
+                extra_result=extra_result,
             )
         return TaskStatus.COMPLETED
 
