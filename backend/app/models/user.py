@@ -16,8 +16,9 @@ from shared.models.db import User
 # Add Backend-specific relationships to User model
 # Note: This modifies the shared User class to add relationships
 # that only make sense in the Backend context
-User.shared_tasks = relationship(
-    "SharedTask", foreign_keys="[SharedTask.user_id]", back_populates="user"
+# Resource sharing is now handled via the unified ResourceMember table
+User.resource_members = relationship(
+    "ResourceMember", foreign_keys="[ResourceMember.user_id]", back_populates="user"
 )
 
 __all__ = ["User"]
