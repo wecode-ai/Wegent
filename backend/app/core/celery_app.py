@@ -85,7 +85,10 @@ def setup_celery_logger(logger, *args, **kwargs):
     This signal handler is called after Celery sets up its logger,
     allowing us to override the format to match backend's format.
     """
-    log_format = "%(asctime)s %(levelname)-4s [%(request_id)s] : %(message)s"
+    log_format = (
+        "%(asctime)s %(levelname)-4s [%(request_id)s] "
+        "%(pathname)s:%(lineno)d : %(message)s"
+    )
     formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
     # Add RequestIdFilter to all handlers
@@ -102,7 +105,10 @@ def setup_celery_task_logger(logger, *args, **kwargs):
     This signal handler is called after Celery sets up its task logger,
     allowing us to override the format to match backend's format.
     """
-    log_format = "%(asctime)s %(levelname)-4s [%(request_id)s] : %(message)s"
+    log_format = (
+        "%(asctime)s %(levelname)-4s [%(request_id)s] "
+        "%(pathname)s:%(lineno)d : %(message)s"
+    )
     formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
     # Add RequestIdFilter to all handlers

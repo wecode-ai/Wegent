@@ -94,6 +94,7 @@ const IMChannelList: React.FC = () => {
     default_model_name: string
     client_id: string
     client_secret: string
+    bot_token: string
     user_mapping_mode: UserMappingMode
     target_user_id: number
   }>({
@@ -104,6 +105,7 @@ const IMChannelList: React.FC = () => {
     default_model_name: '',
     client_id: '',
     client_secret: '',
+    bot_token: '',
     user_mapping_mode: 'select_user',
     target_user_id: 0,
   })
@@ -242,12 +244,24 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    if (!formData.client_id.trim() || !formData.client_secret.trim()) {
-      toast({
-        variant: 'destructive',
-        title: t('admin:im_channels.errors.config_required'),
-      })
-      return
+    // Validate config based on channel type
+    if (formData.channel_type === 'telegram') {
+      if (!formData.bot_token.trim()) {
+        toast({
+          variant: 'destructive',
+          title: t('admin:im_channels.errors.bot_token_required'),
+        })
+        return
+      }
+    } else {
+      // DingTalk and other channels use client_id/client_secret
+      if (!formData.client_id.trim() || !formData.client_secret.trim()) {
+        toast({
+          variant: 'destructive',
+          title: t('admin:im_channels.errors.config_required'),
+        })
+        return
+      }
     }
 
     // Validate: default team is required
@@ -279,11 +293,16 @@ const IMChannelList: React.FC = () => {
 
     setSaving(true)
     try {
-      // Build config with user mapping settings
+      // Build config based on channel type
       const config: Record<string, unknown> = {
-        client_id: formData.client_id.trim(),
-        client_secret: formData.client_secret.trim(),
         user_mapping_mode: formData.user_mapping_mode,
+      }
+
+      if (formData.channel_type === 'telegram') {
+        config.bot_token = formData.bot_token.trim()
+      } else {
+        config.client_id = formData.client_id.trim()
+        config.client_secret = formData.client_secret.trim()
       }
 
       // Add user_mapping_config if select_user mode
@@ -363,16 +382,22 @@ const IMChannelList: React.FC = () => {
         updateData.default_model_name = formData.default_model_name
       }
 
-      // Build config with user mapping settings
+      // Build config based on channel type
       const newConfig: Record<string, unknown> = {
         user_mapping_mode: formData.user_mapping_mode,
       }
 
-      if (formData.client_id.trim()) {
-        newConfig.client_id = formData.client_id.trim()
-      }
-      if (formData.client_secret.trim()) {
-        newConfig.client_secret = formData.client_secret.trim()
+      if (selectedChannel.channel_type === 'telegram') {
+        if (formData.bot_token.trim()) {
+          newConfig.bot_token = formData.bot_token.trim()
+        }
+      } else {
+        if (formData.client_id.trim()) {
+          newConfig.client_id = formData.client_id.trim()
+        }
+        if (formData.client_secret.trim()) {
+          newConfig.client_secret = formData.client_secret.trim()
+        }
       }
 
       // Add user_mapping_config if select_user mode
@@ -462,6 +487,7 @@ const IMChannelList: React.FC = () => {
       default_model_name: '',
       client_id: '',
       client_secret: '',
+      bot_token: '',
       user_mapping_mode: 'select_user',
       target_user_id: 0,
     })
@@ -485,6 +511,7 @@ const IMChannelList: React.FC = () => {
       default_model_name: channel.default_model_name || '',
       client_id: (channel.config?.client_id as string) || '',
       client_secret: '', // Don't show existing secret
+      bot_token: '', // Don't show existing bot_token
       user_mapping_mode: userMappingMode,
       target_user_id: targetUserId,
     })
@@ -505,6 +532,8 @@ const IMChannelList: React.FC = () => {
         return t('admin:im_channels.types.feishu')
       case 'wechat':
         return t('admin:im_channels.types.wechat')
+      case 'telegram':
+        return t('admin:im_channels.types.telegram')
       default:
         return type
     }
@@ -689,6 +718,7 @@ const IMChannelList: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="dingtalk">{t('admin:im_channels.types.dingtalk')}</SelectItem>
+                  <SelectItem value="telegram">{t('admin:im_channels.types.telegram')}</SelectItem>
                   <SelectItem value="feishu" disabled>
                     {t('admin:im_channels.types.feishu')} (
                     {t('admin:im_channels.types.not_supported')})
@@ -696,25 +726,43 @@ const IMChannelList: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="client_id">{t('admin:im_channels.form.client_id')} *</Label>
-              <Input
-                id="client_id"
-                value={formData.client_id}
-                onChange={e => setFormData({ ...formData, client_id: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_id_placeholder')}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="client_secret">{t('admin:im_channels.form.client_secret')} *</Label>
-              <Input
-                id="client_secret"
-                type="password"
-                value={formData.client_secret}
-                onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_secret_placeholder')}
-              />
-            </div>
+            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
+            {formData.channel_type === 'telegram' ? (
+              <div className="space-y-2">
+                <Label htmlFor="bot_token">{t('admin:im_channels.form.bot_token')} *</Label>
+                <Input
+                  id="bot_token"
+                  type="password"
+                  value={formData.bot_token}
+                  onChange={e => setFormData({ ...formData, bot_token: e.target.value })}
+                  placeholder={t('admin:im_channels.form.bot_token_placeholder')}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="client_id">{t('admin:im_channels.form.client_id')} *</Label>
+                  <Input
+                    id="client_id"
+                    value={formData.client_id}
+                    onChange={e => setFormData({ ...formData, client_id: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_id_placeholder')}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="client_secret">
+                    {t('admin:im_channels.form.client_secret')} *
+                  </Label>
+                  <Input
+                    id="client_secret"
+                    type="password"
+                    value={formData.client_secret}
+                    onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_secret_placeholder')}
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label htmlFor="default_team">{t('admin:im_channels.form.default_team')} *</Label>
               <Select
@@ -876,30 +924,51 @@ const IMChannelList: React.FC = () => {
                 className="bg-muted"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-client_id">{t('admin:im_channels.form.client_id')}</Label>
-              <Input
-                id="edit-client_id"
-                value={formData.client_id}
-                onChange={e => setFormData({ ...formData, client_id: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_id_placeholder')}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-client_secret">
-                {t('admin:im_channels.form.client_secret')}
-                <span className="text-xs text-text-muted ml-2">
-                  ({t('admin:im_channels.form.leave_empty_to_keep')})
-                </span>
-              </Label>
-              <Input
-                id="edit-client_secret"
-                type="password"
-                value={formData.client_secret}
-                onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_secret_edit_placeholder')}
-              />
-            </div>
+            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
+            {formData.channel_type === 'telegram' ? (
+              <div className="space-y-2">
+                <Label htmlFor="edit-bot_token">
+                  {t('admin:im_channels.form.bot_token')}
+                  <span className="text-xs text-text-muted ml-2">
+                    ({t('admin:im_channels.form.leave_empty_to_keep')})
+                  </span>
+                </Label>
+                <Input
+                  id="edit-bot_token"
+                  type="password"
+                  value={formData.bot_token}
+                  onChange={e => setFormData({ ...formData, bot_token: e.target.value })}
+                  placeholder={t('admin:im_channels.form.bot_token_edit_placeholder')}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-client_id">{t('admin:im_channels.form.client_id')}</Label>
+                  <Input
+                    id="edit-client_id"
+                    value={formData.client_id}
+                    onChange={e => setFormData({ ...formData, client_id: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_id_placeholder')}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-client_secret">
+                    {t('admin:im_channels.form.client_secret')}
+                    <span className="text-xs text-text-muted ml-2">
+                      ({t('admin:im_channels.form.leave_empty_to_keep')})
+                    </span>
+                  </Label>
+                  <Input
+                    id="edit-client_secret"
+                    type="password"
+                    value={formData.client_secret}
+                    onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_secret_edit_placeholder')}
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label htmlFor="edit-default_team">
                 {t('admin:im_channels.form.default_team')} *

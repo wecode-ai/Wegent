@@ -2,7 +2,7 @@
 import json
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
@@ -34,15 +34,41 @@ logger = setup_logger("claude_response_processor")
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
 
+# Maximum retry count for error subtypes (error_during_execution, etc.)
+MAX_ERROR_SUBTYPE_RETRIES = 3
+
+# Retry message for resuming session - provide clear instruction for Claude to continue
+RETRY_CONTINUE_MESSAGE = "An error occurred during execution. Please continue from where you left off and complete the task."
+
 # Error patterns to detect API errors that need retry
 API_ERROR_PATTERNS = [
     "API Error: Cannot read properties of undefined",
     "API Error: undefined is not an object",
 ]
 
+# Error subtypes that can be retried by resuming session
+# These errors may be transient and can often be recovered by resuming
+RETRYABLE_ERROR_SUBTYPES = [
+    "error_during_execution",  # Transient errors during execution
+    # Note: error_max_turns is NOT included because it indicates the task
+    # is too complex and will likely hit the limit again after resume
+]
+
 
 def contains_api_error(text: str) -> bool:
     return any(pattern in text for pattern in API_ERROR_PATTERNS)
+
+
+def is_retryable_error_subtype(subtype: str) -> bool:
+    """Check if the error subtype is retryable by resuming session.
+
+    Args:
+        subtype: The error subtype from ResultMessage
+
+    Returns:
+        True if the error subtype can be retried
+    """
+    return subtype in RETRYABLE_ERROR_SUBTYPES
 
 
 async def process_response(
@@ -51,7 +77,8 @@ async def process_response(
     thinking_manager=None,
     task_state_manager=None,
     session_id: str = None,
-) -> TaskStatus:
+    error_subtype_retry_count: int = 0,
+) -> Union[TaskStatus, str, Tuple[str, str]]:
     """
     Process the response messages from Claude
 
@@ -61,9 +88,12 @@ async def process_response(
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
         task_state_manager: Optional TaskStateManager instance for checking cancellation
         session_id: Optional session ID for retry operations
+        error_subtype_retry_count: Current retry count for error subtypes (error_during_execution, etc.)
 
     Returns:
         TaskStatus: Processing status
+        str: "RETRY_RESIDUAL" if residual interrupt detected
+        Tuple[str, str]: ("RETRY_WITH_RESUME", session_id) if session should be resumed for retry
     """
     index = 0
     api_error_retry_count = 0  # Track retry count for this session
@@ -89,8 +119,8 @@ async def process_response(
                             f"Task {task_id} cancelled during response processing"
                         )
                         if state_manager:
-                            state_manager.update_workbench_status("completed")
-                        return TaskStatus.COMPLETED
+                            state_manager.update_workbench_status("cancelled")
+                        return TaskStatus.CANCELLED
 
                 # Log the number of messages received
                 logger.info(f"claude message index: {index}, received: {msg}")
@@ -148,6 +178,8 @@ async def process_response(
                         MAX_API_ERROR_RETRIES,
                         silent_exit_detected,
                         silent_exit_reason,
+                        task_state_manager,
+                        error_subtype_retry_count,
                     )
                     if result_status == "RETRY":
                         # Increment retry count and restart response stream for retry
@@ -157,6 +189,20 @@ async def process_response(
                             f"Retry initiated, restarting response stream for session {session_id}"
                         )
                         break
+                    elif result_status == "RETRY_RESIDUAL":
+                        # Return to caller to resend query
+                        return "RETRY_RESIDUAL"
+                    elif (
+                        isinstance(result_status, tuple)
+                        and result_status[0] == "RETRY_WITH_RESUME"
+                    ):
+                        # Return tuple to caller with actual Claude session_id for resume
+                        actual_session_id = result_status[1]
+                        logger.info(
+                            f"RETRY_WITH_RESUME requested for session {actual_session_id}, "
+                            f"retry count {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}"
+                        )
+                        return result_status  # Pass through the tuple
                     elif result_status:
                         return result_status
 
@@ -527,7 +573,9 @@ async def _process_result_message(
     max_retries: int = 3,
     propagated_silent_exit: bool = False,
     propagated_silent_exit_reason: str = "",
-) -> Union[TaskStatus, str, None]:
+    task_state_manager=None,
+    error_subtype_retry_count: int = 0,
+) -> Union[TaskStatus, str, Tuple[str, str], None]:
     """
     Process a ResultMessage from Claude
 
@@ -541,16 +589,23 @@ async def _process_result_message(
         max_retries: Maximum retry attempts
         propagated_silent_exit: Silent exit flag propagated from UserMessage tool results
         propagated_silent_exit_reason: Silent exit reason propagated from UserMessage tool results
+        task_state_manager: Optional TaskStateManager for checking cancellation state
+        error_subtype_retry_count: Current retry count for error subtypes
 
     Returns:
-        TaskStatus: Processing status (COMPLETED if successful, otherwise None)
-        str: "RETRY" if retry was initiated
+        TaskStatus: Processing status (COMPLETED if successful, CANCELLED, FAILED, or None)
+        str: "RETRY" if API error retry was initiated, "RETRY_RESIDUAL" if residual interrupt
+        Tuple[str, str]: ("RETRY_WITH_RESUME", session_id) if error subtype retry is needed
     """
+
+    # Get stop_reason safely (may not exist in older SDK versions)
+    stop_reason = getattr(msg, "stop_reason", None)
 
     # Construct detailed result info, matching target format
     result_details = {
         "type": "result",
         "subtype": msg.subtype,
+        "stop_reason": stop_reason,
         "is_error": msg.is_error,
         "session_id": msg.session_id,
         "num_turns": msg.num_turns,
@@ -568,7 +623,7 @@ async def _process_result_message(
     msg_dict = asdict(msg)
     masked_msg_dict = mask_sensitive_data(msg_dict)
     logger.info(
-        f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
+        f"Result message received: subtype={msg.subtype}, stop_reason={stop_reason}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
 
     # Check for silent exit marker in result
@@ -757,6 +812,152 @@ async def _process_result_message(
         return (
             TaskStatus.FAILED
         )  # CRITICAL FIX: Return FAILED status to stop task execution
+
+    # Handle error subtypes (is_error=False but execution ended with error condition)
+    # Official subtypes per https://platform.claude.com/docs/agent-sdk/stop-reasons:
+    # - error_during_execution: Error occurred during execution
+    # - error_max_turns: Reached turn limit
+    # - error_max_budget_usd: Exceeded budget limit
+    # - error_max_structured_output_retries: Reached structured output retry limit
+    if msg.subtype and msg.subtype.startswith("error_"):
+        result_str = (
+            str(msg.result) if msg.result is not None else f"Task ended: {msg.subtype}"
+        )
+
+        # Check if this is a residual message from a previous interrupted session
+        # When a session is interrupted and then reused, the first response may be
+        # the result of the previous interrupt, not a real error for the current request.
+        # Indicators of a residual interrupt message:
+        # - subtype is error_during_execution
+        # - result is None
+        # - usage tokens are all 0 (no actual API call was made for this)
+        is_residual_interrupt = False
+        if msg.subtype == "error_during_execution" and msg.result is None:
+            usage = msg.usage or {}
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+            if input_tokens == 0 and output_tokens == 0:
+                is_residual_interrupt = True
+                logger.info(
+                    f"Detected residual interrupt message (usage tokens all 0), "
+                    f"this is likely from a previous cancelled session. "
+                    f"Returning None to continue processing."
+                )
+
+        if is_residual_interrupt:
+            # Residual interrupt message detected, need to resend query
+            logger.info(
+                "Returning RETRY_RESIDUAL to resend query after residual interrupt"
+            )
+            return "RETRY_RESIDUAL"
+
+        # Check if this is a user-initiated cancellation
+        # When user cancels, we get error_during_execution but it's not a real failure
+        is_user_cancellation = False
+        if task_state_manager and state_manager:
+            task_id = state_manager.task_data.get("task_id")
+            if task_id and task_state_manager.is_cancelled(task_id):
+                is_user_cancellation = True
+                logger.info(
+                    f"Task {task_id} error_during_execution is due to user cancellation, treating as CANCELLED"
+                )
+
+        if is_user_cancellation:
+            # User cancelled the task, treat as CANCELLED not FAILED
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.task_cancelled",
+                    report_immediately=False,
+                    use_i18n_keys=True,
+                    details=masked_result_details,
+                )
+
+            # Update workbench status to cancelled
+            state_manager.update_workbench_status("cancelled")
+
+            # Report cancelled status
+            state_manager.report_progress(
+                progress=100,
+                status=TaskStatus.CANCELLED.value,
+                message="Task cancelled by user",
+            )
+            return TaskStatus.CANCELLED
+
+        # Check if this error subtype can be retried by resuming session
+        if (
+            is_retryable_error_subtype(msg.subtype)
+            and session_id
+            and error_subtype_retry_count < MAX_ERROR_SUBTYPE_RETRIES
+        ):
+            # Get actual Claude session ID (UUID) for resume
+            # msg.session_id is the Claude UUID, session_id parameter is our internal key
+            actual_claude_session_id = msg.session_id or session_id
+            logger.warning(
+                f"Retryable error subtype detected: {msg.subtype}, "
+                f"retry {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}, "
+                f"internal_session={session_id}, claude_session={actual_claude_session_id}"
+            )
+
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.error_subtype_retry",
+                    report_immediately=True,
+                    use_i18n_keys=True,
+                    details={
+                        "error_subtype": msg.subtype,
+                        "retry_count": error_subtype_retry_count + 1,
+                        "max_retries": MAX_ERROR_SUBTYPE_RETRIES,
+                        "session_id": actual_claude_session_id,
+                    },
+                )
+
+            # Signal to caller that session should be resumed for retry
+            # Return tuple with Claude SDK's actual session_id (UUID) for proper resume
+            return ("RETRY_WITH_RESUME", actual_claude_session_id)
+
+        elif (
+            is_retryable_error_subtype(msg.subtype)
+            and error_subtype_retry_count >= MAX_ERROR_SUBTYPE_RETRIES
+        ):
+            logger.error(
+                f"Max error subtype retries ({MAX_ERROR_SUBTYPE_RETRIES}) reached "
+                f"for session {session_id}, error_subtype={msg.subtype}"
+            )
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.error_subtype_max_retries",
+                    report_immediately=True,
+                    use_i18n_keys=True,
+                    details={
+                        "error_subtype": msg.subtype,
+                        "retry_count": error_subtype_retry_count,
+                        "max_retries": MAX_ERROR_SUBTYPE_RETRIES,
+                        "session_id": session_id,
+                    },
+                )
+
+        # Real error, treat as FAILED
+        logger.error(
+            f"Task ended with subtype={msg.subtype} (is_error={msg.is_error}): {result_str}"
+        )
+
+        # Add thinking step for error result
+        if thinking_manager:
+            thinking_manager.add_thinking_step(
+                title="thinking.task_execution_failed",
+                report_immediately=False,
+                use_i18n_keys=True,
+                details=masked_result_details,
+            )
+
+        # Update workbench status to failed
+        state_manager.update_workbench_status("failed")
+
+        # Report error using state manager
+        state_manager.report_progress(
+            progress=100, status=TaskStatus.FAILED.value, message=result_str
+        )
+        return TaskStatus.FAILED
 
     # If it's not a successful result message, return None to let caller continue processing
     return None

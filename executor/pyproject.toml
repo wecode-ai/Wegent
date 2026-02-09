@@ -12,7 +12,7 @@ dependencies = [
     "ag-ui-protocol==0.1.8",
     "agno==2.1.5",
     "anthropic==0.67.0",
-    "claude-agent-sdk==0.1.26",
+    "claude-agent-sdk==0.1.31",
     "cryptography==46.0.3",
     "fastapi==0.109.1",
     "gitpython==3.1.43",
@@ -25,6 +25,7 @@ dependencies = [
     "requests==2.31.0",
     "sqlalchemy==2.0.43",
     "uvicorn==0.25.0",
+    "pyyaml>=6.0.0",
 
     # envd Connect RPC dependencies
     "grpcio>=1.68.0",

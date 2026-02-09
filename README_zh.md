@@ -193,17 +193,17 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/kissghosts">
             <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
             <br />
             <sub><b>Yanhe</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/joyway1978">
-            <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
-            <br />
-            <sub><b>Joyway78</b></sub>
         </a>
     </td>
     <td align="center">
@@ -215,10 +215,10 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
     </td></tr>
 <tr>
     <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+        <a href="https://github.com/joyway1978">
+            <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
             <br />
-            <sub><b>FicoHu</b></sub>
+            <sub><b>Joyway78</b></sub>
         </a>
     </td>
     <td align="center">
@@ -236,6 +236,20 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+            <br />
+            <sub><b>Icycrystal4</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/parabala">
+            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+            <br />
+            <sub><b>Parabala</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/maquan0927">
             <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
             <br />
@@ -250,24 +264,10 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
-            <br />
-            <sub><b>Icycrystal4</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/fingki">
             <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
             <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/parabala">
-            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
-            <br />
-            <sub><b>Parabala</b></sub>
         </a>
     </td></tr>
 <tr>

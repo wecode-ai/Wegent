@@ -767,7 +767,7 @@ function ChatAreaContent({
           >
             {/* Bottom gradient fade effect - text fades as it approaches the input */}
             <div
-              className="absolute top-0 left-0 right-0 h-12 -translate-y-full pointer-events-none"
+              className="absolute top-0 left-0 right-0 h-6 -translate-y-full pointer-events-none"
               style={{
                 background:
                   'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.8) 40%, rgb(var(--color-bg-base) / 0) 100%)',

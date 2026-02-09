@@ -39,7 +39,11 @@ from executor.agents.claude_code.mode_strategy import (
     ModeStrategyFactory,
 )
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
-from executor.agents.claude_code.response_processor import process_response
+from executor.agents.claude_code.response_processor import (
+    MAX_ERROR_SUBTYPE_RETRIES,
+    RETRY_CONTINUE_MESSAGE,
+    process_response,
+)
 from executor.agents.claude_code.session_manager import (
     SessionManager,
     build_internal_session_key,
@@ -548,6 +552,11 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            # Reset task state to RUNNING at the start of new execution
+            # This ensures that a previously cancelled task can be re-executed
+            self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
+            logger.info(f"Task {self.task_id} state set to RUNNING for new execution")
+
             # Update current progress
             self._update_progress(60)
 
@@ -579,7 +588,7 @@ class ClaudeCodeAgent(Agent):
             # Check if task was cancelled before execution
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} was cancelled before execution")
-                return TaskStatus.COMPLETED
+                return TaskStatus.CANCELLED
 
             progress = 65
             # Update current progress
@@ -631,7 +640,7 @@ class ClaudeCodeAgent(Agent):
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled during client setup")
-                return TaskStatus.COMPLETED
+                return TaskStatus.CANCELLED
 
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
@@ -658,7 +667,7 @@ class ClaudeCodeAgent(Agent):
             # Check cancellation before sending query
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
-                return TaskStatus.COMPLETED
+                return TaskStatus.CANCELLED
 
             # If new_session is True, create a new client with subtask_id as session_id
             # This is needed because different bots may have different skills, MCP servers, etc.
@@ -691,20 +700,76 @@ class ClaudeCodeAgent(Agent):
             await self.client.query(prompt, session_id=self.session_id)
 
             logger.info(f"Waiting for response for prompt: {prompt}")
-            # Process and handle the response using the external processor
-            result = await process_response(
-                self.client,
-                self.state_manager,
-                self.thinking_manager,
-                self.task_state_manager,
-                session_id=self.session_id,
-            )
+
+            # Error subtype retry loop
+            error_subtype_retry_count = 0
+            while True:
+                # Process and handle the response using the external processor
+                result = await process_response(
+                    self.client,
+                    self.state_manager,
+                    self.thinking_manager,
+                    self.task_state_manager,
+                    session_id=self.session_id,
+                    error_subtype_retry_count=error_subtype_retry_count,
+                )
+
+                if result == "RETRY_RESIDUAL":
+                    # Residual interrupt message, resend query without recreating client
+                    logger.info(
+                        f"RETRY_RESIDUAL: Resending query for session {self.session_id}"
+                    )
+                    await self.client.query(prompt, session_id=self.session_id)
+                    continue
+
+                # Check if result is a tuple indicating RETRY_WITH_RESUME with session_id
+                if isinstance(result, tuple) and result[0] == "RETRY_WITH_RESUME":
+                    error_subtype_retry_count += 1
+                    # Extract the actual Claude SDK session_id (UUID) from the tuple
+                    actual_claude_session_id = result[1]
+                    logger.warning(
+                        f"RETRY_WITH_RESUME: Attempting retry {error_subtype_retry_count}/{MAX_ERROR_SUBTYPE_RETRIES} "
+                        f"for internal_session={self.session_id}, claude_session={actual_claude_session_id}"
+                    )
+
+                    # Close current client but preserve session_id for resume
+                    await self._close_client_for_retry()
+
+                    # Create new client with resume option using actual Claude session_id
+                    # Note: Claude SDK resume requires the actual UUID session_id, not our internal key
+                    self.options["resume"] = actual_claude_session_id
+                    logger.info(
+                        f"Creating new client with resume={actual_claude_session_id}"
+                    )
+                    await self._create_and_connect_client()
+
+                    # Send continue message to resume session
+                    logger.info(
+                        f"Sending continue message to resume session, "
+                        f"claude_session={actual_claude_session_id}, current_session={self.session_id}"
+                    )
+                    await self.client.query(
+                        RETRY_CONTINUE_MESSAGE, session_id=self.session_id
+                    )
+
+                    # Continue loop to process response
+                    continue
+
+                # Normal completion or non-retryable failure
+                break
+
+            if result is None:
+                # No final result received, keep RUNNING status
+                logger.warning("No final result received from process_response")
+                result = TaskStatus.RUNNING
 
             # Update task state based on result
             if result == TaskStatus.COMPLETED:
                 self.task_state_manager.set_state(self.task_id, TaskState.COMPLETED)
             elif result == TaskStatus.FAILED:
                 self.task_state_manager.set_state(self.task_id, TaskState.FAILED)
+            elif result == TaskStatus.CANCELLED:
+                self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
 
             return result
 
@@ -736,30 +801,32 @@ class ClaudeCodeAgent(Agent):
             )
 
         # Check if there's a saved session ID to resume
-        # Priority: task_data (from database) > local file (backup)
-        saved_session_id = None
+        # Skip if resume option is already set (e.g., from retry logic)
+        if "resume" not in self.options:
+            # Priority: task_data (from database) > local file (backup)
+            saved_session_id = None
 
-        # 1. First try to get claude_session_id from task_data (comes from database via dispatch_tasks)
-        if self.task_data:
-            saved_session_id = self.task_data.get("claude_session_id")
+            # 1. First try to get claude_session_id from task_data (comes from database via dispatch_tasks)
+            if self.task_data:
+                saved_session_id = self.task_data.get("claude_session_id")
+                if saved_session_id:
+                    logger.info(
+                        f"Using claude_session_id from task data (database): {saved_session_id}"
+                    )
+
+            # 2. Fallback to local file (backup storage in same container)
+            if not saved_session_id:
+                saved_session_id = SessionManager.load_saved_session_id(self.task_id)
+                if saved_session_id:
+                    logger.info(
+                        f"Using claude_session_id from local file (fallback): {saved_session_id}"
+                    )
+
             if saved_session_id:
                 logger.info(
-                    f"Using claude_session_id from task data (database): {saved_session_id}"
+                    f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
                 )
-
-        # 2. Fallback to local file (backup storage in same container)
-        if not saved_session_id:
-            saved_session_id = SessionManager.load_saved_session_id(self.task_id)
-            if saved_session_id:
-                logger.info(
-                    f"Using claude_session_id from local file (fallback): {saved_session_id}"
-                )
-
-        if saved_session_id:
-            logger.info(
-                f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
-            )
-            self.options["resume"] = saved_session_id
+                self.options["resume"] = saved_session_id
 
         # On Windows, write large options to files to avoid command line length limit
         # Windows has a ~8191 character limit (WinError 206 if exceeded)
@@ -828,6 +895,35 @@ class ClaudeCodeAgent(Agent):
             resource_id=f"claude_client_{self.session_id}",
             is_async=True,
         )
+
+    async def _close_client_for_retry(self) -> None:
+        """
+        Close the current client for retry purposes.
+
+        This method closes the client connection but preserves the session_id
+        so it can be used to resume the session with a new client.
+        """
+        if self.client is None:
+            logger.warning("No client to close for retry")
+            return
+
+        try:
+            # Terminate the client process
+            await SessionManager._terminate_client_process(self.client, self.session_id)
+
+            # Remove from client cache but keep session_id mapping
+            SessionManager.remove_client(self.session_id)
+
+            # Clear local client reference
+            self.client = None
+
+            logger.info(
+                f"Closed client for retry, session_id={self.session_id} preserved for resume"
+            )
+        except Exception as e:
+            logger.warning(f"Error closing client for retry: {e}")
+            # Clear client reference anyway to allow new client creation
+            self.client = None
 
     def _handle_execution_result(
         self, result_content: str, execution_type: str = "execution"
