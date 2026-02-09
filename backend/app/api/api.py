@@ -11,6 +11,7 @@ from app.api.endpoints import (
     groups,
     health,
     knowledge,
+    mcp_providers,
     oidc,
     openapi_responses,
     pet,
@@ -136,6 +137,9 @@ api_router.include_router(
 api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
+api_router.include_router(
+    mcp_providers.router, prefix="/mcp-providers", tags=["mcp-providers"]
+)
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
     web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
