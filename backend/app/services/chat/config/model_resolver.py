@@ -435,7 +435,8 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
 
     Search order:
     1. User's private models (kinds table)
-    2. Public models (kinds table with user_id=0)
+    2. Group models (kinds table in user's groups)
+    3. Public models (kinds table with user_id=0)
 
     Args:
         db: Database session
@@ -457,7 +458,8 @@ def _find_model_with_namespace(
 
     Search order:
     1. User's private models (kinds table)
-    2. Public models (kinds table with user_id=0)
+    2. Group models (kinds table in user's groups)
+    3. Public models (kinds table with user_id=0)
 
     Args:
         db: Database session
@@ -484,6 +486,28 @@ def _find_model_with_namespace(
             f"Found model '{model_name}' in user's private models (namespace: {user_model.namespace})"
         )
         return user_model, user_model.json.get("spec", {})
+
+    # Search group models
+    from app.services.group_permission import get_user_groups
+
+    user_groups = get_user_groups(db, user_id)
+    if user_groups:
+        group_model = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace.in_(user_groups),
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if group_model and group_model.json:
+            logger.info(
+                f"Found model '{model_name}' in group models (namespace: {group_model.namespace})"
+            )
+            return group_model, group_model.json.get("spec", {})
 
     # Search public models
     public_model = (
@@ -633,6 +657,8 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         "model": model_type,
         "default_headers": default_headers,
         "api_format": api_format,
+        # Protocol for special API routing (e.g., gemini-deep-research)
+        "protocol": protocol,
         # Context window and output token limits from ModelSpec or modelConfig
         "context_window": context_window,
         "max_output_tokens": max_output_tokens,

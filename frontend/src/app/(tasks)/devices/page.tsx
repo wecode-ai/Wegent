@@ -28,6 +28,7 @@ import { getToken } from '@/apis/user'
 import { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
+import { VersionBadge } from '@/features/devices/components/VersionBadge'
 import {
   Monitor,
   RefreshCw,
@@ -36,12 +37,10 @@ import {
   Star,
   MoreVertical,
   Trash2,
-  Copy,
-  Check,
   ExternalLink,
-  Terminal,
   MessageCircleQuestion,
-  AlertTriangle,
+  Plus,
+  ChevronUp,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -53,99 +52,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-
-// Install script URL
-const INSTALL_SCRIPT_URL =
-  'https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh'
-
-// Helper function to get backend URL dynamically
-const getBackendUrl = (): string => {
-  if (typeof window !== 'undefined') {
-    // Check runtime config from Next.js
-    const runtimeUrl = process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL
-    if (runtimeUrl) return runtimeUrl
-
-    // Derive from current origin - replace frontend port with backend port
-    const origin = window.location.origin
-    return origin.replace(':3000', ':8000')
-  }
-
-  return 'http://localhost:8000'
-}
-
-// Component for copy button with state
-function CopyButton({
-  text,
-  className,
-  onCopySuccess,
-}: {
-  text: string
-  className?: string
-  onCopySuccess?: () => void
-}) {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      onCopySuccess?.()
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error('Failed to copy')
-    }
-  }
-
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={handleCopy}
-      className={cn(
-        'shrink-0 text-gray-400 hover:text-white hover:bg-gray-800 h-8 px-3',
-        className
-      )}
-    >
-      {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-    </Button>
-  )
-}
-
-// Component for displaying a command step
-function CommandStep({
-  stepNumber,
-  title,
-  description,
-  command,
-}: {
-  stepNumber: number
-  title: string
-  description: string
-  command: string
-}) {
-  const stepCircles = ['①', '②', '③', '④', '⑤']
-
-  return (
-    <div className="mb-6">
-      <div className="flex items-start gap-3 mb-3">
-        <span className="text-xl text-primary font-medium">{stepCircles[stepNumber - 1]}</span>
-        <div>
-          <h4 className="font-medium text-text-primary">{title}</h4>
-          <p className="text-sm text-text-muted">{description}</p>
-        </div>
-      </div>
-      <div className="bg-gray-900 rounded-lg px-5 py-4 ml-8">
-        <div className="flex items-start gap-3">
-          <span className="text-gray-500 select-none pt-0.5">$</span>
-          <div className="flex-1 overflow-x-auto">
-            <code className="text-sm font-mono whitespace-pre text-green-400">{command}</code>
-          </div>
-          <CopyButton text={command} />
-        </div>
-      </div>
-    </div>
-  )
-}
+import { getSocketUrl } from '@/lib/runtime-config'
+import { LocalExecutorGuide } from '@/features/devices/components/LocalExecutorGuide'
 
 export default function DevicesPage() {
   const { t } = useTranslation('devices')
@@ -160,21 +68,11 @@ export default function DevicesPage() {
   const communityUrl = process.env.NEXT_PUBLIC_COMMUNITY_URL || ''
   const faqUrl = process.env.NEXT_PUBLIC_FAQ_URL || ''
 
-  // Generate dynamic backend URL
-  const backendUrl = useMemo(() => getBackendUrl(), [])
+  // Generate dynamic backend URL from runtime config
+  const backendUrl = useMemo(() => getSocketUrl(), [])
 
   // Get auth token
   const authToken = useMemo(() => getToken() || '<YOUR_AUTH_TOKEN>', [])
-
-  // Generate one-liner install command
-  const installCommand = useMemo(() => `curl -fsSL ${INSTALL_SCRIPT_URL} | bash`, [])
-
-  // Generate run command
-  const runCommand = useMemo(
-    () =>
-      `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authToken} \\\n~/.wegent-executor/bin/wegent-executor`,
-    [backendUrl, authToken]
-  )
 
   const {
     devices,
@@ -264,6 +162,9 @@ export default function DevicesPage() {
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
+
+  // Guide visibility state (for showing installation guide when devices exist)
+  const [showGuide, setShowGuide] = useState(false)
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -357,16 +258,39 @@ export default function DevicesPage() {
                   {t('beta')}
                 </span>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={refreshDevices}
-                disabled={isLoading}
-                className="flex items-center gap-2"
-              >
-                <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
-                {t('refresh')}
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* Add Device button - only show when devices exist */}
+                {sortedDevices.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowGuide(!showGuide)}
+                    className="flex items-center gap-2"
+                  >
+                    {showGuide ? (
+                      <>
+                        <ChevronUp className="w-4 h-4" />
+                        {t('hide_guide')}
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        {t('add_device')}
+                      </>
+                    )}
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={refreshDevices}
+                  disabled={isLoading}
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
+                  {t('refresh')}
+                </Button>
+              </div>
             </div>
 
             {/* Instructions */}
@@ -386,102 +310,56 @@ export default function DevicesPage() {
               </div>
             )}
 
-            {/* Empty state with simplified two-step installation guide */}
+            {/* Empty state with installation guide */}
             {!isLoading && devices.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-8">
-                {/* Main card */}
-                <div className="w-full max-w-2xl bg-surface border border-border rounded-xl p-6 shadow-sm">
-                  {/* Header */}
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                      <Terminal className="w-5 h-5 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-text-primary">
-                        {t('local_executor_title')}
-                      </h3>
-                      <p className="text-sm text-text-muted">{t('local_executor_description')}</p>
-                    </div>
-                  </div>
-
-                  {/* Step 1: Install */}
-                  <CommandStep
-                    stepNumber={1}
-                    title={t('step_install')}
-                    description={t('step_install_desc')}
-                    command={installCommand}
-                  />
-
-                  {/* Step 2: Run */}
-                  <CommandStep
-                    stepNumber={2}
-                    title={t('step_run')}
-                    description={t('step_run_desc')}
-                    command={runCommand}
-                  />
-
-                  {/* Security warning */}
-                  <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                    <p className="text-sm text-amber-700">{t('security_warning')}</p>
-                  </div>
-
-                  {/* Gatekeeper hint */}
-                  <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
-                    <span className="text-blue-600 shrink-0">💡</span>
-                    <p className="text-sm text-blue-700">{t('gatekeeper_hint')}</p>
-                  </div>
-
-                  {/* Token expiry hint */}
-                  <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <span className="text-blue-600 shrink-0">🔄</span>
-                    <p className="text-sm text-blue-700">{t('token_expiry_hint')}</p>
-                  </div>
-
-                  {/* Guide link */}
-                  {guideUrl && (
-                    <div className="mt-4 flex justify-center">
-                      <a
-                        href={guideUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        {t('view_guide')}
-                      </a>
-                    </div>
-                  )}
-                </div>
+              <>
+                <LocalExecutorGuide
+                  backendUrl={backendUrl}
+                  authToken={authToken}
+                  guideUrl={guideUrl}
+                />
 
                 {/* Help section */}
                 {(communityUrl || faqUrl) && (
-                  <div className="mt-6 flex items-center gap-4 text-sm text-text-muted">
-                    <span>{t('need_help')}</span>
-                    {communityUrl && (
-                      <a
-                        href={communityUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
-                      >
-                        <MessageCircleQuestion className="w-4 h-4" />
-                        {t('join_community')}
-                      </a>
-                    )}
-                    {faqUrl && (
-                      <a
-                        href={faqUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        {t('view_faq')}
-                      </a>
-                    )}
+                  <div className="flex justify-center">
+                    <div className="flex items-center gap-4 text-sm text-text-muted">
+                      <span>{t('need_help')}</span>
+                      {communityUrl && (
+                        <a
+                          href={communityUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
+                        >
+                          <MessageCircleQuestion className="w-4 h-4" />
+                          {t('join_community')}
+                        </a>
+                      )}
+                      {faqUrl && (
+                        <a
+                          href={faqUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          {t('view_faq')}
+                        </a>
+                      )}
+                    </div>
                   </div>
                 )}
+              </>
+            )}
+
+            {/* Installation guide when triggered by Add Device button */}
+            {showGuide && sortedDevices.length > 0 && (
+              <div className="mb-6">
+                <LocalExecutorGuide
+                  backendUrl={backendUrl}
+                  authToken={authToken}
+                  guideUrl={guideUrl}
+                />
               </div>
             )}
 
@@ -512,7 +390,16 @@ export default function DevicesPage() {
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-text-muted">{device.device_id}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm text-text-muted">{device.device_id}</p>
+                            {device.status !== 'offline' && (
+                              <VersionBadge
+                                executorVersion={device.executor_version}
+                                latestVersion={device.latest_version}
+                                updateAvailable={device.update_available}
+                              />
+                            )}
+                          </div>
                           {/* Slot indicator - only show for online devices */}
                           {device.status !== 'offline' && (
                             <div className="mt-1">

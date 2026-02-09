@@ -203,38 +203,38 @@ export function BackgroundExecutionMonitorPanel() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <StatCard
             title={t('admin:monitor.stats.total_executions')}
-            value={stats.total_executions}
+            value={stats.total_executions ?? 0}
             icon={<Activity className="h-5 w-5" />}
           />
           <StatCard
             title={t('admin:monitor.stats.completed')}
-            value={stats.completed_count}
+            value={stats.completed_count ?? 0}
             icon={<CheckCircle className="h-5 w-5" />}
             variant="success"
-            subtitle={`${stats.success_rate.toFixed(1)}%`}
+            subtitle={`${(stats.success_rate ?? 0).toFixed(1)}%`}
           />
           <StatCard
             title={t('admin:monitor.stats.failed')}
-            value={stats.failed_count}
+            value={stats.failed_count ?? 0}
             icon={<XCircle className="h-5 w-5" />}
             variant="error"
-            subtitle={`${stats.failure_rate.toFixed(1)}%`}
+            subtitle={`${(stats.failure_rate ?? 0).toFixed(1)}%`}
           />
           <StatCard
-            title={t('admin:monitor.stats.timeout')}
-            value={stats.timeout_count}
+            title={t('admin:monitor.stats.retrying')}
+            value={stats.retrying_count ?? 0}
             icon={<Clock className="h-5 w-5" />}
             variant="warning"
-            subtitle={`${stats.timeout_rate.toFixed(1)}%`}
+            subtitle={`${(stats.retrying_rate ?? 0).toFixed(1)}%`}
           />
           <StatCard
             title={t('admin:monitor.stats.running')}
-            value={stats.running_count}
+            value={stats.running_count ?? 0}
             icon={<Play className="h-5 w-5" />}
           />
           <StatCard
             title={t('admin:monitor.stats.pending')}
-            value={stats.pending_count}
+            value={stats.pending_count ?? 0}
             icon={<Pause className="h-5 w-5" />}
           />
         </div>
@@ -245,13 +245,13 @@ export function BackgroundExecutionMonitorPanel() {
         <div className="grid grid-cols-2 gap-4">
           <StatCard
             title={t('admin:monitor.stats.active_subscriptions')}
-            value={stats.active_subscriptions_count}
+            value={stats.active_subscriptions_count ?? 0}
             icon={<Activity className="h-5 w-5" />}
             subtitle={t('admin:monitor.stats.enabled_subscriptions')}
           />
           <StatCard
             title={t('admin:monitor.stats.total_subscriptions')}
-            value={stats.total_subscriptions_count}
+            value={stats.total_subscriptions_count ?? 0}
             icon={<AlertTriangle className="h-5 w-5" />}
             subtitle={t('admin:monitor.stats.all_subscriptions')}
           />

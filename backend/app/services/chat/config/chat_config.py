@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -62,9 +63,17 @@ class ChatConfig:
     # Preload skills list (resolved from Ghost CRD + frontend override)
     preload_skills: list[str] = field(default_factory=list)
 
+    # User-selected skills (skills explicitly chosen by user for this message)
+    # These skills will be highlighted in the system prompt to encourage the model to prioritize them
+    user_selected_skills: list[str] = field(default_factory=list)
+
     # Prompt enhancement options (handled internally by chat_shell)
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+
+    # Model protocol for special API routing (e.g., gemini-deep-research)
+    # This determines which API flow to use for the chat
+    protocol: str | None = None
 
 
 class ChatConfigBuilder:
@@ -115,7 +124,7 @@ class ChatConfigBuilder:
         enable_clarification: bool = False,
         enable_deep_thinking: bool = True,
         task_id: int = 0,
-        preload_skills: list[str] | None = None,
+        preload_skills: list | None = None,
     ) -> ChatConfig:
         """Build complete chat configuration.
 
@@ -126,7 +135,8 @@ class ChatConfigBuilder:
             enable_clarification: Whether to enable clarification mode
             enable_deep_thinking: Whether to enable deep thinking mode with search guidance
             task_id: Task ID for placeholder replacement
-            preload_skills: Optional list of skill names to preload into system prompt
+            preload_skills: Optional list of skills to preload into system prompt.
+                Each item can be a dict with {name, namespace, is_public} or a SkillRef object.
 
         Returns:
             Complete ChatConfig ready for streaming
@@ -146,8 +156,10 @@ class ChatConfigBuilder:
 
         # Get skills for the bot (needed for load_skill tool and prompt enhancement)
         # Also get preload_skills from Ghost CRD
-        skills, resolved_preload_skills = self._get_bot_skills(
-            bot, preload_skills=preload_skills or []
+        # Pass user_preload_skills from frontend for dynamic skill loading
+        skills, resolved_preload_skills, user_selected_skills = self._get_bot_skills(
+            bot,
+            user_preload_skills=preload_skills or [],
         )
 
         skill_names = [s["name"] for s in skills]
@@ -181,8 +193,10 @@ class ChatConfigBuilder:
             skill_names=skill_names,
             skill_configs=skills,  # Full skill configs
             preload_skills=resolved_preload_skills,  # Resolved from Ghost CRD + frontend
+            user_selected_skills=user_selected_skills,  # Skills explicitly chosen by user
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
+            protocol=model_config.get("protocol"),  # For special API routing
         )
 
     def _get_first_bot(self) -> Kind | None:
@@ -380,27 +394,81 @@ class ChatConfigBuilder:
 
         return shell_type
 
-    def _get_bot_skills(
-        self, bot: Kind, preload_skills: list[str] = None
-    ) -> tuple[list[dict], list[str]]:
+    def _build_skill_data(self, skill: Kind) -> dict:
+        """Build skill data dictionary from a Skill Kind object.
+
+        Args:
+            skill: Skill Kind object from database
+
+        Returns:
+            Dictionary containing skill metadata for chat configuration
         """
-        Get skills for the bot from Ghost.
+        from app.schemas.kind import Skill
+
+        skill_crd = Skill.model_validate(skill.json)
+
+        skill_data = {
+            "name": skill_crd.metadata.name,
+            "description": skill_crd.spec.description,
+            "prompt": skill_crd.spec.prompt,
+            "displayName": skill_crd.spec.displayName,
+            "skill_id": skill.id,
+            "skill_user_id": skill.user_id,
+        }
+
+        # Include optional fields if present
+        if skill_crd.spec.config:
+            skill_data["config"] = skill_crd.spec.config
+
+        if skill_crd.spec.mcpServers:
+            skill_data["mcpServers"] = skill_crd.spec.mcpServers
+
+        if skill_crd.spec.tools:
+            skill_data["tools"] = [
+                tool.model_dump(exclude_none=True) for tool in skill_crd.spec.tools
+            ]
+
+        if skill_crd.spec.provider:
+            skill_data["provider"] = {
+                "module": skill_crd.spec.provider.module,
+                "class": skill_crd.spec.provider.class_name,
+            }
+            # For HTTP mode: include download URL for remote skill binary loading
+            # Only for public skills (user_id=0) for security
+            if skill.user_id == 0:
+                from app.core.config import settings
+
+                base_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+                skill_data["binary_download_url"] = (
+                    f"{base_url}/api/internal/skills/{skill.id}/binary"
+                )
+
+        return skill_data
+
+    def _get_bot_skills(
+        self,
+        bot: Kind,
+        user_preload_skills: list | None = None,
+    ) -> tuple[list[dict], list[str], list[str]]:
+        """Get skills for the bot from Ghost, plus any additional skills from frontend.
 
         Returns tuple of:
         - List of skill metadata including tools configuration
-        - List of resolved preload skill names (from Ghost CRD + frontend override)
+        - List of resolved preload skill names (from Ghost CRD + user selected skills)
+        - List of user-selected skill names (skills explicitly chosen by user for this message)
 
         The tools field contains tool declarations from SKILL.md frontmatter,
         which are used by SkillToolRegistry to dynamically create tool instances.
 
         Args:
             bot: Bot Kind object
-            preload_skills: Optional list of skill names to mark as preloaded (frontend override)
+            user_preload_skills: Optional list of user-selected skills to preload.
+                Each item can be a dict with {name, namespace, is_public} or a SkillRef object.
 
         Returns:
-            Tuple of (skills, preload_skills)
+            Tuple of (skills, preload_skills, user_selected_skills)
         """
-        from app.schemas.kind import Ghost, Skill
+        from app.schemas.kind import Ghost
 
         bot_crd = Bot.model_validate(bot.json)
         logger.info(
@@ -408,11 +476,12 @@ class ChatConfigBuilder:
             bot.name,
             bot_crd.spec.ghostRef if bot_crd.spec else None,
         )
+
         if not bot_crd.spec or not bot_crd.spec.ghostRef:
             logger.warning(
                 "[_get_bot_skills] Bot has no ghostRef, returning empty skills"
             )
-            return [], []
+            return [], [], []
 
         # Query Ghost
         ghost = (
@@ -433,7 +502,7 @@ class ChatConfigBuilder:
                 bot_crd.spec.ghostRef.name,
                 bot_crd.spec.ghostRef.namespace,
             )
-            return [], []
+            return [], [], []
 
         ghost_crd = Ghost.model_validate(ghost.json)
         logger.info(
@@ -442,96 +511,175 @@ class ChatConfigBuilder:
             ghost_crd.spec.skills,
             ghost_crd.spec.preload_skills,
         )
-        if not ghost_crd.spec.skills:
-            logger.warning("[_get_bot_skills] Ghost has no skills configured")
-            return [], []
 
-        # Build preload set from Ghost CRD and frontend override
-        # Priority: Ghost CRD preload_skills > frontend preload_skills parameter
-        ghost_preload_skills = ghost_crd.spec.preload_skills or []
-        frontend_preload_skills = preload_skills or []
-        # Combine both sources (union)
-        preload_set = set(ghost_preload_skills) | set(frontend_preload_skills)
-        logger.info(
-            "[_get_bot_skills] Preload configuration - Ghost CRD: %s, Frontend: %s, Combined (before filtering): %s",
-            ghost_preload_skills,
-            frontend_preload_skills,
-            list(preload_set),
-        )
+        # Initialize result containers
+        skills: list[dict] = []
+        preload_skills: list[str] = []
+        user_selected_skills: list[str] = []  # Track user-selected skills separately
+        existing_skill_names: set[str] = set()
 
-        # Query each skill (user's first, then public)
-        skills = []
-        # Track which preload skills are actually public (security check)
-        validated_preload_skills = []
+        # Build preload set from Ghost CRD
+        ghost_preload_set = set(ghost_crd.spec.preload_skills or [])
 
-        for skill_name in ghost_crd.spec.skills:
-            skill = self._find_skill(skill_name)
-            if skill:
-                skill_crd = Skill.model_validate(skill.json)
+        # Process Ghost skills
+        if ghost_crd.spec.skills:
+            for skill_name in ghost_crd.spec.skills:
+                skill = self._find_skill(skill_name)
+                if skill:
+                    skill_data = self._build_skill_data(skill)
+                    skills.append(skill_data)
+                    existing_skill_names.add(skill_name)
 
-                # Check if this skill should be preloaded AND is public
-                # SECURITY: Only public skills (user_id=0) can be preloaded
-                if skill_name in preload_set:
-                    if skill.user_id == 0:
-                        validated_preload_skills.append(skill_name)
+                    # Add to preload if configured in Ghost
+                    if skill_name in ghost_preload_set:
+                        preload_skills.append(skill_name)
                         logger.info(
-                            "[_get_bot_skills] Skill '%s' validated for preload (public skill)",
+                            "[_get_bot_skills] Skill '%s' added to preload (from Ghost)",
                             skill_name,
                         )
-                    else:
-                        logger.warning(
-                            "[_get_bot_skills] SECURITY: Rejected preload for skill '%s' (user_id=%s, only public skills can be preloaded)",
-                            skill_name,
-                            skill.user_id,
-                        )
 
-                skill_data = {
-                    "name": skill_crd.metadata.name,
-                    "description": skill_crd.spec.description,
-                    "prompt": skill_crd.spec.prompt,  # Include prompt for LoadSkillTool
-                    "displayName": skill_crd.spec.displayName,  # Include displayName
-                    # Note: Preload decision is made by chat_shell based on preload_skills list
-                    "skill_id": skill.id,  # Include skill ID for provider loading
-                    "skill_user_id": skill.user_id,  # Include user_id for security check
-                }
-                # Include config if present in skill spec
-                if skill_crd.spec.config:
-                    skill_data["config"] = skill_crd.spec.config
-                # Include mcpServers if present in skill spec
-                # MCP servers will be loaded when the skill is loaded
-                if skill_crd.spec.mcpServers:
-                    skill_data["mcpServers"] = skill_crd.spec.mcpServers
-                # Include tools configuration if present in skill spec
-                # Convert SkillToolDeclaration objects to dicts for serialization
-                if skill_crd.spec.tools:
-                    skill_data["tools"] = [
-                        tool.model_dump(exclude_none=True)
-                        for tool in skill_crd.spec.tools
-                    ]
-                # Include provider configuration for dynamic loading
-                if skill_crd.spec.provider:
-                    skill_data["provider"] = {
-                        "module": skill_crd.spec.provider.module,
-                        "class": skill_crd.spec.provider.class_name,
-                    }
-                    # For HTTP mode: include download URL for remote skill binary loading
-                    # Only for public skills (user_id=0) for security
-                    if skill.user_id == 0:
-                        from app.core.config import settings
+        # Process user-selected skills from frontend
+        if user_preload_skills:
+            logger.info(
+                "[_get_bot_skills] Processing %d user-selected skills: %s",
+                len(user_preload_skills),
+                user_preload_skills,
+            )
 
-                        # Build internal API URL for skill binary download
-                        base_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
-                        skill_data["binary_download_url"] = (
-                            f"{base_url}/api/internal/skills/{skill.id}/binary"
-                        )
-                skills.append(skill_data)
+            for add_skill in user_preload_skills:
+                # Handle both dict and Pydantic model (SkillRef)
+                if isinstance(add_skill, BaseModel):
+                    # Pydantic model - access attributes directly
+                    skill_name = add_skill.name
+                    skill_namespace = getattr(add_skill, "namespace", "default")
+                    is_public = getattr(add_skill, "is_public", False)
+                else:
+                    # Dict - use .get() method
+                    skill_name = add_skill.get("name")
+                    skill_namespace = add_skill.get("namespace", "default")
+                    is_public = add_skill.get("is_public", False)
+
+                # Check if already processed from Ghost skills
+                if skill_name in existing_skill_names:
+                    # Skill exists, just add to preload if not already there
+                    if skill_name not in preload_skills:
+                        preload_skills.append(skill_name)
+                    # Always mark as user-selected since user explicitly chose it
+                    if skill_name not in user_selected_skills:
+                        user_selected_skills.append(skill_name)
+                    logger.info(
+                        "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
+                        skill_name,
+                    )
+                    continue
+
+                # Find and add new skill
+                skill = self._find_skill_by_ref(skill_name, skill_namespace, is_public)
+                if skill:
+                    skill_data = self._build_skill_data(skill)
+                    skills.append(skill_data)
+                    existing_skill_names.add(skill_name)
+                    preload_skills.append(skill_name)
+                    user_selected_skills.append(skill_name)  # Mark as user-selected
+                    logger.info(
+                        "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
+                        skill_name,
+                    )
+                else:
+                    logger.warning(
+                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s",
+                        skill_name,
+                        skill_namespace,
+                        is_public,
+                    )
 
         logger.info(
-            "[_get_bot_skills] Final validated preload_skills: %s (rejected: %s)",
-            validated_preload_skills,
-            list(preload_set - set(validated_preload_skills)),
+            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d",
+            preload_skills,
+            user_selected_skills,
+            len(skills),
         )
-        return skills, validated_preload_skills
+        return skills, preload_skills, user_selected_skills
+
+    def _find_skill_by_ref(
+        self, skill_name: str, namespace: str, is_public: bool
+    ) -> Kind | None:
+        """Find skill by name, namespace, and public flag.
+
+        This method is used for additional skills from frontend where we have
+        explicit namespace and is_public information.
+
+        Search order for non-public skills:
+        1. Current user's skill in specified namespace (personal)
+        2. ANY user's skill in specified namespace (group-level, for group namespaces)
+        3. Current user's skill in default namespace (fallback)
+
+        Args:
+            skill_name: Skill name
+            namespace: Skill namespace
+            is_public: Whether the skill is public (user_id=0)
+
+        Returns:
+            Skill Kind object or None if not found
+        """
+        if is_public:
+            # Public skill (user_id=0)
+            return (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Skill",
+                    Kind.name == skill_name,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+        else:
+            # 1. Current user's skill in specified namespace
+            skill = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == self.user_id,
+                    Kind.kind == "Skill",
+                    Kind.name == skill_name,
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if skill:
+                return skill
+
+            # 2. Group-level skill (any user's skill in the namespace)
+            # This allows team members to use skills uploaded by other members
+            if namespace != "default":
+                skill = (
+                    self.db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.name == skill_name,
+                        Kind.namespace == namespace,
+                        Kind.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if skill:
+                    return skill
+
+            # 3. Fallback to current user's skill in default namespace
+            if namespace != "default":
+                return (
+                    self.db.query(Kind)
+                    .filter(
+                        Kind.user_id == self.user_id,
+                        Kind.kind == "Skill",
+                        Kind.name == skill_name,
+                        Kind.namespace == "default",
+                        Kind.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+            return None
 
     def _find_skill(self, skill_name: str) -> Kind | None:
         """Find skill by name.

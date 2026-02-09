@@ -98,6 +98,17 @@ class ContextItem(BaseModel):
     data: Dict[str, Any] = Field(..., description="Context-specific data")
 
 
+class SkillRef(BaseModel):
+    """Skill reference with full identification info for backend.
+
+    Backend needs name + namespace + is_public to uniquely identify a skill.
+    """
+
+    name: str = Field(..., description="Skill name")
+    namespace: str = Field(..., description="Skill namespace")
+    is_public: bool = Field(..., description="Whether the skill is public")
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -143,8 +154,9 @@ class ChatSendPayload(BaseModel):
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
     )
-    preload_skills: Optional[List[str]] = Field(
-        None, description="List of skill names to preload into system prompt"
+    additional_skills: Optional[List[SkillRef]] = Field(
+        None,
+        description="Additional skills with full info (name, namespace, is_public)",
     )
     # Local device execution
     device_id: Optional[str] = Field(

@@ -37,10 +37,19 @@ function normalizeMcpServers(
 
   Object.keys(servers).forEach(key => {
     const server = servers[key] as Record<string, unknown>
-    if (server.transport) {
+
+    // Priority: use 'type' if it exists, otherwise fall back to 'transport'
+    // This ensures that if both fields exist, 'type' takes precedence
+    if (!server.type && server.transport) {
       server.type = server.transport
+    }
+
+    // Remove transport field as it's deprecated
+    if (server.transport) {
       delete server.transport
     }
+
+    // Default to 'stdio' if no type is specified
     if (!server.type) {
       server.type = 'stdio'
     }

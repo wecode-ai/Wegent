@@ -4,8 +4,9 @@ This test verifies that KB call limit configuration is properly fetched
 from Backend API and used by KnowledgeBaseTool.
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from chat_shell.tools.builtin import KnowledgeBaseTool
 
@@ -50,7 +51,9 @@ class TestKnowledgeBaseCallLimitsHTTP:
         }
 
         # Mock the HTTP call
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
 
             # Act: Fetch KB info to populate cache
@@ -88,7 +91,9 @@ class TestKnowledgeBaseCallLimitsHTTP:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
 
             # Populate cache
@@ -155,7 +160,9 @@ class TestKnowledgeBaseCallLimitsHTTP:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
 
             await tool._get_kb_info()
@@ -201,7 +208,9 @@ class TestKnowledgeBaseCallLimitsHTTP:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
 
             await tool._get_kb_info()
@@ -240,7 +249,9 @@ class TestKnowledgeBaseCallLimitsHTTP:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
 
             await tool._get_kb_info()
@@ -299,7 +310,9 @@ class TestCallCountIncrementTiming:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
             await tool._get_kb_info()
 
@@ -307,17 +320,23 @@ class TestCallCountIncrementTiming:
             assert tool._call_count == 0
 
             # First check - should allow and show Call 1/5
-            should_allow, rejection_reason, warning_level = tool._check_call_limits("query1")
+            should_allow, rejection_reason, warning_level = tool._check_call_limits(
+                "query1"
+            )
             assert should_allow is True
             assert rejection_reason is None
-            assert tool._call_count == 0  # Not incremented yet (check only, no increment)
+            assert (
+                tool._call_count == 0
+            )  # Not incremented yet (check only, no increment)
 
             # Simulate what _arun does: increment after check passes
             tool._call_count += 1
             assert tool._call_count == 1
 
             # Second check - should allow and show Call 2/5
-            should_allow, rejection_reason, warning_level = tool._check_call_limits("query2")
+            should_allow, rejection_reason, warning_level = tool._check_call_limits(
+                "query2"
+            )
             assert should_allow is True
             assert tool._call_count == 1  # Still 1 (check only)
 
@@ -325,7 +344,9 @@ class TestCallCountIncrementTiming:
             assert tool._call_count == 2
 
             # Third check - should allow with warning (check period) and show Call 3/5
-            should_allow, rejection_reason, warning_level = tool._check_call_limits("query3")
+            should_allow, rejection_reason, warning_level = tool._check_call_limits(
+                "query3"
+            )
             assert should_allow is True
             assert warning_level == "normal"  # Now in check period
             assert tool._call_count == 2  # Still 2 (check only)
@@ -356,7 +377,9 @@ class TestCallCountIncrementTiming:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
             await tool._get_kb_info()
 
@@ -367,7 +390,9 @@ class TestCallCountIncrementTiming:
             tool._call_count += 1  # Simulate _arun behavior
 
             # Call 2: Should allow (check period, but within limit)
-            should_allow, rejection_reason, warning_level = tool._check_call_limits("query2")
+            should_allow, rejection_reason, warning_level = tool._check_call_limits(
+                "query2"
+            )
             assert should_allow is True
             assert rejection_reason is None
             assert warning_level == "normal"  # In check period
@@ -407,7 +432,9 @@ class TestCallCountIncrementTiming:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
             await tool._get_kb_info()
 
@@ -415,18 +442,22 @@ class TestCallCountIncrementTiming:
 
             # Simulate 6 consecutive calls
             for i in range(6):
-                should_allow, rejection_reason, warning_level = tool._check_call_limits(f"query{i+1}")
+                should_allow, rejection_reason, warning_level = tool._check_call_limits(
+                    f"query{i+1}"
+                )
 
                 if should_allow:
                     tool._call_count += 1  # Simulate _arun behavior
 
-                call_results.append({
-                    "call_number": i + 1,
-                    "should_allow": should_allow,
-                    "rejection_reason": rejection_reason,
-                    "warning_level": warning_level,
-                    "call_count_after": tool._call_count,
-                })
+                call_results.append(
+                    {
+                        "call_number": i + 1,
+                        "should_allow": should_allow,
+                        "rejection_reason": rejection_reason,
+                        "warning_level": warning_level,
+                        "call_count_after": tool._call_count,
+                    }
+                )
 
             # Verify results:
             # Calls 1-3: exempt period, allowed, no warning
@@ -479,7 +510,9 @@ class TestCallCountIncrementTiming:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
             await tool._get_kb_info()
 
@@ -493,6 +526,7 @@ class TestCallCountIncrementTiming:
             rejection_msg = tool._format_rejection_message("max_calls_exceeded", 2)
 
             import json
+
             msg_data = json.loads(rejection_msg)
 
             assert msg_data["status"] == "rejected"
@@ -528,7 +562,9 @@ class TestCallCountIncrementTiming:
             ],
         }
 
-        with patch.object(tool, "_get_kb_info_via_http", new_callable=AsyncMock) as mock_http:
+        with patch.object(
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_http:
             mock_http.return_value = mock_kb_info
             await tool._get_kb_info()
 

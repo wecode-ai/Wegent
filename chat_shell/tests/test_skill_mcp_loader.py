@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from chat_shell.tools.builtin.load_skill import LoadSkillTool
 from chat_shell.tools.skill_factory import (
     _load_skill_mcp_tools,
     prepare_skill_tools,
@@ -201,6 +202,73 @@ class TestPrepareSkillToolsWithMcp:
             # Should return empty lists
             assert tools == []
             assert clients == []
+
+    @pytest.mark.asyncio
+    async def test_skill_mcp_tools_registered_and_gated_by_load_skill(self):
+        """Test that MCP tools are registered but only exposed after load_skill."""
+        skill_configs = [
+            {
+                "name": "test_skill",
+                "description": "A test skill",
+                "prompt": "Test skill prompt",
+                "mcpServers": {
+                    "server1": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "test_server"],
+                    }
+                },
+            }
+        ]
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["test_skill"],
+            skill_metadata={
+                "test_skill": {
+                    "description": "A test skill",
+                    "prompt": "Test skill prompt",
+                }
+            },
+        )
+
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+
+        mock_mcp_tool = MagicMock()
+        mock_mcp_tool.name = "test_skill_server1_list_kbs"
+        mock_mcp_tool.server_name = "test_skill_server1"
+
+        mock_client.get_tools.return_value = [mock_mcp_tool]
+
+        with patch(
+            "chat_shell.tools.mcp.MCPClient", return_value=mock_client
+        ) as mock_mcp_class:
+            mock_client.connect = AsyncMock()
+            tools, clients = await prepare_skill_tools(
+                task_id=1,
+                subtask_id=1,
+                user_id=1,
+                skill_configs=skill_configs,
+                load_skill_tool=load_skill_tool,
+                # Not preloaded: should register but not expose yet
+                preload_skills=[],
+            )
+
+            # MCP client should be created so tools can be registered for later exposure
+            mock_mcp_class.assert_called_once()
+
+            # No immediate tools (skill not loaded yet)
+            assert tools == []
+            assert len(clients) == 1
+
+            # Tools are registered under the owning skill but gated by load_skill
+            assert load_skill_tool.get_available_tools() == []
+            assert load_skill_tool.get_skill_tools("test_skill") == [mock_mcp_tool]
+
+            # After loading the skill, tools become available
+            load_skill_tool._run("test_skill")
+            assert mock_mcp_tool in load_skill_tool.get_available_tools()
 
     @pytest.mark.asyncio
     async def test_skill_without_mcp_servers(self):

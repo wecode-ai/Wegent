@@ -155,6 +155,7 @@ class HTTPAdapter(ChatInterface):
             "skill_names": request.skill_names,
             "skill_configs": request.skill_configs,
             "preload_skills": request.preload_skills,
+            "user_selected_skills": request.user_selected_skills,  # Skills explicitly chosen by user
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
             "is_user_selected_kb": request.is_user_selected_kb,
@@ -488,24 +489,18 @@ class HTTPAdapter(ChatInterface):
                     if text:
                         event_data["content"] = text
                 elif event_type == ChatEventType.DONE:
-                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources, blocks, silent_exit}
-                    # The actual response content is NOT in this event, it's accumulated from CHUNK events
-                    # We pass through the metadata (usage, stop_reason, sources, blocks, silent_exit) and let the caller set 'value'
-                    event_data["result"] = {
-                        "usage": data.get("usage"),
-                        "stop_reason": data.get("stop_reason"),
-                        "id": data.get("id"),
-                        "sources": data.get("sources"),  # Knowledge base citations
-                        "blocks": data.get(
-                            "blocks"
-                        ),  # Message blocks for mixed content rendering
-                        "silent_exit": data.get(
-                            "silent_exit"
-                        ),  # Silent exit flag for subscription tasks
-                        "silent_exit_reason": data.get(
-                            "silent_exit_reason"
-                        ),  # Reason for silent exit
-                    }
+                    # Done event - pass through the entire data object as result
+                    # This avoids having to manually extract each field and ensures
+                    # new fields from chat_shell are automatically included
+                    # The caller will merge this with accumulated response content
+                    event_data["result"] = data
+                    # Log the complete DONE event received from chat_shell
+                    logger.info(
+                        "[HTTP_ADAPTER] Received DONE event from chat_shell: "
+                        "data_keys=%s, loaded_skills=%s",
+                        list(data.keys()),
+                        data.get("loaded_skills"),
+                    )
                 elif event_type in (
                     ChatEventType.TOOL_START,
                     ChatEventType.TOOL_RESULT,

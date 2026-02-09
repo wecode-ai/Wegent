@@ -60,8 +60,11 @@
   "close_session_error": "关闭会话失败",
   "local_executor_title": "运行本地 Executor",
   "local_executor_description": "在您的 Mac 上运行 Executor 以执行 AI 任务",
+  "local_executor_description_linux": "在您的 Linux 设备上运行 Executor 以执行 AI 任务",
+  "local_executor_description_windows": "在您的 Windows 电脑上运行 Executor 以执行 AI 任务",
   "step_install": "安装 wegent-executor",
   "step_install_desc": "运行一键安装脚本，自动下载并安装到 ~/.wegent-executor/bin/",
+  "step_install_desc_windows": "运行 PowerShell 安装脚本，自动下载并安装到 %USERPROFILE%\\.wegent-executor\\bin\\",
   "step_download": "下载 wegent-executor",
   "step_download_desc": "从 GitHub 下载适用于您 Mac 的可执行文件",
   "step_permission": "设置可执行权限",
@@ -72,6 +75,14 @@
   "arch_intel": "Intel",
   "security_warning": "安全提示：请勿分享上述命令，它包含您的认证信息",
   "gatekeeper_hint": "首次运行可能需要在「系统设置 > 隐私与安全性」中允许运行",
+  "windows_security_hint": "首次运行可能需要在 Windows 安全中心允许运行。需要 Windows 10 版本 1809 或更高版本",
   "token_expiry_hint": "认证 Token 有效期为 7 天，过期后可重新执行上述启动命令刷新",
-  "copy_success": "已复制到剪贴板"
+  "copy_success": "已复制到剪贴板",
+  "version": {
+    "current": "当前版本",
+    "latest": "最新版本",
+    "updateAvailable": "有新版本可用"
+  },
+  "add_device": "添加设备",
+  "hide_guide": "收起指南"
 }

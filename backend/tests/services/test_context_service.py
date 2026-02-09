@@ -298,6 +298,92 @@ class TestContextServiceFormatting:
         )
         assert context_service.build_attachment_url(1) == "/api/attachments/1/download"
 
+    def test_build_sandbox_path(self):
+        """Test sandbox path generation"""
+        from app.services.context import context_service
+
+        # Test with valid task_id and subtask_id
+        path = context_service.build_sandbox_path(123, 456, "test.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+        # Test with different values
+        path = context_service.build_sandbox_path(1, 2, "image.png")
+        assert path == "/home/user/1:executor:attachments/2/image.png"
+
+    def test_build_sandbox_path_returns_none_for_missing_ids(self):
+        """Test sandbox path returns None when task_id or subtask_id is missing"""
+        from app.services.context import context_service
+
+        # Test with None task_id
+        assert context_service.build_sandbox_path(None, 456, "test.pdf") is None
+
+        # Test with None subtask_id
+        assert context_service.build_sandbox_path(123, None, "test.pdf") is None
+
+        # Test with both None
+        assert context_service.build_sandbox_path(None, None, "test.pdf") is None
+
+    def test_build_sandbox_path_strips_control_characters(self):
+        """Test sandbox path strips control characters from filename"""
+        from app.services.context import context_service
+
+        # Test filename with newline
+        path = context_service.build_sandbox_path(123, 456, "test\n.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+        # Test filename with carriage return
+        path = context_service.build_sandbox_path(123, 456, "test\r.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+        # Test filename with both
+        path = context_service.build_sandbox_path(123, 456, "test\r\n.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+    def test_build_document_text_prefix_with_sandbox_path(self):
+        """Test building document text prefix with sandbox path included"""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        # Arrange
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="This is the extracted PDF content.",
+            text_length=35,
+            type_data={
+                "file_extension": ".pdf",
+                "original_filename": "test.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 2621440,  # 2.5 MB
+            },
+        )
+        context.id = 12345
+
+        # Act - with task_id and subtask_id
+        prefix = context_service.build_document_text_prefix(
+            context, task_id=100, subtask_id=200
+        )
+
+        # Assert
+        assert prefix is not None
+        assert "[Attachment: test.pdf |" in prefix
+        assert "ID: 12345" in prefix
+        assert "Type: application/pdf" in prefix
+        assert "Size: 2.5 MB" in prefix
+        assert "URL: /api/attachments/12345/download" in prefix
+        assert (
+            "File Path(already in sandbox): /home/user/100:executor:attachments/200/test.pdf"
+            in prefix
+        )
+        assert "This is the extracted PDF content." in prefix
+
     def test_build_document_text_prefix(self):
         """Test building document text prefix with attachment metadata"""
         from app.models.subtask_context import (
@@ -451,3 +537,79 @@ class TestContextServiceFormatting:
         assert "PDF content here" in result
         assert "[User Question]:" in result
         assert "Summarize this document" in result
+
+
+class TestContextServiceOverwrite:
+    """Test attachment overwrite functionality"""
+
+    def test_overwrite_attachment_updates_existing_context(self):
+        """Test overwriting an attachment updates metadata and storage data."""
+        import sys
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.parser import ParseResult
+        from app.services.context.context_service import context_service as cs_instance
+
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        mock_db = Mock()
+        storage_key = "attachments/test123_20250113_1_100"
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="old.txt",
+            status=ContextStatus.READY.value,
+            binary_data=b"old data",
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "original_filename": "old.txt",
+                "file_extension": ".txt",
+                "file_size": 7,
+                "mime_type": "text/plain",
+                "is_encrypted": False,
+            },
+        )
+        context.id = 100
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        new_binary_data = b"new data"
+        parse_result = ParseResult(text="new data", text_length=8)
+
+        with patch.object(cs_module, "_should_encrypt", return_value=False):
+            with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+                mock_backend = Mock()
+                mock_get_backend.return_value = mock_backend
+
+                with patch.object(
+                    cs_instance.parser, "parse", return_value=parse_result
+                ):
+                    updated_context, truncation_info = cs_instance.overwrite_attachment(
+                        db=mock_db,
+                        context_id=context.id,
+                        user_id=context.user_id,
+                        filename="new.txt",
+                        binary_data=new_binary_data,
+                    )
+
+        assert truncation_info is None
+        assert updated_context.id == context.id
+        assert updated_context.status == ContextStatus.READY.value
+        assert updated_context.name == "new.txt"
+        assert updated_context.original_filename == "new.txt"
+        assert updated_context.file_size == len(new_binary_data)
+        assert updated_context.storage_key == storage_key
+        mock_backend.save.assert_called_once()
+        saved_key, saved_data, saved_metadata = mock_backend.save.call_args.args
+        assert saved_key == storage_key
+        assert saved_data == new_binary_data
+        assert saved_metadata["file_size"] == len(new_binary_data)

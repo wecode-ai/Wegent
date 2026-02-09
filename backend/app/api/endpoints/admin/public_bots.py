@@ -287,13 +287,17 @@ async def list_public_bots(
 def _is_predefined_model(agent_config: dict) -> bool:
     """
     Check if agent_config is a predefined model reference.
-    A predefined model config has bind_model and optionally bind_model_type/bind_model_namespace.
+    A predefined model config has bind_model (non-empty) and optionally bind_model_type/bind_model_namespace.
     """
     if not agent_config:
         return False
     keys = set(agent_config.keys())
     allowed_keys = {"bind_model", "bind_model_type", "bind_model_namespace"}
-    return "bind_model" in keys and keys.issubset(allowed_keys)
+    # Check that bind_model exists, is a non-empty string, and all keys are allowed
+    bind_model = agent_config.get("bind_model")
+    if not bind_model or not isinstance(bind_model, str) or not bind_model.strip():
+        return False
+    return keys.issubset(allowed_keys)
 
 
 def _create_public_ghost(

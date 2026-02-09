@@ -7,6 +7,22 @@ WebSocket client for local executor mode.
 
 This module implements a Socket.IO based WebSocket client aligned with
 the LocalDeviceClient protocol for communicating with the Backend server.
+
+Authentication:
+- WEGENT_AUTH_TOKEN environment variable supports both:
+  - JWT Token: Standard JWT token with expiration
+  - API Key: Personal API key starting with 'wg-' prefix (no expiration)
+
+Cross-platform support:
+- Device ID generation works on macOS, Linux, and Windows
+- File permissions use platform abstraction for security
+
+Example:
+    # Using JWT Token
+    export WEGENT_AUTH_TOKEN="eyJhbG..."
+
+    # Using API Key (recommended for local executor)
+    export WEGENT_AUTH_TOKEN="wg-abc123..."
 """
 
 import asyncio
@@ -22,6 +38,8 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from executor.config import config
+from executor.platform_compat import get_permissions_manager
+from executor.version import get_version
 from shared.logger import setup_logger
 
 logger = setup_logger("websocket_client")
@@ -36,8 +54,12 @@ class WebSocketClient:
     Features:
     - Automatic reconnection with exponential backoff
     - Device-based registration with unique device_id
-    - Authentication via JWT token
+    - Authentication via JWT token or API Key
     - Connection state management
+
+    Authentication:
+    - JWT Token: Standard Bearer token with expiration
+    - API Key: Personal API key (wg-xxx) with no expiration
     """
 
     def __init__(
@@ -54,6 +76,7 @@ class WebSocketClient:
         Args:
             backend_url: Backend WebSocket URL. Defaults to config.WEGENT_BACKEND_URL.
             auth_token: Authentication token. Defaults to config.WEGENT_AUTH_TOKEN.
+                        Can be either JWT Token or API Key (starting with 'wg-').
             reconnection: Enable automatic reconnection. Defaults to True.
             reconnection_attempts: Max reconnection attempts (0 for infinite).
             reconnection_delay: Initial reconnection delay in seconds.
@@ -241,7 +264,10 @@ class WebSocketClient:
             DEVICE_ID_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
             DEVICE_ID_CACHE_FILE.write_text(device_id)
             # Set restrictive permissions (owner read/write only)
-            os.chmod(DEVICE_ID_CACHE_FILE, 0o600)
+            permissions_manager = get_permissions_manager()
+            permissions_manager.set_owner_only(
+                str(DEVICE_ID_CACHE_FILE), is_directory=False
+            )
             logger.debug(f"Cached device ID to {DEVICE_ID_CACHE_FILE}")
         except Exception as e:
             logger.warning(f"Failed to cache device ID: {e}")
@@ -370,6 +396,7 @@ class WebSocketClient:
             register_data = {
                 "device_id": self.device_id,
                 "name": self.device_name,
+                "executor_version": get_version(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
@@ -425,6 +452,7 @@ class WebSocketClient:
             heartbeat_data = {
                 "device_id": self.device_id,
                 "running_task_ids": running_task_ids,
+                "executor_version": get_version(),
             }
             logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"

@@ -474,7 +474,7 @@ jobs:
 
   build-executor-local-macos-amd64:
     needs: prepare-release
-    runs-on: macos-14  # Apple Silicon runner with cross-compilation for Intel
+    runs-on: macos-14  # Apple Silicon runner with Rosetta 2 for x86_64 build
     permissions:
       contents: write
     steps:
@@ -483,19 +483,31 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python (universal2 for cross-compilation)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Install Rosetta 2
+        run: |
+          # Check if Rosetta 2 is already installed
+          if ! /usr/bin/pgrep -q oahd; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Python (x86_64 via Rosetta)
+        run: |
+          # Download and install Python for x86_64
+          curl -L -o python-installer.pkg "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
+          sudo installer -pkg python-installer.pkg -target /
+          rm python-installer.pkg
 
-      - name: Install dependencies and build for Intel (x86_64)
+      - name: Install uv (x86_64)
+        run: |
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install --upgrade pip
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install uv
+
+      - name: Install dependencies and build (x86_64)
         working-directory: executor
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --target-arch x86_64
+          # Use x86_64 Python and uv to install dependencies and build
+          arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
+          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py
 
       - name: Rename binary with platform suffix
         run: |
@@ -506,6 +518,126 @@ jobs:
         with:
           name: wegent-executor-macos-amd64
           path: executor/dist/wegent-executor-macos-amd64
+          retention-days: 1
+
+  # ============================================================================
+  # Executor Local Binary Build (Linux)
+  # Note: Using Ubuntu 22.04 for better GLIBC compatibility (GLIBC 2.35)
+  # This ensures the binary works on most Linux distributions including
+  # CentOS 7/8, RHEL, Debian 11+, Ubuntu 20.04+, etc.
+  # ============================================================================
+  build-executor-local-linux-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build
+        working-directory: executor
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py
+
+      - name: Rename binary with platform suffix
+        run: |
+          mv executor/dist/wegent-executor executor/dist/wegent-executor-linux-amd64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-linux-amd64
+          path: executor/dist/wegent-executor-linux-amd64
+          retention-days: 1
+
+  build-executor-local-linux-arm64:
+    needs: prepare-release
+    runs-on: ubuntu-22.04-arm
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build
+        working-directory: executor
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py
+
+      - name: Rename binary with platform suffix
+        run: |
+          mv executor/dist/wegent-executor executor/dist/wegent-executor-linux-arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-linux-arm64
+          path: executor/dist/wegent-executor-linux-arm64
+          retention-days: 1
+
+  # ============================================================================
+  # Executor Local Binary Build (Windows)
+  # Note: Windows 10 1809+ required for ConPTY support
+  # ============================================================================
+  build-executor-local-windows-amd64:
+    needs: prepare-release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build
+        working-directory: executor
+        shell: pwsh
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py
+
+      - name: Rename binary with platform suffix
+        shell: pwsh
+        run: |
+          Move-Item executor/dist/wegent-executor.exe executor/dist/wegent-executor-windows-amd64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-windows-amd64
+          path: executor/dist/wegent-executor-windows-amd64.exe
           retention-days: 1
 
   # ============================================================================
@@ -581,6 +713,9 @@ jobs:
       - create-manifests
       - build-executor-local-macos-arm64
       - build-executor-local-macos-amd64
+      - build-executor-local-linux-amd64
+      - build-executor-local-linux-arm64
+      - build-executor-local-windows-amd64
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -595,7 +730,7 @@ jobs:
       - name: Download executor binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: wegent-executor-macos-*
+          pattern: wegent-executor-*
           path: ./executor-binaries
           merge-multiple: true
 
@@ -655,4 +790,8 @@ jobs:
           files: |
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64
+            ./executor-binaries/wegent-executor-linux-amd64
+            ./executor-binaries/wegent-executor-linux-arm64
+            ./executor-binaries/wegent-executor-windows-amd64.exe
             ./executor/scripts/local_executor_install.sh
+            ./executor/scripts/local_executor_install.ps1

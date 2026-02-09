@@ -237,6 +237,7 @@ async def upload_document(
                 user_id=index_owner_user_id,
                 db=db,
                 splitter_config=parsed_splitter_config,
+                user_name=current_user.user_name,
             )
             return result
         finally:

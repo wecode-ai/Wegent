@@ -8,9 +8,9 @@ This module provides the SandboxCommandTool class that executes
 commands in an isolated sandbox environment.
 """
 
-import asyncio
 import json
 import logging
+import re
 import time
 from typing import Optional
 
@@ -18,6 +18,21 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# Shell operators that require bash -c wrapping
+# These operators are not recognized when commands are executed directly
+SHELL_OPERATORS_PATTERN = re.compile(
+    r"&&|"  # AND operator
+    r"\|\||"  # OR operator
+    r"\|(?!\|)|"  # Pipe (but not ||)
+    r";|"  # Command separator
+    r">>|"  # Append redirect
+    r">|"  # Output redirect
+    r"<<|"  # Here document
+    r"<|"  # Input redirect
+    r"\$\(|"  # Command substitution $(...)
+    r"`"  # Backtick command substitution
+)
 
 
 class SandboxCommandInput(BaseModel):
@@ -93,6 +108,31 @@ Example:
     # Maximum output size to return (64KB per stream to avoid context overflow)
     max_output_size: int = 65536  # 64KB
 
+    def _wrap_shell_command(self, command: str) -> str:
+        """Wrap command with bash -c if it contains shell operators.
+
+        E2B SDK's commands.run executes commands directly without a shell interpreter,
+        so shell operators like &&, ||, |, ;, >, <, etc. are not recognized.
+        This method detects such operators and wraps the command with bash -c.
+
+        Args:
+            command: The original command string
+
+        Returns:
+            The command wrapped with bash -c if needed, otherwise the original command
+        """
+        # Check if command contains shell operators
+        if SHELL_OPERATORS_PATTERN.search(command):
+            # Escape single quotes in the command for bash -c
+            escaped_command = command.replace("'", "'\"'\"'")
+            wrapped = f"bash -c '{escaped_command}'"
+            logger.debug(
+                f"[SandboxCommandTool] Command contains shell operators, "
+                f"wrapping with bash -c: {wrapped[:100]}..."
+            )
+            return wrapped
+        return command
+
     def _run(
         self,
         command: str,
@@ -123,6 +163,10 @@ Example:
         """
         start_time = time.time()
         effective_timeout = timeout_seconds or self.default_command_timeout
+
+        # Wrap command with bash -c if it contains shell operators
+        # This ensures operators like &&, ||, |, ;, >, < are properly interpreted
+        command = self._wrap_shell_command(command)
 
         logger.info(
             f"[SandboxCommandTool] Executing command: {command[:100]}, "

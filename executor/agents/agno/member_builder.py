@@ -65,13 +65,14 @@ class MemberBuilder:
             if mcp_tools:
                 all_tools.extend(mcp_tools)
 
-            # Add wegent MCP server for subscription tasks (provides silent_exit tool via Streamable HTTP)
+            # Add system MCP server for subscription tasks (provides silent_exit tool)
+            # System MCP config is injected by Backend via task_data
             if task_data.get("is_subscription"):
-                wegent_mcp_tools = await self._setup_wegent_mcp_tools()
-                if wegent_mcp_tools:
-                    all_tools.extend(wegent_mcp_tools)
+                system_mcp_tools = await self._setup_system_mcp_tools(task_data)
+                if system_mcp_tools:
+                    all_tools.extend(system_mcp_tools)
                     logger.info(
-                        f"Added wegent MCP tools (Streamable HTTP) for subscription task (member: {member_config.get('name', 'Unnamed')})"
+                        f"Added system MCP tools for subscription task (member: {member_config.get('name', 'Unnamed')})"
                     )
 
             # Prepare data sources for placeholder replacement
@@ -141,13 +142,14 @@ class MemberBuilder:
             if mcp_tools:
                 all_tools.extend(mcp_tools)
 
-            # Add wegent MCP server for subscription tasks (provides silent_exit tool via Streamable HTTP)
+            # Add system MCP server for subscription tasks (provides silent_exit tool)
+            # System MCP config is injected by Backend via task_data
             if task_data.get("is_subscription"):
-                wegent_mcp_tools = await self._setup_wegent_mcp_tools()
-                if wegent_mcp_tools:
-                    all_tools.extend(wegent_mcp_tools)
+                system_mcp_tools = await self._setup_system_mcp_tools(task_data)
+                if system_mcp_tools:
+                    all_tools.extend(system_mcp_tools)
                     logger.info(
-                        "Added wegent MCP tools (Streamable HTTP) for subscription task (default member)"
+                        "Added system MCP tools for subscription task (default member)"
                     )
 
             # Prepare data sources for placeholder replacement
@@ -270,12 +272,17 @@ class MemberBuilder:
         """
         return member_config.get("system_prompt", "Team member")
 
-    async def _setup_wegent_mcp_tools(self) -> Optional[List[Any]]:
+    async def _setup_system_mcp_tools(
+        self, task_data: Dict[str, Any]
+    ) -> Optional[List[Any]]:
         """
-        Setup wegent MCP tools via Streamable HTTP transport.
+        Setup system MCP tools from Backend-injected configuration.
 
-        The wegent MCP server provides internal tools like silent_exit.
-        It runs as an HTTP server within the executor process.
+        The system MCP server provides internal tools like silent_exit.
+        It is hosted by Backend and configuration is injected via task_data.
+
+        Args:
+            task_data: Task data containing system_mcp_config
 
         Returns:
             List of MCPTools if successful, None otherwise
@@ -284,63 +291,58 @@ class MemberBuilder:
         import traceback
 
         try:
-            from executor.mcp_servers.wegent.server import get_wegent_mcp_url
+            system_mcp_config = task_data.get("system_mcp_config")
+            if not system_mcp_config:
+                logger.debug("No system_mcp_config found in task_data")
+                return None
 
-            wegent_mcp_url = get_wegent_mcp_url()
-            logger.info(
-                f"Attempting to connect to wegent MCP server at {wegent_mcp_url}"
-            )
+            # Get the first server configuration
+            for server_name, server_config in system_mcp_config.items():
+                logger.info(
+                    f"Attempting to connect to system MCP server '{server_name}' at {server_config.get('url')}"
+                )
 
-            # Create Streamable HTTP MCP configuration for wegent server
-            # Use shorter timeout for internal server connection
-            wegent_mcp_config = {
-                "type": "streamable-http",
-                "url": wegent_mcp_url,
-                "timeout": 30,  # 30 seconds timeout for internal server
-                "sse_read_timeout": 60,  # 60 seconds read timeout
-            }
+                # Use the existing MCP manager to create and connect the tools
+                mcp_tools = self.mcp_manager._create_streamable_http_tools(
+                    server_config
+                )
 
-            # Use the existing MCP manager to create and connect the tools
-            mcp_tools = self.mcp_manager._create_streamable_http_tools(
-                wegent_mcp_config
-            )
+                if mcp_tools:
+                    # Retry connection with exponential backoff
+                    max_retries = 3
+                    retry_delay = 0.5  # Start with 500ms delay
 
-            if mcp_tools:
-                # Retry connection with exponential backoff
-                max_retries = 3
-                retry_delay = 0.5  # Start with 500ms delay
-
-                for attempt in range(max_retries):
-                    try:
-                        await mcp_tools.connect()
-                        self.mcp_manager.connected_tools.append(mcp_tools)
-                        logger.info(
-                            f"Connected to wegent MCP server at {wegent_mcp_url} (attempt {attempt + 1})"
-                        )
-                        return [mcp_tools]
-                    except Exception as connect_error:
-                        if attempt < max_retries - 1:
-                            logger.warning(
-                                f"Failed to connect to wegent MCP server (attempt {attempt + 1}/{max_retries}): "
-                                f"{type(connect_error).__name__}: {str(connect_error)}"
+                    for attempt in range(max_retries):
+                        try:
+                            await mcp_tools.connect()
+                            self.mcp_manager.connected_tools.append(mcp_tools)
+                            logger.info(
+                                f"Connected to system MCP server '{server_name}' (attempt {attempt + 1})"
                             )
-                            await asyncio.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
-                        else:
-                            # Log full traceback on final failure
-                            logger.error(
-                                f"Failed to connect to wegent MCP server after {max_retries} attempts: "
-                                f"{type(connect_error).__name__}: {str(connect_error)}\n"
-                                f"Traceback: {traceback.format_exc()}"
-                            )
-                            raise
+                            return [mcp_tools]
+                        except Exception as connect_error:
+                            if attempt < max_retries - 1:
+                                logger.warning(
+                                    f"Failed to connect to system MCP server (attempt {attempt + 1}/{max_retries}): "
+                                    f"{type(connect_error).__name__}: {str(connect_error)}"
+                                )
+                                await asyncio.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                            else:
+                                # Log full traceback on final failure
+                                logger.error(
+                                    f"Failed to connect to system MCP server after {max_retries} attempts: "
+                                    f"{type(connect_error).__name__}: {str(connect_error)}\n"
+                                    f"Traceback: {traceback.format_exc()}"
+                                )
+                                raise
 
             return None
 
         except Exception as e:
             # Log full traceback for debugging
             logger.error(
-                f"Failed to setup wegent MCP tools: {type(e).__name__}: {str(e)}\n"
+                f"Failed to setup system MCP tools: {type(e).__name__}: {str(e)}\n"
                 f"Traceback: {traceback.format_exc()}"
             )
             return None

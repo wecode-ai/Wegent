@@ -94,7 +94,213 @@ class ContextService:
         """
         return f"/api/attachments/{attachment_id}/download"
 
+    @staticmethod
+    def build_sandbox_path(
+        task_id: Optional[int],
+        subtask_id: Optional[int],
+        filename: str,
+    ) -> Optional[str]:
+        """
+        Build the sandbox file path for an attachment.
+
+        This path corresponds to where the Executor downloads attachments
+        in the sandbox environment.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            filename: Original filename
+
+        Returns:
+            Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
+            Returns None if task_id or subtask_id is not provided.
+        """
+        if task_id is None or subtask_id is None:
+            return None
+        # Guard against None filename and strip control characters
+        safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
+        return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+
     # ==================== Attachment Operations ====================
+
+    def _validate_attachment_input(
+        self,
+        filename: str,
+        binary_data: bytes,
+    ) -> Tuple[str, int, str]:
+        """
+        Validate attachment input and return basic metadata.
+
+        Returns:
+            Tuple of (extension, file_size, mime_type)
+        """
+        _, extension = os.path.splitext(filename)
+        extension = extension.lower()
+
+        if not self.parser.is_supported_extension(extension):
+            raise ValueError(
+                f"Unsupported file type: {extension}. "
+                f"Supported types: {', '.join(self.parser.SUPPORTED_EXTENSIONS.keys())}"
+            )
+
+        file_size = len(binary_data)
+        if not self.parser.validate_file_size(file_size):
+            max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
+            raise ValueError(f"File size exceeds maximum limit ({max_size_mb} MB)")
+
+        mime_type = self.parser.get_mime_type(extension)
+        return extension, file_size, mime_type
+
+    @staticmethod
+    def _build_attachment_type_data(
+        filename: str,
+        extension: str,
+        file_size: int,
+        mime_type: str,
+        storage_backend: str,
+        storage_key: str,
+    ) -> Dict[str, Any]:
+        """Build type_data payload for attachment contexts."""
+        return {
+            "original_filename": filename,
+            "file_extension": extension,
+            "file_size": file_size,
+            "mime_type": mime_type,
+            "storage_backend": storage_backend,
+            "storage_key": storage_key,
+        }
+
+    def _create_attachment_context(
+        self,
+        user_id: int,
+        filename: str,
+        extension: str,
+        file_size: int,
+        mime_type: str,
+        subtask_id: int,
+        storage_backend: str,
+    ) -> SubtaskContext:
+        """Create a new attachment context with uploading status."""
+        effective_subtask_id = (
+            subtask_id if subtask_id > 0 else self.UNLINKED_SUBTASK_ID
+        )
+
+        return SubtaskContext(
+            subtask_id=effective_subtask_id,
+            user_id=user_id,
+            context_type=ContextType.ATTACHMENT.value,
+            name=filename,
+            status=ContextStatus.UPLOADING.value,
+            binary_data=b"",
+            image_base64="",
+            extracted_text="",
+            text_length=0,
+            error_message="",
+            type_data=self._build_attachment_type_data(
+                filename=filename,
+                extension=extension,
+                file_size=file_size,
+                mime_type=mime_type,
+                storage_backend=storage_backend,
+                storage_key="",
+            ),
+        )
+
+    def _reset_attachment_context(
+        self,
+        context: SubtaskContext,
+        filename: str,
+        extension: str,
+        file_size: int,
+        mime_type: str,
+        storage_backend: str,
+        storage_key: str,
+    ) -> None:
+        """Reset an existing attachment context for overwrite."""
+        context.name = filename
+        context.status = ContextStatus.UPLOADING.value
+        context.error_message = ""
+        context.binary_data = b""
+        context.image_base64 = ""
+        context.extracted_text = ""
+        context.text_length = 0
+
+        base_type_data = context.type_data or {}
+        updated_type_data = self._build_attachment_type_data(
+            filename=filename,
+            extension=extension,
+            file_size=file_size,
+            mime_type=mime_type,
+            storage_backend=storage_backend,
+            storage_key=storage_key,
+        )
+        context.type_data = {**base_type_data, **updated_type_data}
+
+    def _store_attachment_binary(
+        self,
+        storage_backend,
+        context: SubtaskContext,
+        filename: str,
+        mime_type: str,
+        file_size: int,
+        binary_data: bytes,
+    ) -> None:
+        """Save attachment binary data with encryption metadata."""
+        is_encrypted = _should_encrypt()
+        data_to_store = encrypt_attachment(binary_data) if is_encrypted else binary_data
+
+        if is_encrypted:
+            logger.info(f"Encrypted attachment data for context {context.id}")
+
+        metadata = {
+            "filename": filename,
+            "mime_type": mime_type,
+            "file_size": file_size,
+            "user_id": context.user_id,
+            "is_encrypted": is_encrypted,
+        }
+        storage_backend.save(context.storage_key, data_to_store, metadata)
+
+        base_type_data = context.type_data or {}
+        context.type_data = {
+            **base_type_data,
+            "is_encrypted": is_encrypted,
+            "encryption_version": 1 if is_encrypted else 0,
+        }
+
+    def _parse_and_update_context(
+        self,
+        context: SubtaskContext,
+        binary_data: bytes,
+        extension: str,
+    ) -> Optional[TruncationInfo]:
+        """Parse attachment data and update context fields."""
+        truncation_info = None
+        try:
+            parse_result: ParseResult = self.parser.parse(binary_data, extension)
+
+            context.extracted_text = parse_result.text if parse_result.text else ""
+            context.text_length = (
+                parse_result.text_length if parse_result.text_length else 0
+            )
+            context.image_base64 = (
+                parse_result.image_base64 if parse_result.image_base64 else ""
+            )
+            context.status = ContextStatus.READY.value
+
+            if parse_result.truncation_info:
+                truncation_info = TruncationInfo(
+                    is_truncated=parse_result.truncation_info.is_truncated,
+                    original_length=parse_result.truncation_info.original_length,
+                    truncated_length=parse_result.truncation_info.truncated_length,
+                )
+        except DocumentParseError as e:
+            logger.exception(f"Document parsing failed for context {context.id}: {e}")
+            context.status = ContextStatus.FAILED.value
+            context.error_message = str(e)
+            raise
+
+        return truncation_info
 
     def upload_attachment(
         self,
@@ -122,56 +328,21 @@ class ContextService:
             DocumentParseError: If document parsing fails
             StorageError: If storage operation fails
         """
-        # Get file extension
-        _, extension = os.path.splitext(filename)
-        extension = extension.lower()
-
-        # Validate file extension
-        if not self.parser.is_supported_extension(extension):
-            raise ValueError(
-                f"Unsupported file type: {extension}. "
-                f"Supported types: {', '.join(self.parser.SUPPORTED_EXTENSIONS.keys())}"
-            )
-
-        # Validate file size
-        file_size = len(binary_data)
-        if not self.parser.validate_file_size(file_size):
-            max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
-            raise ValueError(f"File size exceeds maximum limit ({max_size_mb} MB)")
-
-        # Get MIME type
-        mime_type = self.parser.get_mime_type(extension)
-
-        # Use placeholder subtask_id if not provided (0 means unlinked)
-        effective_subtask_id = (
-            subtask_id if subtask_id > 0 else self.UNLINKED_SUBTASK_ID
+        extension, file_size, mime_type = self._validate_attachment_input(
+            filename, binary_data
         )
 
         # Get the storage backend
         storage_backend = get_storage_backend(db)
 
-        # Create context record with UPLOADING status
-        # binary_data is NOT stored here - it will be saved via storage_backend.save()
-        # which handles storage based on the configured backend type (MySQL, S3, MinIO, etc.)
-        context = SubtaskContext(
-            subtask_id=effective_subtask_id,
+        context = self._create_attachment_context(
             user_id=user_id,
-            context_type=ContextType.ATTACHMENT.value,
-            name=filename,
-            status=ContextStatus.UPLOADING.value,
-            binary_data=b"",  # Empty bytes - actual data stored via storage_backend.save()
-            image_base64="",  # Empty string for NOT NULL constraint
-            extracted_text="",  # Empty string for NOT NULL constraint
-            text_length=0,
-            error_message="",  # Empty string for NOT NULL constraint
-            type_data={
-                "original_filename": filename,
-                "file_extension": extension,
-                "file_size": file_size,
-                "mime_type": mime_type,
-                "storage_backend": storage_backend.backend_type,
-                "storage_key": "",
-            },
+            filename=filename,
+            extension=extension,
+            file_size=file_size,
+            mime_type=mime_type,
+            subtask_id=subtask_id,
+            storage_backend=storage_backend.backend_type,
         )
         db.add(context)
         db.flush()  # Get the ID
@@ -184,29 +355,14 @@ class ContextService:
         }
 
         try:
-            # Encrypt binary data if encryption is enabled (handled at service layer)
-            is_encrypted = _should_encrypt()
-            data_to_store = binary_data
-            if is_encrypted:
-                data_to_store = encrypt_attachment(binary_data)
-                logger.info(f"Encrypted attachment data for context {context.id}")
-
-            # Save binary data to storage backend
-            metadata = {
-                "filename": filename,
-                "mime_type": mime_type,
-                "file_size": file_size,
-                "user_id": user_id,
-                "is_encrypted": is_encrypted,
-            }
-            storage_backend.save(storage_key, data_to_store, metadata)
-
-            # Update encryption metadata in type_data
-            context.type_data = {
-                **context.type_data,
-                "is_encrypted": is_encrypted,
-                "encryption_version": 1 if is_encrypted else 0,
-            }
+            self._store_attachment_binary(
+                storage_backend=storage_backend,
+                context=context,
+                filename=filename,
+                mime_type=mime_type,
+                file_size=file_size,
+                binary_data=binary_data,
+            )
         except StorageError as e:
             logger.exception(f"Failed to save context {context.id} to storage: {e}")
             db.rollback()
@@ -217,31 +373,13 @@ class ContextService:
         db.flush()
 
         # Parse document
-        truncation_info = None
         try:
-            parse_result: ParseResult = self.parser.parse(binary_data, extension)
-
-            # Update context with parsed content (use empty string instead of None for NOT NULL fields)
-            context.extracted_text = parse_result.text if parse_result.text else ""
-            context.text_length = (
-                parse_result.text_length if parse_result.text_length else 0
+            truncation_info = self._parse_and_update_context(
+                context=context,
+                binary_data=binary_data,
+                extension=extension,
             )
-            context.image_base64 = (
-                parse_result.image_base64 if parse_result.image_base64 else ""
-            )
-            context.status = ContextStatus.READY.value
-
-            if parse_result.truncation_info:
-                truncation_info = TruncationInfo(
-                    is_truncated=parse_result.truncation_info.is_truncated,
-                    original_length=parse_result.truncation_info.original_length,
-                    truncated_length=parse_result.truncation_info.truncated_length,
-                )
-
         except DocumentParseError as e:
-            logger.exception(f"Document parsing failed for context {context.id}: {e}")
-            context.status = ContextStatus.FAILED.value
-            context.error_message = str(e)
             db.commit()
             raise
 
@@ -250,6 +388,90 @@ class ContextService:
 
         logger.info(
             f"Attachment uploaded successfully: id={context.id}, "
+            f"filename={filename}, text_length={context.text_length}, "
+            f"storage_backend={storage_backend.backend_type}, "
+            f"truncated={truncation_info.is_truncated if truncation_info else False}"
+        )
+
+        return context, truncation_info
+
+    def overwrite_attachment(
+        self,
+        db: Session,
+        context_id: int,
+        user_id: int,
+        filename: str,
+        binary_data: bytes,
+    ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
+        """
+        Overwrite an existing attachment with new content.
+
+        Args:
+            db: Database session
+            context_id: Attachment context ID to overwrite
+            user_id: User ID (ownership validation)
+            filename: New filename
+            binary_data: New file binary data
+
+        Returns:
+            Tuple of (Updated SubtaskContext record, TruncationInfo if truncated)
+        """
+        context = self.get_context_optional(db, context_id, user_id)
+        if context is None or context.context_type != ContextType.ATTACHMENT.value:
+            raise NotFoundException(f"Context {context_id} not found")
+
+        extension, file_size, mime_type = self._validate_attachment_input(
+            filename, binary_data
+        )
+
+        storage_backend = get_storage_backend(db)
+        storage_key = context.storage_key or generate_storage_key(context.id, user_id)
+
+        self._reset_attachment_context(
+            context=context,
+            filename=filename,
+            extension=extension,
+            file_size=file_size,
+            mime_type=mime_type,
+            storage_backend=storage_backend.backend_type,
+            storage_key=storage_key,
+        )
+        db.flush()
+
+        try:
+            self._store_attachment_binary(
+                storage_backend=storage_backend,
+                context=context,
+                filename=filename,
+                mime_type=mime_type,
+                file_size=file_size,
+                binary_data=binary_data,
+            )
+        except StorageError as e:
+            logger.exception(
+                f"Failed to overwrite context {context.id} in storage: {e}"
+            )
+            db.rollback()
+            raise
+
+        context.status = ContextStatus.PARSING.value
+        db.flush()
+
+        try:
+            truncation_info = self._parse_and_update_context(
+                context=context,
+                binary_data=binary_data,
+                extension=extension,
+            )
+        except DocumentParseError:
+            db.commit()
+            raise
+
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Attachment overwritten successfully: id={context.id}, "
             f"filename={filename}, text_length={context.text_length}, "
             f"storage_backend={storage_backend.backend_type}, "
             f"truncated={truncation_info.is_truncated if truncation_info else False}"
@@ -373,14 +595,18 @@ class ContextService:
     def build_document_text_prefix(
         self,
         context: SubtaskContext,
+        task_id: Optional[int] = None,
+        subtask_id: Optional[int] = None,
     ) -> Optional[str]:
         """
         Build a text prefix containing document content for prepending to messages.
 
-        Includes attachment metadata (id, filename, mime_type, file_size, url).
+        Includes attachment metadata (id, filename, mime_type, file_size, url, sandbox_path).
 
         Args:
             context: SubtaskContext record with extracted_text
+            task_id: Optional task ID for building sandbox path
+            subtask_id: Optional subtask ID for building sandbox path
 
         Returns:
             Formatted text prefix without XML tags, or None if no extracted text
@@ -400,11 +626,21 @@ class ContextService:
         formatted_size = self.format_file_size(file_size)
         url = self.build_attachment_url(attachment_id)
 
+        # Build sandbox path if task_id and subtask_id are provided
+        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
+
         # Build the prefix with metadata and optional truncation notice
-        prefix = (
-            f"[Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-        )
+        if sandbox_path:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+                f"File Path(already in sandbox): {sandbox_path}]\n"
+            )
+        else:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+            )
 
         if is_truncated:
             prefix += (
@@ -939,6 +1175,45 @@ class ContextService:
             )
             .order_by(SubtaskContext.created_at)
             .first()
+        )
+
+    def get_attachments_by_task(
+        self,
+        db: Session,
+        task_id: int,
+    ) -> List[SubtaskContext]:
+        """
+        Get all attachment contexts for a task (across all subtasks).
+
+        This method is used by the executor to pre-download all attachments
+        for a task at sandbox startup.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            List of attachment SubtaskContext records for all subtasks of the task
+        """
+        from app.models.subtask import Subtask
+
+        # Get all subtask IDs for this task
+        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
+        subtask_ids = [s[0] for s in subtask_ids]
+
+        if not subtask_ids:
+            return []
+
+        # Get all attachments for these subtasks
+        return (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.subtask_id.in_(subtask_ids),
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                SubtaskContext.status == ContextStatus.READY.value,
+            )
+            .order_by(SubtaskContext.created_at)
+            .all()
         )
 
     def delete_context(

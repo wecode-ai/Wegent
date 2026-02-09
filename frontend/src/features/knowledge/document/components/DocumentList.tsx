@@ -95,6 +95,8 @@ export function DocumentList({
   const [initialSelectionDone, setInitialSelectionDone] = useState(false)
   // Track which document is being refreshed
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
+  // Track which document is being reindexed
+  const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
   // Track if summary is being retried
   const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
 
@@ -356,6 +358,39 @@ export function DocumentList({
     }
   }
 
+  // Handle document reindex
+  const handleReindexDocument = async (doc: KnowledgeDocument) => {
+    setReindexingDocId(doc.id)
+    try {
+      const { reindexDocument } = await import('@/apis/knowledge')
+      const result = await reindexDocument(doc.id)
+
+      if (!result.success) {
+        throw new Error(t('document.document.reindexFailed'))
+      }
+
+      toast({
+        description: t('document.document.reindexSuccess'),
+      })
+
+      // Refresh document list after a short delay to allow backend to start processing
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          refresh()
+        }
+      }, 2000)
+    } catch {
+      toast({
+        variant: 'destructive',
+        description: t('document.document.reindexFailed'),
+      })
+    } finally {
+      if (isMountedRef.current) {
+        setReindexingDocId(null)
+      }
+    }
+  }
+
   const longSummary = knowledgeBase.summary?.long_summary
 
   // Knowledge base type info
@@ -363,6 +398,11 @@ export function DocumentList({
   const isNotebook = kbType === 'notebook'
   // Check if can convert to notebook (document count must be <= 50)
   const canConvertToNotebook = documents.length <= NOTEBOOK_MAX_DOCUMENTS
+  // Check if RAG is configured (has retriever and embedding model)
+  const ragConfigured = !!(
+    knowledgeBase.retrieval_config?.retriever_name &&
+    knowledgeBase.retrieval_config?.embedding_config?.model_name
+  )
 
   return (
     <div className="space-y-4">
@@ -623,20 +663,23 @@ export function DocumentList({
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
                   onRefresh={handleRefreshWebDocument}
+                  onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
+                  isReindexing={reindexingDocId === doc.id}
                   canManage={canManage}
                   showBorder={false}
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
                   compact={true}
+                  ragConfigured={ragConfigured}
                 />
               ))}
             </div>
           ) : (
             /* Normal mode: Table layout */
-            <div className="border border-border rounded-lg overflow-hidden">
+            <div className="border border-border rounded-lg overflow-x-auto">
               {/* Table header */}
-              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium">
+              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[800px]">
                 {/* Checkbox for select all */}
                 {canManage && (
                   <div className="flex-shrink-0">
@@ -694,11 +737,14 @@ export function DocumentList({
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
                   onRefresh={handleRefreshWebDocument}
+                  onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
+                  isReindexing={reindexingDocId === doc.id}
                   canManage={canManage}
                   showBorder={index < filteredAndSortedDocuments.length - 1}
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
+                  ragConfigured={ragConfigured}
                 />
               ))}
             </div>

@@ -181,14 +181,26 @@ export async function renderMathAsImage(
  * Check if a string contains LaTeX math formulas
  */
 export function containsMathFormulas(text: string): boolean {
-  // Inline math: $...$
-  const inlineMathRegex = /(?<!\\)\$[^$\n]+?(?<!\\)\$/
   // Block math: $$...$$
   const blockMathRegex = /\$\$[\s\S]+?\$\$/
   // LaTeX environments: \begin{...}...\end{...}
   const latexEnvRegex = /\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\}/
 
-  return inlineMathRegex.test(text) || blockMathRegex.test(text) || latexEnvRegex.test(text)
+  if (blockMathRegex.test(text) || latexEnvRegex.test(text)) {
+    return true
+  }
+
+  // Inline math: $...$ (without lookbehind for iOS 16 compatibility)
+  const inlineMathPattern = /\$([^$\n]+?)\$/g
+  let match
+  while ((match = inlineMathPattern.exec(text)) !== null) {
+    // Skip if the $ is escaped (preceded by backslash)
+    if (match.index === 0 || text[match.index - 1] !== '\\') {
+      return true
+    }
+  }
+
+  return false
 }
 
 /**

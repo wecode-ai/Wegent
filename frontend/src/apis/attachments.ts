@@ -42,6 +42,15 @@ export interface AttachmentDetailResponse extends AttachmentResponse {
 }
 
 /**
+ * Attachment preview response with extracted text snippet
+ */
+export interface AttachmentPreviewResponse extends AttachmentDetailResponse {
+  preview_type: 'text' | 'image' | 'html' | 'none'
+  preview_text?: string | null
+  download_url: string
+}
+
+/**
  * Error code to i18n key mapping
  */
 const ERROR_CODE_MAPPING: Record<
@@ -119,6 +128,8 @@ export const SUPPORTED_EXTENSIONS = [
   '.csv',
   '.txt',
   '.md',
+  '.html',
+  '.htm',
   '.jpg',
   '.jpeg',
   '.png',
@@ -195,6 +206,7 @@ export const SUPPORTED_MIME_TYPES = [
   'text/csv',
   'text/plain',
   'text/markdown',
+  'text/html',
   'image/jpeg',
   'image/png',
   'image/gif',
@@ -272,6 +284,9 @@ export function getFileIcon(extension: string): string {
     case '.bmp':
     case '.webp':
       return '🖼️'
+    case '.html':
+    case '.htm':
+      return '🌐'
     default:
       // Check for code files
       if (CODE_FILE_EXTENSIONS.includes(ext)) {
@@ -292,6 +307,11 @@ export function getFileIcon(extension: string): string {
 export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 /**
+ * HTML file extensions
+ */
+export const HTML_EXTENSIONS = ['.html', '.htm']
+
+/**
  * Check if a file extension is an image type
  */
 export function isImageExtension(extension: string): boolean {
@@ -300,13 +320,26 @@ export function isImageExtension(extension: string): boolean {
 }
 
 /**
+ * Check if a file extension is an HTML type
+ */
+export function isHtmlExtension(extension: string): boolean {
+  const ext = extension.toLowerCase()
+  return HTML_EXTENSIONS.includes(ext)
+}
+
+/**
  * Get image preview URL for an attachment
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access
  * @returns Preview URL
  */
-export function getAttachmentPreviewUrl(attachmentId: number): string {
-  return `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+export function getAttachmentPreviewUrl(attachmentId: number, shareToken?: string): string {
+  const baseUrl = `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+  if (shareToken) {
+    return `${baseUrl}?share_token=${encodeURIComponent(shareToken)}`
+  }
+  return baseUrl
 }
 
 /**
@@ -388,16 +421,28 @@ export async function uploadAttachment(
  * Get attachment details by ID
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access (no login required)
  * @returns Attachment details
  */
-export async function getAttachment(attachmentId: number): Promise<AttachmentDetailResponse> {
+export async function getAttachment(
+  attachmentId: number,
+  shareToken?: string
+): Promise<AttachmentDetailResponse> {
   const token = getToken()
+  let url = `${API_BASE_URL}/api/attachments/${attachmentId}`
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}`, {
+  // Add share_token as query parameter if provided
+  if (shareToken) {
+    url += `?share_token=${encodeURIComponent(shareToken)}`
+  }
+
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
     },
   })
 
@@ -410,13 +455,55 @@ export async function getAttachment(attachmentId: number): Promise<AttachmentDet
 }
 
 /**
+ * Get attachment preview by ID
+ *
+ * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access (no login required)
+ * @returns Attachment preview details
+ */
+export async function getAttachmentPreview(
+  attachmentId: number,
+  shareToken?: string
+): Promise<AttachmentPreviewResponse> {
+  const token = getToken()
+  let url = `${API_BASE_URL}/api/attachments/${attachmentId}/preview`
+
+  // Add share_token as query parameter if provided
+  if (shareToken) {
+    url += `?share_token=${encodeURIComponent(shareToken)}`
+  }
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || 'Failed to get attachment preview')
+  }
+
+  return response.json()
+}
+
+/**
  * Get attachment download URL
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access
  * @returns Download URL
  */
-export function getAttachmentDownloadUrl(attachmentId: number): string {
-  return `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: string): string {
+  const baseUrl = `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+  if (shareToken) {
+    return `${baseUrl}?share_token=${encodeURIComponent(shareToken)}`
+  }
+  return baseUrl
 }
 
 /**
@@ -424,14 +511,22 @@ export function getAttachmentDownloadUrl(attachmentId: number): string {
  *
  * @param attachmentId - Attachment ID
  * @param filename - Optional filename for download. If not provided, will be extracted from Content-Disposition header
+ * @param shareToken - Optional share token for public access (no login required)
  */
-export async function downloadAttachment(attachmentId: number, filename?: string): Promise<void> {
+export async function downloadAttachment(
+  attachmentId: number,
+  filename?: string,
+  shareToken?: string
+): Promise<void> {
   const token = getToken()
+  const downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download`, {
+  const response = await fetch(downloadUrl, {
     method: 'GET',
     headers: {
-      ...(token && { Authorization: `Bearer ${token}` }),
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
     },
   })
 
@@ -540,6 +635,7 @@ export async function getAttachmentBySubtask(
 export const attachmentApis = {
   uploadAttachment,
   getAttachment,
+  getAttachmentPreview,
   getAttachmentDownloadUrl,
   downloadAttachment,
   deleteAttachment,
