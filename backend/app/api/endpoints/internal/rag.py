@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from shared.telemetry.decorators import trace_async
 
 # Constants for document reading pagination
 DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
@@ -389,6 +390,7 @@ class SaveKbToolResultResponse(BaseModel):
 
 
 @router.post("/save-tool-result", response_model=SaveKbToolResultResponse)
+@trace_async(span_name="rag_save_kb_tool_result", tracer_name="internal.rag")
 async def save_kb_tool_result(
     request: SaveKbToolResultRequest,
     db: Session = Depends(get_db),
@@ -534,7 +536,7 @@ async def save_kb_tool_result(
             )
 
             if updated_context:
-                kb_head_result = updated_context.type_data.get("kb_head_result", {})
+                kb_head_result = updated_context.type_data.get("kb_head_result") or {}
                 usage_count = kb_head_result.get("usage_count", 0)
                 logger.info(
                     "[internal_rag] Saved kb_head result via unified API: context_id=%d, subtask_id=%d, kb_id=%d, "

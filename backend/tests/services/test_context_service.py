@@ -17,7 +17,7 @@ import pytest
 class TestContextServiceKnowledgeBaseRetrieval:
     """Test knowledge base retrieval result functionality"""
 
-    def test_update_knowledge_base_retrieval_result_rag_mode(self):
+    def test_update_knowledge_base_retrieval_result_rag_mode(self) -> None:
         """Test updating context with RAG retrieval results."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -67,7 +67,7 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result.type_data["chunks_count"] == 5
         assert result.type_data["sources"] == sources
 
-    def test_update_knowledge_base_retrieval_result_direct_injection_mode(self):
+    def test_update_knowledge_base_retrieval_result_direct_injection_mode(self) -> None:
         """Test updating context with direct injection results - extracted_text should be empty."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -115,7 +115,7 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result.type_data["query"] == "test query"
         assert result.type_data["chunks_count"] == 10
 
-    def test_update_knowledge_base_retrieval_result_empty_status(self):
+    def test_update_knowledge_base_retrieval_result_empty_status(self) -> None:
         """Test updating context with no results sets EMPTY status."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -157,7 +157,9 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result.status == ContextStatus.EMPTY.value
         assert result.type_data["chunks_count"] == 0
 
-    def test_update_knowledge_base_retrieval_result_increments_retrieval_count(self):
+    def test_update_knowledge_base_retrieval_result_increments_retrieval_count(
+        self,
+    ) -> None:
         """Test that retrieval_count increments on multiple tool calls."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -215,7 +217,7 @@ class TestContextServiceKnowledgeBaseRetrieval:
         assert result2.type_data["query"] == "second query"
         assert result2.type_data["chunks_count"] == 3
 
-    def test_update_knowledge_base_retrieval_result_not_found(self):
+    def test_update_knowledge_base_retrieval_result_not_found(self) -> None:
         """Test updating non-existent context returns None."""
         from app.services.context import context_service
 
@@ -240,7 +242,7 @@ class TestContextServiceKnowledgeBaseRetrieval:
         # Assert
         assert result is None
 
-    def test_update_knowledge_base_retrieval_result_wrong_type(self):
+    def test_update_knowledge_base_retrieval_result_wrong_type(self) -> None:
         """Test updating non-knowledge_base context returns None."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -380,7 +382,7 @@ class TestSubtaskContextProperties:
         )
         assert context2.retrieval_count == 0
 
-    def test_kb_head_count_property(self):
+    def test_kb_head_count_property(self) -> None:
         """Test kb_head_count property returns correct value."""
         from app.models.subtask_context import SubtaskContext
 
@@ -404,7 +406,7 @@ class TestSubtaskContextProperties:
         )
         assert context2.kb_head_count == 0
 
-    def test_kb_head_document_ids_property(self):
+    def test_kb_head_document_ids_property(self) -> None:
         """Test kb_head_document_ids property returns correct value."""
         from app.models.subtask_context import SubtaskContext
 
@@ -442,7 +444,7 @@ class TestSubtaskContextProperties:
 class TestKbHeadPersistence:
     """Test kb_head persistence functionality"""
 
-    def test_update_kb_head_result_basic(self):
+    def test_update_kb_head_result_basic(self) -> None:
         """Test basic kb_head result persistence."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -490,7 +492,7 @@ class TestKbHeadPersistence:
         # Original knowledge_id should be preserved
         assert result.type_data["knowledge_id"] == 123
 
-    def test_update_kb_head_result_increments_count(self):
+    def test_update_kb_head_result_increments_count(self) -> None:
         """Test kb_head usage_count increments on multiple calls."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -543,7 +545,7 @@ class TestKbHeadPersistence:
         assert kb_head_result2.get("usage_count") == 2
         assert set(kb_head_result2.get("document_ids", [])) == {10, 20, 30}
 
-    def test_update_kb_head_result_preserves_rag_data(self):
+    def test_update_kb_head_result_preserves_rag_data(self) -> None:
         """Test kb_head update preserves existing RAG retrieval data."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -609,7 +611,7 @@ class TestKbHeadPersistence:
         # Status should NOT change (already READY)
         assert result.status == ContextStatus.READY.value
 
-    def test_update_kb_head_result_not_found(self):
+    def test_update_kb_head_result_not_found(self) -> None:
         """Test kb_head update returns None for non-existent context."""
         from app.services.context import context_service
 
@@ -632,7 +634,7 @@ class TestKbHeadPersistence:
         # Assert
         assert result is None
 
-    def test_update_kb_head_result_wrong_type(self):
+    def test_update_kb_head_result_wrong_type(self) -> None:
         """Test kb_head update returns None for non-knowledge_base context."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -1295,7 +1297,7 @@ class TestContextServiceOverwrite:
 class TestContextServiceCreateKnowledgeBaseContextWithResult:
     """Test create_knowledge_base_context_with_result functionality."""
 
-    def test_create_knowledge_base_context_with_rag_result(self):
+    def test_create_knowledge_base_context_with_rag_result(self) -> None:
         """Test creating KB context with RAG result in one operation."""
         from app.models.subtask_context import ContextStatus, ContextType
         from app.services.context import context_service
@@ -1344,9 +1346,11 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         assert added_context.type_data["auto_created"] is True
         assert added_context.type_data["rag_result"]["chunks_count"] == 5
         assert added_context.type_data["rag_result"]["query"] == "test query"
-        assert added_context.type_data["rag_result"]["injection_mode"] == "rag_retrieval"
+        assert (
+            added_context.type_data["rag_result"]["injection_mode"] == "rag_retrieval"
+        )
 
-    def test_create_knowledge_base_context_with_kb_head_result(self):
+    def test_create_knowledge_base_context_with_kb_head_result(self) -> None:
         """Test creating KB context with kb_head result in one operation."""
         from app.models.subtask_context import ContextStatus, ContextType
         from app.services.context import context_service
@@ -1394,7 +1398,7 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         assert added_context.type_data["kb_head_result"]["usage_count"] == 1
         assert added_context.type_data["kb_head_result"]["document_ids"] == [1, 2, 3]
 
-    def test_create_knowledge_base_context_with_empty_rag_result(self):
+    def test_create_knowledge_base_context_with_empty_rag_result(self) -> None:
         """Test creating KB context with empty RAG result sets EMPTY status."""
         from app.models.subtask_context import ContextStatus, ContextType
         from app.services.context import context_service
@@ -1431,7 +1435,7 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         added_context = mock_db.add.call_args[0][0]
         assert added_context.status == ContextStatus.EMPTY.value
 
-    def test_create_knowledge_base_context_fetches_kb_name(self):
+    def test_create_knowledge_base_context_fetches_kb_name(self) -> None:
         """Test that KB name is fetched from Kind table when not provided."""
         from app.models.subtask_context import ContextType
         from app.services.context import context_service
@@ -1466,7 +1470,7 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         added_context = mock_db.add.call_args[0][0]
         assert added_context.name == "Auto-fetched KB Name"
 
-    def test_create_knowledge_base_context_with_custom_kb_name(self):
+    def test_create_knowledge_base_context_with_custom_kb_name(self) -> None:
         """Test that custom KB name is used when provided."""
         from app.services.context import context_service
 
@@ -1496,7 +1500,7 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         # Should not query Kind table when kb_name is provided
         # Note: The Kind query is only for fetching name when not provided
 
-    def test_create_knowledge_base_context_invalid_tool_type(self):
+    def test_create_knowledge_base_context_invalid_tool_type(self) -> None:
         """Test that invalid tool_type raises ValueError."""
         from app.services.context import context_service
 
@@ -1518,7 +1522,7 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
 
         assert "Unknown tool_type: invalid_type" in str(exc_info.value)
 
-    def test_create_knowledge_base_context_marks_auto_created(self):
+    def test_create_knowledge_base_context_marks_auto_created(self) -> None:
         """Test that auto_created flag is set in type_data."""
         from app.services.context import context_service
 
