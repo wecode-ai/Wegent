@@ -705,7 +705,11 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                 ),
                 // Code component - handles inline code, mermaid, and code blocks
                 code: ({ node: _node, className, children, ...props }: MarkdownComponentProps) => {
-                  const isInline = !className
+                  const codeString = String(children)
+                  // Code blocks contain newlines, inline code does not
+                  // Also check for language- prefix to handle ``` (no language) code blocks
+                  const hasNewlines = codeString.includes('\n')
+                  const isInline = !hasNewlines && !className
 
                   // Inline code
                   if (isInline) {
@@ -739,9 +743,10 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
 
                   // Code blocks
                   const match = /language-(\w+)/.exec(className || '')
-                  if (match) {
-                    let language = match[1]
-                    const codeContent = String(children).replace(/\n$/, '')
+                  // Treat content with newlines as code blocks (even without language identifier)
+                  if (match || hasNewlines) {
+                    let language = match ? match[1] : ''
+                    const codeContent = codeString.replace(/\n$/, '')
 
                     // Language mapping
                     const languageMap: Record<string, string> = {
@@ -754,7 +759,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       yml: 'yaml',
                     }
 
-                    if (languageMap[language.toLowerCase()]) {
+                    if (language && languageMap[language.toLowerCase()]) {
                       language = languageMap[language.toLowerCase()]
                     }
 

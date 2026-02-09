@@ -456,8 +456,12 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       code: ({ className, children, ...props }) => {
         // Check if this is an inline code or a code block
         // Code blocks are wrapped in <pre> and have a className with language
+        const codeString = String(children)
         const match = /language-(\w+)/.exec(className || '')
-        const isInline = !match && !className?.includes('language-')
+        // Code blocks contain newlines, inline code does not
+        // Also check for language- prefix to handle ``` (no language) code blocks
+        const hasNewlines = codeString.includes('\n')
+        const isInline = !hasNewlines && !match && !className?.includes('language-')
 
         // For inline code, render as simple <code> element
         if (isInline) {
@@ -473,9 +477,9 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
 
         // For code blocks, extract language and code content
         const language = match ? match[1] : ''
-        const codeString = String(children).replace(/\n$/, '')
+        const codeBlockContent = codeString.replace(/\n$/, '')
 
-        return <CodeBlock language={language} code={codeString} theme={theme} />
+        return <CodeBlock language={language} code={codeBlockContent} theme={theme} />
       },
       // Override pre to avoid double wrapping
       pre: ({ children }) => <>{children}</>,
