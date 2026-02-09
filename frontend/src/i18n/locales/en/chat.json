@@ -292,6 +292,7 @@
     "no_messages": "No messages to export",
     "select_at_least_one": "Please select at least one message",
     "selected_count": "Selected: {{count}} message(s)",
+    "total_messages": "{{count}} total",
     "select_all": "Select All",
     "deselect_all": "Deselect All",
     "cancel": "Cancel",
@@ -308,7 +309,14 @@
     "knowledge_bases": "knowledge base(s)",
     "preparing": "Preparing export...",
     "font_load_failed": "Failed to load font, please retry",
-    "retry": "Retry"
+    "retry": "Retry",
+    "loading_all_messages": "Loading all messages...",
+    "load_error_fallback": "Using currently loaded messages"
+  },
+  "pagination": {
+    "loading_more": "Loading more messages...",
+    "loaded_count": "Loaded {{loaded}} / {{total}} messages",
+    "all_loaded": "All messages loaded"
   },
   "web_search": {
     "enable": "Enable web search",

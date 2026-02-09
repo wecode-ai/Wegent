@@ -165,6 +165,7 @@ class TaskDetail(BaseModel):
         None  # App preview information (set by expose_service tool)
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
+    total_messages: int = 0  # Total number of messages for pagination
 
     class Config:
         from_attributes = True

@@ -286,7 +286,15 @@
     "knowledge_bases": "个知识库",
     "preparing": "正在准备导出...",
     "font_load_failed": "字体加载失败，请重试",
-    "retry": "重试"
+    "retry": "重试",
+    "loading_all_messages": "正在加载所有消息...",
+    "load_error_fallback": "使用当前已加载的消息",
+    "total_messages": "共 {{count}} 条"
+  },
+  "pagination": {
+    "loading_more": "正在加载更多消息...",
+    "loaded_count": "已加载 {{loaded}} / {{total}} 条消息",
+    "all_loaded": "已加载全部消息"
   },
   "web_search": {
     "enable": "启用联网搜索",

@@ -48,8 +48,7 @@ class TaskQueryMixin:
         """
         # Use raw SQL to get task IDs where user is owner OR member (using resource_members)
         # Exclude system namespace tasks (background tasks)
-        count_sql = text(
-            """
+        count_sql = text("""
             SELECT COUNT(DISTINCT k.id)
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
@@ -57,13 +56,11 @@ class TaskQueryMixin:
             AND k.is_active = true
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-        """
-        )
+        """)
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by created_at
-        ids_sql = text(
-            """
+        ids_sql = text("""
             SELECT DISTINCT k.id, k.created_at
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
@@ -73,8 +70,7 @@ class TaskQueryMixin:
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
-        """
-        )
+        """)
         task_id_rows = db.execute(
             ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
         ).fetchall()
@@ -125,8 +121,7 @@ class TaskQueryMixin:
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
         # Get task IDs where user is owner OR member (using resource_members)
-        count_sql = text(
-            """
+        count_sql = text("""
             SELECT COUNT(DISTINCT k.id)
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
@@ -134,13 +129,11 @@ class TaskQueryMixin:
             AND k.is_active = true
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-        """
-        )
+        """)
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by created_at
-        ids_sql = text(
-            """
+        ids_sql = text("""
             SELECT DISTINCT k.id, k.created_at
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
@@ -150,8 +143,7 @@ class TaskQueryMixin:
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
-        """
-        )
+        """)
         task_id_rows = db.execute(
             ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
         ).fetchall()
@@ -215,8 +207,7 @@ class TaskQueryMixin:
         from app.models.share_link import ResourceType
 
         # Get task IDs that are group chats (have members) using resource_members
-        member_task_ids_sql = text(
-            """
+        member_task_ids_sql = text("""
             SELECT DISTINCT tm.resource_id
             FROM resource_members tm
             INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
@@ -225,16 +216,14 @@ class TaskQueryMixin:
             AND k.is_active = true
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.user_id = :user_id)
-        """
-        )
+        """)
         member_task_ids_result = db.execute(
             member_task_ids_sql, {"user_id": user_id}
         ).fetchall()
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get tasks where is_group_chat is explicitly set to true
-        explicit_group_sql = text(
-            """
+        explicit_group_sql = text("""
             SELECT DISTINCT k.id
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
@@ -243,8 +232,7 @@ class TaskQueryMixin:
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
-        """
-        )
+        """)
         explicit_group_result = db.execute(
             explicit_group_sql, {"user_id": user_id}
         ).fetchall()
@@ -303,8 +291,7 @@ class TaskQueryMixin:
         from app.models.share_link import ResourceType
 
         # Get all task IDs that are group chats (have members) using resource_members
-        member_task_ids_sql = text(
-            """
+        member_task_ids_sql = text("""
             SELECT DISTINCT tm.resource_id
             FROM resource_members tm
             INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
@@ -312,14 +299,12 @@ class TaskQueryMixin:
             AND k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
-        """
-        )
+        """)
         member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get task IDs where is_group_chat is explicitly set to true
-        explicit_group_sql = text(
-            """
+        explicit_group_sql = text("""
             SELECT DISTINCT k.id
             FROM tasks k
             WHERE k.kind = 'Task'
@@ -327,8 +312,7 @@ class TaskQueryMixin:
             AND k.namespace != 'system'
             AND k.user_id = :user_id
             AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
-        """
-        )
+        """)
         explicit_group_result = db.execute(
             explicit_group_sql, {"user_id": user_id}
         ).fetchall()
@@ -338,21 +322,18 @@ class TaskQueryMixin:
         all_group_task_ids = member_task_ids | explicit_group_ids
 
         # Get user's owned tasks (not group chats)
-        count_sql = text(
-            """
+        count_sql = text("""
             SELECT COUNT(*)
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND k.user_id = :user_id
-        """
-        )
+        """)
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by created_at
-        ids_sql = text(
-            """
+        ids_sql = text("""
             SELECT k.id, k.created_at
             FROM tasks k
             WHERE k.kind = 'Task'
@@ -361,8 +342,7 @@ class TaskQueryMixin:
             AND k.user_id = :user_id
             ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
-        """
-        )
+        """)
         task_id_rows = db.execute(
             ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
         ).fetchall()
@@ -448,8 +428,7 @@ class TaskQueryMixin:
         Returns tasks with ID greater than since_id, ordered by ID descending.
         """
         # Get task IDs where user is owner OR member, with ID > since_id (using resource_members)
-        ids_sql = text(
-            """
+        ids_sql = text("""
             SELECT DISTINCT k.id, k.created_at
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
@@ -460,8 +439,7 @@ class TaskQueryMixin:
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.id DESC
             LIMIT :limit
-        """
-        )
+        """)
         task_id_rows = db.execute(
             ids_sql, {"user_id": user_id, "since_id": since_id, "limit": limit}
         ).fetchall()
@@ -515,19 +493,16 @@ class TaskQueryMixin:
         Excludes DELETE status tasks.
         """
         # Get task IDs
-        count_sql = text(
-            """
+        count_sql = text("""
             SELECT COUNT(*) FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
             AND is_active = true
             AND namespace != 'system'
-        """
-        )
+        """)
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        ids_sql = text(
-            """
+        ids_sql = text("""
             SELECT id FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
@@ -535,8 +510,7 @@ class TaskQueryMixin:
             AND namespace != 'system'
             ORDER BY created_at DESC
             LIMIT :limit OFFSET :skip
-        """
-        )
+        """)
         task_id_rows = db.execute(
             ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
         ).fetchall()
@@ -651,9 +625,27 @@ class TaskQueryMixin:
                     )
                     team = None
 
-        # Get related subtasks
+        # Get total message count for pagination
+        from app.models.subtask import Subtask as SubtaskModel
+        from app.services.task_member_service import task_member_service
+
+        is_member = task_member_service.is_member(db, task_id, user_id)
+        if is_member:
+            total_messages = (
+                db.query(SubtaskModel).filter(SubtaskModel.task_id == task_id).count()
+            )
+        else:
+            total_messages = (
+                db.query(SubtaskModel)
+                .filter(
+                    SubtaskModel.task_id == task_id, SubtaskModel.user_id == user_id
+                )
+                .count()
+            )
+
+        # Get related subtasks (limit to 50 for initial load, pagination supported via /subtasks API)
         subtasks = subtask_service.get_by_task(
-            db=db, task_id=task_id, user_id=user_id, from_latest=True
+            db=db, task_id=task_id, user_id=user_id, from_latest=True, limit=50
         )
 
         # Get all bot objects for the subtasks
@@ -670,6 +662,7 @@ class TaskQueryMixin:
         task_dict["user"] = user
         task_dict["team"] = team
         task_dict["subtasks"] = subtasks_dict
+        task_dict["total_messages"] = total_messages
 
         # Add group chat information
         self._add_group_chat_info_to_task(db, task_id, task_dict, user_id)
@@ -896,8 +889,7 @@ class TaskQueryMixin:
             team_name = task_crd.spec.teamRef.name
             team_namespace = task_crd.spec.teamRef.namespace
             team_result = db.execute(
-                text(
-                    """
+                text("""
                     SELECT id FROM kinds
                     WHERE user_id = :user_id
                     AND kind = 'Team'
@@ -905,16 +897,14 @@ class TaskQueryMixin:
                     AND namespace = :namespace
                     AND is_active = true
                     LIMIT 1
-                """
-                ),
+                """),
                 {"user_id": user_id, "name": team_name, "namespace": team_namespace},
             ).fetchone()
 
             team_id = team_result[0] if team_result else None
             if not team_id:
                 shared_team_result = db.execute(
-                    text(
-                        """
+                    text("""
                         SELECT k.id FROM kinds k
                         INNER JOIN resource_members rm
                             ON rm.resource_id = k.id
@@ -926,8 +916,7 @@ class TaskQueryMixin:
                         AND k.namespace = :namespace
                         AND k.is_active = true
                         LIMIT 1
-                    """
-                    ),
+                    """),
                     {
                         "user_id": user_id,
                         "name": team_name,
@@ -940,8 +929,7 @@ class TaskQueryMixin:
             workspace_name = task_crd.spec.workspaceRef.name
             workspace_namespace = task_crd.spec.workspaceRef.namespace
             workspace_result = db.execute(
-                text(
-                    """
+                text("""
                     SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
                     FROM tasks
                     WHERE user_id = :user_id
@@ -950,8 +938,7 @@ class TaskQueryMixin:
                     AND namespace = :namespace
                     AND is_active = true
                     LIMIT 1
-                """
-                ),
+                """),
                 {
                     "user_id": user_id,
                     "name": workspace_name,

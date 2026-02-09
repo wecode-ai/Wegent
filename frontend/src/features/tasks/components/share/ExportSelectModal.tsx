@@ -21,6 +21,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments'
 import { getToken } from '@/apis/user'
 import { taskApis } from '@/apis/tasks'
+import { subtaskApis } from '@/apis/subtasks'
 import { formatDateTime } from '@/utils/dateTime'
 
 /** Attachment info for selectable messages */
@@ -73,17 +74,26 @@ interface ExportSelectModalProps {
  * Provides a selection interface for users to choose which messages to export,
  * with options to select all, select from a specific message onwards,
  * and generate either PDF or DOCX.
+ *
+ * NOTE: This component fetches ALL messages from the backend when opened,
+ * regardless of how many messages are currently loaded in the chat UI.
+ * This ensures complete export of entire conversation history.
  */
 export default function ExportSelectModal({
   open,
   onClose,
-  messages,
+  messages: initialMessages,
   taskId,
   taskName,
   exportFormat,
 }: ExportSelectModalProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
+
+  // All messages for export (fetched from backend when modal opens)
+  const [allMessages, setAllMessages] = useState<SelectableMessage[]>([])
+  const [isLoadingAllMessages, setIsLoadingAllMessages] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set())
@@ -93,12 +103,103 @@ export default function ExportSelectModal({
   const [isFontLoading, setIsFontLoading] = useState(false)
   const [fontLoadError, setFontLoadError] = useState(false)
 
-  // Select all messages by default when modal opens
-  React.useEffect(() => {
-    if (open && messages.length > 0) {
-      setSelectedIds(new Set(messages.map(msg => msg.id)))
+  // Fetch all messages when modal opens
+  useEffect(() => {
+    if (!open || !taskId) {
+      setAllMessages([])
+      return
     }
-  }, [open, messages])
+
+    const fetchAllMessages = async () => {
+      setIsLoadingAllMessages(true)
+      setLoadError(null)
+
+      try {
+        // Fetch all messages from backend (use large limit to get all)
+        const response = await subtaskApis.listSubtasks({
+          taskId,
+          limit: 10000, // Large limit to get all messages
+          fromLatest: false, // Get in chronological order
+        })
+
+        // Convert subtasks to SelectableMessage format
+        const messages: SelectableMessage[] = response.items.map(subtask => {
+          const isUserMessage = subtask.role === 'USER' || subtask.role?.toUpperCase() === 'USER'
+          const content = isUserMessage
+            ? subtask.prompt || ''
+            : typeof subtask.result?.value === 'string'
+              ? subtask.result.value
+              : ''
+
+          // Extract attachments from contexts
+          const attachments: SelectableAttachment[] = []
+          const knowledgeBases: SelectableKnowledgeBase[] = []
+
+          if (subtask.contexts && subtask.contexts.length > 0) {
+            for (const ctx of subtask.contexts) {
+              if (ctx.context_type === 'attachment') {
+                attachments.push({
+                  id: ctx.id,
+                  filename: ctx.name,
+                  file_size: ctx.file_size || 0,
+                  file_extension: ctx.file_extension || '',
+                })
+              } else if (ctx.context_type === 'knowledge_base') {
+                knowledgeBases.push({
+                  id: ctx.id,
+                  name: ctx.name,
+                  document_count: ctx.document_count,
+                })
+              }
+            }
+          }
+
+          // Fallback to legacy attachments field
+          if (attachments.length === 0 && subtask.attachments && subtask.attachments.length > 0) {
+            for (const att of subtask.attachments) {
+              attachments.push({
+                id: att.id,
+                filename: att.filename,
+                file_size: att.file_size,
+                file_extension: att.file_extension,
+              })
+            }
+          }
+
+          return {
+            id: subtask.id.toString(),
+            type: isUserMessage ? 'user' : 'ai',
+            content,
+            timestamp: new Date(subtask.created_at).getTime(),
+            botName: subtask.bots?.[0]?.name,
+            userName: subtask.sender_user_name,
+            attachments: attachments.length > 0 ? attachments : undefined,
+            knowledgeBases: knowledgeBases.length > 0 ? knowledgeBases : undefined,
+          } as SelectableMessage
+        })
+
+        // Filter out empty content messages
+        const validMessages = messages.filter(msg => msg.content.trim() !== '')
+        setAllMessages(validMessages)
+
+        // Select all by default
+        setSelectedIds(new Set(validMessages.map(msg => msg.id)))
+      } catch (error) {
+        console.error('[ExportSelectModal] Failed to fetch all messages:', error)
+        setLoadError(error instanceof Error ? error.message : 'Failed to load messages')
+        // Fallback to initial messages from props
+        setAllMessages(initialMessages)
+        setSelectedIds(new Set(initialMessages.map(msg => msg.id)))
+      } finally {
+        setIsLoadingAllMessages(false)
+      }
+    }
+
+    fetchAllMessages()
+  }, [open, taskId, initialMessages])
+
+  // Use allMessages (fetched) or initialMessages (fallback)
+  const messages = allMessages.length > 0 ? allMessages : initialMessages
 
   // Preload font when modal opens for PDF export
   useEffect(() => {
@@ -381,105 +482,138 @@ export default function ExportSelectModal({
           </DialogTitle>
         </DialogHeader>
 
+        {/* Loading state when fetching all messages */}
+        {isLoadingAllMessages && (
+          <div className="flex items-center justify-center py-8">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <span className="text-sm text-text-secondary">
+                {t('chat:export.loading_all_messages') || 'Loading all messages...'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Error state */}
+        {loadError && !isLoadingAllMessages && (
+          <div className="flex items-center justify-center py-4 text-sm text-amber-600">
+            {t('chat:export.load_error_fallback') || 'Using currently loaded messages'}
+          </div>
+        )}
+
         {/* Selection toolbar */}
-        <div className="flex items-center justify-between gap-3 p-3 bg-surface border border-border rounded-lg">
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-text-secondary">
-              {t('chat:export.selected_count', { count: selectionCount }) ||
-                `Selected: ${selectionCount} message(s)`}
-            </span>
+        {!isLoadingAllMessages && (
+          <div className="flex items-center justify-between gap-3 p-3 bg-surface border border-border rounded-lg">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-text-secondary">
+                {t('chat:export.selected_count', { count: selectionCount }) ||
+                  `Selected: ${selectionCount} message(s)`}
+              </span>
+              {allMessages.length > 0 && (
+                <span className="text-xs text-text-muted">
+                  (
+                  {t('chat:export.total_messages', { count: messages.length }) ||
+                    `${messages.length} total`}
+                  )
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={isAllSelected ? handleDeselectAll : handleSelectAll}
+                className="text-xs"
+              >
+                {isAllSelected
+                  ? t('chat:export.deselect_all') || 'Deselect All'
+                  : t('chat:export.select_all') || 'Select All'}
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={isAllSelected ? handleDeselectAll : handleSelectAll}
-              className="text-xs"
-            >
-              {isAllSelected
-                ? t('chat:export.deselect_all') || 'Deselect All'
-                : t('chat:export.select_all') || 'Select All'}
-            </Button>
-          </div>
-        </div>
+        )}
 
         {/* Message selection list */}
-        <div className="flex-1 overflow-y-auto space-y-2 min-h-0 pr-1">
-          {messages.map((msg, index) => {
-            const isSelected = selectedIds.has(msg.id)
-            return (
-              <div
-                key={msg.id}
-                className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
-                  isSelected
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border bg-surface hover:bg-muted'
-                }`}
-                onClick={() => handleToggleMessage(msg.id)}
-              >
-                <div className="flex-shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
-                  <Checkbox
-                    checked={isSelected}
-                    onCheckedChange={() => handleToggleMessage(msg.id)}
-                    className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span
-                      className={`text-xs font-medium ${
-                        msg.type === 'user' ? 'text-text-secondary' : 'text-primary'
-                      }`}
-                    >
-                      {msg.type === 'user'
-                        ? msg.userName || 'User'
-                        : msg.teamName || msg.botName || 'AI'}
-                    </span>
-                    <span className="text-xs text-text-muted">{formatDateTime(msg.timestamp)}</span>
+        {!isLoadingAllMessages && (
+          <div className="flex-1 overflow-y-auto space-y-2 min-h-0 pr-1">
+            {messages.map((msg, index) => {
+              const isSelected = selectedIds.has(msg.id)
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border bg-surface hover:bg-muted'
+                  }`}
+                  onClick={() => handleToggleMessage(msg.id)}
+                >
+                  <div className="flex-shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => handleToggleMessage(msg.id)}
+                      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                    />
                   </div>
-                  <p className="text-sm text-text-primary line-clamp-2">
-                    {msg.content.slice(0, 200)}
-                    {msg.content.length > 200 ? '...' : ''}
-                  </p>
-                  {/* Show attachment indicator */}
-                  {msg.attachments && msg.attachments.length > 0 && (
-                    <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
-                      <Paperclip className="w-3 h-3" />
-                      <span>
-                        {msg.attachments.length} {t('chat:export.attachments') || 'attachment(s)'}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className={`text-xs font-medium ${
+                          msg.type === 'user' ? 'text-text-secondary' : 'text-primary'
+                        }`}
+                      >
+                        {msg.type === 'user'
+                          ? msg.userName || 'User'
+                          : msg.teamName || msg.botName || 'AI'}
+                      </span>
+                      <span className="text-xs text-text-muted">
+                        {formatDateTime(msg.timestamp)}
                       </span>
                     </div>
-                  )}
-                  {/* Show knowledge base indicator */}
-                  {msg.knowledgeBases && msg.knowledgeBases.length > 0 && (
-                    <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
-                      <Database className="w-3 h-3" />
-                      <span>
-                        {msg.knowledgeBases.length}{' '}
-                        {t('chat:export.knowledge_bases') || 'knowledge base(s)'}
-                      </span>
-                    </div>
-                  )}
+                    <p className="text-sm text-text-primary line-clamp-2">
+                      {msg.content.slice(0, 200)}
+                      {msg.content.length > 200 ? '...' : ''}
+                    </p>
+                    {/* Show attachment indicator */}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
+                        <Paperclip className="w-3 h-3" />
+                        <span>
+                          {msg.attachments.length} {t('chat:export.attachments') || 'attachment(s)'}
+                        </span>
+                      </div>
+                    )}
+                    {/* Show knowledge base indicator */}
+                    {msg.knowledgeBases && msg.knowledgeBases.length > 0 && (
+                      <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
+                        <Database className="w-3 h-3" />
+                        <span>
+                          {msg.knowledgeBases.length}{' '}
+                          {t('chat:export.knowledge_bases') || 'knowledge base(s)'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={e => {
+                        e.stopPropagation()
+                        handleSelectFromHere(index)
+                      }}
+                      className="text-xs text-text-muted hover:text-primary"
+                      title={t('chat:export.select_from_here') || 'Select from here'}
+                    >
+                      <ChevronDown className="w-3 h-3 mr-1" />
+                      {t('chat:export.select_below') || 'Select below'}
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex-shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={e => {
-                      e.stopPropagation()
-                      handleSelectFromHere(index)
-                    }}
-                    className="text-xs text-text-muted hover:text-primary"
-                    title={t('chat:export.select_from_here') || 'Select from here'}
-                  >
-                    <ChevronDown className="w-3 h-3 mr-1" />
-                    {t('chat:export.select_below') || 'Select below'}
-                  </Button>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
+        )}
 
         {/* Footer actions */}
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
@@ -492,7 +626,10 @@ export default function ExportSelectModal({
             size="sm"
             onClick={fontLoadError ? handleRetryFontLoad : handleConfirmExport}
             disabled={
-              (exportFormat === 'pdf' && isFontLoading) || selectionCount === 0 || isExporting
+              isLoadingAllMessages ||
+              (exportFormat === 'pdf' && isFontLoading) ||
+              selectionCount === 0 ||
+              isExporting
             }
             className="text-sm bg-primary hover:bg-primary/90"
           >
