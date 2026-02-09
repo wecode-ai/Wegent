@@ -37,6 +37,7 @@ class ClientEvents:
 
     # Generic Skill Events
     SKILL_RESPONSE = "skill:response"  # Client -> Server: skill response
+    SKILL_UPDATE = "skill:update"  # Client -> Server: update task skills
 
 
 class ServerEvents:
@@ -226,6 +227,18 @@ class HistorySyncPayload(BaseModel):
 
     task_id: int = Field(..., description="Task ID")
     after_message_id: int = Field(..., description="Get messages after this ID")
+
+
+class SkillUpdatePayload(BaseModel):
+    """Payload for skill:update event.
+
+    Allows dynamically updating skills for an active Chat Shell task.
+    """
+
+    task_id: int = Field(..., description="Task ID to update skills for")
+    skills: List[SkillRef] = Field(
+        ..., description="New skill list with full info (name, namespace, is_public)"
+    )
 
 
 # ============================================================

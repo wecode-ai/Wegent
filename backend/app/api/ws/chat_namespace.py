@@ -35,6 +35,7 @@ from app.api.ws.events import (
     GenericAck,
     HistorySyncAck,
     HistorySyncPayload,
+    SkillUpdatePayload,
     TaskJoinAck,
     TaskJoinPayload,
     TaskLeavePayload,
@@ -102,6 +103,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:close-session": "on_task_close_session",
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
+            "skill:update": "on_skill_update",
         }
 
     async def _check_token_expiry(self, sid: str) -> bool:
@@ -1627,6 +1629,208 @@ class ChatNamespace(socketio.AsyncNamespace):
     # ============================================================
     # Generic Skill Events
     # ============================================================
+
+    async def on_skill_update(self, sid: str, data: dict) -> dict:
+        """
+        Handle skill:update event for dynamically updating task skills.
+
+        This allows tasks to modify their skill configuration during an
+        active conversation. The skills are stored in the task's metadata
+        and will be used for subsequent AI responses.
+
+        For Chat Shell tasks:
+        - Skills are stored in metadata and read at next AI response
+        - No additional action needed (Chat Shell reads from metadata)
+
+        For other shell types (ClaudeCode, Agno) running on local devices:
+        - Skills are stored in metadata
+        - A skill:sync event is emitted to the device to download new skills
+
+        Args:
+            sid: Socket ID
+            data: SkillUpdatePayload fields (task_id, skills)
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        # Check token expiry first
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
+
+        try:
+            payload = SkillUpdatePayload.model_validate(data)
+        except Exception as e:
+            logger.error(f"[WS] skill:update validation error: {e}")
+            return {"success": False, "error": str(e)}
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        if not user_id:
+            return {"success": False, "error": "Not authenticated"}
+
+        db = SessionLocal()
+        try:
+            # Get task and verify access
+            task = (
+                db.query(TaskResource)
+                .filter(TaskResource.id == payload.task_id)
+                .first()
+            )
+            if not task:
+                return {"success": False, "error": "Task not found"}
+
+            # Verify user has access to this task
+            if not can_access_task(db, task, user_id):
+                return {"success": False, "error": "Access denied"}
+
+            # Get team to determine shell type
+            team = db.query(Kind).filter(Kind.id == task.team_id).first()
+            if not team:
+                return {"success": False, "error": "Team not found"}
+
+            team_crd = Team.model_validate(team.json)
+
+            # Determine shell type
+            shell_type = None
+            team_namespace = (
+                team_crd.metadata.namespace if team_crd.metadata else "default"
+            )
+            if team_crd.spec.members:
+                from app.schemas.kind import Bot, Shell
+
+                first_member = team_crd.spec.members[0]
+                bot = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == team.user_id,
+                        Kind.kind == "Bot",
+                        Kind.name == first_member.botRef.name,
+                        Kind.namespace == first_member.botRef.namespace,
+                        Kind.is_active,
+                    )
+                    .first()
+                )
+                if bot:
+                    bot_crd = Bot.model_validate(bot.json)
+                    if bot_crd.spec and bot_crd.spec.shellRef:
+                        shell = (
+                            db.query(Kind)
+                            .filter(
+                                Kind.kind == "Shell",
+                                Kind.name == bot_crd.spec.shellRef.name,
+                                Kind.is_active,
+                            )
+                            .first()
+                        )
+                        if shell:
+                            shell_crd = Shell.model_validate(shell.json)
+                            shell_type = (
+                                shell_crd.spec.shellType if shell_crd.spec else None
+                            )
+
+            # Update task metadata with new skills
+            metadata = task.metadata or {}
+            skills_data = [
+                {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
+                for s in payload.skills
+            ]
+            metadata["additional_skills"] = skills_data
+            task.metadata = metadata
+            db.commit()
+
+            logger.info(
+                f"[WS] skill:update: task_id={payload.task_id}, "
+                f"shell_type={shell_type}, skills={[s.name for s in payload.skills]}"
+            )
+
+            # For non-Chat Shell tasks running on local devices, emit skill:sync
+            # to download new skills to the executor
+            if shell_type and shell_type != "Chat":
+                await self._emit_skill_sync_to_device(
+                    db=db,
+                    task=task,
+                    user_id=user_id,
+                    skills=skills_data,
+                    team_namespace=team_namespace,
+                )
+
+            return {"success": True}
+
+        except Exception as e:
+            logger.exception(f"[WS] skill:update error: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            db.close()
+
+    async def _emit_skill_sync_to_device(
+        self,
+        db,
+        task: TaskResource,
+        user_id: int,
+        skills: list,
+        team_namespace: str,
+    ) -> None:
+        """
+        Emit skill:sync event to the local device running the task.
+
+        This triggers the device to download new/updated skills.
+
+        Args:
+            db: Database session
+            task: Task resource
+            user_id: User ID
+            skills: List of skill references [{name, namespace, is_public}]
+            team_namespace: Team namespace for skill lookup
+        """
+        from app.core.socketio import get_sio
+        from app.schemas.kind import Task as TaskCRD
+        from app.services.chat.access import generate_jwt_for_user
+
+        try:
+            # Get device_id from task CRD
+            task_crd = TaskCRD.model_validate(task.json)
+            device_id = task_crd.spec.device_id if task_crd.spec else None
+
+            if not device_id:
+                logger.debug(
+                    f"[WS] No device_id for task {task.id}, "
+                    "skipping skill:sync (task may be running on Docker executor)"
+                )
+                return
+
+            # Generate auth token for skill download
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                logger.warning(
+                    f"[WS] User {user_id} not found, cannot generate auth token"
+                )
+                return
+
+            auth_token = generate_jwt_for_user(user)
+
+            # Emit skill:sync to device
+            sio = get_sio()
+            device_room = f"device:{user_id}:{device_id}"
+
+            await sio.emit(
+                "skill:sync",
+                {
+                    "task_id": task.id,
+                    "skills": skills,
+                    "auth_token": auth_token,
+                    "team_namespace": team_namespace,
+                },
+                room=device_room,
+                namespace="/local-executor",
+            )
+
+            logger.info(
+                f"[WS] skill:sync emitted to device {device_id} for task {task.id}, "
+                f"skills={[s.get('name') for s in skills]}"
+            )
+
+        except Exception as e:
+            logger.exception(f"[WS] Error emitting skill:sync to device: {e}")
 
     async def on_skill_response(self, sid: str, data: dict) -> dict:
         """

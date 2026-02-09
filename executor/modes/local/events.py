@@ -26,6 +26,12 @@ class TaskEvents:
     CLOSE_SESSION = "task:close-session"
 
 
+class SkillEvents:
+    """Skill-related events."""
+
+    SYNC = "skill:sync"  # Backend -> Executor: sync new skills to sandbox
+
+
 class ChatEvents:
     """Chat streaming events."""
 

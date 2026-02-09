@@ -429,6 +429,30 @@ async def _stream_chat_response(
             )
             return
 
+        # Fetch task to check for dynamic skill configuration
+        # For Chat Shell, skills can be updated during the conversation
+        task = (
+            db.query(TaskResource)
+            .filter(TaskResource.id == stream_data.task_id)
+            .first()
+        )
+
+        # Determine which skills to use:
+        # 1. If task has additional_skills in metadata (dynamic update), use those
+        # 2. Otherwise, use skills from the current message payload
+        preload_skills = None
+        if task and task.metadata and "additional_skills" in task.metadata:
+            # Use dynamically updated skills from task metadata
+            preload_skills = task.metadata["additional_skills"]
+            logger.info(
+                "[ai_trigger] Using skills from task metadata: task_id=%d, skills=%s",
+                stream_data.task_id,
+                [s.get("name") for s in preload_skills] if preload_skills else [],
+            )
+        else:
+            # Use skills from the message payload (initial selection)
+            preload_skills = getattr(payload, "additional_skills", None)
+
         # Use ChatConfigBuilder to prepare configuration
         config_builder = ChatConfigBuilder(
             db=db,
@@ -444,7 +468,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
-                preload_skills=getattr(payload, "additional_skills", None),
+                preload_skills=preload_skills,
             )
         except ValueError as e:
             error_msg = str(e)

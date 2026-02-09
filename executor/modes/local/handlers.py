@@ -100,6 +100,65 @@ class TaskHandler:
         await self.runner.enqueue_task(data)
 
 
+class SkillHandler:
+    """Handler for skill-related events from Backend."""
+
+    def __init__(self, runner: "LocalRunner"):
+        """Initialize the skill handler.
+
+        Args:
+            runner: The LocalRunner instance.
+        """
+        self.runner = runner
+
+    async def handle_skill_sync(self, data: Dict[str, Any]) -> None:
+        """Handle skill sync event from Backend.
+
+        This is called when skills are dynamically updated for a running task.
+        Downloads new/updated skills to the skills directory.
+
+        Args:
+            data: Skill sync data containing:
+                - task_id: Task ID
+                - skills: List of skill references [{name, namespace, is_public}]
+                - auth_token: JWT token for downloading skills
+                - team_namespace: Team namespace for skill lookup
+        """
+        task_id = data.get("task_id")
+        skills = data.get("skills", [])
+        auth_token = data.get("auth_token")
+        team_namespace = data.get("team_namespace", "default")
+
+        if not task_id:
+            logger.warning("Received skill sync without task_id")
+            return
+
+        if not skills:
+            logger.debug(
+                f"Received skill sync with empty skills list: task_id={task_id}"
+            )
+            return
+
+        if not auth_token:
+            logger.warning(f"Received skill sync without auth_token: task_id={task_id}")
+            return
+
+        logger.info(
+            f"Received skill sync: task_id={task_id}, "
+            f"skills={[s.get('name') for s in skills]}"
+        )
+
+        try:
+            await self.runner.sync_skills(
+                task_id=task_id,
+                skills=skills,
+                auth_token=auth_token,
+                team_namespace=team_namespace,
+            )
+        except Exception as e:
+            logger.exception(f"Error syncing skills for task {task_id}: {e}")
+
+
 class ConnectionHandler:
     """Handler for connection-related events."""
 

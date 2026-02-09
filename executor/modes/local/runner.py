@@ -16,11 +16,11 @@ import os
 import signal
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from executor.config import config
-from executor.modes.local.events import ChatEvents, TaskEvents
-from executor.modes.local.handlers import TaskHandler
+from executor.modes.local.events import ChatEvents, SkillEvents, TaskEvents
+from executor.modes.local.handlers import SkillHandler, TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.progress_reporter import WebSocketProgressReporter
 from executor.modes.local.websocket_client import WebSocketClient
@@ -51,6 +51,7 @@ class LocalRunner:
 
         # Event handlers
         self.task_handler = TaskHandler(self)
+        self.skill_handler = SkillHandler(self)
 
         # Task queue for serial execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
@@ -188,6 +189,9 @@ class LocalRunner:
             ChatEvents.MESSAGE, self.task_handler.handle_chat_message
         )
 
+        # Skill events
+        self.websocket_client.on(SkillEvents.SYNC, self.skill_handler.handle_skill_sync)
+
         logger.info("WebSocket event handlers registered")
 
     async def enqueue_task(self, task_data: Dict[str, Any]) -> None:
@@ -283,6 +287,63 @@ class LocalRunner:
             logger.info(f"Sent heartbeat after closing session for task {task_id}")
         except Exception as e:
             logger.error(f"Failed to send heartbeat after closing session: {e}")
+
+    async def sync_skills(
+        self,
+        task_id: int,
+        skills: list,
+        auth_token: str,
+        team_namespace: str,
+    ) -> None:
+        """Sync skills for a running task.
+
+        Downloads new or updated skills to the skills directory.
+        This is called when skills are dynamically updated via WebSocket.
+
+        Args:
+            task_id: Task ID
+            skills: List of skill references [{name, namespace, is_public}]
+            auth_token: JWT token for downloading skills
+            team_namespace: Team namespace for skill lookup
+        """
+        from executor.services.api_client import SkillDownloader
+
+        logger.info(
+            f"Syncing skills for task {task_id}: "
+            f"skills={[s.get('name') for s in skills]}"
+        )
+
+        # Get skills directory (local mode uses ~/.claude/skills or configurable)
+        skills_dir = config.SKILLS_DIR or os.path.expanduser("~/.claude/skills")
+
+        # Create downloader
+        downloader = SkillDownloader(
+            auth_token=auth_token,
+            team_namespace=team_namespace,
+            skills_dir=skills_dir,
+            task_id=task_id,
+        )
+
+        # Extract skill names from skill refs
+        skill_names = [s.get("name") for s in skills if s.get("name")]
+
+        # Download skills (skip_existing=True for incremental sync)
+        result = downloader.download_and_deploy(
+            skills=skill_names,
+            clear_cache=False,  # Don't clear existing skills
+            skip_existing=False,  # Re-download to ensure latest version
+        )
+
+        logger.info(
+            f"Skill sync complete for task {task_id}: "
+            f"{result.success_count}/{result.total_count} synced"
+        )
+
+        if result.failed_skills:
+            logger.warning(
+                f"Some skills failed to sync for task {task_id}: "
+                f"{result.failed_skills}"
+            )
 
     async def _send_cancel_callback(self, task_id: int) -> None:
         """Send CANCELLED status callback to Backend."""

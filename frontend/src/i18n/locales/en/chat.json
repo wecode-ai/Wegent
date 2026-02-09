@@ -532,5 +532,7 @@
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
     "no_task_id": "No task ID available"
-  }
+  },
+  "skill_update_success": "Skill configuration updated",
+  "skill_update_error": "Failed to update skills"
 }
