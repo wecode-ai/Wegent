@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simp
 ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
 ENV UV_EXTRA_INDEX_URL=""
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.27
+RUN npm install -g @anthropic-ai/claude-code@2.1.33
 
 # Set environment variables
 ENV PATH="/usr/local/bin:${PATH}"
