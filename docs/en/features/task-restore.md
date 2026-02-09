@@ -2,211 +2,259 @@
 
 ## Overview
 
-This document describes the Task Restoration feature that allows users to continue conversations on expired tasks or tasks whose executor containers have been cleaned up.
+The Task Restoration feature allows users to continue conversations on expired tasks or tasks whose executor containers have been cleaned up, while preserving the full conversation context.
 
-## Problem Statement
+## Problem Background
 
-In Wegent, tasks use Docker containers (executors) to process AI conversations. These containers have a lifecycle:
+In Wegent, tasks use Docker containers (executors) to process AI conversations. These containers have lifecycle limits:
 
-1. **Expiration**: Chat tasks expire after 2 hours, Code tasks after 24 hours of inactivity
-2. **Container Cleanup**: Expired task containers are automatically removed to free resources
-3. **Issue**: When users try to send a message to an expired/cleaned-up task, they would encounter a "Container not found" error
+| Task Type | Expiration | Scenario |
+|-----------|-----------|----------|
+| Chat | 2 hours | Daily conversations |
+| Code | 24 hours | Code development |
 
-## Solution
+When containers expire and get cleaned up, users attempting to continue the conversation face two problems:
 
-The Task Restoration feature provides a graceful recovery mechanism:
+1. **Container doesn't exist** - The original executor container has been deleted
+2. **Session context lost** - Claude SDK's session ID was stored in the container and lost with it
 
-1. When a user sends a message to an expired or container-deleted task, the backend returns HTTP 409 with `TASK_EXPIRED_RESTORABLE` code
-2. Frontend displays a restore dialog giving the user options to:
-   - **Continue Chat**: Restore the task and resend the message
-   - **New Chat**: Create a new task instead
-3. If user chooses to continue, the restore API resets the task state and allows a new container to be created
+## Solution Overview
 
-## Technical Implementation
+```mermaid
+flowchart TB
+    subgraph Problem["❌ Original Problem"]
+        A[Container expires] --> B[Container cleaned up]
+        B --> C[Session ID lost]
+        C --> D[AI loses conversation memory]
+    end
 
-### Backend Changes
+    subgraph Solution["✅ Solution"]
+        E[Detect expired/deleted] --> F[Prompt user to restore]
+        F --> G[Reset container state]
+        G --> H[Read Session ID from database]:::new
+        H --> I[New container resumes session]:::new
+    end
 
-#### 1. Executor Deletion Detection (`executor_kinds.py`)
+    Problem -.->|Task Restoration Feature| Solution
 
-When executor_manager reports a "container not found" error, the subtask is marked with `executor_deleted_at=True`:
-
-```python
-# Mark executor as deleted when container not found error is reported
-if subtask_update.status == SubtaskStatus.FAILED and subtask_update.error_message:
-    error_msg = subtask_update.error_message.lower()
-    if "container" in error_msg and "not found" in error_msg:
-        subtask.executor_deleted_at = True
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
 ```
 
-#### 2. Pre-append Check (`operations.py`)
+> 💡 **Legend**: Green nodes are new functionality (Session ID Persistence)
 
-Before allowing a message to be appended to an existing task, check for:
-- `executor_deleted_at` flag on the last assistant subtask
-- Task expiration time
+## User Flow
 
-If either condition is met, return HTTP 409:
+```mermaid
+sequenceDiagram
+    actor User
+    participant Frontend
+    participant Backend
+    participant Database
+    participant NewContainer as New Container
 
-```python
-if last_assistant_subtask and last_assistant_subtask.executor_deleted_at:
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "code": "TASK_EXPIRED_RESTORABLE",
-            "task_id": existing_task.id,
-            "task_type": task_type,
-            ...
-        },
-    )
+    User->>Frontend: Send message to expired task
+    Frontend->>Backend: POST /tasks/{id}/append
+    Backend-->>Frontend: HTTP 409 TASK_EXPIRED_RESTORABLE
+    Frontend->>User: Show restore dialog
+
+    alt Choose to continue
+        User->>Frontend: Click "Continue Chat"
+        Frontend->>Backend: POST /tasks/{id}/restore
+        Backend->>Backend: Reset task state
+        Backend-->>Frontend: Restore successful
+        Frontend->>Backend: Resend message
+        rect rgb(212, 237, 218)
+            Note over Backend,Database: 🆕 New: Session ID Persistence
+            Backend->>Database: Read claude_session_id
+            Database-->>Backend: Return session_id
+        end
+        Backend->>NewContainer: Create container + pass Session ID
+        NewContainer->>NewContainer: Resume session using Session ID
+        NewContainer-->>User: AI continues conversation (context preserved)
+    else Choose new chat
+        User->>Frontend: Click "New Chat"
+        Frontend->>Backend: Create new task
+    end
 ```
 
-#### 3. Restore API (`task_restore.py`)
+## Core Mechanisms
 
-New endpoint `POST /tasks/{task_id}/restore` that:
-1. Validates task exists and user has access
-2. Resets `updated_at` timestamp
-3. Clears `executor_deleted_at` flags
-4. Clears `executor_name` from all assistant subtasks (forces new container creation)
+### 1. Expiration Detection
 
-```python
-# Reset executor_deleted_at for flagged subtasks
-db.query(Subtask).filter(
-    Subtask.task_id == task_id,
-    Subtask.executor_deleted_at.is_(True),
-).update({Subtask.executor_deleted_at: False})
+When processing message append requests, the backend checks the following conditions:
 
-# Clear executor_name for ALL assistant subtasks
-# This prevents inheritance of old container names
-db.query(Subtask).filter(
-    Subtask.task_id == task_id,
-    Subtask.role == SubtaskRole.ASSISTANT,
-    Subtask.executor_name.isnot(None),
-    Subtask.executor_name != "",
-).update({Subtask.executor_name: ""})
+| Check | Condition | Result |
+|-------|-----------|--------|
+| executor_deleted_at | Last ASSISTANT subtask marked as true | Return 409 |
+| Expiration time | Exceeds configured expiration hours | Return 409 |
+
+### 2. Task Restore API
+
+**Endpoint**: `POST /api/v1/tasks/{task_id}/restore`
+
+The restore operation performs these steps:
+
+```mermaid
+flowchart LR
+    A[Validate task] --> B[Reset updated_at]
+    B --> C[Clear executor_deleted_at]
+    C --> D[Clear executor_name]
+    D --> E[Return success]
 ```
 
-#### 4. Executor Name Inheritance Fix (`helpers.py`)
-
-Fixed a bug in `_create_standard_subtask` where `executor_name` was blindly inherited from the first existing subtask without checking:
-- If the subtask is an ASSISTANT role (USER subtasks have empty executor_name)
-- If the executor_name is non-empty
-
-Before (buggy):
-```python
-if existing_subtasks:
-    executor_name = existing_subtasks[0].executor_name
-```
-
-After (fixed):
-```python
-for s in existing_subtasks:
-    if s.role == SubtaskRole.ASSISTANT and s.executor_name:
-        executor_name = s.executor_name
-        break
-```
-
-### Frontend Changes
-
-#### 1. Error Parser (`errorParser.ts`)
-
-Added parsing for `TASK_EXPIRED_RESTORABLE` error code from HTTP 409 responses.
-
-#### 2. Restore Dialog (`TaskRestoreDialog.tsx`)
-
-New dialog component that displays:
-- Expiration information (task type, hours expired)
-- Option to continue chat (calls restore API then resends message)
-- Option to start new chat
-
-#### 3. Stream Handlers (`useChatStreamHandlers.tsx`)
-
-- Added state for restore dialog visibility
-- Added `handleConfirmRestore` handler that:
-  1. Calls restore API
-  2. Refreshes task detail
-  3. Resends the pending message
-
-### API Changes
-
-#### New Endpoint
-
-```
-POST /api/v1/tasks/{task_id}/restore
-```
-
-**Request Body:**
-```json
-{
-  "message": "optional message to send after restoration"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "task_id": 123,
-  "task_type": "chat",
-  "executor_rebuilt": true,
-  "message": "Task restored successfully"
-}
-```
-
-## Flow Diagram
-
-```
-User sends message to expired task
-         │
-         ▼
-Backend checks expiration/executor_deleted_at
-         │
-         ▼
-    ┌────┴────┐
-    │ Expired │ ──Yes──► Return HTTP 409
-    │   or    │          with TASK_EXPIRED_RESTORABLE
-    │ Deleted │
-    └────┬────┘
-         │No
-         ▼
-   Continue normally
-
-Frontend receives HTTP 409
-         │
-         ▼
-   Show Restore Dialog
-         │
-    ┌────┴────┐
-    │Continue │ ──Yes──► Call POST /tasks/{id}/restore
-    │  Chat?  │                    │
-    └────┬────┘                    ▼
-         │No              Clear executor data
-         ▼                Reset timestamps
-   Create new task               │
-                                 ▼
-                          Resend message
-                                 │
-                                 ▼
-                          New container created
-```
-
-## Files Changed
-
-| File | Changes |
+| Step | Purpose |
 |------|---------|
-| `backend/app/api/api.py` | Register task_restore router |
-| `backend/app/api/endpoints/adapter/task_restore.py` | New restore API endpoint |
-| `backend/app/services/adapters/task_restore.py` | New restore service |
-| `backend/app/services/adapters/executor_kinds.py` | Mark executor_deleted_at on error, inherit executor_name |
-| `backend/app/services/adapters/task_kinds/operations.py` | Check executor_deleted_at before append |
-| `backend/app/services/adapters/task_kinds/helpers.py` | Fix executor_name inheritance bug |
-| `frontend/src/apis/tasks.ts` | Add restoreTask API |
-| `frontend/src/utils/errorParser.ts` | Parse TASK_EXPIRED_RESTORABLE error |
-| `frontend/src/features/tasks/components/chat/TaskRestoreDialog.tsx` | New restore dialog |
-| `frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx` | Handle restore flow |
-| `frontend/src/i18n/locales/*/chat.json` | Add i18n translations |
+| Clear executor_deleted_at | Allow task to receive new messages |
+| Clear executor_name | Force new container creation (don't reuse old container name) |
+
+### 3. Claude Session ID Persistence 🆕
+
+> ⚠️ **New Feature**: This section describes the newly added Session ID persistence mechanism
+
+To enable new containers to restore previous conversation context, Session IDs are persisted to the database:
+
+```mermaid
+flowchart TB
+    subgraph SaveFlow["🆕 Save Session ID"]
+        direction LR
+        A1[Claude SDK returns session_id]:::new --> A2[Write to result dict]:::new
+        A2 --> A3[Backend extracts and saves to DB]:::new
+        A2 --> A4[Local file backup]
+    end
+
+    subgraph ReadFlow["🆕 Read Session ID"]
+        direction LR
+        B1[Task dispatch]:::new --> B2{Database has value?}:::new
+        B2 -->|Yes| B3[Use database value]:::new
+        B2 -->|No| B4{Local file has value?}
+        B4 -->|Yes| B5[Use local file value]
+        B4 -->|No| B6[Create new session]
+    end
+
+    SaveFlow --> ReadFlow
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+```
+
+> 💡 **Legend**: Green nodes are new logic, white nodes are existing logic (local file backup)
+
+**Storage Strategy**:
+
+| Storage Location | Purpose | Priority | Status |
+|-----------------|---------|----------|--------|
+| Database `subtasks.claude_session_id` | Primary storage, supports cross-container restore | High | 🆕 New |
+| Local file `.claude_session_id` | Backup, fast read within same container | Low | Existing |
+
+## Data Flow Details
+
+### Task Dispatch (Backend → Executor)
+
+```mermaid
+flowchart LR
+    A[dispatch_tasks] --> B[Query related_subtasks]
+    B --> C{Found ASSISTANT<br/>with session_id?}:::new
+    C -->|Yes| D[Get latest session_id]:::new
+    C -->|No| E[session_id = null]
+    D --> F{new_session?}:::new
+    E --> G[Return task data]
+    F -->|Yes| H[Clear session_id]:::new
+    F -->|No| G
+    H --> G
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+```
+
+> 💡 **Legend**: Green nodes are the new Session ID lookup and processing logic
+
+### Task Completion (Executor → Backend)
+
+```mermaid
+flowchart LR
+    A[Claude SDK<br/>returns ResultMessage] --> B[Extract session_id]:::new
+    B --> C[Add to result dict]:::new
+    C --> D[report_progress]
+    D --> E[Backend update_subtask]
+    E --> F[Save to database]:::new
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+```
+
+> 💡 **Legend**: Green nodes are the new Session ID passing and saving logic
+
+## Pipeline Mode Handling 🆕
+
+> ⚠️ **New Feature**: Session ID isolation handling in Pipeline mode
+
+In Pipeline mode, when user confirms to proceed to the next stage:
+
+```mermaid
+flowchart LR
+    A[Stage 1 complete] --> B[User confirms]
+    B --> C[new_session = true]
+    C --> D[Don't pass old session_id]:::new
+    D --> E[Stage 2 creates new session]:::new
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+```
+
+**Reason**: Each Pipeline stage may use different Bots, requiring independent session contexts.
+
+## Session Expiry Handling 🆕
+
+> ⚠️ **New Feature**: Automatic fallback handling when session expires
+
+When Claude SDK returns session-related errors, automatic fallback occurs:
+
+```mermaid
+flowchart TB
+    A[Attempt to resume session]:::new --> B{Connection successful?}:::new
+    B -->|Yes| C[Continue with resumed session]:::new
+    B -->|No| D{Is session error?}:::new
+    D -->|Yes| E[Remove resume parameter]:::new
+    E --> F[Create new session]:::new
+    D -->|No| G[Throw exception]
+
+    classDef new fill:#d4edda,stroke:#28a745,stroke-width:2px
+```
+
+**Detection Keywords**: `session`, `expired`, `invalid`, `resume`
 
 ## Configuration
 
-The expiration times are controlled by environment variables:
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `APPEND_CHAT_TASK_EXPIRE_HOURS` | Hours before chat task expires | 2 |
+| `APPEND_CODE_TASK_EXPIRE_HOURS` | Hours before code task expires | 24 |
 
-- `APPEND_CHAT_TASK_EXPIRE_HOURS`: Hours before chat task expires (default: 2)
-- `APPEND_CODE_TASK_EXPIRE_HOURS`: Hours before code task expires (default: 24)
+## Related Files
+
+### Backend
+
+| File | Responsibility | Status |
+|------|----------------|--------|
+| `backend/app/api/endpoints/adapter/task_restore.py` | Restore API endpoint | Existing |
+| `backend/app/services/adapters/task_restore.py` | Restore service logic | Existing |
+| `backend/app/services/adapters/executor_kinds.py` | Session ID read/save, executor_deleted_at marking | 🆕 Modified |
+| `backend/app/services/adapters/task_kinds/operations.py` | Pre-append expiration check | Existing |
+| `backend/alembic/versions/x4y5z6a7b8c9_*.py` | Database migration (add claude_session_id) | 🆕 New |
+
+### Executor
+
+| File | Responsibility | Status |
+|------|----------------|--------|
+| `executor/agents/claude_code/claude_code_agent.py` | Session ID reading, expiry handling | 🆕 Modified |
+| `executor/agents/claude_code/response_processor.py` | Add Session ID to result | 🆕 Modified |
+
+### Frontend
+
+| File | Responsibility | Status |
+|------|----------------|--------|
+| `frontend/src/features/tasks/components/chat/TaskRestoreDialog.tsx` | Restore dialog | Existing |
+| `frontend/src/features/tasks/components/chat/useChatStreamHandlers.tsx` | Restore flow handling | Existing |
+| `frontend/src/utils/errorParser.ts` | Parse TASK_EXPIRED_RESTORABLE error | Existing |
+
+### Shared
+
+| File | Responsibility | Status |
+|------|----------------|--------|
+| `shared/models/db/subtask.py` | Subtask model (includes claude_session_id field) | 🆕 Modified |
