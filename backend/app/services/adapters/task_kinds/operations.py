@@ -597,8 +597,9 @@ class TaskOperationsMixin:
     def _handle_member_leave(
         self, db: Session, task_id: int, user_id: int
     ) -> Optional[TaskResource]:
-        """Handle a member leaving a group chat."""
-        from app.models.task_member import MemberStatus, TaskMember
+        """Handle a member leaving a group chat using ResourceMember."""
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         task = (
             db.query(TaskResource)
@@ -614,11 +615,12 @@ class TaskOperationsMixin:
             raise HTTPException(status_code=404, detail="Task not found")
 
         task_member = (
-            db.query(TaskMember)
+            db.query(ResourceMember)
             .filter(
-                TaskMember.task_id == task_id,
-                TaskMember.user_id == user_id,
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == task_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )
@@ -628,8 +630,8 @@ class TaskOperationsMixin:
 
         # User is a member, not owner - handle as "leave group chat"
         logger.info(f"User {user_id} leaving group chat task {task_id}")
-        task_member.status = MemberStatus.REMOVED
-        task_member.removed_at = datetime.now()
+        task_member.status = MemberStatus.REJECTED
+        task_member.reviewed_at = datetime.now()
         db.commit()
         return None
 

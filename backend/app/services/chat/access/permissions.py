@@ -6,6 +6,7 @@
 
 This module provides utilities for checking task access permissions,
 including ownership and group membership checks.
+Uses the unified ResourceMember model for access control.
 """
 
 import logging
@@ -26,8 +27,7 @@ async def can_access_task(user_id: int, task_id: int) -> bool:
 
     Supports:
     - Task ownership
-    - Shared tasks (via SharedTask)
-    - Group chat membership (via TaskMember)
+    - Resource membership (via ResourceMember with status=approved)
 
     Args:
         user_id: User ID
@@ -72,31 +72,17 @@ def can_access_task_sync(db: Session, user_id: int, task_id: int) -> bool:
     if task.user_id == user_id:
         return True
 
-    # Check if task is shared with user (via SharedTask)
-    from app.models.shared_task import SharedTask
-
-    shared = (
-        db.query(SharedTask)
-        .filter(
-            SharedTask.original_task_id == task_id,
-            SharedTask.user_id == user_id,
-            SharedTask.is_active == True,
-        )
-        .first()
-    )
-
-    if shared is not None:
-        return True
-
-    # Check if user is a group chat member (via TaskMember)
-    from app.models.task_member import MemberStatus, TaskMember
+    # Check if user is a member via ResourceMember (includes shared tasks and group chat members)
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
 
     member = (
-        db.query(TaskMember)
+        db.query(ResourceMember)
         .filter(
-            TaskMember.task_id == task_id,
-            TaskMember.user_id == user_id,
-            TaskMember.status == MemberStatus.ACTIVE,
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == task_id,
+            ResourceMember.user_id == user_id,
+            ResourceMember.status == MemberStatus.APPROVED,
         )
         .first()
     )

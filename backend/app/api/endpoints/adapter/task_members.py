@@ -135,19 +135,42 @@ async def add_task_member(
     Manually add a user to a task (group chat).
     Any member can add new members.
     """
+    logger.info(
+        f"[add_task_member] Adding member: task_id={task_id}, user_id={request.user_id}, current_user_id={current_user.id}"
+    )
+
     # Check if current user is a member
-    if not task_member_service.is_member(db, task_id, current_user.id):
+    is_current_member = task_member_service.is_member(db, task_id, current_user.id)
+    logger.info(
+        f"[add_task_member] Current user membership check: task_id={task_id}, user_id={current_user.id}, is_member={is_current_member}"
+    )
+
+    if not is_current_member:
+        logger.warning(
+            f"[add_task_member] Current user {current_user.id} is not a member of task {task_id}"
+        )
         raise HTTPException(
             status_code=403, detail="You are not a member of this group chat"
         )
 
     # Check if target user exists
     target_user = task_member_service.get_user(db, request.user_id)
+    logger.info(
+        f"[add_task_member] Target user lookup: user_id={request.user_id}, found={target_user is not None}"
+    )
+
     if not target_user:
+        logger.warning(f"[add_task_member] Target user {request.user_id} not found")
         raise HTTPException(status_code=404, detail="User not found")
 
     # Check if task is a group chat
-    if not task_member_service.is_group_chat(db, task_id):
+    is_group_chat = task_member_service.is_group_chat(db, task_id)
+    logger.info(
+        f"[add_task_member] Group chat check: task_id={task_id}, is_group_chat={is_group_chat}"
+    )
+
+    if not is_group_chat:
+        logger.warning(f"[add_task_member] Task {task_id} is not a group chat")
         raise HTTPException(status_code=400, detail="This task is not a group chat")
 
     # Add member

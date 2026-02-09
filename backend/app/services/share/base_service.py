@@ -259,30 +259,57 @@ class UnifiedShareService(ABC):
         config: ShareLinkConfig,
     ) -> ShareLinkResponse:
         """Create or update a share link for a resource."""
+        logger.info(
+            f"[create_share_link] START: resource_type={self.resource_type.value}, "
+            f"resource_id={resource_id}, user_id={user_id}"
+        )
+
         # Validate resource exists and user is owner
         resource = self._get_resource(db, resource_id, user_id)
         if not resource:
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
+        logger.info(
+            f"[create_share_link] Owner check: owner_id={owner_id}, user_id={user_id}"
+        )
+
         if owner_id != user_id:
             raise HTTPException(
                 status_code=403, detail="Only resource owner can create share link"
             )
 
         # Check for existing active share link
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to check both formats to handle legacy data
+        resource_type_variants = [self.resource_type.value]
+
+        # Add underscore variant for KnowledgeBase -> KNOWLEDGE_BASE
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         existing_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
             .first()
         )
 
+        logger.info(
+            f"[create_share_link] Existing link check: "
+            f"found={existing_link is not None}, "
+            f"existing_link_id={existing_link.id if existing_link else None}, "
+            f"existing_token={existing_link.share_token[:50] + '...' if existing_link and existing_link.share_token else None}"
+        )
+
         if existing_link:
             # Update existing link
+            logger.info(
+                f"[create_share_link] UPDATING existing link: id={existing_link.id}"
+            )
             existing_link.require_approval = config.require_approval
             existing_link.default_permission_level = (
                 config.default_permission_level.value
@@ -301,7 +328,27 @@ class UnifiedShareService(ABC):
             return self._share_link_to_response(existing_link)
 
         # Generate new share token
+        logger.info(f"[create_share_link] No existing link found, generating new token")
         share_token = self._generate_share_token(user_id, resource_id)
+        logger.info(f"[create_share_link] Generated share_token: {share_token[:50]}...")
+
+        # ADDITIONAL DIAGNOSTIC: Check if this token already exists in DB
+        duplicate_check = (
+            db.query(ShareLink).filter(ShareLink.share_token == share_token).first()
+        )
+        if duplicate_check:
+            logger.error(
+                f"[create_share_link] CRITICAL: Generated token already exists! "
+                f"duplicate_link_id={duplicate_check.id}, "
+                f"duplicate_resource_type={duplicate_check.resource_type}, "
+                f"duplicate_resource_id={duplicate_check.resource_id}, "
+                f"duplicate_is_active={duplicate_check.is_active}, "
+                f"token={share_token[:50]}..."
+            )
+        else:
+            logger.info(
+                f"[create_share_link] Token uniqueness check passed: no duplicate found"
+            )
 
         # Calculate expiration
         # Use far future instead of None to avoid NOT NULL constraint
@@ -311,6 +358,9 @@ class UnifiedShareService(ABC):
             expires_at = datetime.utcnow() + timedelta(days=365 * 100)
 
         # Create new share link
+        logger.info(
+            f"[create_share_link] Creating new ShareLink record with token: {share_token[:50]}..."
+        )
         share_link = ShareLink(
             resource_type=self.resource_type.value,
             resource_id=resource_id,
@@ -323,9 +373,30 @@ class UnifiedShareService(ABC):
         )
 
         db.add(share_link)
-        db.commit()
+
+        try:
+            db.commit()
+            logger.info(
+                f"[create_share_link] Successfully committed new share_link: id={share_link.id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[create_share_link] FAILED to commit share_link: {type(e).__name__}: {str(e)}"
+            )
+            logger.error(
+                f"[create_share_link] Share link details that failed: "
+                f"resource_type={self.resource_type.value}, "
+                f"resource_id={resource_id}, "
+                f"share_token={share_token[:50]}..., "
+                f"created_by_user_id={user_id}"
+            )
+            raise
+
         db.refresh(share_link)
 
+        logger.info(
+            f"[create_share_link] END: Successfully created share_link id={share_link.id}"
+        )
         return self._share_link_to_response(share_link)
 
     def get_share_link(
@@ -337,10 +408,15 @@ class UnifiedShareService(ABC):
         if not resource:
             raise HTTPException(status_code=404, detail="Resource not found")
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -365,10 +441,15 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="Only resource owner can delete share link"
             )
 
+        # Note: Database may store resource_type in different formats
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -419,10 +500,15 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=400, detail="Invalid resource type")
 
         # Find share link by resource_id (not by token, since token encoding may vary)
+        # Note: Database may store resource_type in different formats
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -490,10 +576,15 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=400, detail="Cannot join your own resource")
 
         # Find share link by resource_id (not by token, since token encoding may vary)
+        # Note: Database may store resource_type in different formats
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -705,10 +796,15 @@ class UnifiedShareService(ABC):
 
             # Ensure share_link_id is set (required by database)
             if not existing.share_link_id:
+                # Note: Database may store resource_type in different formats
+                resource_type_variants = [self.resource_type.value]
+                if self.resource_type.value == "KnowledgeBase":
+                    resource_type_variants.append("KNOWLEDGE_BASE")
+
                 share_link = (
                     db.query(ShareLink)
                     .filter(
-                        ShareLink.resource_type == self.resource_type.value,
+                        ShareLink.resource_type.in_(resource_type_variants),
                         ShareLink.resource_id == resource_id,
                         ShareLink.is_active == True,
                     )
@@ -743,10 +839,15 @@ class UnifiedShareService(ABC):
         else:
             # Get or create a share link for direct member addition
             # This is needed because share_link_id may be required in the database
+            # Note: Database may store resource_type in different formats
+            resource_type_variants = [self.resource_type.value]
+            if self.resource_type.value == "KnowledgeBase":
+                resource_type_variants.append("KNOWLEDGE_BASE")
+
             share_link = (
                 db.query(ShareLink)
                 .filter(
-                    ShareLink.resource_type == self.resource_type.value,
+                    ShareLink.resource_type.in_(resource_type_variants),
                     ShareLink.resource_id == resource_id,
                     ShareLink.is_active == True,
                 )
