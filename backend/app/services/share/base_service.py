@@ -605,10 +605,12 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         # Check for existing member record
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to check both formats to handle legacy data and prevent duplicate records
         existing_member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
             )
@@ -616,11 +618,12 @@ class UnifiedShareService(ABC):
         )
 
         if existing_member:
-            if existing_member.status == MemberStatus.APPROVED.value:
+            # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+            if existing_member.status.lower() == MemberStatus.APPROVED.value.lower():
                 raise HTTPException(
                     status_code=400, detail="Already have access to this resource"
                 )
-            elif existing_member.status == MemberStatus.PENDING.value:
+            elif existing_member.status.lower() == MemberStatus.PENDING.value.lower():
                 raise HTTPException(
                     status_code=400, detail="Request already pending approval"
                 )
@@ -732,7 +735,7 @@ class UnifiedShareService(ABC):
             MemberStatus.APPROVED.value.upper(),
         ]
 
-        members = (
+        all_members = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
@@ -742,12 +745,24 @@ class UnifiedShareService(ABC):
             .all()
         )
 
+        # Deduplicate members by user_id (keep the first one found for each user)
+        # This handles legacy data where the same user may have multiple records
+        # with different resource_type formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        seen_user_ids = set()
+        members = []
+        for member in all_members:
+            if member.user_id not in seen_user_ids:
+                seen_user_ids.add(member.user_id)
+                members.append(member)
+
         # LOGGING: Log query parameters and results to verify resource_type matching
         logger.info(
             f"[get_members] Query params: resource_type_variants={resource_type_variants}, "
             f"resource_id={resource_id}, status={MemberStatus.APPROVED.value}"
         )
-        logger.info(f"[get_members] Found {len(members)} members")
+        logger.info(
+            f"[get_members] Found {len(all_members)} raw members, {len(members)} after deduplication"
+        )
         for member in members:
             logger.info(
                 f"[get_members] Member detail: id={member.id}, resource_type={member.resource_type}, "
@@ -812,10 +827,16 @@ class UnifiedShareService(ABC):
         )
 
         # Check for existing member
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to check both formats to handle legacy data and prevent duplicate records
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         existing = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == target_user_id,
             )
@@ -823,7 +844,8 @@ class UnifiedShareService(ABC):
         )
 
         if existing:
-            if existing.status == MemberStatus.APPROVED.value:
+            # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+            if existing.status.lower() == MemberStatus.APPROVED.value.lower():
                 raise HTTPException(status_code=400, detail="User already has access")
 
             # Ensure share_link_id is set (required by database)
