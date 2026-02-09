@@ -608,6 +608,22 @@ def create_app():
         allow_headers=["*"],
     )
 
+    # Setup Prometheus middleware if enabled
+    if settings.PROMETHEUS_ENABLED:
+        from shared.prometheus.middleware.fastapi import (
+            PrometheusMiddleware,
+            ServiceType,
+            setup_prometheus_endpoint,
+        )
+
+        app.add_middleware(PrometheusMiddleware, service_type=ServiceType.BACKEND)
+        setup_prometheus_endpoint(app, settings.PROMETHEUS_METRICS_PATH)
+        logger.info(f"Prometheus metrics enabled at {settings.PROMETHEUS_METRICS_PATH}")
+    else:
+        logger.info(
+            "Prometheus metrics disabled. Set PROMETHEUS_ENABLED=true to enable."
+        )
+
     # Register exception handlers
     app.add_exception_handler(CustomHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)

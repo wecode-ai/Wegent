@@ -9,12 +9,81 @@ This module provides separate functions for loading:
 - Server-side MCP tools (from CHAT_MCP_SERVERS config)
 - Bot MCP tools (from Bot/Ghost mcpServers config)
 - Custom MCP tools (from user-provided configurations via API)
+
+Prometheus metrics:
+- mcp_connections_total: Counter for connection attempts by server and status
+- mcp_tool_discovery_duration_seconds: Histogram for tool discovery latency
 """
 
 import logging
+import time
 from typing import Any, Dict, List
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
+
+
+def _record_mcp_connection_metrics(server: str, status: str) -> None:
+    """Record Prometheus metrics for MCP connection attempt.
+
+    Args:
+        server: MCP server name
+        status: Connection status ("success", "error", or "timeout")
+    """
+    if settings.PROMETHEUS_ENABLED:
+        try:
+            from shared.prometheus.metrics.llm import get_mcp_metrics
+
+            metrics = get_mcp_metrics()
+            metrics.observe_connection(server=server, status=status)
+            logger.info(
+                "[OPENAPI_MCP] Recorded connection metrics: server=%s, status=%s",
+                server,
+                status,
+            )
+        except Exception as e:
+            logger.warning("[OPENAPI_MCP] Failed to record connection metrics: %s", e)
+    else:
+        logger.debug(
+            "[OPENAPI_MCP] Prometheus disabled, skipping connection metrics for server %s",
+            server,
+        )
+
+
+def _record_mcp_tool_discovery_metrics(
+    server: str, status: str, duration: float
+) -> None:
+    """Record Prometheus metrics for MCP tool discovery.
+
+    Args:
+        server: MCP server name
+        status: Discovery status ("success" or "error")
+        duration: Discovery duration in seconds
+    """
+    if settings.PROMETHEUS_ENABLED:
+        try:
+            from shared.prometheus.metrics.llm import get_mcp_metrics
+
+            metrics = get_mcp_metrics()
+            metrics.observe_tool_discovery(
+                server=server, status=status, duration_seconds=duration
+            )
+            logger.info(
+                "[OPENAPI_MCP] Recorded tool discovery metrics: server=%s, status=%s, duration=%.3fs",
+                server,
+                status,
+                duration,
+            )
+        except Exception as e:
+            logger.warning(
+                "[OPENAPI_MCP] Failed to record tool discovery metrics: %s", e
+            )
+    else:
+        logger.debug(
+            "[OPENAPI_MCP] Prometheus disabled, skipping tool discovery metrics for server %s",
+            server,
+        )
 
 
 async def load_server_mcp_tools(task_id: int) -> Any:
@@ -24,6 +93,10 @@ async def load_server_mcp_tools(task_id: int) -> Any:
     This function loads MCP tools configured at the server level via
     the CHAT_MCP_SERVERS environment variable.
 
+    Prometheus metrics recorded:
+    - mcp_connections_total: Connection attempts by server and status
+    - mcp_tool_discovery_duration_seconds: Tool discovery latency by server
+
     Args:
         task_id: Task ID for session management and logging
 
@@ -32,8 +105,6 @@ async def load_server_mcp_tools(task_id: int) -> Any:
     """
     import asyncio
     import json
-
-    from app.core.config import settings
 
     try:
         from chat_shell.tools.mcp import MCPClient
@@ -56,19 +127,35 @@ async def load_server_mcp_tools(task_id: int) -> Any:
 
         # Create MCP client with server configuration
         client = MCPClient(backend_servers)
+        start_time = time.time()
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
+            duration = time.time() - start_time
+            # Record success metrics for each server
+            for server_name in backend_servers.keys():
+                _record_mcp_connection_metrics(server_name, "success")
+                _record_mcp_tool_discovery_metrics(server_name, "success", duration)
             logger.info(
                 f"[OPENAPI_MCP] Loaded {len(client.get_tools())} server-side MCP tools "
                 f"from {len(backend_servers)} servers for task {task_id}"
             )
             return client
         except asyncio.TimeoutError:
+            duration = time.time() - start_time
+            # Record timeout metrics for each server
+            for server_name in backend_servers.keys():
+                _record_mcp_connection_metrics(server_name, "timeout")
+                _record_mcp_tool_discovery_metrics(server_name, "error", duration)
             logger.error(
                 f"[OPENAPI_MCP] Timeout connecting to server MCP servers for task {task_id}"
             )
             return None
         except Exception as e:
+            duration = time.time() - start_time
+            # Record error metrics for each server
+            for server_name in backend_servers.keys():
+                _record_mcp_connection_metrics(server_name, "error")
+                _record_mcp_tool_discovery_metrics(server_name, "error", duration)
             logger.error(
                 f"[OPENAPI_MCP] Failed to connect to server MCP servers for task {task_id}: {e}"
             )
@@ -89,6 +176,10 @@ async def load_bot_mcp_tools(
 
     This function loads MCP tools configured for a specific bot via
     its Ghost CRD's mcpServers field.
+
+    Prometheus metrics recorded:
+    - mcp_connections_total: Connection attempts by server and status
+    - mcp_tool_discovery_duration_seconds: Tool discovery latency by server
 
     Args:
         task_id: Task ID for session management and logging
@@ -134,19 +225,35 @@ async def load_bot_mcp_tools(
 
         # Create MCP client with bot configuration
         client = MCPClient(bot_servers)
+        start_time = time.time()
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
+            duration = time.time() - start_time
+            # Record success metrics for each server
+            for server_name in bot_servers.keys():
+                _record_mcp_connection_metrics(server_name, "success")
+                _record_mcp_tool_discovery_metrics(server_name, "success", duration)
             logger.info(
                 f"[OPENAPI_MCP] Loaded {len(client.get_tools())} bot MCP tools "
                 f"from {len(bot_servers)} servers for task {task_id} (bot={bot_namespace}/{bot_name})"
             )
             return client
         except asyncio.TimeoutError:
+            duration = time.time() - start_time
+            # Record timeout metrics for each server
+            for server_name in bot_servers.keys():
+                _record_mcp_connection_metrics(server_name, "timeout")
+                _record_mcp_tool_discovery_metrics(server_name, "error", duration)
             logger.error(
                 f"[OPENAPI_MCP] Timeout connecting to bot MCP servers for task {task_id}"
             )
             return None
         except Exception as e:
+            duration = time.time() - start_time
+            # Record error metrics for each server
+            for server_name in bot_servers.keys():
+                _record_mcp_connection_metrics(server_name, "error")
+                _record_mcp_tool_discovery_metrics(server_name, "error", duration)
             logger.error(
                 f"[OPENAPI_MCP] Failed to connect to bot MCP servers for task {task_id}: {e}"
             )
@@ -227,6 +334,10 @@ async def load_custom_mcp_tools(task_id: int, mcp_servers: Dict[str, Any]) -> An
     This function loads MCP tools from user-specified server configurations
     passed through the API request's tools parameter.
 
+    Prometheus metrics recorded:
+    - mcp_connections_total: Connection attempts by server and status
+    - mcp_tool_discovery_duration_seconds: Tool discovery latency by server
+
     Args:
         task_id: Task ID for session management and logging
         mcp_servers: Dict of MCP server configurations, format:
@@ -277,19 +388,35 @@ async def load_custom_mcp_tools(task_id: int, mcp_servers: Dict[str, Any]) -> An
 
         # Create MCP client with custom configuration
         client = MCPClient(servers_config)
+        start_time = time.time()
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
+            duration = time.time() - start_time
+            # Record success metrics for each server
+            for server_name in servers_config.keys():
+                _record_mcp_connection_metrics(server_name, "success")
+                _record_mcp_tool_discovery_metrics(server_name, "success", duration)
             logger.info(
                 f"[OPENAPI_MCP] Loaded {len(client.get_tools())} custom MCP tools "
                 f"from {len(servers_config)} servers for task {task_id}"
             )
             return client
         except asyncio.TimeoutError:
+            duration = time.time() - start_time
+            # Record timeout metrics for each server
+            for server_name in servers_config.keys():
+                _record_mcp_connection_metrics(server_name, "timeout")
+                _record_mcp_tool_discovery_metrics(server_name, "error", duration)
             logger.error(
                 f"[OPENAPI_MCP] Timeout connecting to custom MCP servers for task {task_id}"
             )
             return None
         except Exception as e:
+            duration = time.time() - start_time
+            # Record error metrics for each server
+            for server_name in servers_config.keys():
+                _record_mcp_connection_metrics(server_name, "error")
+                _record_mcp_tool_discovery_metrics(server_name, "error", duration)
             logger.error(
                 f"[OPENAPI_MCP] Failed to connect to custom MCP servers for task {task_id}: {e}"
             )

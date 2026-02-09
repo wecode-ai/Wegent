@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration
     OTEL_ENABLED: bool = False
 
+    # Prometheus metrics configuration
+    PROMETHEUS_ENABLED: bool = False
+    PROMETHEUS_METRICS_PATH: str = "/metrics"
+
     # Graceful shutdown
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
 
