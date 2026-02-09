@@ -194,6 +194,13 @@ export function DiscoverFeedCard({
         <div
           ref={contentRef}
           className={`discover-feed-content ${!isExpanded && needsExpansion ? 'collapsed' : ''}`}
+          style={
+            isExpanded
+              ? { maxHeight: '600px', overflowY: 'auto' }
+              : needsExpansion
+                ? { maxHeight: '400px', overflow: 'hidden' }
+                : undefined
+          }
         >
           {/* Header Row: Status + Time + Follow Button */}
           <div className="flex items-center justify-between gap-2 mb-3">
