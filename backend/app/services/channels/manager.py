@@ -92,6 +92,11 @@ class ChannelManager:
             ChannelType.DINGTALK.value,
             self._create_dingtalk_provider,
         )
+        # Register Telegram provider
+        self.register_provider_factory(
+            ChannelType.TELEGRAM.value,
+            self._create_telegram_provider,
+        )
         # Future providers can be registered here or via register_provider_factory()
 
     def register_provider_factory(
@@ -142,6 +147,13 @@ class ChannelManager:
         from app.services.channels.dingtalk.service import DingTalkChannelProvider
 
         return DingTalkChannelProvider(channel)
+
+    @staticmethod
+    def _create_telegram_provider(channel: ChannelLike) -> "BaseChannelProvider":
+        """Create a Telegram provider instance."""
+        from app.services.channels.telegram.service import TelegramChannelProvider
+
+        return TelegramChannelProvider(channel)
 
     async def start_all_enabled(self, db: Session) -> int:
         """
