@@ -212,7 +212,18 @@ class SessionManager:
 
     @classmethod
     async def close_client(cls, session_id: str) -> bool:
-        """Close a specific client connection.
+        """Close a specific client connection using SDK disconnect.
+
+        WARNING: This method should only be called from the SAME asyncio context
+        where the client was created. The SDK's disconnect() method uses anyio
+        cancel scopes that are bound to the asyncio task where the client was
+        connected. Calling this from a different asyncio context (e.g., FastAPI
+        background tasks) will result in:
+        "RuntimeError: Attempted to exit cancel scope in a different task than it was entered in"
+
+        For cross-context cleanup (e.g., task cancellation in background tasks),
+        use _terminate_client_process() instead, which uses direct process
+        termination and avoids cancel scope issues.
 
         Args:
             session_id: Session ID to close
@@ -389,17 +400,28 @@ def resolve_session_id(
     task_id: int,
     bot_id: Optional[int] = None,
     new_session: bool = False,
+    task_state_manager=None,
 ) -> tuple[str, str]:
-    """Resolve session ID for a task.
+    """Resolve session ID for a task with interruption support.
+
+    Session is reused ONLY if:
+    1. task_id matches cached task_id
+    2. bot_id matches (if specified)
+    3. Not forcing new_session
+
+    When task is INTERRUPTED, session is preserved for resumption.
 
     Args:
         task_id: Task ID
         bot_id: Bot ID (optional)
         new_session: Whether to create a new session
+        task_state_manager: TaskStateManager instance for checking interruption state
 
     Returns:
         Tuple of (internal_session_key, session_id)
     """
+    from executor.tasks.task_state_manager import TaskState
+
     internal_key = build_internal_session_key(task_id, bot_id)
     cached_session_id = SessionManager.get_session_id(internal_key)
 
@@ -416,8 +438,21 @@ def resolve_session_id(
     else:
         # Has cache + new_session=False -> use cached session_id
         session_id = cached_session_id
-        logger.info(
-            f"Has cache, using cached session_id {session_id} (bot_id={bot_id})"
-        )
+
+        # Check if resuming from interruption
+        if task_state_manager:
+            task_state = task_state_manager.get_state(task_id)
+            if task_state == TaskState.INTERRUPTED:
+                logger.info(
+                    f"Resuming interrupted session {session_id} for task {task_id}"
+                )
+            else:
+                logger.info(
+                    f"Has cache, using cached session_id {session_id} (bot_id={bot_id})"
+                )
+        else:
+            logger.info(
+                f"Has cache, using cached session_id {session_id} (bot_id={bot_id})"
+            )
 
     return internal_key, session_id

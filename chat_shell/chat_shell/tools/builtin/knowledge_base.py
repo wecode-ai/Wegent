@@ -16,9 +16,9 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
-from .knowledge_base_abc import KnowledgeBaseToolABC
 from ..knowledge_content_cleaner import get_content_cleaner
 from ..knowledge_injection_strategy import InjectionMode, InjectionStrategy
+from .knowledge_base_abc import KnowledgeBaseToolABC
 
 logger = logging.getLogger(__name__)
 
@@ -1316,7 +1316,9 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         if injection_mode == "direct_injection":
             extracted_text = ""
         else:
-            extracted_text = self._build_extracted_data(chunks, source_references, kb_id)
+            extracted_text = self._build_extracted_data(
+                chunks, source_references, kb_id
+            )
 
         # Filter source references for this KB
         kb_sources = [s for s in source_references if s.get("kb_id") == kb_id]
@@ -1401,7 +1403,9 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         if injection_mode == "direct_injection":
             extracted_text = ""
         else:
-            extracted_text = self._build_extracted_data(chunks, source_references, kb_id)
+            extracted_text = self._build_extracted_data(
+                chunks, source_references, kb_id
+            )
 
         # Filter source references for this KB
         kb_sources = [s for s in source_references if s.get("kb_id") == kb_id]

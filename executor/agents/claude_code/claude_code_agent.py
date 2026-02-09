@@ -40,8 +40,6 @@ from executor.agents.claude_code.mode_strategy import (
 )
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import (
-    MAX_ERROR_SUBTYPE_RETRIES,
-    RETRY_CONTINUE_MESSAGE,
     process_response,
 )
 from executor.agents.claude_code.session_manager import (
@@ -130,9 +128,13 @@ class ClaudeCodeAgent(Agent):
         if bots and len(bots) > 0:
             bot_id = bots[0].get("id")
 
-        # Resolve session ID using SessionManager
+        # Initialize task state manager and resource manager
+        self.task_state_manager = TaskStateManager()
+        self.resource_manager = ResourceManager()
+
+        # Resolve session ID using SessionManager (pass task_state_manager for interruption support)
         self._internal_session_key, self.session_id = resolve_session_id(
-            self.task_id, bot_id, self.new_session
+            self.task_id, bot_id, self.new_session, self.task_state_manager
         )
 
         self.prompt = task_data.get("prompt", "")
@@ -156,12 +158,10 @@ class ClaudeCodeAgent(Agent):
         # Initialize progress state manager - will be fully initialized when task starts
         self.state_manager: Optional[ProgressStateManager] = None
 
-        # Initialize task state manager and resource manager
-        self.task_state_manager = TaskStateManager()
-        self.resource_manager = ResourceManager()
-
-        # Set initial task state to RUNNING
-        self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
+        # Set initial task state to RUNNING (but preserve INTERRUPTED if resuming)
+        current_state = self.task_state_manager.get_state(self.task_id)
+        if current_state != TaskState.INTERRUPTED:
+            self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
 
         # Silent exit tracking for subscription tasks
         self.is_silent_exit: bool = False
@@ -309,9 +309,13 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Initialization status
         """
         try:
-            # Check if task was cancelled before initialization
-            if self.task_state_manager.is_cancelled(self.task_id):
-                logger.info(f"Task {self.task_id} was cancelled before initialization")
+            # Check if task was hard-cancelled before initialization
+            # Note: INTERRUPTED tasks should continue to allow resumption
+            task_state = self.task_state_manager.get_state(self.task_id)
+            if task_state == TaskState.CANCELLED:
+                logger.info(
+                    f"Task {self.task_id} was hard-cancelled before initialization"
+                )
                 return TaskStatus.COMPLETED
 
             self.add_thinking_step_by_key(
@@ -701,62 +705,16 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Waiting for response for prompt: {prompt}")
 
-            # Error subtype retry loop
-            error_subtype_retry_count = 0
-            while True:
-                # Process and handle the response using the external processor
-                result = await process_response(
-                    self.client,
-                    self.state_manager,
-                    self.thinking_manager,
-                    self.task_state_manager,
-                    session_id=self.session_id,
-                    error_subtype_retry_count=error_subtype_retry_count,
-                )
+            # Process and handle the response using the external processor
+            result = await process_response(
+                self.client,
+                self.state_manager,
+                self.thinking_manager,
+                self.task_state_manager,
+                session_id=self.session_id,
+            )
 
-                if result == "RETRY_RESIDUAL":
-                    # Residual interrupt message, resend query without recreating client
-                    logger.info(
-                        f"RETRY_RESIDUAL: Resending query for session {self.session_id}"
-                    )
-                    await self.client.query(prompt, session_id=self.session_id)
-                    continue
-
-                # Check if result is a tuple indicating RETRY_WITH_RESUME with session_id
-                if isinstance(result, tuple) and result[0] == "RETRY_WITH_RESUME":
-                    error_subtype_retry_count += 1
-                    # Extract the actual Claude SDK session_id (UUID) from the tuple
-                    actual_claude_session_id = result[1]
-                    logger.warning(
-                        f"RETRY_WITH_RESUME: Attempting retry {error_subtype_retry_count}/{MAX_ERROR_SUBTYPE_RETRIES} "
-                        f"for internal_session={self.session_id}, claude_session={actual_claude_session_id}"
-                    )
-
-                    # Close current client but preserve session_id for resume
-                    await self._close_client_for_retry()
-
-                    # Create new client with resume option using actual Claude session_id
-                    # Note: Claude SDK resume requires the actual UUID session_id, not our internal key
-                    self.options["resume"] = actual_claude_session_id
-                    logger.info(
-                        f"Creating new client with resume={actual_claude_session_id}"
-                    )
-                    await self._create_and_connect_client()
-
-                    # Send continue message to resume session
-                    logger.info(
-                        f"Sending continue message to resume session, "
-                        f"claude_session={actual_claude_session_id}, current_session={self.session_id}"
-                    )
-                    await self.client.query(
-                        RETRY_CONTINUE_MESSAGE, session_id=self.session_id
-                    )
-
-                    # Continue loop to process response
-                    continue
-
-                # Normal completion or non-retryable failure
-                break
+            # Task completed or failed
 
             if result is None:
                 # No final result received, keep RUNNING status
@@ -1104,14 +1062,12 @@ class ClaudeCodeAgent(Agent):
 
     async def _async_cancel_run(self) -> None:
         """
-        Asynchronous helper method to cancel the current run
-        No longer send callback, handled by background task
+        Asynchronous helper method to cancel the current run.
+        No longer send callback, handled by background task.
         """
         try:
             if self.client is not None:
                 await self.client.interrupt()
-                # Note: No longer send callback here
-                # Callback will be sent asynchronously by background task in main.py
                 logger.info(
                     f"Successfully sent interrupt to client for session_id: {self.session_id}"
                 )

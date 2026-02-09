@@ -58,6 +58,16 @@ hiddenimports += collect_submodules('opentelemetry.instrumentation.system_metric
 if os.path.exists(shared_path):
     hiddenimports += collect_submodules('shared')
 
+# Add jaraco namespace packages for pkg_resources compatibility
+hiddenimports += [
+    'jaraco',
+    'jaraco.classes',
+    'jaraco.context',
+    'jaraco.functools',
+    'jaraco.text',
+    'platformdirs',
+]
+
 # Collect Rich Unicode data modules (fix for Unicode character handling)
 hiddenimports += collect_submodules('rich._unicode_data')
 

@@ -764,7 +764,9 @@ class SharedTaskService:
                 user_id=rm.user_id,
                 original_user_id=rm.invited_by_user_id,
                 original_task_id=rm.resource_id,
-                copied_task_id=rm.copied_resource_id if rm.copied_resource_id > 0 else None,
+                copied_task_id=(
+                    rm.copied_resource_id if rm.copied_resource_id > 0 else None
+                ),
                 is_active=True,
                 created_at=rm.created_at,
                 updated_at=rm.updated_at,

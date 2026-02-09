@@ -95,11 +95,6 @@ class LocalModeStrategy(ExecutionModeStrategy):
             json.dump(claude_json_config, f, indent=2)
         permissions_manager.set_owner_only(claude_json_path, is_directory=False)
 
-        logger.info(
-            f"Local mode: Saved claude.json to {config_dir} "
-            "(settings.json skipped - sensitive config passed via env)"
-        )
-
         # Return env config to be passed via environment variables
         env_config = agent_config.get("env", {})
         return config_dir, env_config

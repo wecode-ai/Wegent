@@ -900,7 +900,9 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
     # as get_event_loop() is deprecated in Python 3.10+
     try:
         _main_event_loop = asyncio.get_running_loop()
-        logger.info("[WS_LOOP] WebSocket emitter initialized with main event loop reference")
+        logger.info(
+            "[WS_LOOP] WebSocket emitter initialized with main event loop reference"
+        )
     except RuntimeError:
         # No running loop during initialization - this is expected if called
         # before the async context starts. The loop will be set later.
@@ -964,13 +966,9 @@ async def safe_emit_in_main_loop(
                     emit_func(*args, **kwargs), _main_event_loop
                 )
                 future.add_done_callback(_make_done_callback("no current loop"))
-                logger.info(
-                    "[WS_LOOP] Scheduled emit in main loop (no current loop)"
-                )
+                logger.info("[WS_LOOP] Scheduled emit in main loop (no current loop)")
             except Exception as e:
-                logger.warning(
-                    "[WS_LOOP] Failed to schedule emit in main loop: %s", e
-                )
+                logger.warning("[WS_LOOP] Failed to schedule emit in main loop: %s", e)
             return
         # No main loop available, skip emit
         logger.warning(
