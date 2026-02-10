@@ -15,7 +15,7 @@ import {
   ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
-import { taskApis, WorkspaceFile, WorkspaceFilesResponse } from '@/apis/tasks'
+import { taskApis, WorkspaceFile } from '@/apis/tasks'
 import { Button } from '@/components/ui/button'
 
 interface WorkspaceFilesProps {
