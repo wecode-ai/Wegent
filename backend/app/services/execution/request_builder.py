@@ -211,7 +211,7 @@ class TaskRequestBuilder:
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
-            message_id=subtask.id,
+            message_id=subtask.message_id,
             user_message_id=None,
             is_group_chat=is_group_chat,
             history_limit=history_limit,

@@ -788,34 +788,62 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Trigger AI response if needed
             # Uses unified trigger from chat.trigger module
             # enable_deep_thinking controls whether tools are enabled in chat_shell
+            # IMPORTANT: Use asyncio.create_task to trigger AI response asynchronously
+            # This allows the ACK response to be returned immediately, so the frontend
+            # can update the user message with subtaskId and messageId before chat:start arrives
             if should_trigger_ai and assistant_subtask:
+                from sqlalchemy.orm import make_transient
+
                 from app.services.chat.trigger import trigger_ai_response_unified
 
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
                 )
-                # Note: knowledge_base_ids is no longer passed separately.
-                # The unified context processing in trigger_ai_response_unified will
-                # retrieve both attachments and knowledge bases from the
-                # user_subtask's associated contexts.
-                await trigger_ai_response_unified(
-                    task=task,
-                    assistant_subtask=assistant_subtask,
-                    team=team,
-                    user=user,
-                    message=payload.message,  # Original message
-                    payload=payload,
-                    task_room=task_room,
-                    namespace=self,
-                    user_subtask_id=(
-                        user_subtask_for_context.id
-                        if user_subtask_for_context
-                        else None
-                    ),  # Pass user subtask ID for unified context processing
-                    auth_token=auth_token,  # Pass original JWT token from WebSocket session
+
+                # Refresh objects to load all attributes before making them transient
+                # This ensures all lazy-loaded attributes are loaded from the database
+                db.refresh(task)
+                db.refresh(team)
+                db.refresh(assistant_subtask)
+                db.refresh(user)
+
+                # Make objects transient so they can be used after session is closed
+                make_transient(task)
+                make_transient(team)
+                make_transient(assistant_subtask)
+                make_transient(user)
+
+                # Extract user_subtask_id before closing session
+                user_subtask_id_for_context = (
+                    user_subtask_for_context.id if user_subtask_for_context else None
                 )
 
+                # Create async task for AI response - don't await it
+                # This ensures the ACK is returned before chat:start is sent
+                async def _trigger_ai():
+                    try:
+                        await trigger_ai_response_unified(
+                            task=task,
+                            assistant_subtask=assistant_subtask,
+                            team=team,
+                            user=user,
+                            message=payload.message,  # Original message
+                            payload=payload,
+                            task_room=task_room,
+                            namespace=self,
+                            user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
+                            auth_token=auth_token,  # Pass original JWT token from WebSocket session
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"[WS] chat:send AI trigger failed: task_id={task.id}, error={e}"
+                        )
+
+                asyncio.create_task(_trigger_ai())
+
             # Return unified response - same structure for all modes
+            # IMPORTANT: Return immediately so frontend can update user message
+            # with subtaskId and messageId before chat:start arrives
             return {
                 "task_id": task.id,
                 "subtask_id": user_subtask.id if user_subtask else None,
