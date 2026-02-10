@@ -218,7 +218,7 @@ class TaskRequestBuilder:
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
-            message_id=subtask.id,
+            message_id=subtask.message_id,
             user_message_id=None,
             is_group_chat=is_group_chat,
             history_limit=history_limit,
@@ -905,7 +905,12 @@ class TaskRequestBuilder:
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
                     ghost_system_prompt = ghost_crd.spec.systemPrompt or ""
-                    ghost_mcp_servers = ghost_crd.spec.mcpServers or []
+                    # Convert dict format to list format with name field
+                    mcp_servers_dict = ghost_crd.spec.mcpServers or {}
+                    ghost_mcp_servers = [
+                        {"name": name, **config}
+                        for name, config in mcp_servers_dict.items()
+                    ]
                     ghost_skills = ghost_crd.spec.skills or []
 
             # Resolve agent_config from model binding
@@ -984,7 +989,9 @@ class TaskRequestBuilder:
             return []
 
         ghost_crd = Ghost.model_validate(ghost.json)
-        return ghost_crd.spec.mcpServers or []
+        mcp_servers_dict = ghost_crd.spec.mcpServers or {}
+        # Convert dict format to list format with name field
+        return [{"name": name, **config} for name, config in mcp_servers_dict.items()]
 
     # =========================================================================
     # Helper Methods
