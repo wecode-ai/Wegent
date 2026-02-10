@@ -20,11 +20,12 @@ class TestAgentFactory:
         """
         Mock all HTTP requests to prevent actual network calls during tests.
         - requests.get: DifyAgent.__init__ calls _get_app_mode() which makes GET to /v1/info
-        - requests.post: CallbackClient.send_event() makes POST to callback URL
+        - CallbackClient: Uses TracedSession (not raw requests.post), so we mock
+          the entire class to prevent retry loops with exponential backoff on empty URLs.
         """
         with (
             patch("executor.agents.dify.dify_agent.requests.get") as mock_get,
-            patch("executor.callback.callback_client.requests.post") as mock_post,
+            patch("executor.agents.base.CallbackClient") as mock_callback_cls,
         ):
             # Mock GET response for _get_app_mode()
             mock_get_response = MagicMock()
@@ -32,14 +33,12 @@ class TestAgentFactory:
             mock_get_response.json.return_value = {"mode": "chat"}
             mock_get.return_value = mock_get_response
 
-            # Mock POST response for callback
-            mock_post_response = MagicMock()
-            mock_post_response.status_code = 200
-            mock_post_response.content = b"{}"
-            mock_post_response.json.return_value = {}
-            mock_post.return_value = mock_post_response
+            # Mock CallbackClient instance
+            mock_callback = MagicMock()
+            mock_callback.send_event.return_value = {"status": "success"}
+            mock_callback_cls.return_value = mock_callback
 
-            yield {"get": mock_get, "post": mock_post}
+            yield {"get": mock_get, "callback": mock_callback}
 
     @pytest.fixture
     def task_data(self):
