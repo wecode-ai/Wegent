@@ -7,6 +7,7 @@ WebSocket event decorators for tracing and context management.
 """
 
 import logging
+import time
 import uuid
 from functools import wraps
 from typing import Any, Callable, Optional
@@ -32,13 +33,14 @@ def trace_websocket_event(
     extract_event_data: bool = True,
 ):
     """
-    Decorator to add OpenTelemetry tracing to WebSocket event handlers.
+    Decorator to add OpenTelemetry tracing and Prometheus metrics to WebSocket event handlers.
 
     This decorator:
     1. Generates a unique request_id for each event (except 'connect')
     2. Restores user context from session
     3. Creates an OpenTelemetry span with event metadata
-    4. Handles exceptions and marks span status
+    4. Records Prometheus metrics for WebSocket events
+    5. Handles exceptions and marks span status
 
     Args:
         exclude_events: Set of event names to exclude from tracing (e.g., {'connect', 'ping'})
@@ -72,6 +74,11 @@ def trace_websocket_event(
             if event in exclude_events:
                 return await func(self, event, sid, *args)
 
+            # Start timing for Prometheus metrics
+            start_time = time.time()
+            namespace = getattr(self, "namespace", "/")
+            status = "success"
+
             # Generate a new request_id for each WebSocket event (except connect)
             if event != "connect":
                 event_request_id = str(uuid.uuid4())[:8]
@@ -98,42 +105,66 @@ def trace_websocket_event(
                 logger.debug(f"Failed to create span for WebSocket event: {e}")
 
             # Execute handler with or without span
-            if span_context:
-                with span_context as span:
-                    # Set base attributes
-                    span.set_attribute("websocket.event", event)
-                    span.set_attribute("websocket.sid", sid)
-                    span.set_attribute("websocket.namespace", self.namespace)
+            try:
+                if span_context:
+                    with span_context as span:
+                        # Set base attributes
+                        span.set_attribute("websocket.event", event)
+                        span.set_attribute("websocket.sid", sid)
+                        span.set_attribute("websocket.namespace", self.namespace)
 
-                    # Extract and set event data attributes
-                    if (
-                        extract_event_data
-                        and args
-                        and len(args) > 0
-                        and isinstance(args[0], dict)
-                    ):
-                        event_data = args[0]
-                        _set_event_data_attributes(span, event_data)
+                        # Extract and set event data attributes
+                        if (
+                            extract_event_data
+                            and args
+                            and len(args) > 0
+                            and isinstance(args[0], dict)
+                        ):
+                            event_data = args[0]
+                            _set_event_data_attributes(span, event_data)
 
+                        try:
+                            result = await func(self, event, sid, *args)
+
+                            # Mark span as successful
+                            if span.is_recording():
+                                span.set_status(Status(StatusCode.OK))
+
+                            return result
+                        except Exception as e:
+                            status = "error"
+                            # Record exception in span
+                            if span.is_recording():
+                                span.record_exception(e)
+                                span.set_status(
+                                    Status(StatusCode.ERROR, description=str(e))
+                                )
+                            raise
+                else:
+                    # No span, execute without tracing
                     try:
-                        result = await func(self, event, sid, *args)
-
-                        # Mark span as successful
-                        if span.is_recording():
-                            span.set_status(Status(StatusCode.OK))
-
-                        return result
-                    except Exception as e:
-                        # Record exception in span
-                        if span.is_recording():
-                            span.record_exception(e)
-                            span.set_status(
-                                Status(StatusCode.ERROR, description=str(e))
-                            )
+                        return await func(self, event, sid, *args)
+                    except Exception:
+                        status = "error"
                         raise
-            else:
-                # No span, execute without tracing
-                return await func(self, event, sid, *args)
+            finally:
+                # Record Prometheus metrics if enabled
+                if settings.PROMETHEUS_ENABLED:
+                    try:
+                        from shared.prometheus.metrics.websocket import (
+                            get_websocket_metrics,
+                        )
+
+                        duration = time.time() - start_time
+                        metrics = get_websocket_metrics()
+                        metrics.observe_event(
+                            namespace=namespace,
+                            event=event,
+                            status=status,
+                            duration_seconds=duration,
+                        )
+                    except Exception as e:
+                        logger.debug(f"Failed to record WebSocket metrics: {e}")
 
         return wrapper
 

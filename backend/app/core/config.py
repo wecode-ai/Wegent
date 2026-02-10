@@ -454,6 +454,10 @@ class Settings(BaseSettings):
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
 
+    # Prometheus metrics configuration
+    PROMETHEUS_ENABLED: bool = False
+    PROMETHEUS_METRICS_PATH: str = "/metrics"
+
     @classmethod
     def settings_customise_sources(
         cls,

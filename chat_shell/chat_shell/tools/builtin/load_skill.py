@@ -15,11 +15,14 @@ In HTTP mode, skill prompts are obtained from the skill_configs passed via ChatR
 """
 
 import logging
+import time
 from typing import Any, Optional, Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
+
+from chat_shell.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -166,33 +169,60 @@ class LoadSkillTool(BaseTool):
         )
         return True
 
+    def _record_skill_metrics(
+        self, skill_name: str, status: str, duration: float
+    ) -> None:
+        """Record Prometheus metrics for skill loading."""
+        if settings.PROMETHEUS_ENABLED:
+            try:
+                from shared.prometheus.metrics.llm import get_skill_metrics
+
+                metrics = get_skill_metrics()
+                metrics.observe_request(
+                    skill_name=skill_name,
+                    status=status,
+                    duration_seconds=duration,
+                )
+            except Exception as e:
+                logger.debug("[LoadSkillTool] Failed to record metrics: %s", e)
+
     def _run(
         self,
         skill_name: str,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Load skill and return prompt content."""
-        if skill_name not in self.skill_names:
-            return (
-                f"Error: Skill '{skill_name}' is not available. "
-                f"Available skills: {', '.join(self.skill_names)}"
-            )
+        start_time = time.time()
+        status = "success"
 
-        # Check if skill was already expanded in this turn
-        if skill_name in self._expanded_skills:
-            # Reset the remaining turns counter since skill is being used again
-            self._skill_remaining_turns[skill_name] = self.skill_retention_turns
-            return (
-                f"Skill '{skill_name}' is already active in this conversation turn. "
-                f"The skill instructions have been added to the system prompt."
-            )
+        try:
+            if skill_name not in self.skill_names:
+                status = "error"
+                return (
+                    f"Error: Skill '{skill_name}' is not available. "
+                    f"Available skills: {', '.join(self.skill_names)}"
+                )
 
-        # Use shared internal method to load the skill
-        if not self._load_skill_internal(skill_name, source="load_skill"):
-            return f"Error: Skill '{skill_name}' has no prompt content."
+            # Check if skill was already expanded in this turn
+            if skill_name in self._expanded_skills:
+                # Reset the remaining turns counter since skill is being used again
+                self._skill_remaining_turns[skill_name] = self.skill_retention_turns
+                status = "cached"
+                return (
+                    f"Skill '{skill_name}' is already active in this conversation turn. "
+                    f"The skill instructions have been added to the system prompt."
+                )
 
-        # Return a confirmation message (the actual prompt will be injected into system prompt)
-        return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
+            # Use shared internal method to load the skill
+            if not self._load_skill_internal(skill_name, source="load_skill"):
+                status = "error"
+                return f"Error: Skill '{skill_name}' has no prompt content."
+
+            # Return a confirmation message (the actual prompt will be injected into system prompt)
+            return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
+        finally:
+            duration = time.time() - start_time
+            self._record_skill_metrics(skill_name, status, duration)
 
     async def _arun(
         self,
@@ -278,20 +308,30 @@ class LoadSkillTool(BaseTool):
                 for this message. User-selected skills will be highlighted in the
                 system prompt to encourage the model to prioritize them.
         """
-        # Temporarily add to skill_metadata if not present (for _load_skill_internal)
-        if skill_name not in self.skill_metadata:
-            self.skill_metadata[skill_name] = skill_config
+        start_time = time.time()
+        status = "success"
 
-        # Use shared internal method to load the skill
-        self._load_skill_internal(skill_name, source="preload")
+        try:
+            # Temporarily add to skill_metadata if not present (for _load_skill_internal)
+            if skill_name not in self.skill_metadata:
+                self.skill_metadata[skill_name] = skill_config
 
-        # Track user-selected skills
-        if is_user_selected:
-            self._user_selected_skills.add(skill_name)
-            logger.info(
-                "[LoadSkillTool] Marked skill '%s' as user-selected",
-                skill_name,
-            )
+            # Use shared internal method to load the skill
+            if not self._load_skill_internal(skill_name, source="preload"):
+                status = "error"
+                return
+
+            # Track user-selected skills
+            if is_user_selected:
+                self._user_selected_skills.add(skill_name)
+                logger.info(
+                    "[LoadSkillTool] Marked skill '%s' as user-selected",
+                    skill_name,
+                )
+        finally:
+            duration = time.time() - start_time
+            # Record metrics for preloaded skills
+            self._record_skill_metrics(skill_name, status, duration)
 
     def get_prompt_modification(self) -> str:
         """Get prompt modification content for system prompt injection.
@@ -683,13 +723,25 @@ The following skills provide specialized guidance for specific tasks. When your 
             remaining_turns = self.skill_retention_turns - turns_ago
 
             if remaining_turns > 0 and skill_name in self.skill_names:
-                # Use shared internal method to restore the skill
-                if self._load_skill_internal(
-                    skill_name,
-                    remaining_turns=remaining_turns,
-                    source=f"restore (loaded {turns_ago} turns ago)",
-                ):
-                    restored_count += 1
+                start_time = time.time()
+                status = "success"
+
+                try:
+                    # Use shared internal method to restore the skill
+                    if self._load_skill_internal(
+                        skill_name,
+                        remaining_turns=remaining_turns,
+                        source=f"restore (loaded {turns_ago} turns ago)",
+                    ):
+                        restored_count += 1
+                    else:
+                        status = "error"
+                finally:
+                    # Record metrics for restored skills
+                    duration = time.time() - start_time
+                    self._record_skill_metrics(
+                        skill_name, f"restored_{status}", duration
+                    )
             elif remaining_turns <= 0:
                 logger.debug(
                     "[LoadSkillTool] Skill '%s' expired (loaded %d turns ago, "

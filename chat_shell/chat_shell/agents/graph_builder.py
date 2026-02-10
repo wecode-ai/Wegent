@@ -29,6 +29,7 @@ from opentelemetry import trace as otel_trace
 from shared.telemetry.decorators import add_span_event, trace_sync
 
 from ..core.config import settings
+from ..models.factory import LangChainModelFactory
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 
@@ -110,6 +111,10 @@ class LangGraphAgentBuilder:
         )
         self._agent = None
 
+        # Extract model info for metrics
+        self._model_name = self._extract_model_name(llm)
+        self._provider = self._detect_provider(self._model_name)
+
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
         if self.tool_registry:
@@ -120,6 +125,36 @@ class LangGraphAgentBuilder:
 
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
+
+    @staticmethod
+    def _extract_model_name(llm: BaseChatModel) -> str:
+        """Extract model name from LangChain model instance.
+
+        Args:
+            llm: LangChain chat model instance
+
+        Returns:
+            Model name string (e.g., "gpt-4", "claude-3-sonnet")
+        """
+        # Try common attributes used by LangChain models
+        if hasattr(llm, "model_name") and llm.model_name:
+            return llm.model_name
+        if hasattr(llm, "model") and llm.model:
+            return llm.model
+        return "unknown"
+
+    @staticmethod
+    def _detect_provider(model_name: str) -> str:
+        """Detect provider from model name.
+
+        Args:
+            model_name: Model name string
+
+        Returns:
+            Provider name (e.g., "openai", "anthropic", "google")
+        """
+        provider = LangChainModelFactory.get_provider(model_name)
+        return provider or "unknown"
 
     def _find_prompt_modifier_tools(self) -> list[Any]:
         """Find all tools that implement the PromptModifierTool protocol.
@@ -544,6 +579,24 @@ class LangGraphAgentBuilder:
                 # Check cancellation
                 if cancel_event and cancel_event.is_set():
                     logger.info("Streaming cancelled by user")
+                    # Record cancelled LLM request to Prometheus metrics
+                    if llm_request_start_time is not None:
+                        try:
+                            from shared.prometheus.metrics.llm import get_llm_metrics
+
+                            total_time = time.perf_counter() - llm_request_start_time
+                            llm_metrics = get_llm_metrics()
+                            llm_metrics.observe_request(
+                                model=self._model_name,
+                                provider=self._provider,
+                                status="cancelled",
+                                duration_seconds=total_time,
+                            )
+                        except Exception as metrics_error:
+                            logger.debug(
+                                "[stream_tokens] Failed to record cancel metrics: %s",
+                                metrics_error,
+                            )
                     return
 
                 # Handle token streaming events
@@ -572,6 +625,22 @@ class LangGraphAgentBuilder:
                             "[stream_tokens] TTFT: %.2fms",
                             ttft_ms,
                         )
+
+                        # Record TTFT to Prometheus metrics
+                        try:
+                            from shared.prometheus.metrics.llm import get_llm_metrics
+
+                            llm_metrics = get_llm_metrics()
+                            llm_metrics.observe_first_token(
+                                model=self._model_name,
+                                provider=self._provider,
+                                duration_seconds=ttft_ms / 1000,
+                            )
+                        except Exception as metrics_error:
+                            logger.debug(
+                                "[stream_tokens] Failed to record TTFT metrics: %s",
+                                metrics_error,
+                            )
 
                     data = event.get("data", {})
                     chunk = data.get("chunk")
@@ -703,6 +772,24 @@ class LangGraphAgentBuilder:
                             total_llm_time_ms,
                             ttft_ms or 0,
                         )
+
+                        # Record LLM request duration to Prometheus metrics
+                        try:
+                            from shared.prometheus.metrics.llm import get_llm_metrics
+
+                            llm_metrics = get_llm_metrics()
+                            llm_metrics.observe_request(
+                                model=self._model_name,
+                                provider=self._provider,
+                                status="success",
+                                duration_seconds=total_llm_time_ms / 1000,
+                            )
+                        except Exception as metrics_error:
+                            logger.debug(
+                                "[stream_tokens] Failed to record LLM request metrics: %s",
+                                metrics_error,
+                            )
+
                         # Reset for potential next LLM call (e.g., after tool execution)
                         llm_request_start_time = None
 
@@ -974,6 +1061,24 @@ class LangGraphAgentBuilder:
                 raise
 
         except Exception as e:
+            # Record failed LLM request to Prometheus metrics
+            if llm_request_start_time is not None:
+                try:
+                    from shared.prometheus.metrics.llm import get_llm_metrics
+
+                    total_time = time.perf_counter() - llm_request_start_time
+                    llm_metrics = get_llm_metrics()
+                    llm_metrics.observe_request(
+                        model=self._model_name,
+                        provider=self._provider,
+                        status="error",
+                        duration_seconds=total_time,
+                    )
+                except Exception as metrics_error:
+                    logger.debug(
+                        "[stream_tokens] Failed to record error metrics: %s",
+                        metrics_error,
+                    )
             logger.exception("Error in stream_tokens")
             raise
 

@@ -39,6 +39,7 @@ from app.api.ws.events import (
     TaskJoinPayload,
     TaskLeavePayload,
 )
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -252,6 +253,17 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
 
+        # Record Prometheus metrics for connection
+        if settings.PROMETHEUS_ENABLED:
+            try:
+                from shared.prometheus.middleware.socketio import (
+                    record_socketio_connection,
+                )
+
+                record_socketio_connection("/chat", "connected")
+            except Exception as e:
+                logger.debug(f"Failed to record WebSocket connection metrics: {e}")
+
     async def on_disconnect(self, sid: str):
         """
         Handle client disconnection.
@@ -273,6 +285,17 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.info(f"[WS] Disconnected user={user_id} sid={sid}")
         except Exception:
             logger.info(f"[WS] Disconnected sid={sid}")
+
+        # Record Prometheus metrics for disconnection
+        if settings.PROMETHEUS_ENABLED:
+            try:
+                from shared.prometheus.middleware.socketio import (
+                    record_socketio_connection,
+                )
+
+                record_socketio_connection("/chat", "disconnected")
+            except Exception as e:
+                logger.debug(f"Failed to record WebSocket disconnection metrics: {e}")
 
     # ============================================================
     # Task Room Events
