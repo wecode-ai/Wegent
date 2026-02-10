@@ -553,6 +553,10 @@ def _extract_rag_config_from_knowledge_base(
     summary_enabled = spec.get("summaryEnabled", False)
     if knowledge_base.namespace == "default":
         index_owner_user_id = current_user_id
+    elif knowledge_base.namespace == "organization":
+        # Organization KB - use current user's ID for index naming
+        # All users can access organization KBs, so we use the current user's ID
+        index_owner_user_id = current_user_id
     else:
         # Group KB - use creator's user_id for shared index
         index_owner_user_id = knowledge_base.user_id
@@ -1344,7 +1348,12 @@ async def update_document_content(
                     summary_enabled = spec.get("summaryEnabled", False)
                     if knowledge_base.namespace == "default":
                         index_owner_user_id = current_user.id
+                    elif knowledge_base.namespace == "organization":
+                        # Organization KB - use current user's ID for index naming
+                        # All users can access organization KBs, so we use the current user's ID
+                        index_owner_user_id = current_user.id
                     else:
+                        # Group KB - use creator's user_id for shared index
                         index_owner_user_id = knowledge_base.user_id
 
                     kb_index_info = KnowledgeBaseIndexInfo(

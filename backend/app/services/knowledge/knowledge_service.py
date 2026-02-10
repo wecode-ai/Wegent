@@ -784,12 +784,23 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
-        kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
+        # First, query the KB directly without permission check to determine namespace
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
-        # Check permission for organization knowledge base (admin only)
+        # Check permission based on namespace type
         if kb.namespace == "organization":
+            # Organization KB - admin only
             from app.models.user import User
 
             user = db.query(User).filter(User.id == user_id).first()
@@ -797,9 +808,12 @@ class KnowledgeService:
                 raise ValueError(
                     "Only admin can add documents to organization knowledge base"
                 )
-
-        # Check permission for team knowledge base
-        elif kb.namespace != "default":
+        elif kb.namespace == "default":
+            # Personal KB - only owner can add documents
+            if kb.user_id != user_id:
+                raise ValueError("Knowledge base not found or access denied")
+        else:
+            # Team/Group KB - check group permission
             if not check_group_permission(
                 db, user_id, kb.namespace, GroupRole.Maintainer
             ):
