@@ -34,41 +34,15 @@ logger = setup_logger("claude_response_processor")
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
 
-# Maximum retry count for error subtypes (error_during_execution, etc.)
-MAX_ERROR_SUBTYPE_RETRIES = 3
-
-# Retry message for resuming session - provide clear instruction for Claude to continue
-RETRY_CONTINUE_MESSAGE = "An error occurred during execution. Please continue from where you left off and complete the task."
-
 # Error patterns to detect API errors that need retry
 API_ERROR_PATTERNS = [
     "API Error: Cannot read properties of undefined",
     "API Error: undefined is not an object",
 ]
 
-# Error subtypes that can be retried by resuming session
-# These errors may be transient and can often be recovered by resuming
-RETRYABLE_ERROR_SUBTYPES = [
-    "error_during_execution",  # Transient errors during execution
-    # Note: error_max_turns is NOT included because it indicates the task
-    # is too complex and will likely hit the limit again after resume
-]
-
 
 def contains_api_error(text: str) -> bool:
     return any(pattern in text for pattern in API_ERROR_PATTERNS)
-
-
-def is_retryable_error_subtype(subtype: str) -> bool:
-    """Check if the error subtype is retryable by resuming session.
-
-    Args:
-        subtype: The error subtype from ResultMessage
-
-    Returns:
-        True if the error subtype can be retried
-    """
-    return subtype in RETRYABLE_ERROR_SUBTYPES
 
 
 async def process_response(
@@ -77,8 +51,7 @@ async def process_response(
     thinking_manager=None,
     task_state_manager=None,
     session_id: str = None,
-    error_subtype_retry_count: int = 0,
-) -> Union[TaskStatus, str, Tuple[str, str]]:
+) -> Union[TaskStatus, str]:
     """
     Process the response messages from Claude
 
@@ -88,18 +61,19 @@ async def process_response(
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
         task_state_manager: Optional TaskStateManager instance for checking cancellation
         session_id: Optional session ID for retry operations
-        error_subtype_retry_count: Current retry count for error subtypes (error_during_execution, etc.)
 
     Returns:
         TaskStatus: Processing status
-        str: "RETRY_RESIDUAL" if residual interrupt detected
-        Tuple[str, str]: ("RETRY_WITH_RESUME", session_id) if session should be resumed for retry
     """
     index = 0
     api_error_retry_count = 0  # Track retry count for this session
     # Track silent exit detection from UserMessage tool results
     silent_exit_detected = False
     silent_exit_reason = ""
+    # Track cancellation to continue processing SDK interrupt messages
+    cancellation_in_progress = False
+    # Track if we've seen SDK interrupt messages (for resume detection)
+    saw_sdk_interrupt_messages = False
     try:
         while True:
             retry_requested = False
@@ -108,6 +82,7 @@ async def process_response(
                 index += 1
 
                 # Check for cancellation before processing each message
+                # Also detect SDK interrupt messages (user cancelled via SDK)
                 if task_state_manager:
                     task_id = (
                         state_manager.task_data.get("task_id")
@@ -115,12 +90,34 @@ async def process_response(
                         else None
                     )
                     if task_id and task_state_manager.is_cancelled(task_id):
-                        logger.info(
-                            f"Task {task_id} cancelled during response processing"
-                        )
-                        if state_manager:
-                            state_manager.update_workbench_status("cancelled")
-                        return TaskStatus.CANCELLED
+                        if not cancellation_in_progress:
+                            logger.info(
+                                f"Task {task_id} cancelled during response processing - will continue processing SDK interrupt messages"
+                            )
+                            cancellation_in_progress = True
+                            if state_manager:
+                                # Mark as cancelling to block further RUNNING status reports
+                                state_manager.mark_cancelling()
+
+                        # Don't send progress callback here - wait until all SDK interrupt messages are processed
+                        # SDK will send: ToolResultBlock -> TextBlock -> ResultMessage (error_during_execution)
+                        # We'll send CANCELLED status in ResultMessage handler after all messages are processed
+
+                # Also detect SDK interrupt message (UserMessage with "[Request interrupted by user]")
+                if isinstance(msg, UserMessage):
+                    for block in msg.content:
+                        if (
+                            isinstance(block, TextBlock)
+                            and "[Request interrupted by user]" in block.text
+                        ):
+                            if not cancellation_in_progress:
+                                logger.info(
+                                    f"Detected SDK interrupt message - marking cancellation_in_progress=True"
+                                )
+                                cancellation_in_progress = True
+                                if state_manager:
+                                    state_manager.mark_cancelling()
+                            break
 
                 # Log the number of messages received
                 logger.info(f"claude message index: {index}, received: {msg}")
@@ -131,7 +128,9 @@ async def process_response(
 
                 elif isinstance(msg, UserMessage):
                     # Handle UserMessage and check for silent_exit in tool results
-                    is_silent, reason = _handle_user_message(msg, thinking_manager)
+                    is_silent, reason = _handle_user_message(
+                        msg, thinking_manager, state_manager
+                    )
                     if is_silent:
                         silent_exit_detected = True
                         silent_exit_reason = reason
@@ -145,6 +144,7 @@ async def process_response(
                     _handle_assistant_message(msg, state_manager, thinking_manager)
 
                 elif isinstance(msg, ResultMessage):
+
                     # Use specialized function to handle ResultMessage
                     current_session_id = msg.session_id or session_id
                     if msg.session_id:
@@ -179,8 +179,10 @@ async def process_response(
                         silent_exit_detected,
                         silent_exit_reason,
                         task_state_manager,
-                        error_subtype_retry_count,
+                        cancellation_in_progress,
+                        saw_sdk_interrupt_messages,
                     )
+
                     if result_status == "RETRY":
                         # Increment retry count and restart response stream for retry
                         api_error_retry_count += 1
@@ -189,20 +191,6 @@ async def process_response(
                             f"Retry initiated, restarting response stream for session {session_id}"
                         )
                         break
-                    elif result_status == "RETRY_RESIDUAL":
-                        # Return to caller to resend query
-                        return "RETRY_RESIDUAL"
-                    elif (
-                        isinstance(result_status, tuple)
-                        and result_status[0] == "RETRY_WITH_RESUME"
-                    ):
-                        # Return tuple to caller with actual Claude session_id for resume
-                        actual_session_id = result_status[1]
-                        logger.info(
-                            f"RETRY_WITH_RESUME requested for session {actual_session_id}, "
-                            f"retry count {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}"
-                        )
-                        return result_status  # Pass through the tuple
                     elif result_status:
                         return result_status
 
@@ -217,6 +205,24 @@ async def process_response(
     except Exception as e:
         logger.exception(f"Error processing response: {str(e)}")
 
+        # Check if this exception is due to user cancellation
+        # When client is interrupted/terminated, it raises an exception
+        # We should check task state before treating it as a failure
+        if task_state_manager and state_manager:
+            task_id = state_manager.task_data.get("task_id")
+            if task_id and task_state_manager.is_cancelled(task_id):
+                logger.info(
+                    f"Exception due to user cancellation for task {task_id}, "
+                    f"treating as CANCELLED not FAILED"
+                )
+                if state_manager:
+                    state_manager.set_task_status(TaskStatus.CANCELLED.value)
+
+                # Clean up task state
+                task_state_manager.cleanup(task_id)
+                return TaskStatus.CANCELLED
+
+        # Real error, not cancellation
         # Add thinking step for error
         if thinking_manager:
             thinking_manager.add_thinking_step_by_key(
@@ -225,7 +231,7 @@ async def process_response(
 
         # Update workbench status to failed
         if state_manager:
-            state_manager.update_workbench_status("failed")
+            state_manager.set_task_status(TaskStatus.FAILED.value)
 
             # Report error using state manager
             state_manager.report_progress(
@@ -257,6 +263,24 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
         f"SystemMessage: subtype = {msg.subtype}. msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
 
+    # Save Claude session ID from init message for future resume
+    # This ensures session can be resumed even if task is cancelled early
+    if msg.subtype == "init" and "session_id" in msg.data:
+        task_id = state_manager.task_data.get("task_id") if state_manager else None
+        if task_id:
+            try:
+                from executor.agents.claude_code.session_manager import SessionManager
+
+                claude_session_id = msg.data["session_id"]
+                SessionManager.save_session_id(task_id, claude_session_id)
+                logger.info(
+                    f"Saved Claude session_id {claude_session_id} from init message for task {task_id}"
+                )
+            except Exception as save_error:
+                logger.warning(
+                    f"Failed to save session ID from init message: {save_error}"
+                )
+
     if thinking_manager:
         thinking_manager.add_thinking_step(
             title="thinking.system_message_received",
@@ -266,12 +290,15 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
         )
 
 
-def _handle_user_message(msg: UserMessage, thinking_manager=None) -> tuple[bool, str]:
+def _handle_user_message(
+    msg: UserMessage, thinking_manager=None, state_manager=None
+) -> tuple[bool, str]:
     """处理用户消息，提取详细信息
 
     Args:
         msg: UserMessage to process
         thinking_manager: Optional ThinkingStepManager instance
+        state_manager: Optional ProgressStateManager instance
 
     Returns:
         Tuple of (silent_exit_detected, silent_exit_reason)
@@ -332,6 +359,16 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None) -> tuple[bool,
                 logger.info(f"UserMessage ToolUseBlock: tool = {block.name}")
 
             elif isinstance(block, TextBlock):
+                # Check if this is SDK interruption text block
+                if "[Request interrupted by user for tool use]" in block.text:
+                    logger.info(
+                        f"Skipping SDK interruption text block for task {state_manager.task_data.get('task_id') if state_manager else 'unknown'}"
+                    )
+                    saw_sdk_interrupt_messages = (
+                        True  # Mark that we saw interrupt messages
+                    )
+                    continue  # Skip this interruption message
+
                 # 文本内容详情，符合目标格式
                 text_detail = {"type": "text", "text": block.text}
                 message_details["message"]["content"].append(text_detail)
@@ -339,6 +376,17 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None) -> tuple[bool,
                 logger.info(f"UserMessage TextBlock: {len(block.text)} chars")
 
             elif isinstance(block, ToolResultBlock):
+                # Check if this is SDK interrupt error from previous cancellation
+                if block.is_error and "Request interrupted" in str(block.content):
+                    # This is expected on resume - skip this error block
+                    logger.info(
+                        f"Skipping SDK interrupt error on resume for task {state_manager.task_data.get('task_id') if state_manager else 'unknown'}"
+                    )
+                    saw_sdk_interrupt_messages = (
+                        True  # Mark that we saw interrupt messages
+                    )
+                    continue  # Skip processing this error block
+
                 # 工具结果详情，符合目标格式
                 result_detail = {
                     "type": "tool_result",
@@ -478,7 +526,7 @@ def _handle_assistant_message(
             text_detail = {"type": "text", "text": block.text}
             message_details["message"]["content"].append(text_detail)
 
-            state_manager.update_workbench_status("running", block.text)
+            state_manager.update_workbench_summary(block.text)
 
             logger.info(f"TextBlock: {len(block.text)} chars")
 
@@ -574,8 +622,9 @@ async def _process_result_message(
     propagated_silent_exit: bool = False,
     propagated_silent_exit_reason: str = "",
     task_state_manager=None,
-    error_subtype_retry_count: int = 0,
-) -> Union[TaskStatus, str, Tuple[str, str], None]:
+    cancellation_in_progress: bool = False,
+    saw_sdk_interrupt_messages: bool = False,
+) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
 
@@ -590,12 +639,10 @@ async def _process_result_message(
         propagated_silent_exit: Silent exit flag propagated from UserMessage tool results
         propagated_silent_exit_reason: Silent exit reason propagated from UserMessage tool results
         task_state_manager: Optional TaskStateManager for checking cancellation state
-        error_subtype_retry_count: Current retry count for error subtypes
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, CANCELLED, FAILED, or None)
-        str: "RETRY" if API error retry was initiated, "RETRY_RESIDUAL" if residual interrupt
-        Tuple[str, str]: ("RETRY_WITH_RESUME", session_id) if error subtype retry is needed
+        str: "RETRY" if API error retry was initiated
     """
 
     # Get stop_reason safely (may not exist in older SDK versions)
@@ -686,8 +733,8 @@ async def _process_result_message(
                         f"🔇 Adding silent_exit flag to result: reason={silent_exit_reason}"
                     )
 
-                # Update workbench status to completed
-                state_manager.update_workbench_status("completed")
+                # Update task status to completed
+                state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
                 # Report progress using state manager
                 state_manager.report_progress(
@@ -705,16 +752,16 @@ async def _process_result_message(
                         use_i18n_keys=True,
                     )
 
-                # Update workbench status to failed
-                state_manager.update_workbench_status("failed")
+                # Update task status to failed
+                state_manager.set_task_status(TaskStatus.FAILED.value)
 
                 # Report error using state manager
                 state_manager.report_progress(
                     progress=100, status=TaskStatus.FAILED.value, message=result_str
                 )
         else:
-            # Update workbench status to completed
-            state_manager.update_workbench_status("completed")
+            # Update task status to completed
+            state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
             # Report progress using state manager
             state_manager.report_progress(
@@ -787,8 +834,8 @@ async def _process_result_message(
                 details=masked_result_details,
             )
 
-        # Update workbench status to failed
-        state_manager.update_workbench_status("failed")
+        # Update task status to failed
+        state_manager.set_task_status(TaskStatus.FAILED.value)
 
         # Report error using state manager
         state_manager.report_progress(
@@ -809,117 +856,56 @@ async def _process_result_message(
             str(msg.result) if msg.result is not None else f"Task ended: {msg.subtype}"
         )
 
-        # Check if this is a residual message from a previous interrupted session
-        # When a session is interrupted and then reused, the first response may be
-        # the result of the previous interrupt, not a real error for the current request.
-        # Indicators of a residual interrupt message:
-        # - subtype is error_during_execution
-        # - result is None
-        # - usage tokens are all 0 (no actual API call was made for this)
-        is_residual_interrupt = False
-        if msg.subtype == "error_during_execution" and msg.result is None:
-            usage = msg.usage or {}
-            input_tokens = usage.get("input_tokens", 0)
-            output_tokens = usage.get("output_tokens", 0)
-            if input_tokens == 0 and output_tokens == 0:
-                is_residual_interrupt = True
-                logger.info(
-                    f"Detected residual interrupt message (usage tokens all 0), "
-                    f"this is likely from a previous cancelled session. "
-                    f"Returning None to continue processing."
-                )
+        # Check if this is resuming from an interrupted task
+        # When resuming from interruption, SDK may legitimately return error_during_execution
+        # Check both: 1) if we saw SDK interrupt messages in this cycle, OR 2) task state is INTERRUPTED
+        is_resuming_from_interruption = saw_sdk_interrupt_messages
 
-        if is_residual_interrupt:
-            # Residual interrupt message detected, need to resend query
-            logger.info(
-                "Returning RETRY_RESIDUAL to resend query after residual interrupt"
-            )
-            return "RETRY_RESIDUAL"
-
-        # Check if this is a user-initiated cancellation
-        # When user cancels, we get error_during_execution but it's not a real failure
-        is_user_cancellation = False
-        if task_state_manager and state_manager:
+        if not is_resuming_from_interruption and task_state_manager and state_manager:
             task_id = state_manager.task_data.get("task_id")
-            if task_id and task_state_manager.is_cancelled(task_id):
-                is_user_cancellation = True
+            if task_id:
+                from executor.tasks.task_state_manager import TaskState
+
+                task_state = task_state_manager.get_state(task_id)
+                if task_state == TaskState.INTERRUPTED:
+                    is_resuming_from_interruption = True
+                    logger.info(
+                        f"Task {task_id} resumed from interruption based on task state"
+                    )
+                    # Clear interrupted state and set to RUNNING
+                    task_state_manager.set_state(task_id, TaskState.RUNNING)
+
+        if is_resuming_from_interruption:
+            # This is expected - SDK is reporting the previous interruption
+            # Return SUCCESS to indicate initialization can continue
+            # The actual new message will be processed in execute phase
+            if state_manager:
+                task_id = state_manager.task_data.get("task_id")
+            logger.info(
+                f"Ignoring error_during_execution on resume for task {task_id}, returning SUCCESS"
+            )
+            return TaskStatus.SUCCESS
+
+        # Check if this is due to current cancellation (cancellation_in_progress flag)
+        # When user cancels during execution, SDK sends error_during_execution
+        # This is the final message in the interrupt sequence - we can now return CANCELLED
+        logger.info(
+            f"Checking cancellation status: cancellation_in_progress={cancellation_in_progress}, "
+            f"is_resuming={is_resuming_from_interruption}"
+        )
+        if cancellation_in_progress:
+            logger.info(
+                f"Task {task_id} error_during_execution due to current cancellation - marking as INTERRUPTED internally"
+            )
+            # Mark task as INTERRUPTED internally (preserve session for resumption)
+            if task_state_manager and task_id:
+                task_state_manager.set_interrupted(task_id)
                 logger.info(
-                    f"Task {task_id} error_during_execution is due to user cancellation, treating as CANCELLED"
+                    f"Task {task_id} marked as INTERRUPTED internally (session preserved for resumption)"
                 )
 
-        if is_user_cancellation:
-            # User cancelled the task, treat as CANCELLED not FAILED
-            if thinking_manager:
-                thinking_manager.add_thinking_step(
-                    title="thinking.task_cancelled",
-                    report_immediately=False,
-                    use_i18n_keys=True,
-                    details=masked_result_details,
-                )
-
-            # Update workbench status to cancelled
-            state_manager.update_workbench_status("cancelled")
-
-            # Report cancelled status
-            state_manager.report_progress(
-                progress=100,
-                status=TaskStatus.CANCELLED.value,
-                message="Task cancelled by user",
-            )
+            # Return CANCELLED to frontend (INTERRUPTED is internal state only)
             return TaskStatus.CANCELLED
-
-        # Check if this error subtype can be retried by resuming session
-        if (
-            is_retryable_error_subtype(msg.subtype)
-            and session_id
-            and error_subtype_retry_count < MAX_ERROR_SUBTYPE_RETRIES
-        ):
-            # Get actual Claude session ID (UUID) for resume
-            # msg.session_id is the Claude UUID, session_id parameter is our internal key
-            actual_claude_session_id = msg.session_id or session_id
-            logger.warning(
-                f"Retryable error subtype detected: {msg.subtype}, "
-                f"retry {error_subtype_retry_count + 1}/{MAX_ERROR_SUBTYPE_RETRIES}, "
-                f"internal_session={session_id}, claude_session={actual_claude_session_id}"
-            )
-
-            if thinking_manager:
-                thinking_manager.add_thinking_step(
-                    title="thinking.error_subtype_retry",
-                    report_immediately=True,
-                    use_i18n_keys=True,
-                    details={
-                        "error_subtype": msg.subtype,
-                        "retry_count": error_subtype_retry_count + 1,
-                        "max_retries": MAX_ERROR_SUBTYPE_RETRIES,
-                        "session_id": actual_claude_session_id,
-                    },
-                )
-
-            # Signal to caller that session should be resumed for retry
-            # Return tuple with Claude SDK's actual session_id (UUID) for proper resume
-            return ("RETRY_WITH_RESUME", actual_claude_session_id)
-
-        elif (
-            is_retryable_error_subtype(msg.subtype)
-            and error_subtype_retry_count >= MAX_ERROR_SUBTYPE_RETRIES
-        ):
-            logger.error(
-                f"Max error subtype retries ({MAX_ERROR_SUBTYPE_RETRIES}) reached "
-                f"for session {session_id}, error_subtype={msg.subtype}"
-            )
-            if thinking_manager:
-                thinking_manager.add_thinking_step(
-                    title="thinking.error_subtype_max_retries",
-                    report_immediately=True,
-                    use_i18n_keys=True,
-                    details={
-                        "error_subtype": msg.subtype,
-                        "retry_count": error_subtype_retry_count,
-                        "max_retries": MAX_ERROR_SUBTYPE_RETRIES,
-                        "session_id": session_id,
-                    },
-                )
 
         # Real error, treat as FAILED
         logger.error(
@@ -935,8 +921,8 @@ async def _process_result_message(
                 details=masked_result_details,
             )
 
-        # Update workbench status to failed
-        state_manager.update_workbench_status("failed")
+        # Update task status to failed
+        state_manager.set_task_status(TaskStatus.FAILED.value)
 
         # Report error using state manager
         state_manager.report_progress(

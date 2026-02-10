@@ -437,6 +437,9 @@ class Settings(BaseSettings):
     MEMORY_API_KEY: str = ""
     # Search timeout in seconds (to avoid blocking chat flow)
     MEMORY_TIMEOUT_SECONDS: float = 2.0
+    # Write timeout in seconds (for async background operations like add_memory)
+    # Can be longer since write operations don't block the main chat flow
+    MEMORY_WRITE_TIMEOUT_SECONDS: float = 10.0
     # Maximum number of memories to inject into system prompt
     MEMORY_MAX_RESULTS: int = 5
     # Number of recent messages to include as context when saving memory (default: 3 total)

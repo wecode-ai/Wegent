@@ -69,9 +69,10 @@ class TestKnowledgeBaseToolABC:
             # should raise TypeError
             IncompleteKnowledgeBaseTool()
 
-        assert "abstract method" in str(exc_info.value).lower() or "abstract" in str(
-            exc_info.value
-        ).lower()
+        assert (
+            "abstract method" in str(exc_info.value).lower()
+            or "abstract" in str(exc_info.value).lower()
+        )
 
     def test_should_persist_returns_true_when_both_set(self):
         """Test _should_persist returns True when user_subtask_id and knowledge_base_ids are set."""

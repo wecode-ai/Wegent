@@ -11,6 +11,7 @@ for all event types.
 """
 
 import asyncio
+import concurrent.futures
 import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
@@ -884,6 +885,8 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
     """
     Initialize the global WebSocket emitter.
 
+    This should be called during application startup from within an async context.
+
     Args:
         sio: Socket.IO server instance
 
@@ -893,19 +896,26 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
     global _ws_emitter, _main_event_loop
     _ws_emitter = WebSocketEmitter(sio)
 
-    # Capture the main event loop reference for use in synchronous contexts
+    # Capture the main event loop reference - only use get_running_loop()
+    # as get_event_loop() is deprecated in Python 3.10+
     try:
         _main_event_loop = asyncio.get_running_loop()
-        logger.info("WebSocket emitter initialized with main event loop reference")
+        logger.info(
+            "[WS_LOOP] WebSocket emitter initialized with main event loop reference"
+        )
     except RuntimeError:
-        # No running loop during initialization (shouldn't happen in normal startup)
-        try:
-            _main_event_loop = asyncio.get_event_loop()
-            logger.info(
-                "WebSocket emitter initialized with event loop (not running yet)"
-            )
-        except RuntimeError:
-            logger.warning("WebSocket emitter initialized without event loop reference")
+        # No running loop during initialization - this is expected if called
+        # before the async context starts. The loop will be set later.
+        logger.warning(
+            "[WS_LOOP] WebSocket emitter initialized without event loop reference "
+            "(will be set when async context starts)"
+        )
+
+    # Also set the main loop in async_utils for consistency
+    if _main_event_loop is not None:
+        from app.core.async_utils import set_main_event_loop
+
+        set_main_event_loop(_main_event_loop)
 
     return _ws_emitter
 
@@ -913,8 +923,7 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
 async def safe_emit_in_main_loop(
     emit_func: Callable[..., Any], *args: Any, **kwargs: Any
 ) -> None:
-    """
-    Safely execute an emit function in the main event loop.
+    """Safely execute an emit function in the main event loop.
 
     This function handles the case where the current event loop is different
     from the main event loop (which can happen when event handlers run in
@@ -929,29 +938,65 @@ async def safe_emit_in_main_loop(
     """
     global _main_event_loop
 
+    def _make_done_callback(
+        context: str,
+    ) -> Callable[["concurrent.futures.Future[Any]"], None]:
+        """Create a done callback that logs exceptions from the scheduled emit."""
+
+        def done_callback(future: "concurrent.futures.Future[Any]") -> None:
+            try:
+                future.result()
+            except Exception:
+                logger.warning(
+                    "[WS_LOOP] Emit failed in main loop (%s): %s",
+                    context,
+                    future.exception(),
+                )
+
+        return done_callback
+
+    # Try to get current running loop
     try:
         current_loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop, try to use main loop or execute directly
-        if _main_event_loop and _main_event_loop.is_running():
-            # Schedule in main loop without waiting (fire-and-forget)
-            asyncio.run_coroutine_threadsafe(
-                emit_func(*args, **kwargs), _main_event_loop
-            )
+        # No running loop, try to schedule in main loop
+        if _main_event_loop is not None and _main_event_loop.is_running():
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    emit_func(*args, **kwargs), _main_event_loop
+                )
+                future.add_done_callback(_make_done_callback("no current loop"))
+                logger.info("[WS_LOOP] Scheduled emit in main loop (no current loop)")
+            except Exception as e:
+                logger.warning("[WS_LOOP] Failed to schedule emit in main loop: %s", e)
             return
-        # Fallback: try direct execution (may fail if no loop)
-        await emit_func(*args, **kwargs)
+        # No main loop available, skip emit
+        logger.warning(
+            "[WS_LOOP] Cannot emit: no current loop and main loop not available"
+        )
         return
 
     # If we're already in the main loop, execute directly
     if _main_event_loop is None or current_loop is _main_event_loop:
-        await emit_func(*args, **kwargs)
+        try:
+            await emit_func(*args, **kwargs)
+        except Exception as e:
+            logger.warning("[WS_LOOP] Direct emit failed: %s", e)
         return
 
-    # We're in a different loop, schedule in main loop (fire-and-forget)
-    if _main_event_loop and _main_event_loop.is_running():
-        asyncio.run_coroutine_threadsafe(emit_func(*args, **kwargs), _main_event_loop)
+    # We're in a different loop, schedule in main loop
+    if _main_event_loop.is_running():
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                emit_func(*args, **kwargs), _main_event_loop
+            )
+            future.add_done_callback(_make_done_callback("cross-loop"))
+            logger.info("[WS_LOOP] Scheduled emit in main loop from different loop")
+        except Exception as e:
+            logger.warning("[WS_LOOP] Failed to schedule emit in main loop: %s", e)
     else:
-        # Main loop not running, execute in current loop (may fail with Redis)
-        # This is a fallback that may raise an exception
-        await emit_func(*args, **kwargs)
+        # Main loop not running, log warning and skip
+        # Don't try to execute in current loop as it will likely fail with Redis
+        logger.warning(
+            "[WS_LOOP] Main loop not running, skipping emit (would fail with Redis)"
+        )

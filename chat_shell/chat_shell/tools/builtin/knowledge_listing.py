@@ -19,8 +19,9 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
-from .knowledge_base_abc import KnowledgeBaseToolABC
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
+
+from .knowledge_base_abc import KnowledgeBaseToolABC
 
 logger = logging.getLogger(__name__)
 
@@ -476,7 +477,9 @@ class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
                         )
                 except Exception as e:
                     # Log but don't fail the tool response
-                    logger.warning(f"[KbHeadTool] Failed to persist kb_head result: {e}")
+                    logger.warning(
+                        f"[KbHeadTool] Failed to persist kb_head result: {e}"
+                    )
 
             return result
 
@@ -642,7 +645,9 @@ class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
                             "total_length": data.get("total_length", 0),
                             "returned_length": data.get("returned_length", 0),
                             "has_more": data.get("has_more", False),
-                            "kb_id": data.get("kb_id"),  # Include KB ID for persistence routing
+                            "kb_id": data.get(
+                                "kb_id"
+                            ),  # Include KB ID for persistence routing
                         }
                     )
 
@@ -804,9 +809,7 @@ class KbHeadTool(KnowledgeBaseToolABC, BaseTool):
                     )
 
         except Exception as e:
-            logger.warning(
-                f"[KbHeadTool] HTTP persist error for kb_id={kb_id}: {e}"
-            )
+            logger.warning(f"[KbHeadTool] HTTP persist error for kb_id={kb_id}: {e}")
 
     async def _persist_result(
         self,

@@ -19,6 +19,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserForm } from './add-user-form'
 import type { PermissionLevel } from '@/types/knowledge'
+import type { SearchUser } from '@/types/api'
 
 interface AddUserDialogProps {
   open: boolean
@@ -29,7 +30,7 @@ interface AddUserDialogProps {
 
 export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDialogProps) {
   const { t } = useTranslation('knowledge')
-  const [userName, setUserName] = useState('')
+  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
   const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>('view')
   const [localError, setLocalError] = useState<string | null>(null)
 
@@ -39,18 +40,23 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
     e?.preventDefault()
     setLocalError(null)
 
-    const trimmedUserName = userName.trim()
-    if (!trimmedUserName) {
+    if (selectedUsers.length === 0) {
+      setLocalError(t('document.permission.selectUser'))
+      return
+    }
+
+    const userName = selectedUsers[0].user_name
+    if (!userName.trim()) {
       setLocalError(t('document.permission.invalidUserName'))
       return
     }
 
     try {
-      await addPermission(trimmedUserName, permissionLevel)
+      await addPermission(userName, permissionLevel)
       onSuccess?.()
       onOpenChange(false)
       // Reset form
-      setUserName('')
+      setSelectedUsers([])
       setPermissionLevel('view')
     } catch (_err) {
       // Error is displayed from hook
@@ -58,7 +64,7 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
   }
 
   const handleClose = () => {
-    setUserName('')
+    setSelectedUsers([])
     setPermissionLevel('view')
     setLocalError(null)
     onOpenChange(false)
@@ -80,9 +86,9 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
           </DialogTitle>
         </DialogHeader>
         <AddUserForm
-          userName={userName}
+          selectedUsers={selectedUsers}
           permissionLevel={permissionLevel}
-          onUserNameChange={setUserName}
+          onSelectedUsersChange={setSelectedUsers}
           onPermissionLevelChange={setPermissionLevel}
           onSubmit={handleSubmit}
           error={displayError}
@@ -91,7 +97,12 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
           <Button type="button" variant="outline" onClick={handleClose}>
             {t('common:actions.cancel')}
           </Button>
-          <Button type="button" variant="primary" disabled={loading} onClick={handleAddClick}>
+          <Button
+            type="button"
+            variant="primary"
+            disabled={loading || selectedUsers.length === 0}
+            onClick={handleAddClick}
+          >
             {loading ? <Spinner className="w-4 h-4" /> : t('document.permission.add')}
           </Button>
         </DialogFooter>

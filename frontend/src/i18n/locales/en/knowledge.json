@@ -298,6 +298,8 @@
       "confirmRemove": "Are you sure you want to remove this user's access permission? This action cannot be undone.",
       "userName": "Username",
       "enterUserName": "Enter username",
+      "searchUserPlaceholder": "Search username or email...",
+      "selectUser": "Please select a user",
       "invalidUserName": "Please enter a valid username",
       "invalidShareLink": "Share link is invalid or expired",
       "noLinkToCopy": "No link to copy",
