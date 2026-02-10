@@ -12,6 +12,7 @@ from .base import Base
 from .enums import (
     ContextStatus,
     ContextType,
+    InjectionMode,
     SenderType,
     SubtaskRole,
     SubtaskStatus,
@@ -31,6 +32,7 @@ __all__ = [
     "SenderType",
     "ContextType",
     "ContextStatus",
+    "InjectionMode",
     # Models
     "Subtask",
     "SubtaskContext",

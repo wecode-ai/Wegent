@@ -2,6 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+Service for managing task sharing functionality.
+
+Uses the unified ResourceMember model instead of the legacy SharedTask table.
+"""
+
 import base64
 import logging
 import urllib.parse
@@ -16,7 +22,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.shared_task import SharedTask
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import PermissionLevel, ResourceType
 from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
@@ -35,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class SharedTaskService:
-    """Service for managing task sharing functionality"""
+    """Service for managing task sharing functionality using ResourceMember"""
 
     def __init__(self):
         # Initialize AES key and IV from settings (reuse team share settings)
@@ -660,34 +667,36 @@ class SharedTaskService:
 
         # Check if user already has any share record for this task (active or inactive)
         existing_share = (
-            db.query(SharedTask)
+            db.query(ResourceMember)
             .filter(
-                SharedTask.user_id == user_id,
-                SharedTask.original_task_id == share_info.task_id,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == share_info.task_id,
+                ResourceMember.user_id == user_id,
             )
             .first()
         )
 
-        # If there's an active share record, check if the copied task still exists
-        if existing_share and existing_share.is_active:
+        # If there's an approved share record, check if the copied task still exists
+        if existing_share and existing_share.status == MemberStatus.APPROVED:
             # Verify that the copied task still exists and is active
-            copied_task_check = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == existing_share.copied_task_id,
-                    TaskResource.user_id == user_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+            if existing_share.copied_resource_id > 0:
+                copied_task_check = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == existing_share.copied_resource_id,
+                        TaskResource.user_id == user_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            # If copied task still exists, cannot copy again
-            if copied_task_check:
-                raise HTTPException(
-                    status_code=400,
-                    detail="You have already copied this task",
-                )
+                # If copied task still exists, cannot copy again
+                if copied_task_check:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="You have already copied this task",
+                    )
 
         # Copy the task and all subtasks to new user
         copied_task = self._copy_task_with_subtasks(
@@ -708,23 +717,28 @@ class SharedTaskService:
         # Update existing share record or create new one
         if existing_share:
             # Reuse existing record to avoid unique constraint violation
-            existing_share.copied_task_id = copied_task.id
-            existing_share.is_active = True
+            existing_share.copied_resource_id = copied_task.id
+            existing_share.status = MemberStatus.APPROVED
             existing_share.updated_at = datetime.now()
-            shared_task = existing_share
+            resource_member = existing_share
         else:
-            # Create new share relationship record
-            shared_task = SharedTask(
+            # Create new share relationship record using ResourceMember
+            resource_member = ResourceMember(
+                resource_type=ResourceType.TASK,
+                resource_id=share_info.task_id,
                 user_id=user_id,
-                original_user_id=share_info.user_id,
-                original_task_id=share_info.task_id,
-                copied_task_id=copied_task.id,
-                is_active=True,
+                permission_level=PermissionLevel.MANAGE,
+                status=MemberStatus.APPROVED,
+                invited_by_user_id=share_info.user_id,
+                share_link_id=0,
+                reviewed_by_user_id=0,
+                copied_resource_id=copied_task.id,
+                requested_at=datetime.now(),
             )
-            db.add(shared_task)
+            db.add(resource_member)
 
         db.commit()
-        db.refresh(shared_task)
+        db.refresh(resource_member)
 
         return JoinSharedTaskResponse(
             message="Successfully copied shared task to your task list",
@@ -732,36 +746,56 @@ class SharedTaskService:
         )
 
     def get_user_shared_tasks(self, db: Session, user_id: int) -> List[SharedTaskInDB]:
-        """Get all shared tasks for a user"""
-        shared_tasks = (
-            db.query(SharedTask)
-            .filter(SharedTask.user_id == user_id, SharedTask.is_active == True)
+        """Get all shared tasks for a user using ResourceMember"""
+        resource_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.copied_resource_id > 0,  # Only entries with copied tasks
+            )
             .all()
         )
 
-        return [SharedTaskInDB.model_validate(task) for task in shared_tasks]
+        return [
+            SharedTaskInDB(
+                id=rm.id,
+                user_id=rm.user_id,
+                original_user_id=rm.invited_by_user_id,
+                original_task_id=rm.resource_id,
+                copied_task_id=(
+                    rm.copied_resource_id if rm.copied_resource_id > 0 else None
+                ),
+                is_active=True,
+                created_at=rm.created_at,
+                updated_at=rm.updated_at,
+            )
+            for rm in resource_members
+        ]
 
     def remove_shared_task(
         self, db: Session, user_id: int, original_task_id: int
     ) -> bool:
-        """Remove shared task relationship (soft delete)"""
-        shared_task = (
-            db.query(SharedTask)
+        """Remove shared task relationship (soft delete by setting status to rejected)"""
+        resource_member = (
+            db.query(ResourceMember)
             .filter(
-                SharedTask.user_id == user_id,
-                SharedTask.original_task_id == original_task_id,
-                SharedTask.is_active == True,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == original_task_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )
 
-        if not shared_task:
+        if not resource_member:
             raise HTTPException(
                 status_code=404, detail="Shared task relationship not found"
             )
 
-        shared_task.is_active = False
-        shared_task.updated_at = datetime.now()
+        resource_member.status = MemberStatus.REJECTED
+        resource_member.updated_at = datetime.now()
         db.commit()
 
         return True

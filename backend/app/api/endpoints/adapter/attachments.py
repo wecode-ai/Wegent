@@ -50,9 +50,10 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
 
     if not has_access and context.subtask_id > 0:
         # Check if user is a task owner or member
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
         from app.models.subtask import Subtask
         from app.models.task import TaskResource
-        from app.models.task_member import MemberStatus, TaskMember
 
         subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
         if subtask:
@@ -69,13 +70,14 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
             if task:
                 has_access = True
             else:
-                # Check if user is a task member
+                # Check if user is a task member using ResourceMember
                 task_member = (
-                    db.query(TaskMember)
+                    db.query(ResourceMember)
                     .filter(
-                        TaskMember.task_id == subtask.task_id,
-                        TaskMember.user_id == current_user.id,
-                        TaskMember.status == MemberStatus.ACTIVE,
+                        ResourceMember.resource_type == ResourceType.TASK,
+                        ResourceMember.resource_id == subtask.task_id,
+                        ResourceMember.user_id == current_user.id,
+                        ResourceMember.status == MemberStatus.APPROVED,
                     )
                     .first()
                 )
@@ -627,15 +629,17 @@ async def get_all_task_attachments(
         raise HTTPException(status_code=404, detail="Task not found")
 
     # Check if user is the task owner or a member
-    from app.models.task_member import MemberStatus, TaskMember
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
 
     is_owner = task.user_id == current_user.id
     is_member = (
-        db.query(TaskMember)
+        db.query(ResourceMember)
         .filter(
-            TaskMember.task_id == task_id,
-            TaskMember.user_id == current_user.id,
-            TaskMember.status == MemberStatus.ACTIVE,
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == task_id,
+            ResourceMember.user_id == current_user.id,
+            ResourceMember.status == MemberStatus.APPROVED,
         )
         .first()
         is not None

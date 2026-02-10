@@ -308,89 +308,12 @@ class AgentService:
                     f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel event: {result}"
                 )
 
-            # Clean up task state after cancel event is sent
-            # This allows next message to be processed without "Request interrupted" error
-            task_state_manager = TaskStateManager()
-            task_state_manager.cleanup(task_id)
-            logger.info(
-                f"[{_format_task_log(task_id, subtask_id)}] Cleaned up task state after cancel"
-            )
-
-            # Close agent client and remove session to free up slot
-            # This ensures the task_id is no longer reported in heartbeat
-            await self._cleanup_cancelled_session(task_id, session)
+            # DO NOT cleanup task state here - SDK interrupt messages still need to be processed
+            # State will be cleaned up in response_processor after all messages are processed
 
         except Exception as e:
-            logger.exception(f"[{task_id}] Error sending cancel event: {e}")
-            # Still attempt to cleanup task state and session on error
-            try:
-                task_state_manager = TaskStateManager()
-                task_state_manager.cleanup(task_id)
-                logger.info(
-                    f"[{_format_task_log(task_id, -1)}] Cleaned up task state after cancel error"
-                )
-                # Try to cleanup session even on error
-                session = self._agent_sessions.get(task_id)
-                if session:
-                    await self._cleanup_cancelled_session(task_id, session)
-            except Exception as cleanup_error:
-                logger.warning(
-                    f"[{task_id}] Failed to cleanup task state or session: {cleanup_error}"
-                )
-
-    async def _cleanup_cancelled_session(
-        self, task_id: int, session: AgentSession
-    ) -> None:
-        """
-        Clean up cancelled session by closing client and removing from session map.
-
-        This method is called after cancel event is sent to ensure:
-        1. Agent client connection is properly closed
-        2. Session is removed from _agent_sessions map
-        3. Task ID is no longer reported in heartbeat (freeing up device slot)
-
-        Args:
-            task_id: Task ID
-            session: Agent session to clean up
-        """
-        try:
-            agent = session.agent
-            agent_name = agent.get_name()
-
-            # Close client connection if agent supports it
-            if hasattr(agent, "close_client") and hasattr(agent, "session_id"):
-                session_id = getattr(agent, "session_id", None)
-                if session_id:
-                    logger.info(
-                        f"[{_format_task_log(task_id, -1)}] Closing {agent_name} client for session_id: {session_id}"
-                    )
-                    close_status = await agent.close_client(session_id)
-                    if close_status == TaskStatus.SUCCESS:
-                        logger.info(
-                            f"[{_format_task_log(task_id, -1)}] Successfully closed {agent_name} client"
-                        )
-                    else:
-                        logger.warning(
-                            f"[{_format_task_log(task_id, -1)}] Failed to close {agent_name} client"
-                        )
-                else:
-                    logger.warning(
-                        f"[{_format_task_log(task_id, -1)}] No session_id found for {agent_name} agent"
-                    )
-            else:
-                logger.debug(
-                    f"[{_format_task_log(task_id, -1)}] {agent_name} agent does not support close_client"
-                )
-
-            # Remove session from map to stop reporting in heartbeat
-            if task_id in self._agent_sessions:
-                del self._agent_sessions[task_id]
-                logger.info(
-                    f"[{_format_task_log(task_id, -1)}] Removed session from agent_sessions map"
-                )
-
-        except Exception as e:
-            logger.exception(f"[{task_id}] Error cleaning up cancelled session: {e}")
+            logger.exception(f"[{task_id}] Error sending cancel callback: {e}")
+            # DO NOT cleanup task state on error - let response_processor handle it
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         return [

@@ -55,7 +55,7 @@ class ShareLink(Base):
 
     # Resource identification (polymorphic association)
     resource_type = Column(
-        Enum(ResourceType),
+        String(50),
         nullable=False,
         comment="Resource type: Team, Task, KnowledgeBase",
     )
@@ -81,16 +81,19 @@ class ShareLink(Base):
         comment="Whether joining requires approval",
     )
     default_permission_level = Column(
-        Enum(PermissionLevel),
+        String(20),
         nullable=False,
-        default=PermissionLevel.VIEW,
+        default=PermissionLevel.VIEW.value,
+        server_default="view",
         comment="Default permission level: view, edit, manage",
     )
 
-    # Expiration
+    # Expiration - default to year 9999 for "never expires"
     expires_at = Column(
         DateTime,
         nullable=False,
+        default=datetime(9999, 12, 31, 23, 59, 59),
+        server_default="9999-12-31 23:59:59",
         comment="Expiration time (far future = never expires)",
     )
 

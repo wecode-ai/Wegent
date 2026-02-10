@@ -220,14 +220,16 @@ async def correct_response(
 
     if not task:
         # Check if user is a group chat member
-        from app.models.task_member import MemberStatus, TaskMember
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         member = (
-            db.query(TaskMember)
+            db.query(ResourceMember)
             .filter(
-                TaskMember.task_id == request.task_id,
-                TaskMember.user_id == current_user.id,
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == request.task_id,
+                ResourceMember.user_id == current_user.id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )
@@ -423,14 +425,16 @@ async def delete_correction(
 
     if not task:
         # Check if user is a group chat member
-        from app.models.task_member import MemberStatus, TaskMember
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         member = (
-            db.query(TaskMember)
+            db.query(ResourceMember)
             .filter(
-                TaskMember.task_id == subtask.task_id,
-                TaskMember.user_id == current_user.id,
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == subtask.task_id,
+                ResourceMember.user_id == current_user.id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )
@@ -495,14 +499,16 @@ async def apply_correction(
 
     if not task:
         # Check if user is a group chat member
-        from app.models.task_member import MemberStatus, TaskMember
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         member = (
-            db.query(TaskMember)
+            db.query(ResourceMember)
             .filter(
-                TaskMember.task_id == subtask.task_id,
-                TaskMember.user_id == current_user.id,
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == subtask.task_id,
+                ResourceMember.user_id == current_user.id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )

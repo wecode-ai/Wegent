@@ -279,11 +279,17 @@ class KnowledgeBaseQAService:
         try:
             type_data = context.type_data or {}
 
+            # Get sources from rag_result sub-object with legacy fallback
+            rag_result = type_data.get("rag_result", {})
+            sources = (
+                rag_result.get("sources") if rag_result else type_data.get("sources")
+            )
+
             # Parse type_data into KnowledgeBaseTypeData
             kb_type_data = KnowledgeBaseTypeData(
                 knowledge_id=type_data.get("knowledge_id"),
                 document_count=type_data.get("document_count"),
-                sources=type_data.get("sources"),
+                sources=sources,
             )
 
             return KnowledgeBaseResult(

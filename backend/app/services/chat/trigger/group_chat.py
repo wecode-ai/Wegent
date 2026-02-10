@@ -72,7 +72,8 @@ async def notify_group_members_task_updated(
         task: Task Kind object
         sender_user_id: User ID of the message sender (to exclude from notification)
     """
-    from app.models.task_member import MemberStatus, TaskMember
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
     from app.services.chat.ws_emitter import get_ws_emitter
 
     ws_emitter = get_ws_emitter()
@@ -83,12 +84,13 @@ async def notify_group_members_task_updated(
         return
 
     try:
-        # Get all active members of this group chat
+        # Get all active members of this group chat using ResourceMember
         members = (
-            db.query(TaskMember)
+            db.query(ResourceMember)
             .filter(
-                TaskMember.task_id == task.id,
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == task.id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()
         )

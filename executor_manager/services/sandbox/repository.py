@@ -11,7 +11,15 @@ Redis Data Structure:
 - Session Hash: wegent-sandbox-session:{task_id}
   - __sandbox__ field: Sandbox metadata JSON
   - {subtask_id} fields: Execution data JSON
+  - TTL: session_hash_ttl (longer than redis_ttl to ensure GC can load data)
 - Active Sandboxes ZSet: wegent-sandbox:active (score = last_activity timestamp)
+  - GC uses redis_ttl to determine which sandboxes are expired
+
+GC Design:
+- GC runs every GC_INTERVAL (default 3600s) to clean up expired sandboxes
+- Sandboxes are considered expired if last_activity > redis_ttl (default 86400s)
+- Session hash has TTL = session_hash_ttl = redis_ttl + GC_INTERVAL + buffer
+- This ensures GC can still load sandbox data even when it's marked as expired
 """
 
 import json
@@ -110,7 +118,8 @@ class SandboxRepository(metaclass=SingletonMeta):
             hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
             data = json.dumps(sandbox_info)
             self.redis_client.hset(hash_key, SANDBOX_FIELD_NAME, data)
-            self.redis_client.expire(hash_key, self._config.timeout.redis_ttl)
+            # Use session_hash_ttl (longer than redis_ttl) to ensure GC can load data
+            self.redis_client.expire(hash_key, self._config.timeout.session_hash_ttl)
 
             # Update active sandboxes ZSet with current timestamp
             self.redis_client.zadd(ACTIVE_SANDBOXES_ZSET, {str(task_id): time.time()})
@@ -337,7 +346,8 @@ class SandboxRepository(metaclass=SingletonMeta):
             )
 
             self.redis_client.hset(hash_key, field, data)
-            self.redis_client.expire(hash_key, self._config.timeout.redis_ttl)
+            # Use session_hash_ttl (longer than redis_ttl) to ensure GC can load data
+            self.redis_client.expire(hash_key, self._config.timeout.session_hash_ttl)
 
             # Only update ZSet timestamp for new executions (not status updates)
             # This ensures GC only considers "last new task time" for expiration
@@ -560,8 +570,9 @@ class SandboxRepository(metaclass=SingletonMeta):
 
         try:
             index_key = f"{E2B_SANDBOX_ID_INDEX_PREFIX}{e2b_sandbox_id}"
+            # Use session_hash_ttl to keep index alive as long as the session
             self.redis_client.setex(
-                index_key, self._config.timeout.redis_ttl, sandbox_id
+                index_key, self._config.timeout.session_hash_ttl, sandbox_id
             )
             logger.debug(
                 f"[SandboxRepository] Saved e2b index: {e2b_sandbox_id} -> {sandbox_id}"
