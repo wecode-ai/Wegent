@@ -227,7 +227,10 @@ async def _broadcast_device_slot_update(
             ],
         ).model_dump()
 
-        await sio.emit(
+        from app.services.chat.ws_emitter import safe_emit_in_main_loop
+
+        await safe_emit_in_main_loop(
+            sio.emit,
             "device:slot_update",
             event_data,
             room=f"user:{user_id}",

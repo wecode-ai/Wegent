@@ -42,6 +42,11 @@ class WebSocketEmitter:
         self.sio = sio
         self.namespace = namespace
 
+    async def _emit(self, event: str, data: Any, **kwargs: Any) -> None:
+        if "namespace" not in kwargs:
+            kwargs["namespace"] = self.namespace
+        await safe_emit_in_main_loop(self.sio.emit, event, data, **kwargs)
+
     # ============================================================
     # Chat Streaming Events (to task room)
     # ============================================================
@@ -64,7 +69,7 @@ class WebSocketEmitter:
             shell_type: Shell type for frontend display logic (default: "Chat")
             message_id: Optional message ID for ordering
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_START,
             {
                 "task_id": task_id,
@@ -120,7 +125,7 @@ class WebSocketEmitter:
         if result is not None:
             payload["result"] = result
 
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_CHUNK,
             payload,
             room=f"task:{task_id}",
@@ -145,7 +150,7 @@ class WebSocketEmitter:
             result: Optional result data
             message_id: Message ID for ordering (primary sort key)
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_DONE,
             {
                 "task_id": task_id,
@@ -189,7 +194,7 @@ class WebSocketEmitter:
         if message_id is not None:
             payload["message_id"] = message_id
 
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_ERROR,
             payload,
             room=f"task:{task_id}",
@@ -211,7 +216,7 @@ class WebSocketEmitter:
             task_id: Task ID
             subtask_id: Subtask ID
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_CANCELLED,
             {
                 "task_id": task_id,
@@ -250,7 +255,7 @@ class WebSocketEmitter:
             created_at: Message creation time
             skip_sid: Socket ID to exclude (sender)
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_MESSAGE,
             {
                 "subtask_id": subtask_id,
@@ -288,7 +293,7 @@ class WebSocketEmitter:
             content: Full response content
             result: Result data
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_BOT_COMPLETE,
             {
                 "task_id": task_id,
@@ -318,7 +323,7 @@ class WebSocketEmitter:
             content: Message content
             data: Optional additional data
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CHAT_SYSTEM,
             {
                 "task_id": task_id,
@@ -355,7 +360,7 @@ class WebSocketEmitter:
             team_name: Team name
             is_group_chat: Whether this is a group chat task
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.TASK_CREATED,
             {
                 "task_id": task_id,
@@ -378,7 +383,7 @@ class WebSocketEmitter:
             user_id: User ID
             task_id: Task ID
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.TASK_DELETED,
             {"task_id": task_id},
             room=f"user:{user_id}",
@@ -395,7 +400,7 @@ class WebSocketEmitter:
             task_id: Task ID
             title: New title
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.TASK_RENAMED,
             {"task_id": task_id, "title": title},
             room=f"user:{user_id}",
@@ -433,7 +438,7 @@ class WebSocketEmitter:
             # Auto-generate completed_at for terminal states if not provided
             payload["completed_at"] = datetime.now().isoformat()
 
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.TASK_STATUS,
             payload,
             room=f"user:{user_id}",
@@ -459,7 +464,7 @@ class WebSocketEmitter:
             title: Task title
             shared_by: Info about who shared the task
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.TASK_SHARED,
             {
                 "task_id": task_id,
@@ -491,7 +496,7 @@ class WebSocketEmitter:
             team_name: Team name
             invited_by: Info about who invited the user
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.TASK_INVITED,
             {
                 "task_id": task_id,
@@ -515,7 +520,7 @@ class WebSocketEmitter:
             user_id: User ID
             count: Unread count
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.UNREAD_COUNT,
             {"count": count},
             room=f"user:{user_id}",
@@ -538,7 +543,7 @@ class WebSocketEmitter:
             task_id: Task ID
             app: App data (name, address, previewUrl)
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.TASK_APP_UPDATE,
             {
                 "task_id": task_id,
@@ -580,7 +585,7 @@ class WebSocketEmitter:
             data=data,
         )
 
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.SKILL_REQUEST,
             payload.to_dict(),
             room=f"task:{task_id}",
@@ -609,7 +614,7 @@ class WebSocketEmitter:
             subtask_id: Subtask ID (AI message being corrected)
             correction_model: Model ID used for correction
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CORRECTION_START,
             {
                 "task_id": task_id,
@@ -639,7 +644,7 @@ class WebSocketEmitter:
             stage: Current stage (verifying_facts, evaluating, generating_improvement)
             tool_name: Optional tool name being used
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CORRECTION_PROGRESS,
             {
                 "task_id": task_id,
@@ -672,7 +677,7 @@ class WebSocketEmitter:
             content: Content chunk
             offset: Current offset
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CORRECTION_CHUNK,
             {
                 "task_id": task_id,
@@ -699,7 +704,7 @@ class WebSocketEmitter:
             subtask_id: Subtask ID
             result: Correction result data
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CORRECTION_DONE,
             {
                 "task_id": task_id,
@@ -725,7 +730,7 @@ class WebSocketEmitter:
             subtask_id: Subtask ID
             error: Error message
         """
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.CORRECTION_ERROR,
             {
                 "task_id": task_id,
@@ -811,7 +816,7 @@ class WebSocketEmitter:
             f"[WS] emit_flow_execution_update called: user={user_id} execution={execution_id} status={status} room=user:{user_id}"
         )
 
-        await self.sio.emit(
+        await self._emit(
             ServerEvents.FLOW_EXECUTION_UPDATE,
             payload,
             room=f"user:{user_id}",
@@ -845,7 +850,7 @@ class WebSocketEmitter:
             data: Event payload data
             skip_sid: Optional socket ID to exclude
         """
-        await self.sio.emit(
+        await self._emit(
             event_type,
             data,
             room=f"task:{task_id}",

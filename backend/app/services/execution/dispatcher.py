@@ -256,11 +256,13 @@ class ExecutionDispatcher:
             target: Execution target configuration
         """
         from app.core.socketio import get_sio
+        from app.services.chat.ws_emitter import safe_emit_in_main_loop
 
         sio = get_sio()
 
         # Send task to specified room
-        await sio.emit(
+        await safe_emit_in_main_loop(
+            sio.emit,
             target.event,
             request.to_dict(),
             room=target.room,
@@ -419,9 +421,11 @@ class ExecutionDispatcher:
             True if cancel request was sent successfully
         """
         from app.core.socketio import get_sio
+        from app.services.chat.ws_emitter import safe_emit_in_main_loop
 
         sio = get_sio()
-        await sio.emit(
+        await safe_emit_in_main_loop(
+            sio.emit,
             "task:cancel",
             {"task_id": request.task_id, "subtask_id": request.subtask_id},
             room=target.room,

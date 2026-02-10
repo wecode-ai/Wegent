@@ -61,6 +61,30 @@ def create_socketio_server() -> socketio.AsyncServer:
     return sio
 
 
+def reset_socketio_redis_manager(sio: socketio.AsyncServer) -> None:
+    """Reset Socket.IO AsyncRedisManager connection state.
+
+    Redis asyncio connections are bound to the event loop they were created in.
+    If any emit occurs in a different loop (e.g., a temporary loop created by
+    sync code), the manager can end up holding connections bound to the wrong
+    loop, leading to "Future attached to a different loop" / "Event loop is closed".
+
+    Resetting state forces the next emit to create fresh connections in the
+    current (main) loop.
+    """
+    mgr = getattr(sio, "manager", None)
+    if not isinstance(mgr, socketio.AsyncRedisManager):
+        return
+
+    try:
+        mgr.connected = False
+        mgr.redis = None
+        mgr.pubsub = None
+        logger.info("Socket.IO AsyncRedisManager state reset")
+    except Exception as e:
+        logger.warning("Failed to reset Socket.IO AsyncRedisManager state: %s", e)
+
+
 def create_socketio_app(sio: socketio.AsyncServer) -> socketio.ASGIApp:
     """
     Create ASGI app for Socket.IO.

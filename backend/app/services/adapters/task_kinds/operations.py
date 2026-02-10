@@ -1152,9 +1152,11 @@ class TaskOperationsMixin:
             )
 
             from app.core.socketio import get_sio
+            from app.services.chat.ws_emitter import safe_emit_in_main_loop
 
             sio = get_sio()
-            await sio.emit(
+            await safe_emit_in_main_loop(
+                sio.emit,
                 "task:close-session",
                 {"task_id": task_id},
                 room=device_room,

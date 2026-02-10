@@ -223,6 +223,9 @@ async def lifespan(app: FastAPI):
     from app.services.chat.ws_emitter import init_ws_emitter
 
     sio = get_sio()
+    from app.core.socketio import reset_socketio_redis_manager
+
+    reset_socketio_redis_manager(sio)
     init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 

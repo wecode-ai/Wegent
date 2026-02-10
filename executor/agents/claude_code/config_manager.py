@@ -17,6 +17,7 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from executor.config.config import get_wegent_mcp_url
 from shared.logger import setup_logger
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
@@ -277,8 +278,6 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
 
         # Add wegent MCP server for subscription tasks
         if task_data.get("is_subscription"):
-            from executor.mcp_servers.wegent.server import get_wegent_mcp_url
-
             wegent_mcp_url = get_wegent_mcp_url()
             wegent_mcp = {
                 "wegent": {

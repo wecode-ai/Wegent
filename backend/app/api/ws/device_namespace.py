@@ -1018,6 +1018,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         """Broadcast device:online event to user room via chat namespace."""
         from app.core.socketio import get_sio
         from app.schemas.device import DeviceStatusEnum
+        from app.services.chat.ws_emitter import safe_emit_in_main_loop
 
         sio = get_sio()
         event_data = DeviceOnlineEvent(
@@ -1026,7 +1027,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             status=DeviceStatusEnum.ONLINE,
         ).model_dump()
 
-        await sio.emit(
+        await safe_emit_in_main_loop(
+            sio.emit,
             "device:online",
             event_data,
             room=f"user:{user_id}",
@@ -1037,11 +1039,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
     async def _broadcast_device_offline(self, user_id: int, device_id: str) -> None:
         """Broadcast device:offline event to user room via chat namespace."""
         from app.core.socketio import get_sio
+        from app.services.chat.ws_emitter import safe_emit_in_main_loop
 
         sio = get_sio()
         event_data = DeviceOfflineEvent(device_id=device_id).model_dump()
 
-        await sio.emit(
+        await safe_emit_in_main_loop(
+            sio.emit,
             "device:offline",
             event_data,
             room=f"user:{user_id}",
@@ -1055,6 +1059,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         """Broadcast device:status event to user room via chat namespace."""
         from app.core.socketio import get_sio
         from app.schemas.device import DeviceStatusEnum
+        from app.services.chat.ws_emitter import safe_emit_in_main_loop
 
         sio = get_sio()
         # Convert string status to enum
@@ -1063,7 +1068,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_id=device_id, status=status_enum
         ).model_dump()
 
-        await sio.emit(
+        await safe_emit_in_main_loop(
+            sio.emit,
             "device:status",
             event_data,
             room=f"user:{user_id}",
@@ -1081,6 +1087,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         """
         from app.core.socketio import get_sio
         from app.schemas.device import DeviceRunningTask
+        from app.services.chat.ws_emitter import safe_emit_in_main_loop
 
         try:
             with _db_session() as db:
@@ -1098,7 +1105,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 ],
             ).model_dump()
 
-            await sio.emit(
+            await safe_emit_in_main_loop(
+                sio.emit,
                 "device:slot_update",
                 event_data,
                 room=f"user:{user_id}",

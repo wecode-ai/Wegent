@@ -52,6 +52,9 @@ dev = [
     "pytest-httpx>=0.36.0",
 ]
 
+[tool.uv.sources]
+wegent-shared = { path = "../shared", editable = true }
+
 [tool.setuptools]
 packages = ["executor_manager", "executor_manager.clients", "executor_manager.config", "executor_manager.executors", "executor_manager.executors.docker", "executor_manager.github", "executor_manager.models", "executor_manager.routers", "executor_manager.scheduler", "executor_manager.services", "executor_manager.tasks", "executor_manager.utils"]
 

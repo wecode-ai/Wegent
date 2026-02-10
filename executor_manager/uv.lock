@@ -510,7 +510,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=0.49.1" },
     { name = "uvicorn", specifier = "==0.38.0" },
     { name = "websocket-client", specifier = ">=1.9.0" },
-    { name = "wegent-shared", directory = "../shared" },
+    { name = "wegent-shared", editable = "../shared" },
 ]
 
 [package.metadata.requires-dev]
@@ -1627,7 +1627,7 @@ wheels = [
 [[package]]
 name = "wegent-shared"
 version = "1.0.0"
-source = { directory = "../shared" }
+source = { editable = "../shared" }
 dependencies = [
     { name = "asyncmy" },
     { name = "cryptography" },
