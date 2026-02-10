@@ -2,7 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.2.1
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
+
+# Install additional OpenCV dependencies for Docling table structure model
+# libxcb.so.1 is required by cv2 (opencv-python-headless)
+RUN dnf install -y libxcb-devel libXrender libXtst && dnf clean all
 
 # Set working directory
 WORKDIR /app

@@ -24,6 +24,7 @@ class SplitterType(str, Enum):
     SEMANTIC = "semantic"  # Semantic-based splitting using embeddings
     SENTENCE = "sentence"  # Sentence/text-based splitting with separators
     SMART = "smart"  # Smart splitting based on file type
+    DOCLING = "docling"  # Docling-based intelligent document parsing
 
 
 class SemanticSplitterConfig(BaseModel):
@@ -105,9 +106,66 @@ class SmartSplitterConfig(BaseModel):
         return v
 
 
+class DoclingPipelineConfig(BaseModel):
+    """Configuration for Docling-based intelligent document parsing.
+
+    DoclingReader provides advanced document parsing with support for
+    various formats (PDF, DOCX, PPTX, MD) with better structure
+    preservation compared to SimpleDirectoryReader.
+
+    Attributes:
+        type: Fixed value "docling" for config identification
+        export_type: Output format - "markdown" for general docs
+        ocr: Whether to enable OCR for scanned documents (default: False)
+        export_images: Whether to include base64 images in output (default: False)
+        heading_level_limit: Max heading level for MarkdownNodeParser (1-6, default: 3)
+        chunk_size: Maximum chunk size in characters (128-8192, default: 1024)
+        chunk_overlap: Number of characters to overlap between chunks (0-2048, default: 50)
+        file_extension: Original file extension for strategy selection
+    """
+
+    type: Literal["docling"] = "docling"
+    export_type: Literal["markdown"] = Field(
+        "markdown",
+        description="Export format: 'markdown' for general documents",
+    )
+    ocr: bool = Field(False, description="Enable OCR for scanned documents")
+    export_images: bool = Field(False, description="Include base64 images in output")
+    heading_level_limit: Optional[int] = Field(
+        3,
+        ge=1,
+        le=6,
+        description="Max heading level for MarkdownNodeParser (only for markdown export)",
+    )
+    chunk_size: int = Field(
+        1024, ge=128, le=8192, description="Maximum chunk size in characters"
+    )
+    chunk_overlap: int = Field(
+        50,
+        ge=0,
+        le=2048,
+        description="Number of characters to overlap between chunks",
+    )
+    file_extension: str = Field(
+        ...,
+        description="Original file extension (e.g., '.pdf', '.docx')",
+    )
+
+    @field_validator("chunk_overlap")
+    @classmethod
+    def validate_overlap(cls, v, info):
+        """Validate that chunk_overlap is less than chunk_size."""
+        chunk_size = info.data.get("chunk_size", 1024)
+        if v >= chunk_size:
+            raise ValueError(
+                f"chunk_overlap ({v}) must be less than chunk_size ({chunk_size})"
+            )
+        return v
+
+
 # Union type for splitter configuration
 SplitterConfig = Union[
-    SemanticSplitterConfig, SentenceSplitterConfig, SmartSplitterConfig
+    SemanticSplitterConfig, SentenceSplitterConfig, SmartSplitterConfig, DoclingPipelineConfig
 ]
 
 

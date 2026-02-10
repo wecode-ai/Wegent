@@ -7,21 +7,51 @@ Document indexing orchestration.
 """
 
 import logging
+import os
 import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from llama_index.core import Document, SimpleDirectoryReader
+from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
+from llama_index.core.schema import BaseNode
 
-from app.schemas.rag import SplitterConfig
-from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
+from app.schemas.rag import DoclingPipelineConfig, SplitterConfig
+from app.services.rag.splitter import SemanticSplitter, SentenceSplitter as SentenceSplitterClass, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
 from app.services.rag.storage.base import BaseStorageBackend
 from shared.telemetry.decorators import add_span_event
 
+# Lazy import for DoclingReader to avoid heavy dependency loading at module level
+# DoclingReader has large CUDA-related dependencies
+if TYPE_CHECKING:
+    from llama_index.readers.docling import DoclingReader
+
 logger = logging.getLogger(__name__)
+
+# File extensions supported by DoclingReader for intelligent document parsing
+# These file types will use DoclingReader + IngestionPipeline for better structure preservation
+DOCLING_EXTENSIONS = {".md", ".pdf", ".doc", ".docx", ".ppt", ".pptx"}
+
+
+def should_use_docling(file_extension: str) -> bool:
+    """
+    Determine if DoclingReader should be used for the given file type.
+
+    DoclingReader provides better structure preservation for complex documents
+    like PDF, DOCX, PPTX compared to SimpleDirectoryReader.
+
+    Args:
+        file_extension: File extension (e.g., '.pdf', '.docx')
+
+    Returns:
+        True if DoclingReader should be used for this file type, False otherwise
+    """
+    return file_extension.lower() in DOCLING_EXTENSIONS
+
 
 # Metadata keys to preserve during indexing
 # These are simple string/number fields that won't cause ES mapping conflicts
@@ -136,11 +166,12 @@ class DocumentIndexer:
         """
         Index a document from binary data (synchronous).
 
-        This method writes binary data to a temporary file and uses
-        SimpleDirectoryReader to parse it, leveraging LlamaIndex's
-        built-in document parsing capabilities for various file formats.
-
-        Supports MySQL and external storage (S3/MinIO) binary data.
+        This method supports two processing modes based on file type:
+        1. Docling mode (for .md, .pdf, .doc, .docx, .ppt, .pptx):
+           - Uses DoclingReader for intelligent document parsing
+           - Uses IngestionPipeline for structure-aware chunking
+        2. Standard mode (for .txt and other types):
+           - Uses SimpleDirectoryReader with existing splitter
 
         Args:
             knowledge_id: Knowledge base ID
@@ -154,10 +185,90 @@ class DocumentIndexer:
             Indexing result dict
 
         Raises:
-            Exception: If indexing fails
+            Exception: If indexing fails (including DoclingReader processing failure)
         """
-        # Write binary data to a temporary file for SimpleDirectoryReader
-        # This allows LlamaIndex to use its built-in parsers for various formats
+        logger.info(
+            f"Indexing document from binary: source_file={source_file}, "
+            f"extension={file_extension}, size={len(binary_data)} bytes"
+        )
+
+        # Determine processing mode based on file extension
+        if should_use_docling(file_extension):
+            # Use DoclingReader + IngestionPipeline for supported file types
+            logger.info(
+                f"Using DoclingReader for file type: {file_extension}"
+            )
+            documents, nodes, docling_config = self._process_with_docling(
+                binary_data=binary_data,
+                file_extension=file_extension,
+                source_file=source_file,
+            )
+            return self._index_documents(
+                documents=documents,
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                source_file=source_file,
+                pre_split_nodes=nodes,
+                docling_config=docling_config,
+                **kwargs,
+            )
+        else:
+            # Use standard SimpleDirectoryReader for other file types (.txt, etc.)
+            logger.info(
+                f"Using SimpleDirectoryReader for file type: {file_extension}"
+            )
+            return self._process_with_simple_reader(
+                binary_data=binary_data,
+                file_extension=file_extension,
+                source_file=source_file,
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                **kwargs,
+            )
+
+    def _process_with_docling(
+        self,
+        binary_data: bytes,
+        file_extension: str,
+        source_file: str,
+    ) -> Tuple[List[Document], List[BaseNode], DoclingPipelineConfig]:
+        """
+        Process document using DoclingReader and IngestionPipeline.
+
+        DoclingReader provides intelligent document parsing with better
+        structure preservation for complex documents (PDF, DOCX, PPTX, MD).
+
+        Args:
+            binary_data: File binary data
+            file_extension: File extension (e.g., '.pdf', '.docx')
+            source_file: Original filename
+
+        Returns:
+            Tuple of (documents, pre-split nodes, docling config)
+
+        Raises:
+            ImportError: If llama-index-readers-docling is not installed
+            RuntimeError: If DoclingReader processing fails
+        """
+        # Lazy import DoclingReader - will raise ImportError if not installed
+        try:
+            from llama_index.readers.docling import DoclingReader
+        except ImportError as e:
+            raise ImportError(
+                "llama-index-readers-docling is required but not installed. "
+                "Please install it with: pip install llama-index-readers-docling"
+            ) from e
+
+        # Import docling pipeline options for disabling layout and figure analysis
+        try:
+            from docling.datamodel.base_models import InputFormat
+        except ImportError as e:
+            raise ImportError(
+                "docling is required but not installed. "
+                "Please install it with: pip install docling"
+            ) from e
+
+        # Create temporary file for DoclingReader
         with tempfile.NamedTemporaryFile(
             suffix=file_extension, delete=False
         ) as tmp_file:
@@ -165,11 +276,126 @@ class DocumentIndexer:
             tmp_file_path = tmp_file.name
 
         try:
-            logger.info(
-                f"Indexing document from binary: source_file={source_file}, "
-                f"extension={file_extension}, size={len(binary_data)} bytes"
+            # General documents use Markdown export format
+            export_type = DoclingReader.ExportType.MARKDOWN
+            logger.info(f"Configuring DoclingReader with Markdown export for general document")
+
+            # Configure pipeline options for faster processing
+            # Note: Layout analysis cannot be disabled in StandardPdfPipeline (it's a core feature)
+            # The following options are disabled for performance:
+            # - do_ocr=False: Disable OCR (we set this via DoclingReader.ocr=False as well)
+        
+
+            reader = DoclingReader(
+                export_type=export_type,
+                ocr=False,  # OCR disabled per requirement
+                export_images=False,  # Image export disabled per requirement
             )
 
+            # Load documents using DoclingReader
+            try:
+                documents = reader.load_data(file_path=tmp_file_path)
+            except Exception as e:
+                # Re-raise with detailed error information
+                raise RuntimeError(
+                    f"DoclingReader failed to process file: "
+                    f"filename={source_file}, "
+                    f"extension={file_extension}, "
+                    f"error={str(e)}"
+                ) from e
+
+            if not documents:
+                raise RuntimeError(
+                    f"DoclingReader returned no documents: "
+                    f"filename={source_file}, extension={file_extension}"
+                )
+
+            # Update document metadata with original filename
+            filename_without_ext = Path(source_file).stem
+            for doc in documents:
+                doc.metadata["filename"] = filename_without_ext
+                doc.metadata = sanitize_metadata(doc.metadata)
+
+            # General documents: Two-stage pipeline (Markdown + Sentence)
+            heading_level_limit = 3
+            pipeline = IngestionPipeline(
+                transformations=[
+                    # Stage 1: Split by Markdown heading structure
+                    MarkdownNodeParser(
+                        include_metadata=True,
+                        include_prev_next_rel=True,
+                    ),
+                    # Stage 2: Further split large chunks by sentence
+                    SentenceSplitter(
+                        chunk_size=1024,
+                        chunk_overlap=50,
+                    ),
+                ]
+            )
+            logger.info(
+                "Configured Markdown pipeline with heading_level_limit=3, "
+                "chunk_size=1024, chunk_overlap=50"
+            )
+
+            # Execute pipeline to get split nodes
+            nodes = pipeline.run(documents=documents)
+            logger.info(f"DoclingReader pipeline produced {len(nodes)} nodes")
+
+            # Build config for database storage
+            docling_config = DoclingPipelineConfig(
+                type="docling",
+                export_type="markdown",
+                ocr=False,
+                export_images=False,
+                heading_level_limit=heading_level_limit,
+                chunk_size=1024,
+                chunk_overlap=50,
+                file_extension=file_extension,
+            )
+
+            return documents, nodes, docling_config
+
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(tmp_file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary file {tmp_file_path}: {e}")
+
+    def _process_with_simple_reader(
+        self,
+        binary_data: bytes,
+        file_extension: str,
+        source_file: str,
+        knowledge_id: str,
+        doc_ref: str,
+        **kwargs,
+    ) -> Dict:
+        """
+        Process document using SimpleDirectoryReader (original logic).
+
+        This method maintains backward compatibility for file types not
+        supported by DoclingReader (e.g., .txt).
+
+        Args:
+            binary_data: File binary data
+            file_extension: File extension
+            source_file: Original filename
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID
+            **kwargs: Additional parameters
+
+        Returns:
+            Indexing result dict
+        """
+        # Write binary data to temporary file
+        with tempfile.NamedTemporaryFile(
+            suffix=file_extension, delete=False
+        ) as tmp_file:
+            tmp_file.write(binary_data)
+            tmp_file_path = tmp_file.name
+
+        try:
             # Load document using SimpleDirectoryReader
             documents = SimpleDirectoryReader(input_files=[tmp_file_path]).load_data()
 
@@ -198,6 +424,8 @@ class DocumentIndexer:
         knowledge_id: str,
         doc_ref: str,
         source_file: str,
+        pre_split_nodes: Optional[List[BaseNode]] = None,
+        docling_config: Optional[DoclingPipelineConfig] = None,
         **kwargs,
     ) -> Dict:
         """
@@ -208,6 +436,9 @@ class DocumentIndexer:
             knowledge_id: Knowledge base ID
             doc_ref: Document reference ID
             source_file: Source filename
+            pre_split_nodes: Optional pre-split nodes from DoclingReader pipeline.
+                            If provided, skips internal splitter processing.
+            docling_config: Optional DoclingPipelineConfig for metadata storage
             **kwargs: Additional parameters
 
         Returns:
@@ -228,20 +459,30 @@ class DocumentIndexer:
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
 
-        # Split documents into nodes
-        nodes = self.splitter.split_documents(documents)
+        # Use pre-split nodes if available (from DoclingReader pipeline),
+        # otherwise split documents using the configured splitter
+        if pre_split_nodes is not None:
+            nodes = pre_split_nodes
+            splitter_type_name = "DoclingPipeline"
+            logger.info(
+                f"Using pre-split nodes from {splitter_type_name}: {len(nodes)} nodes"
+            )
+        else:
+            nodes = self.splitter.split_documents(documents)
+            splitter_type_name = type(self.splitter).__name__
+
         add_span_event(
             "rag.indexer.documents.split",
             {
                 "knowledge_id": knowledge_id,
                 "doc_ref": doc_ref,
                 "node_count": str(len(nodes)),
-                "splitter_type": type(self.splitter).__name__,
+                "splitter_type": splitter_type_name,
             },
         )
 
         # Build chunk metadata for storage in database
-        chunks_data = self._build_chunks_metadata(nodes)
+        chunks_data = self._build_chunks_metadata(nodes, docling_config=docling_config)
 
         # Prepare metadata
         created_at = datetime.now(timezone.utc).isoformat()
@@ -288,14 +529,23 @@ class DocumentIndexer:
             }
         )
 
+        # Include splitter config for database storage if using Docling
+        if docling_config is not None:
+            result["splitter_config"] = docling_config.model_dump()
+
         return result
 
-    def _build_chunks_metadata(self, nodes: List) -> Dict[str, Any]:
+    def _build_chunks_metadata(
+        self,
+        nodes: List,
+        docling_config: Optional[DoclingPipelineConfig] = None,
+    ) -> Dict[str, Any]:
         """
         Build chunk metadata from nodes for storage in database.
 
         Args:
             nodes: List of nodes from splitter
+            docling_config: Optional DoclingPipelineConfig if using Docling processing
 
         Returns:
             Dictionary with chunk metadata suitable for JSON storage
@@ -322,15 +572,20 @@ class DocumentIndexer:
 
             current_position += text_length
 
-        # Get splitter type info
-        splitter_type = "semantic"  # default
-        splitter_subtype = None
-
-        if isinstance(self.splitter, SmartSplitter):
+        # Determine splitter type info based on processing mode
+        if docling_config is not None:
+            # Docling processing mode
+            splitter_type = "docling"
+            splitter_subtype = "markdown_pipeline"
+        elif isinstance(self.splitter, SmartSplitter):
             splitter_type = "smart"
             splitter_subtype = self.splitter._get_subtype()
-        elif isinstance(self.splitter, SentenceSplitter):
+        elif isinstance(self.splitter, SentenceSplitterClass):
             splitter_type = "sentence"
+            splitter_subtype = None
+        else:
+            splitter_type = "semantic"  # default
+            splitter_subtype = None
 
         return {
             "items": items,
