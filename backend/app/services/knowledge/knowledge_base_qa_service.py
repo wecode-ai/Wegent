@@ -281,7 +281,9 @@ class KnowledgeBaseQAService:
 
             # Get sources from rag_result sub-object with legacy fallback
             rag_result = type_data.get("rag_result", {})
-            sources = rag_result.get("sources") if rag_result else type_data.get("sources")
+            sources = (
+                rag_result.get("sources") if rag_result else type_data.get("sources")
+            )
 
             # Parse type_data into KnowledgeBaseTypeData
             kb_type_data = KnowledgeBaseTypeData(
