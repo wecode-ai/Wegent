@@ -67,7 +67,20 @@
     "loading_diff_message": "Loading diff...",
     "no_changes_between_branches": "No changes found between branches",
     "execution_timeline": "Execution Timeline",
-    "no_repository": "This task is not associated with a code repository"
+    "no_repository": "This task is not associated with a code repository",
+    "workspace_files": {
+      "loading": "Loading workspace files...",
+      "error_title": "Unable to load files",
+      "container_stopped_title": "Container Not Running",
+      "container_stopped": "The execution environment has stopped. Files are only available while the executor is active.",
+      "network_error": "Network error. Please check your connection and try again.",
+      "no_files": "No files generated yet",
+      "file_count": "{{count}} files",
+      "file_count_one": "{{count}} file",
+      "download_all": "Download All",
+      "downloading": "Downloading...",
+      "too_many_files": "File list limited to 1000 items. Use \"Download All\" to get all files."
+    }
   },
   "thinking": {
     "execution_completed": "Execution Completed",

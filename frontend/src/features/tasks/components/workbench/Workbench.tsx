@@ -26,6 +26,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, BranchDiffResponse } from '@/apis/tasks'
 import DiffViewer from '../message/DiffViewer'
+import WorkspaceFiles from './WorkspaceFiles'
 import { TaskApp } from '@/types/api'
 
 // Tool icon mapping
@@ -931,10 +932,19 @@ export default function Workbench({
                   // Files Changed Tab - with integrated diff support
                   <>
                     {!hasRepository ? (
-                      // No repository - show friendly message
-                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                        <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
-                      </div>
+                      // No repository - show workspace files from executor container
+                      (() => {
+                        const taskId = taskNumber
+                          ? parseInt(taskNumber.replace('#', ''), 10)
+                          : NaN
+                        return !Number.isNaN(taskId) ? (
+                          <WorkspaceFiles taskId={taskId} />
+                        ) : (
+                          <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                            <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
+                          </div>
+                        )
+                      })()
                     ) : isDiffLoading ? (
                       // Loading diff data
                       <div className="flex items-center justify-center h-64">
