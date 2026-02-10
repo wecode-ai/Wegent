@@ -67,7 +67,18 @@
     "loading_diff_message": "Loading diff...",
     "no_changes_between_branches": "No changes found between branches",
     "execution_timeline": "Execution Timeline",
-    "no_repository": "This task is not associated with a code repository"
+    "no_repository": "This task is not associated with a code repository",
+    "workspace_files": {
+      "title": "Workspace Files",
+      "loading": "Loading files...",
+      "no_files": "No files generated",
+      "download_all": "Download All",
+      "downloading": "Packaging...",
+      "refresh": "Refresh",
+      "error_title": "Failed to load files",
+      "container_stopped": "Container Stopped",
+      "container_stopped_hint": "The task execution environment has been shut down. File list is no longer available. Please re-run the task if you need to access the generated files."
+    }
   },
   "thinking": {
     "execution_completed": "Execution Completed",

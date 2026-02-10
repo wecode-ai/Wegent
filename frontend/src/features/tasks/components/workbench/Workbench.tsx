@@ -27,6 +27,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, BranchDiffResponse } from '@/apis/tasks'
 import DiffViewer from '../message/DiffViewer'
 import { TaskApp } from '@/types/api'
+import WorkspaceFileViewer from './WorkspaceFileViewer'
 
 // Tool icon mapping
 const TOOL_ICONS: Record<string, string> = {
@@ -108,6 +109,7 @@ interface WorkbenchProps {
   isLoading?: boolean
   taskTitle?: string
   taskNumber?: string
+  taskId?: number
   thinking?: Array<{
     title: string
     next_action: string
@@ -199,6 +201,7 @@ export default function Workbench({
   isLoading: _isLoading = false,
   taskTitle,
   taskNumber,
+  taskId,
   thinking,
   app,
 }: WorkbenchProps) {
@@ -931,10 +934,14 @@ export default function Workbench({
                   // Files Changed Tab - with integrated diff support
                   <>
                     {!hasRepository ? (
-                      // No repository - show friendly message
-                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                        <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
-                      </div>
+                      // No repository - show workspace files from executor container
+                      taskId ? (
+                        <WorkspaceFileViewer taskId={taskId} />
+                      ) : (
+                        <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                          <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
+                        </div>
+                      )
                     ) : isDiffLoading ? (
                       // Loading diff data
                       <div className="flex items-center justify-center h-64">

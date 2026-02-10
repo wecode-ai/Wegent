@@ -684,3 +684,59 @@ def delete_task_services(
     db.refresh(task)
 
     return {"app": app_data}
+
+
+# =============================================================================
+# Workspace Files Endpoints (for no-repository mode)
+# =============================================================================
+
+
+@router.get("/{task_id}/workspace/files")
+async def get_workspace_files(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get list of files in the task's workspace directory.
+
+    This endpoint is for tasks without an associated git repository.
+    Files are retrieved from the executor container's workspace directory.
+
+    Returns a tree structure with directories and files,
+    excluding common temporary and generated directories.
+    """
+    from app.services.workspace_files import workspace_files_service
+
+    return await workspace_files_service.get_workspace_files(
+        db=db, task_id=task_id, user_id=current_user.id
+    )
+
+
+@router.get("/{task_id}/workspace/download")
+async def download_workspace_files(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Download workspace files as a ZIP archive.
+
+    This endpoint packages all files in the task's workspace directory
+    into a ZIP file for download. Excludes common temporary and
+    generated directories (node_modules, .git, etc.).
+
+    Returns:
+        StreamingResponse with ZIP file
+    """
+    from app.services.workspace_files import workspace_files_service
+
+    zip_content, filename = await workspace_files_service.download_workspace_zip(
+        db=db, task_id=task_id, user_id=current_user.id
+    )
+
+    return StreamingResponse(
+        io.BytesIO(zip_content),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

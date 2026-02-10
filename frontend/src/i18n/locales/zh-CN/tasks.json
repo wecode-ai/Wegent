@@ -63,7 +63,18 @@
     "loading_diff_message": "加载中...",
     "no_changes_between_branches": "分支之间未发现变更",
     "execution_timeline": "执行时间线",
-    "no_repository": "该任务未关联代码仓库"
+    "no_repository": "该任务未关联代码仓库",
+    "workspace_files": {
+      "title": "工作区文件",
+      "loading": "正在加载文件列表...",
+      "no_files": "暂无生成的文件",
+      "download_all": "打包下载",
+      "downloading": "正在打包...",
+      "refresh": "刷新",
+      "error_title": "获取文件列表失败",
+      "container_stopped": "容器已停止",
+      "container_stopped_hint": "任务执行环境已关闭，无法获取文件列表。如需获取生成的文件，请重新运行任务。"
+    }
   },
   "thinking": {
     "execution_completed": "执行完成",
