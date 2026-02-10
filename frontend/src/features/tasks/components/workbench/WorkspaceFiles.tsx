@@ -96,11 +96,11 @@ function getFileIcon(filename: string): string {
 }
 
 function formatFileSize(bytes: number | undefined): string {
-  if (bytes === undefined || bytes === null) return ''
+  if (bytes === undefined || bytes === null || bytes < 0) return ''
   if (bytes === 0) return '0 B'
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
@@ -117,8 +117,8 @@ function FileTreeNode({ file, level, defaultExpanded = false }: FileTreeNodeProp
   return (
     <div>
       <div
-        className={`flex items-center gap-1 py-1 px-2 rounded-md hover:bg-muted transition-colors cursor-pointer text-sm ${
-          level === 0 ? '' : 'ml-4'
+        className={`flex items-center gap-1 py-1 px-2 rounded-md transition-colors text-sm ${
+          isDirectory ? 'cursor-pointer hover:bg-muted' : ''
         }`}
         onClick={() => isDirectory && setIsExpanded(!isExpanded)}
         style={{ paddingLeft: `${level * 16 + 8}px` }}

@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, with_task_telemetry
@@ -689,9 +690,6 @@ def delete_task_services(
 # ============================================================================
 # Workspace Files API - for "no repository mode" file display and download
 # ============================================================================
-
-
-from pydantic import BaseModel
 
 
 class WorkspaceFile(BaseModel):

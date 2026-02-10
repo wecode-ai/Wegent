@@ -258,7 +258,10 @@ def register_rest_api(app: FastAPI):
         return False
 
     def build_file_tree(
-        root_path: Path, relative_base: str = "", max_files: int = 1000
+        root_path: Path,
+        relative_base: str = "",
+        max_files: int = 1000,
+        max_depth: int = 20,
     ) -> tuple[list[WorkspaceFile], int, int]:
         """
         Recursively build a file tree from a directory.
@@ -267,6 +270,7 @@ def register_rest_api(app: FastAPI):
             root_path: The root directory path
             relative_base: The relative path from workspace root
             max_files: Maximum number of files to return
+            max_depth: Maximum recursion depth to prevent infinite symlink loops
 
         Returns:
             Tuple of (file list, total file count, total size in bytes)
@@ -274,6 +278,10 @@ def register_rest_api(app: FastAPI):
         files: list[WorkspaceFile] = []
         total_files = 0
         total_size = 0
+
+        # Prevent infinite recursion
+        if max_depth <= 0:
+            return files, total_files, total_size
 
         try:
             entries = sorted(
@@ -292,6 +300,10 @@ def register_rest_api(app: FastAPI):
             name = entry.name
             is_dir = entry.is_dir()
 
+            # Skip symlinks to prevent infinite loops
+            if entry.is_symlink():
+                continue
+
             # Skip excluded items
             if should_exclude(name, is_dir):
                 continue
@@ -301,7 +313,7 @@ def register_rest_api(app: FastAPI):
             if is_dir:
                 # Recursively build children
                 children, child_count, child_size = build_file_tree(
-                    entry, relative_path, max_files - total_files
+                    entry, relative_path, max_files - total_files, max_depth - 1
                 )
                 total_files += child_count
                 total_size += child_size
@@ -416,9 +428,15 @@ def register_rest_api(app: FastAPI):
             zip_buffer = io.BytesIO()
 
             def add_files_to_zip(
-                zipf: zipfile.ZipFile, dir_path: Path, arc_prefix: str = ""
+                zipf: zipfile.ZipFile,
+                dir_path: Path,
+                arc_prefix: str = "",
+                max_depth: int = 20,
             ):
                 """Recursively add files to ZIP archive"""
+                if max_depth <= 0:
+                    return
+
                 try:
                     entries = sorted(dir_path.iterdir())
                 except PermissionError:
@@ -431,6 +449,10 @@ def register_rest_api(app: FastAPI):
                     name = entry.name
                     is_dir = entry.is_dir()
 
+                    # Skip symlinks to prevent infinite loops
+                    if entry.is_symlink():
+                        continue
+
                     # Skip excluded items
                     if should_exclude(name, is_dir):
                         continue
@@ -438,7 +460,7 @@ def register_rest_api(app: FastAPI):
                     arc_name = f"{arc_prefix}/{name}" if arc_prefix else name
 
                     if is_dir:
-                        add_files_to_zip(zipf, entry, arc_name)
+                        add_files_to_zip(zipf, entry, arc_name, max_depth - 1)
                     else:
                         try:
                             zipf.write(entry, arc_name)

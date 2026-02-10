@@ -933,13 +933,18 @@ export default function Workbench({
                   <>
                     {!hasRepository ? (
                       // No repository - show workspace files from executor container
-                      taskNumber ? (
-                        <WorkspaceFiles taskId={parseInt(taskNumber.replace('#', ''), 10)} />
-                      ) : (
-                        <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                          <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
-                        </div>
-                      )
+                      (() => {
+                        const taskId = taskNumber
+                          ? parseInt(taskNumber.replace('#', ''), 10)
+                          : NaN
+                        return !Number.isNaN(taskId) ? (
+                          <WorkspaceFiles taskId={taskId} />
+                        ) : (
+                          <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                            <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
+                          </div>
+                        )
+                      })()
                     ) : isDiffLoading ? (
                       // Loading diff data
                       <div className="flex items-center justify-center h-64">
