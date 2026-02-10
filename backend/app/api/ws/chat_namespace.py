@@ -799,6 +799,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
                 )
+                # Note: knowledge_base_ids is no longer passed separately.
+                # The unified context processing in trigger_ai_response_unified will
+                # retrieve both attachments and knowledge bases from the
+                # user_subtask's associated contexts.
 
                 # Refresh objects to load all attributes before making them transient
                 # This ensures all lazy-loaded attributes are loaded from the database
@@ -813,10 +817,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                 make_transient(assistant_subtask)
                 make_transient(user)
 
-                # Extract user_subtask_id before closing session
+                # Extract user_subtask_id and device_id before closing session
                 user_subtask_id_for_context = (
                     user_subtask_for_context.id if user_subtask_for_context else None
                 )
+                device_id = payload.device_id
 
                 # Create async task for AI response - don't await it
                 # This ensures the ACK is returned before chat:start is sent
@@ -830,6 +835,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             message=payload.message,  # Original message
                             payload=payload,
                             task_room=task_room,
+                            device_id=device_id,
                             namespace=self,
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
@@ -1443,6 +1449,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 is_group_chat=False,
             )
 
+            device_id = get_device_id(task)
             # Trigger AI response using unified trigger
             task_room = f"task:{payload.task_id}"
             await trigger_ai_response_unified(
@@ -1453,6 +1460,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=user_subtask.prompt or "",
                 payload=retry_payload,
                 task_room=task_room,
+                device_id=device_id,
                 namespace=self,
                 user_subtask_id=user_subtask.id,  # Pass user subtask ID for unified context processing
             )
@@ -1713,3 +1721,8 @@ def register_chat_namespace(sio: socketio.AsyncServer):
     chat_ns = ChatNamespace("/chat")
     sio.register_namespace(chat_ns)
     logger.info("Chat namespace registered at /chat")
+
+
+def get_device_id(task):
+    task_crd = Task.model_validate(task.json)
+    return task_crd.spec.device_id if task_crd.spec else None

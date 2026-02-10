@@ -31,11 +31,13 @@ class TestWebSocketResultEmitter:
             emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)
             await emitter.emit_start(task_id=1, subtask_id=1, message_id=100)
 
-            mock_ws.emit_chat_start.assert_called_once_with(
-                task_id=1,
-                subtask_id=1,
-                message_id=100,
-            )
+            mock_ws.emit_chat_start.assert_called_once()
+            call_kwargs = mock_ws.emit_chat_start.call_args[1]
+            assert call_kwargs["task_id"] == 1
+            assert call_kwargs["subtask_id"] == 1
+            assert call_kwargs["message_id"] == 100
+            # Default shell_type should be "Chat" when not explicitly provided
+            assert call_kwargs["shell_type"] == "Chat"
 
     @pytest.mark.asyncio
     async def test_emit_chunk(self):

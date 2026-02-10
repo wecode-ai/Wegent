@@ -64,7 +64,7 @@ class TaskDispatcher:
         # Use localhost by default for local development
         # Override with docker hostname in production via EXECUTOR_MANAGER_URL
         self.base_url = os.getenv("EXECUTOR_MANAGER_URL", "http://localhost:8001")
-        self.enabled = os.getenv("TASK_DISPATCH_MODE", "pull") == "push"
+        self.enabled = os.getenv("TASK_DISPATCH_MODE", "push") == "push"
         self.timeout = float(os.getenv("TASK_DISPATCH_TIMEOUT", "10.0"))
         self.max_retries = int(os.getenv("TASK_DISPATCH_MAX_RETRIES", "3"))
         self.retry_delay = float(os.getenv("TASK_DISPATCH_RETRY_DELAY", "1.0"))
@@ -75,7 +75,11 @@ class TaskDispatcher:
                 f"max_retries={self.max_retries})"
             )
         else:
-            logger.debug("TaskDispatcher disabled (pull mode)")
+            # DEPRECATED: Pull mode is deprecated and will be removed in a future version.
+            logger.warning(
+                "TaskDispatcher disabled (pull mode) - pull mode is deprecated, "
+                "please switch to push mode (TASK_DISPATCH_MODE=push)"
+            )
 
     async def dispatch_pending_tasks(
         self,

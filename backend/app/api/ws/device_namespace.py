@@ -223,10 +223,27 @@ def _update_subtask_complete(
                     success=False, error="Subtask does not belong to this device"
                 )
 
+            # Idempotency guard: skip if already in terminal state
+            if subtask.status in (
+                SubtaskStatus.COMPLETED,
+                SubtaskStatus.FAILED,
+                SubtaskStatus.CANCELLED,
+            ):
+                logger.info(
+                    f"[Device WS] Subtask {subtask_id} already in terminal state "
+                    f"{subtask.status.value}, skipping completion update"
+                )
+                return CompleteUpdateResult(
+                    success=False, error="Already in terminal state"
+                )
+
             # Update status - normalize to uppercase since SubtaskStatus enum uses uppercase values
             status_str = data.get("status", "COMPLETED")
             if isinstance(status_str, str):
                 status_str = status_str.upper()
+                # Map executor's SUCCESS status to COMPLETED
+                if status_str == "SUCCESS":
+                    status_str = "COMPLETED"
             try:
                 subtask.status = SubtaskStatus(status_str)
             except ValueError:
@@ -934,6 +951,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
         result = _update_subtask_complete(subtask_id, device_id, user_id, data)
 
         if not result.success:
+            logger.warning(
+                f"[Device WS] Complete update failed for subtask {subtask_id}: "
+                f"{result.error}"
+            )
             return {"error": result.error}
 
         # WebSocket emission happens AFTER database connection is released

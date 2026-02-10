@@ -36,7 +36,11 @@ logger = setup_logger(__name__)
 
 
 class TaskScheduler:
-    """Task scheduler class, responsible for periodic task fetching and processing"""
+    """Task scheduler class, responsible for periodic task fetching and processing.
+
+    .. deprecated::
+        Pull mode (TaskScheduler) is deprecated. Use push mode (TASK_DISPATCH_MODE=push) instead.
+    """
 
     def __init__(self):
         """Initialize scheduler"""
