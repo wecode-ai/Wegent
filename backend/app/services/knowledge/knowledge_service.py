@@ -542,7 +542,17 @@ class KnowledgeService:
         """
         from app.services.share import knowledge_share_service
 
-        kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
+        # First, try to get the KB without permission check to check namespace
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
         if not kb:
             return False
 
@@ -553,10 +563,15 @@ class KnowledgeService:
             user = db.query(User).filter(User.id == user_id).first()
             if not user or user.role != "admin":
                 raise ValueError("Only admin can delete organization knowledge base")
-
-        # Only creator can delete personal/group knowledge base
-        elif kb.user_id != user_id:
-            raise ValueError("Only the creator can delete this knowledge base")
+            # Admin can delete organization KB, skip get_knowledge_base permission check
+        else:
+            # For non-organization KBs, use get_knowledge_base for permission check
+            kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
+            if not kb:
+                return False
+            # Only creator can delete personal/group knowledge base
+            if kb.user_id != user_id:
+                raise ValueError("Only the creator can delete this knowledge base")
 
         # Check if knowledge base has documents - prevent deletion if documents exist
         document_count = KnowledgeService.get_document_count(db, knowledge_base_id)

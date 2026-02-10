@@ -1154,10 +1154,10 @@ function OrganizationKnowledgeContent({
             onClick={() => onSelectKb(kb)}
             onEdit={isAdmin ? () => onEditKb(kb) : undefined}
             onDelete={isAdmin ? () => onDeleteKb(kb) : undefined}
-            onShare={() => onShareKb(kb)}
+            onShare={isAdmin ? () => onShareKb(kb) : undefined}
             canEdit={isAdmin}
             canDelete={isAdmin}
-            canShare={true}
+            canShare={isAdmin}
           />
         ))}
       </div>
