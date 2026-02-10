@@ -8,10 +8,10 @@ import { modelApis, UnifiedModel } from '@/apis/models'
 /**
  * Hook to fetch embedding models with scope support.
  *
- * @param scope - Resource scope: 'personal', 'group', or 'all'
+ * @param scope - Resource scope: 'personal', 'group', 'organization', or 'all'
  * @param groupName - Group name (required when scope is 'group')
  */
-export function useEmbeddingModels(scope?: 'personal' | 'group' | 'all', groupName?: string) {
+export function useEmbeddingModels(scope?: 'personal' | 'group' | 'organization' | 'all', groupName?: string) {
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
@@ -19,11 +19,14 @@ export function useEmbeddingModels(scope?: 'personal' | 'group' | 'all', groupNa
   const fetchModels = useCallback(async () => {
     try {
       setLoading(true)
+      // For organization scope, use 'personal' to get user's models + public models
+      // Organization KBs should use personal or public models
+      const apiScope = scope === 'organization' ? 'personal' : (scope || 'all')
       // Use modelApis.getUnifiedModels with scope support and filter by embedding type
       const response = await modelApis.getUnifiedModels(
         undefined, // shellType
         false, // includeConfig
-        scope || 'all', // scope - default to 'all' to include personal + group + public models
+        apiScope, // scope - default to 'all' to include personal + group + public models
         groupName, // groupName
         'embedding' // modelCategoryType - filter by embedding models
       )
@@ -31,6 +34,7 @@ export function useEmbeddingModels(scope?: 'personal' | 'group' | 'all', groupNa
       // Sort by type priority based on scope, then by name
       // - Personal scope: user > public
       // - Group scope: group > public
+      // - Organization scope: user > public (same as personal)
       const typePriority: Record<string, number> =
         scope === 'group' ? { group: 0, public: 1 } : { user: 0, public: 1 }
       data.sort((a, b) => {
