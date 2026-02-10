@@ -99,6 +99,7 @@ class ExecutionRequest:
     )  # From ChatRequest: Skill metadata for prompt injection
 
     # === MCP Configuration ===
+    # Format: [{"name": "server_name", "url": "...", "type": "...", "auth": {...}}]
     mcp_servers: list = field(default_factory=list)
 
     # === Knowledge Base Configuration ===
@@ -180,7 +181,25 @@ class ExecutionRequest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionRequest":
-        """Create from dict - automatically deserializes."""
+        """Create from dict - automatically deserializes.
+
+        Handles type coercion for fields that may have inconsistent types:
+        - mcp_servers: converts dict to list format if needed
+        """
+        # Handle mcp_servers type inconsistency
+        # Ghost CRD stores as dict {"name": {...}}, but we need list [{"name": "...", ...}]
+        if "mcp_servers" in data and isinstance(data.get("mcp_servers"), dict):
+            mcp_dict = data["mcp_servers"]
+            mcp_list = []
+            for server_name, server_config in mcp_dict.items():
+                if isinstance(server_config, dict):
+                    server_entry = {"name": server_name, **server_config}
+                    # Convert "headers" to "auth" for chat_shell compatibility
+                    if "headers" in server_entry and "auth" not in server_entry:
+                        server_entry["auth"] = server_entry.pop("headers")
+                    mcp_list.append(server_entry)
+            data = {**data, "mcp_servers": mcp_list}
+
         return from_dict(
             data_class=cls,
             data=data,
