@@ -942,6 +942,18 @@ class ExecutorKindsService(
 
             task_crd = Task.model_validate(task.json)
 
+            # Get workspace restore information from task labels
+            workspace_restore_pending = (
+                task_crd.metadata.labels.get("workspaceRestorePending")
+                if task_crd.metadata.labels
+                else None
+            )
+            workspace_archive_url = (
+                task_crd.metadata.labels.get("workspaceArchiveUrl")
+                if task_crd.metadata.labels
+                else None
+            )
+
             # Get workspace information
             workspace = (
                 db.query(TaskResource)
@@ -1288,6 +1300,27 @@ class ExecutorKindsService(
                     f"Found {len(attachments_data)} attachments for subtask {subtask.id}"
                 )
 
+            # Inherit executor_name from previous assistant subtask if current is empty
+            # This ensures executor reuse for existing tasks when new subtasks are created
+            executor_name = subtask.executor_name or ""
+            executor_namespace = subtask.executor_namespace or ""
+
+            if not executor_name:
+                # Look for previous assistant subtask with non-empty executor_name
+                for related in related_subtasks:
+                    if (
+                        related.role == SubtaskRole.ASSISTANT
+                        and related.id != subtask.id
+                        and related.executor_name
+                    ):
+                        executor_name = related.executor_name
+                        executor_namespace = related.executor_namespace or ""
+                        logger.info(
+                            f"Subtask {subtask.id} inheriting executor_name={executor_name} "
+                            f"from previous subtask {related.id}"
+                        )
+                        break
+
             formatted_subtasks.append(
                 {
                     "subtask_id": subtask.id,
@@ -1295,8 +1328,8 @@ class ExecutorKindsService(
                     "task_id": subtask.task_id,
                     "type": type,
                     "is_subscription": is_subscription,  # For silent exit tool injection
-                    "executor_name": subtask.executor_name,
-                    "executor_namespace": subtask.executor_namespace,
+                    "executor_name": executor_name,
+                    "executor_namespace": executor_namespace,
                     "subtask_title": subtask.title,
                     "task_title": task_crd.spec.title,
                     "user": {
@@ -1335,6 +1368,9 @@ class ExecutorKindsService(
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
+                    # Workspace restore fields for code task recovery
+                    "workspace_restore_pending": workspace_restore_pending,
+                    "workspace_archive_url": workspace_archive_url,
                     # User-selected skills for skill emphasis in executor
                     # These are skills explicitly selected by the user for this task
                     "user_selected_skills": user_selected_skills,
@@ -1535,6 +1571,20 @@ class ExecutorKindsService(
         # Set completion time
         if subtask_update.status == SubtaskStatus.COMPLETED:
             subtask.completed_at = datetime.now()
+
+        # Mark executor as deleted when container not found error is reported
+        # This enables the task restore flow on next message send
+        if (
+            subtask_update.status == SubtaskStatus.FAILED
+            and subtask_update.error_message
+        ):
+            error_msg = subtask_update.error_message.lower()
+            if "container" in error_msg and "not found" in error_msg:
+                logger.info(
+                    f"[update_subtask] Container not found error detected for subtask {subtask.id}, "
+                    f"marking executor_deleted_at=True"
+                )
+                subtask.executor_deleted_at = True
 
         db.add(subtask)
         db.flush()  # Ensure subtask update is complete
@@ -2819,6 +2869,42 @@ class ExecutorKindsService(
             raise HTTPException(
                 status_code=500, detail=f"Error deleting executor task: {str(e)}"
             )
+
+    def get_executor_address_sync(
+        self, executor_name: str, executor_namespace: str = ""
+    ) -> Dict:
+        """
+        Get executor container address synchronously.
+
+        Args:
+            executor_name: The executor container name
+            executor_namespace: Executor namespace (optional)
+
+        Returns:
+            Dict with status and base_url if successful
+        """
+        if not executor_name:
+            return {"status": "failed", "error_msg": "executor_name is required"}
+        try:
+            import requests
+
+            payload = {
+                "executor_name": executor_name,
+            }
+            url = f"{settings.EXECUTOR_MANAGER_URL}/executor-manager/executor/address"
+            logger.info(f"executor.address sync request url={url} {payload}")
+
+            response = requests.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Error getting executor address: {e}")
+            return {"status": "failed", "error_msg": str(e)}
 
 
 executor_kinds_service = ExecutorKindsService(Kind)

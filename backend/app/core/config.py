@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     DB_AUTO_MIGRATE: bool = True
 
     # Executor configuration
+    EXECUTOR_MANAGER_URL: str = "http://localhost:8001"
     EXECUTOR_DELETE_TASK_URL: str = (
         "http://localhost:8001/executor-manager/executor/delete"
     )
@@ -449,6 +450,23 @@ class Settings(BaseSettings):
     # Since mem0 may be shared across multiple systems, this prefix ensures
     # wegent resources are isolated from other systems' resources
     MEMORY_USER_ID_PREFIX: str = "wegent_user:"
+
+    # Workspace Archive Configuration
+    # Enable/disable workspace archive feature for code task recovery
+    # When enabled, workspace files are archived to S3 before executor cleanup
+    # and restored when the task is resumed
+    WORKSPACE_ARCHIVE_ENABLED: bool = False
+    # Maximum archive size in MB (archives larger than this will be skipped)
+    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500
+    # S3-compatible storage configuration for workspace archives
+    WORKSPACE_ARCHIVE_S3_ENDPOINT: str = (
+        ""  # e.g., "https://s3.amazonaws.com" or "http://minio:9000"
+    )
+    WORKSPACE_ARCHIVE_S3_BUCKET: str = "workspace-archives"
+    WORKSPACE_ARCHIVE_S3_ACCESS_KEY: str = ""
+    WORKSPACE_ARCHIVE_S3_SECRET_KEY: str = ""
+    WORKSPACE_ARCHIVE_S3_REGION: str = "us-east-1"
+    WORKSPACE_ARCHIVE_S3_USE_SSL: bool = True
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config

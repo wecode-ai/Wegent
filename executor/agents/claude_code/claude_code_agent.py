@@ -761,6 +761,7 @@ class ClaudeCodeAgent(Agent):
         # Check if there's a saved session ID to resume
         # Skip if resume option is already set (e.g., from retry logic)
         if "resume" not in self.options:
+            # Load saved session ID from local file
             saved_session_id = SessionManager.load_saved_session_id(self.task_id)
             if saved_session_id:
                 logger.info(
@@ -783,8 +784,30 @@ class ClaudeCodeAgent(Agent):
         else:
             self.client = ClaudeSDKClient()
 
-        # Connect the client
-        await self.client.connect()
+        # Connect the client with session expiry handling
+        try:
+            await self.client.connect()
+        except Exception as e:
+            error_msg = str(e).lower()
+            logger.warning(f"Claude SDK connection error: {e}")
+
+            # Check if it's a session-related error (expired, invalid, etc.)
+            session_error_keywords = ["session", "expired", "invalid", "resume"]
+            if any(keyword in error_msg for keyword in session_error_keywords):
+                logger.warning(
+                    f"Session error detected, creating new session. Original error: {e}"
+                )
+                # Remove resume parameter to create a fresh session
+                self.options.pop("resume", None)
+                # Recreate client without resume
+                if self.options:
+                    code_options = ClaudeAgentOptions(**self.options)
+                    self.client = ClaudeSDKClient(options=code_options)
+                else:
+                    self.client = ClaudeSDKClient()
+                await self.client.connect()
+            else:
+                raise
 
         # Store client connection for reuse
         SessionManager.set_client(self.session_id, self.client)

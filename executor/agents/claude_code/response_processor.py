@@ -765,7 +765,10 @@ async def _process_result_message(
 
             # Report progress using state manager
             state_manager.report_progress(
-                progress=100, status=TaskStatus.COMPLETED.value, message=result_str
+                progress=100,
+                status=TaskStatus.COMPLETED.value,
+                message=result_str,
+                extra_result=None,
             )
         return TaskStatus.COMPLETED
 

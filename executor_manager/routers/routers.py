@@ -635,6 +635,43 @@ class DeleteExecutorRequest(BaseModel):
     executor_name: str
 
 
+class GetExecutorAddressRequest(BaseModel):
+    executor_name: str
+
+
+@api_router.post("/executor/address")
+async def get_executor_address(
+    request: GetExecutorAddressRequest, http_request: Request
+):
+    """
+    Get the base URL for an executor container.
+
+    This endpoint is used by backend to get the container's accessible address
+    for calling APIs like workspace archiving.
+
+    Args:
+        request: Request containing executor_name
+
+    Returns:
+        dict: Container address with status and base_url
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Received request to get executor address: {request.executor_name} from {client_ip}"
+        )
+
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        result = executor.get_container_address(request.executor_name)
+
+        return result
+    except Exception as e:
+        logger.error(
+            f"Error getting executor address for '{request.executor_name}': {e}"
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.post("/executor/delete")
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:

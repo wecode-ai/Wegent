@@ -98,8 +98,13 @@ class APIClient {
         try {
           // Try to parse as JSON and extract detail field
           const json = JSON.parse(errorText)
-          if (json && typeof json.detail === 'string') {
-            errorMsg = json.detail
+          if (json && json.detail) {
+            // If detail is an object (like structured error), stringify it for parsing
+            if (typeof json.detail === 'object') {
+              errorMsg = JSON.stringify(json.detail)
+            } else {
+              errorMsg = json.detail
+            }
           }
         } catch {
           // Not JSON, use original text directly

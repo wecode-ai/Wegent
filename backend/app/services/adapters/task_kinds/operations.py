@@ -29,6 +29,10 @@ from app.schemas.kind import Task, Team, Workspace
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
+from app.services.adapters.workspace_archive import (
+    is_workspace_archive_enabled,
+    workspace_archive_service,
+)
 from app.services.readers.kinds import KindType, kindReader
 
 from .converters import convert_to_task_dict
@@ -109,8 +113,10 @@ class TaskOperationsMixin:
         task_id: int,
     ) -> tuple:
         """Handle appending to an existing task."""
+        logger.info(f"[_handle_existing_task] Processing task_id={task_id}")
         task_crd = Task.model_validate(existing_task.json)
         task_status = task_crd.status.status if task_crd.status else "PENDING"
+        logger.info(f"[_handle_existing_task] task_status={task_status}")
 
         if task_status == "RUNNING":
             raise HTTPException(
@@ -142,27 +148,79 @@ class TaskOperationsMixin:
                 detail="task already clear, please create a new task",
             )
 
-        # Check expiration
-        expire_hours = settings.APPEND_CHAT_TASK_EXPIRE_HOURS
+        # Get task type for error messages
         task_type = (
             task_crd.metadata.labels
             and task_crd.metadata.labels.get("taskType")
             or "chat"
         )
+
+        # Check if executor was deleted (container cleaned up)
+        # This takes priority over expiration check - if executor is gone, task needs restore
+        last_assistant_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        if last_assistant_subtask and last_assistant_subtask.executor_deleted_at:
+            logger.info(
+                f"[_handle_existing_task] Task {task_id} executor was deleted, raising 409 for restore"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "TASK_EXPIRED_RESTORABLE",
+                    "task_id": existing_task.id,
+                    "task_type": task_type,
+                    "expire_hours": 0,
+                    "last_updated_at": existing_task.updated_at.isoformat(),
+                    "message": f"{task_type} task executor was cleaned up but can be restored",
+                    "reason": "executor_deleted",
+                },
+            )
+
+        # Check expiration
+        expire_hours = settings.APPEND_CHAT_TASK_EXPIRE_HOURS
         if task_type == "code":
             expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
 
-        task_shell_source = (
-            task_crd.metadata.labels and task_crd.metadata.labels.get("source") or None
+        # Log expiration check details
+        time_since_update = (datetime.now() - existing_task.updated_at).total_seconds()
+        expire_seconds = expire_hours * 3600
+        logger.info(
+            f"[_handle_existing_task] Expiration check: task_type={task_type}, "
+            f"expire_hours={expire_hours}, time_since_update={time_since_update:.0f}s, "
+            f"expire_seconds={expire_seconds}s, is_expired={time_since_update > expire_seconds}"
         )
-        if task_shell_source != "chat_shell":
-            if (
-                datetime.now() - existing_task.updated_at
-            ).total_seconds() > expire_hours * 3600:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{task_type} task has expired. You can only append tasks within {expire_hours} hours after last update.",
-                )
+
+        # Check expiration for all executor-based tasks
+        # Note: This check is ONLY in the executor path (create_task_or_append).
+        # Chat Shell tasks use a different path (create_task_and_subtasks) which
+        # doesn't need expiration check because they don't use persistent containers.
+        if time_since_update > expire_seconds:
+            logger.info(
+                f"[_handle_existing_task] Task {task_id} is expired, raising 409"
+            )
+            # Return HTTP 409 with restorable error details
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "TASK_EXPIRED_RESTORABLE",
+                    "task_id": existing_task.id,
+                    "task_type": task_type,
+                    "expire_hours": expire_hours,
+                    "last_updated_at": existing_task.updated_at.isoformat(),
+                    "message": f"{task_type} task has expired but can be restored",
+                    "reason": "expired",
+                },
+            )
 
         # Get team reference
         team_name = task_crd.spec.teamRef.name
@@ -587,6 +645,9 @@ class TaskOperationsMixin:
         task.updated_at = datetime.now()
         task.is_active = False
         flag_modified(task, "json")
+
+        # Clean up workspace archive from S3 if exists
+        self._cleanup_workspace_archive(db, task_id)
 
         # Clean up long-term memories associated with this task (fire-and-forget)
         # This runs in background and doesn't block task deletion
@@ -1056,6 +1117,25 @@ class TaskOperationsMixin:
             return True
 
         return False
+
+    def _cleanup_workspace_archive(self, db: Session, task_id: int) -> None:
+        """
+        Clean up workspace archive from S3 if it exists.
+
+        Args:
+            db: Database session
+            task_id: Task ID being deleted
+        """
+        if not is_workspace_archive_enabled():
+            return
+
+        try:
+            workspace_archive_service.delete_archive(db, task_id)
+        except Exception as e:
+            # Log but don't fail the deletion
+            logger.warning(
+                f"Failed to delete workspace archive for task {task_id}: {e}"
+            )
 
     def _cleanup_task_memories(self, user_id: int, task_id: int) -> None:
         """
