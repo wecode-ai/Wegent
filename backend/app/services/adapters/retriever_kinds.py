@@ -169,7 +169,8 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
             HTTPException: If retriever not found or access denied
         """
         # Check permissions for group resources
-        if namespace != "default":
+        # Skip permission check for organization namespace (visible to all users)
+        if namespace != "default" and namespace != "organization":
             if not check_group_permission(
                 db, user_id, namespace, required_role="Reporter"
             ):

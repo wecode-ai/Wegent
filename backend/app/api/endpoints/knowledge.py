@@ -666,6 +666,10 @@ def _get_kb_index_info_sync(
     if kb.namespace == "default":
         # Personal knowledge base - use current user's ID
         index_owner_user_id = current_user_id
+    elif kb.namespace == "organization":
+        # Organization knowledge base - use current user's ID for index naming
+        # All users can access organization KBs, so we use the current user's ID
+        index_owner_user_id = current_user_id
     else:
         # Group knowledge base - use KB creator's user_id for index naming
         # This ensures all group members access the same index

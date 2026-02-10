@@ -1083,7 +1083,8 @@ class KnowledgeService:
                             # Get the correct user_id for index naming
                             # For group knowledge bases, use the KB creator's user_id
                             # This ensures we delete from the same index where documents were stored
-                            if kb.namespace == "default":
+                            if kb.namespace == "default" or kb.namespace == "organization":
+                                # Personal/Organization knowledge base - use current user's ID
                                 index_owner_user_id = user_id
                             else:
                                 # Group knowledge base - use KB creator's user_id
