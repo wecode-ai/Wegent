@@ -100,8 +100,16 @@ class KnowledgeService:
         """
         from datetime import datetime
 
+        # Check permission for organization knowledge base (admin only)
+        if data.namespace == "organization":
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError("Only admin can create organization knowledge base")
+
         # Check permission for team knowledge base
-        if data.namespace != "default":
+        elif data.namespace != "default":
             role = get_effective_role_in_group(db, user_id, data.namespace)
             if role is None:
                 raise ValueError(
@@ -320,6 +328,20 @@ class KnowledgeService:
                 .all()
             )
 
+        elif scope == ResourceScope.ORGANIZATION:
+            # Organization knowledge bases are visible to all users
+            # No user_id or permission check needed for listing
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.namespace == "organization",
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
         else:  # ALL
             from app.models.resource_member import MemberStatus, ResourceMember
             from app.models.share_link import ResourceType
@@ -396,8 +418,16 @@ class KnowledgeService:
         if not kb:
             return None
 
+        # Check permission for organization knowledge base (admin only)
+        if kb.namespace == "organization":
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError("Only admin can update organization knowledge base")
+
         # Check permission for team knowledge base
-        if kb.namespace != "default":
+        elif kb.namespace != "default":
             if not check_group_permission(
                 db, user_id, kb.namespace, GroupRole.Maintainer
             ):
@@ -516,8 +546,16 @@ class KnowledgeService:
         if not kb:
             return False
 
-        # Only creator can delete knowledge base
-        if kb.user_id != user_id:
+        # Check permission for organization knowledge base (admin only)
+        if kb.namespace == "organization":
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError("Only admin can delete organization knowledge base")
+
+        # Only creator can delete personal/group knowledge base
+        elif kb.user_id != user_id:
             raise ValueError("Only the creator can delete this knowledge base")
 
         # Check if knowledge base has documents - prevent deletion if documents exist
@@ -728,8 +766,18 @@ class KnowledgeService:
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
+        # Check permission for organization knowledge base (admin only)
+        if kb.namespace == "organization":
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError(
+                    "Only admin can add documents to organization knowledge base"
+                )
+
         # Check permission for team knowledge base
-        if kb.namespace != "default":
+        elif kb.namespace != "default":
             if not check_group_permission(
                 db, user_id, kb.namespace, GroupRole.Maintainer
             ):
@@ -859,19 +907,30 @@ class KnowledgeService:
         if not doc:
             return None
 
-        # Check permission for team knowledge base
+        # Check permission for knowledge base
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can update documents in this knowledge base"
-                )
+        if kb:
+            # Check permission for organization knowledge base (admin only)
+            if kb.namespace == "organization":
+                from app.models.user import User
+
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or user.role != "admin":
+                    raise ValueError(
+                        "Only admin can update documents in organization knowledge base"
+                    )
+            # Check permission for team knowledge base
+            elif kb.namespace != "default":
+                if not check_group_permission(
+                    db, user_id, kb.namespace, GroupRole.Maintainer
+                ):
+                    raise ValueError(
+                        "Only Owner or Maintainer can update documents in this knowledge base"
+                    )
 
         if data.name is not None:
             doc.name = data.name
@@ -947,19 +1006,30 @@ class KnowledgeService:
         if not doc:
             return DocumentDeleteResult(success=False, kb_id=None)
 
-        # Check permission for team knowledge base
+        # Check permission for knowledge base
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can delete documents from this knowledge base"
-                )
+        if kb:
+            # Check permission for organization knowledge base (admin only)
+            if kb.namespace == "organization":
+                from app.models.user import User
+
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or user.role != "admin":
+                    raise ValueError(
+                        "Only admin can delete documents from organization knowledge base"
+                    )
+            # Check permission for team knowledge base
+            elif kb.namespace != "default":
+                if not check_group_permission(
+                    db, user_id, kb.namespace, GroupRole.Maintainer
+                ):
+                    raise ValueError(
+                        "Only Owner or Maintainer can delete documents from this knowledge base"
+                    )
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing

@@ -75,7 +75,7 @@ router = APIRouter()
 def list_knowledge_bases(
     scope: str = Query(
         default="all",
-        description="Resource scope: personal, group, or all",
+        description="Resource scope: personal, group, organization, or all",
     ),
     group_name: Optional[str] = Query(
         default=None,
@@ -89,6 +89,7 @@ def list_knowledge_bases(
 
     - **scope=personal**: Only user's own personal knowledge bases
     - **scope=group**: Knowledge bases from a specific group (requires group_name)
+    - **scope=organization**: Organization knowledge bases (visible to all, admin only for management)
     - **scope=all**: All accessible knowledge bases (personal + team)
     """
     try:
@@ -96,7 +97,7 @@ def list_knowledge_bases(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid scope: {scope}. Must be one of: personal, group, all",
+            detail=f"Invalid scope: {scope}. Must be one of: personal, group, organization, all",
         )
 
     if resource_scope == ResourceScope.GROUP and not group_name:
