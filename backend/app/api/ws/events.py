@@ -154,6 +154,14 @@ class ChatSendPayload(BaseModel):
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
     )
+    workdir: Optional[str] = Field(
+        None,
+        description="Preferred local working directory for local executor tasks",
+    )
+    workdir_policy: Optional[Literal["managed", "existing", "repo_bound"]] = Field(
+        None,
+        description="Working directory policy: managed, existing, or repo_bound",
+    )
     additional_skills: Optional[List[SkillRef]] = Field(
         None,
         description="Additional skills with full info (name, namespace, is_public)",

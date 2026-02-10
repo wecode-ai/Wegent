@@ -113,6 +113,13 @@ LOCAL_WORKSPACE_ROOT = os.environ.get(
     "LOCAL_WORKSPACE_ROOT", os.path.join(WEGENT_EXECUTOR_HOME, "workspace")
 )
 
+# Local mode allowed roots for user-specified working directories.
+# Comma-separated absolute paths or ~-prefixed home paths.
+# Defaults to LOCAL_WORKSPACE_ROOT only.
+LOCAL_WORKDIR_ALLOWED_ROOTS = os.environ.get(
+    "LOCAL_WORKDIR_ALLOWED_ROOTS", LOCAL_WORKSPACE_ROOT
+)
+
 
 def get_workspace_root() -> str:
     """Get the workspace root directory based on executor mode.
@@ -124,6 +131,21 @@ def get_workspace_root() -> str:
     if EXECUTOR_MODE == "local":
         return LOCAL_WORKSPACE_ROOT
     return WORKSPACE_ROOT
+
+
+def get_local_workdir_allowed_roots() -> list[str]:
+    """Get normalized allowed roots for local workdir selection."""
+    roots = []
+    for raw_root in LOCAL_WORKDIR_ALLOWED_ROOTS.split(","):
+        root = raw_root.strip()
+        if not root:
+            continue
+        expanded = os.path.expandvars(os.path.expanduser(root))
+        normalized = os.path.realpath(os.path.abspath(expanded))
+        roots.append(normalized)
+    if roots:
+        return roots
+    return [os.path.realpath(os.path.abspath(LOCAL_WORKSPACE_ROOT))]
 
 
 # Local mode logging configuration

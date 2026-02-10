@@ -960,6 +960,17 @@ class ExecutorKindsService(
             git_repo_id = 0
             git_domain = ""
             branch_name = ""
+            workdir = (
+                task_crd.spec.workdir if hasattr(task_crd.spec, "workdir") else None
+            )
+            workdir_policy = (
+                task_crd.spec.workdir_policy
+                if hasattr(task_crd.spec, "workdir_policy")
+                else None
+            )
+            device_id = (
+                task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
+            )
 
             if workspace and workspace.json:
                 try:
@@ -1318,6 +1329,9 @@ class ExecutorKindsService(
                     "git_repo_id": git_repo_id,
                     "branch_name": branch_name,
                     "git_url": git_url,
+                    "device_id": device_id,
+                    "workdir": workdir,
+                    "workdir_policy": workdir_policy,
                     "backend_url": settings.BACKEND_INTERNAL_URL.rstrip("/"),
                     "prompt": aggregated_prompt,
                     "auth_token": auth_token,

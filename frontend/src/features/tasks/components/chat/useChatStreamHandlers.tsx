@@ -80,6 +80,13 @@ export interface UseChatStreamHandlersOptions {
   // Skill selection
   /** Additional skills selected by user (backend determines preload vs download based on executor type) */
   additionalSkills?: SkillRef[]
+
+  // Workdir (local executor task mode)
+  /** Resolve workdir selection before first message of a new task. Return null to cancel send. */
+  onResolveWorkdirForNewTask?: () => Promise<{
+    workdir?: string
+    workdir_policy?: 'managed' | 'existing' | 'repo_bound'
+  } | null>
 }
 
 export interface ChatStreamHandlers {
@@ -163,6 +170,7 @@ export function useChatStreamHandlers({
   onTaskCreated,
   selectedDocumentIds,
   additionalSkills,
+  onResolveWorkdirForNewTask,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -386,6 +394,24 @@ export function useChatStreamHandlers({
         return
       }
 
+      let resolvedWorkdirSelection:
+        | {
+            workdir?: string
+            workdir_policy?: 'managed' | 'existing' | 'repo_bound'
+          }
+        | null
+        | undefined
+      if (!selectedTaskDetail?.id && taskType === 'task' && onResolveWorkdirForNewTask) {
+        resolvedWorkdirSelection = await onResolveWorkdirForNewTask()
+        if (!resolvedWorkdirSelection) {
+          return
+        }
+      }
+
+      const requestWorkdirPolicy =
+        selectedTaskDetail?.workdir_policy ?? resolvedWorkdirSelection?.workdir_policy
+      const requestWorkdir = selectedTaskDetail?.workdir ?? resolvedWorkdirSelection?.workdir
+
       setIsLoading(true)
 
       // Set local pending state immediately
@@ -509,13 +535,6 @@ export function useChatStreamHandlers({
           }
         }
 
-        // Debug log for skill selection
-        console.log('[useChatStreamHandlers] Sending message with skills:', {
-          additionalSkills,
-          additional_skills_in_payload:
-            additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
-        })
-
         const tempTaskId = await contextSendMessage(
           {
             message: finalMessage,
@@ -538,6 +557,8 @@ export function useChatStreamHandlers({
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
+            workdir: requestWorkdir ?? undefined,
+            workdir_policy: requestWorkdirPolicy ?? undefined,
             // Device ID for local device execution (only for executor-based teams, not Chat Shell)
             device_id: !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined,
             // Skill selection - backend determines preload vs download based on executor type
@@ -634,6 +655,7 @@ export function useChatStreamHandlers({
       selectedDeviceId,
       effectiveRequiresWorkspace,
       additionalSkills,
+      onResolveWorkdirForNewTask,
     ]
   )
 
@@ -790,6 +812,8 @@ export function useChatStreamHandlers({
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
+            workdir: selectedTaskDetail?.workdir ?? undefined,
+            workdir_policy: selectedTaskDetail?.workdir_policy ?? undefined,
           },
           {
             pendingUserMessage: message,

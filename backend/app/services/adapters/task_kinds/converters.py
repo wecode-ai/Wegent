@@ -140,6 +140,12 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
 
     # Extract device_id from task spec
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
+    workdir = task_crd.spec.workdir if hasattr(task_crd.spec, "workdir") else None
+    workdir_policy = (
+        task_crd.spec.workdir_policy
+        if hasattr(task_crd.spec, "workdir_policy")
+        else None
+    )
 
     return {
         "id": task.id,
@@ -154,6 +160,8 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "git_repo_id": git_repo_id,
         "git_domain": git_domain,
         "branch_name": branch_name,
+        "workdir": workdir,
+        "workdir_policy": workdir_policy,
         "prompt": task_crd.spec.prompt,
         "status": task_crd.status.status if task_crd.status else "PENDING",
         "progress": task_crd.status.progress if task_crd.status else 0,
@@ -195,6 +203,12 @@ def convert_to_task_dict_optimized(
 
     # Extract device_id from task spec
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
+    workdir = task_crd.spec.workdir if hasattr(task_crd.spec, "workdir") else None
+    workdir_policy = (
+        task_crd.spec.workdir_policy
+        if hasattr(task_crd.spec, "workdir_policy")
+        else None
+    )
 
     return {
         "id": task.id,
@@ -209,6 +223,8 @@ def convert_to_task_dict_optimized(
         "git_repo_id": workspace_data.get("git_repo_id", 0),
         "git_domain": workspace_data.get("git_domain", ""),
         "branch_name": workspace_data.get("branch_name", ""),
+        "workdir": workdir,
+        "workdir_policy": workdir_policy,
         "prompt": task_crd.spec.prompt,
         "status": task_crd.status.status if task_crd.status else "PENDING",
         "progress": task_crd.status.progress if task_crd.status else 0,

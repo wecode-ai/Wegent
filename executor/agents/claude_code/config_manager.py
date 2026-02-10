@@ -237,6 +237,7 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         extract_mcp_servers_config,
         replace_mcp_server_variables,
     )
+    from executor.utils.workdir_resolver import resolve_task_workdir
 
     # List of valid options for ClaudeAgentOptions
     valid_options = [
@@ -296,6 +297,10 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         for key in valid_options:
             if key in bot_config and bot_config[key] is not None:
                 options[key] = bot_config[key]
+
+    effective_cwd = resolve_task_workdir(task_data, options.get("cwd"))
+    if effective_cwd:
+        options["cwd"] = effective_cwd
 
     return options
 

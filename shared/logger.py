@@ -12,12 +12,15 @@ Common logging module, configures and provides logging functionality for the app
 Supports automatic request_id injection into log messages via ContextVar.
 """
 
+import atexit
 import logging
 import multiprocessing
 import os
 import sys
 from logging.handlers import QueueHandler, QueueListener
 from typing import Optional
+
+_ACTIVE_QUEUE_LISTENERS: list[QueueListener] = []
 
 
 class RequestIdFilter(logging.Filter):
@@ -139,6 +142,7 @@ def setup_logger(
 
             logger.addHandler(queue_handler)
             logger._queue_listener = listener
+            _ACTIVE_QUEUE_LISTENERS.append(listener)
             handler_configured = True
 
         except Exception:
@@ -157,3 +161,20 @@ def setup_logger(
         logger.addHandler(console_handler)
 
     return logger
+
+
+def shutdown_logging() -> None:
+    """Stop all QueueListener threads created by setup_logger.
+
+    This prevents noisy tracebacks from background logging threads during interpreter
+    shutdown (common when the process exits quickly due to config validation errors).
+    """
+    while _ACTIVE_QUEUE_LISTENERS:
+        listener = _ACTIVE_QUEUE_LISTENERS.pop()
+        try:
+            listener.stop()
+        except Exception:
+            pass
+
+
+atexit.register(shutdown_logging)

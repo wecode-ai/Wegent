@@ -103,5 +103,24 @@
   "apikey_name_placeholder": "我的设备",
   "cancel": "取消",
   "create": "创建",
-  "creating": "创建中..."
+  "creating": "创建中...",
+  "workdir": {
+    "label": "目录",
+    "display_existing_unset": "未设置路径",
+    "policy_managed": "托管目录",
+    "policy_managed_description": "使用 Wegent 托管目录作为本次任务工作目录",
+    "policy_existing": "本地已有目录",
+    "policy_existing_description": "使用你电脑上的现有目录作为本次任务工作目录",
+    "policy_repo_bound": "仓库绑定目录",
+    "dialog": {
+      "title": "选择工作目录",
+      "description": "请为本次新任务选择运行目录",
+      "path_label": "目录路径",
+      "path_placeholder": "~/Projects/my-project",
+      "path_hint": "请输入绝对路径，例如 /Users/alice/Projects 或 ~/Projects",
+      "path_required": "请输入目录路径",
+      "path_absolute_required": "路径必须以 / 或 ~ 开头",
+      "confirm": "开始任务"
+    }
+  }
 }

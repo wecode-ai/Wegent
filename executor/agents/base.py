@@ -173,7 +173,7 @@ class Agent:
             logger.info("git url is empty, skip download code")
             return
 
-        user_config = self.task_data.get("user")
+        user_config = self.task_data.get("user") or {}
         git_token = user_config.get("git_token")
         # Handle encrypted tokens
         if git_token and is_token_encrypted(git_token):
@@ -182,22 +182,26 @@ class Agent:
             )
             git_token = decrypt_git_token(git_token)
 
-        username = user_config.get("user_name")
+        username = user_config.get("user_name") or user_config.get("git_login")
         branch_name = self.task_data.get("branch_name")
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(
-            f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}"
+            f"Agent[{self.get_name()}][{self.task_id}] start download code: "
+            f"repo={repo_name}, branch={branch_name}"
         )
-        logger.info("username: {username} git token: {git_token}")
-        logger.info(user_config)
+        logger.debug(
+            f"Agent[{self.get_name()}][{self.task_id}] git credentials provided={bool(git_token)}"
+        )
 
-        project_path = os.path.join(
-            config.get_workspace_root(), str(self.task_id), repo_name
-        )
+        project_path = self._resolve_project_path(repo_name)
         if self.project_path is None:
             self.project_path = project_path
 
-        if not os.path.exists(project_path):
+        if isinstance(getattr(self, "options", None), dict):
+            self.options["cwd"] = project_path
+
+        git_dir = os.path.join(project_path, ".git")
+        if not os.path.isdir(git_dir):
             success, error_msg = git_util.clone_repo(
                 git_url, branch_name, project_path, username, git_token
             )
@@ -217,6 +221,54 @@ class Agent:
             logger.info(
                 f"Agent[{self.get_name()}][{self.task_id}] Project already exists at {project_path}, skip cloning"
             )
+
+    def _resolve_project_path(self, repo_name: str) -> str:
+        """Resolve repository path with task-level workdir override support."""
+        default_path = os.path.join(
+            config.get_workspace_root(), str(self.task_id), repo_name
+        )
+
+        requested_workdir = self.task_data.get("workdir")
+        requested_policy = self.task_data.get("workdir_policy")
+        if requested_policy is None:
+            requested_policy = self.task_data.get("workdirPolicy")
+
+        if not requested_workdir and not requested_policy:
+            return default_path
+
+        configured_cwd: Optional[str] = None
+        if isinstance(getattr(self, "options", None), dict):
+            configured_cwd = self.options.get("cwd")
+        from executor.utils.workdir_resolver import (
+            EXISTING_POLICY,
+            MANAGED_POLICY,
+            REPO_BOUND_POLICY,
+            resolve_task_workdir_details,
+        )
+
+        resolution = resolve_task_workdir_details(self.task_data, configured_cwd)
+        base_dir = resolution.effective_cwd
+        if not base_dir:
+            return default_path
+
+        # Managed/Repo-bound policies always place the repository under a managed base dir.
+        if resolution.policy in {MANAGED_POLICY, REPO_BOUND_POLICY}:
+            return os.path.join(base_dir, repo_name)
+
+        # Existing policy uses the selected directory as-is when it already looks like a repo,
+        # or when the target path is empty / not yet created. Otherwise, clone under <dir>/<repo>.
+        configured_cwd = base_dir
+
+        if os.path.isdir(os.path.join(configured_cwd, ".git")):
+            return configured_cwd
+
+        if not os.path.exists(configured_cwd):
+            return configured_cwd
+
+        if os.path.isdir(configured_cwd) and not os.listdir(configured_cwd):
+            return configured_cwd
+
+        return os.path.join(configured_cwd, repo_name)
 
     def initialize(self) -> TaskStatus:
         """

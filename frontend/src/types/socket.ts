@@ -117,6 +117,9 @@ export interface ChatSendPayload {
   task_type?: 'chat' | 'code' | 'knowledge' | 'task'
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  // Local executor workdir
+  workdir?: string
+  workdir_policy?: 'managed' | 'existing' | 'repo_bound'
   // Local device execution
   device_id?: string // Local device ID for task execution (if undefined, use cloud executor)
   // Skill selection

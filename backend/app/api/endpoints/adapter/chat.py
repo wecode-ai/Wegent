@@ -65,6 +65,8 @@ class StreamChatRequest(BaseModel):
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
     branch_name: Optional[str] = None
+    workdir: Optional[str] = None
+    workdir_policy: Optional[str] = None
     # Resume/reconnect parameters for offset-based streaming
     subtask_id: Optional[int] = None  # For resuming an existing stream
     offset: Optional[int] = None  # Character offset for resuming (0 = new stream)

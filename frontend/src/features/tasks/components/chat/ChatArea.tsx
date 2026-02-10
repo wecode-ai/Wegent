@@ -61,6 +61,11 @@ interface ChatAreaProps {
   selectedDocumentIds?: number[]
   /** Reason why input is disabled (e.g., device offline). If set, input will be disabled and show this message. */
   disabledReason?: string
+  /** Optional callback to resolve workdir selection before first message of a new task. */
+  onResolveWorkdirForNewTask?: () => Promise<{
+    workdir?: string
+    workdir_policy?: 'managed' | 'existing' | 'repo_bound'
+  } | null>
 }
 
 /**
@@ -80,6 +85,7 @@ function ChatAreaContent({
   knowledgeBaseId,
   selectedDocumentIds,
   disabledReason,
+  onResolveWorkdirForNewTask,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -339,6 +345,7 @@ function ChatAreaContent({
     // Skill selection - pass user-selected skills to backend
     // Uses full skill info (name, namespace, is_public) for backend to determine preload vs download
     additionalSkills: skillSelector.selectedSkills,
+    onResolveWorkdirForNewTask,
   })
 
   // Scheme URL action bridge - handles wegent://action/send-message and wegent://action/prefill-message

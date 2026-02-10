@@ -255,6 +255,8 @@ export interface TaskDetail {
   git_repo_id: number
   git_domain: string
   branch_name: string
+  workdir?: string | null
+  workdir_policy?: 'managed' | 'existing' | 'repo_bound' | null
   prompt: string
   status: TaskStatus
   task_type?: TaskType
@@ -352,6 +354,8 @@ export interface Task {
   git_repo_id: number
   git_domain: string
   branch_name: string
+  workdir?: string | null
+  workdir_policy?: 'managed' | 'existing' | 'repo_bound' | null
   prompt: string
   status: TaskStatus
   task_type?: TaskType

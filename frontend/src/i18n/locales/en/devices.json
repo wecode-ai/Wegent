@@ -103,5 +103,24 @@
   "apikey_name_placeholder": "My Device",
   "cancel": "Cancel",
   "create": "Create",
-  "creating": "Creating..."
+  "creating": "Creating...",
+  "workdir": {
+    "label": "Directory",
+    "display_existing_unset": "Path not set",
+    "policy_managed": "Managed",
+    "policy_managed_description": "Use Wegent managed workspace for this task",
+    "policy_existing": "Existing Directory",
+    "policy_existing_description": "Use a directory on your local machine",
+    "policy_repo_bound": "Repo Bound",
+    "dialog": {
+      "title": "Choose Working Directory",
+      "description": "Select where this new device task should run",
+      "path_label": "Directory Path",
+      "path_placeholder": "~/Projects/my-project",
+      "path_hint": "Use an absolute path such as /Users/alice/Projects or ~/Projects",
+      "path_required": "Please enter a directory path",
+      "path_absolute_required": "Path must start with / or ~",
+      "confirm": "Start Task"
+    }
+  }
 }

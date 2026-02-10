@@ -102,6 +102,9 @@ export interface ChatMessageRequest {
   task_type?: 'chat' | 'code' | 'knowledge' | 'task'
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  // Local executor workdir
+  workdir?: string
+  workdir_policy?: 'managed' | 'existing' | 'repo_bound'
   // Local device ID for task execution (optional, when undefined use cloud executor)
   device_id?: string
 
@@ -704,6 +707,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         branch_name: request.branch_name,
         task_type: request.task_type,
         knowledge_base_id: request.knowledge_base_id,
+        workdir: request.workdir,
+        workdir_policy: request.workdir_policy,
         device_id: request.device_id,
         additional_skills: request.additional_skills,
       }

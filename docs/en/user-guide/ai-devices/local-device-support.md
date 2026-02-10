@@ -129,6 +129,29 @@ In the chat interface, you'll see a device selector dropdown:
 3. Select your preferred device
 4. Send your message as usual
 
+### Session Workdir (Optional)
+
+When you create a new task using a **local device executor** (e.g. ClaudeCode), you can choose a preferred working directory (Workdir) for that session to control the effective `cwd` on your machine.
+
+Workdir policies:
+
+1) **Managed**: use the executor-managed workspace directory (default)
+2) **Existing Directory**: use a directory on your local machine (requires an absolute path)
+
+Security limits (important):
+
+- The local executor validates workdir inputs against an allowlist to prevent path escape
+- Only paths under `LOCAL_WORKDIR_ALLOWED_ROOTS` are allowed
+- If validation fails, the executor falls back to **Managed** and reports the reason (and how to fix it) in the task thinking steps
+
+Example (allow your Projects directory):
+
+```bash
+export LOCAL_WORKDIR_ALLOWED_ROOTS="~/.wegent-executor/workspace,~/Projects"
+```
+
+> The current version primarily sets Claude's `cwd`. Depending on the policy, the repository clone location may also change. Attachments and some session files may still stay under the executor-managed directory.
+
 ### Device Status Indicators
 
 | Status | Icon | Description |

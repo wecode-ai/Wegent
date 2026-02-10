@@ -55,6 +55,8 @@ class TaskBase(BaseModel):
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
     branch_name: Optional[str] = None
+    workdir: Optional[str] = None
+    workdir_policy: Optional[str] = None
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     progress: int = 0
@@ -74,6 +76,8 @@ class TaskCreate(BaseModel):
     git_repo_id: Optional[int] = 0
     git_domain: Optional[str] = ""
     branch_name: Optional[str] = ""
+    workdir: Optional[str] = None
+    workdir_policy: Optional[str] = None
     prompt: str
     type: Optional[str] = "online"  # online、offline
     task_type: Optional[str] = "chat"  # chat、code
@@ -146,6 +150,8 @@ class TaskDetail(BaseModel):
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
     branch_name: str
+    workdir: Optional[str] = None
+    workdir_policy: Optional[str] = None
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     progress: int = 0

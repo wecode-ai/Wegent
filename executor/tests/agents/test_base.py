@@ -101,10 +101,10 @@ class TestAgent:
         assert agent.project_path is not None
 
     @patch("executor.agents.base.git_util.get_repo_name_from_url")
-    @patch("os.path.exists")
-    def test_download_code_already_exists(self, mock_exists, mock_get_repo_name, agent):
+    @patch("executor.agents.base.os.path.isdir")
+    def test_download_code_already_exists(self, mock_isdir, mock_get_repo_name, agent):
         """Test code download when project already exists"""
-        mock_exists.return_value = True
+        mock_isdir.return_value = True
         mock_get_repo_name.return_value = "repo"
 
         agent.download_code()

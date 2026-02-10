@@ -46,8 +46,11 @@ class TaskHandler:
         """
         task_id = data.get("task_id", -1)
         subtask_id = data.get("subtask_id", -1)
+        workdir_set = bool(data.get("workdir"))
+        workdir_policy = data.get("workdir_policy") or data.get("workdirPolicy")
         logger.info(
-            f"Received task dispatch: task_id={task_id}, subtask_id={subtask_id}"
+            f"Received task dispatch: task_id={task_id}, subtask_id={subtask_id}, "
+            f"workdir_policy={workdir_policy}, workdir_set={workdir_set}"
         )
 
         # Enqueue task for execution
@@ -92,8 +95,11 @@ class TaskHandler:
         """
         task_id = data.get("task_id", -1)
         subtask_id = data.get("subtask_id", -1)
+        workdir_set = bool(data.get("workdir"))
+        workdir_policy = data.get("workdir_policy") or data.get("workdirPolicy")
         logger.info(
-            f"Received chat message: task_id={task_id}, subtask_id={subtask_id}"
+            f"Received chat message: task_id={task_id}, subtask_id={subtask_id}, "
+            f"workdir_policy={workdir_policy}, workdir_set={workdir_set}"
         )
 
         # Chat messages are processed as tasks
