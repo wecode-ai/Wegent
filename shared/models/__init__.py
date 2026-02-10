@@ -4,12 +4,22 @@
 
 """
 Shared models package for Wegent project.
+
+Unified execution protocol - all modules use these classes:
+- ExecutionRequest: Unified request format for all execution services
+- ExecutionEvent: Unified event format for all execution services
+- EventType: Unified event type enum
 """
 
 from . import db
-from .task import Task
+
+# Unified execution protocol
+from .execution import EventType, ExecutionEvent, ExecutionRequest
 
 __all__ = [
     "db",
-    "Task",
+    # Unified execution protocol
+    "EventType",
+    "ExecutionEvent",
+    "ExecutionRequest",
 ]

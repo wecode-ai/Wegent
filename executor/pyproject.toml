@@ -14,6 +14,7 @@ dependencies = [
     "anthropic==0.67.0",
     "claude-agent-sdk==0.1.31",
     "cryptography==46.0.3",
+    "dacite>=1.8.0",
     "fastapi==0.109.1",
     "gitpython==3.1.43",
     "google-genai==1.55.0",

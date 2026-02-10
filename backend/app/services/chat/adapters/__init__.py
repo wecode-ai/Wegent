@@ -4,23 +4,24 @@
 
 """Chat Shell adapters for Backend integration.
 
-This module provides adapters for communicating with Chat Shell,
-supporting both package import (in-process) and HTTP/SSE (remote) modes.
+This module provides converters for SSE to WebSocket streaming.
+
+NOTE: ChatRequest, ChatEvent, ChatEventType, HTTPAdapter, ChatProxy have been removed.
+Use ExecutionRequest, ExecutionEvent, and EventType from shared.models instead.
+Use ExecutionDispatcher from app.services.execution for task dispatch.
 """
 
+# Re-export unified types from shared.models for convenience
+from shared.models import EventType, ExecutionEvent, ExecutionRequest
+
 from .converter import SSEToWebSocketConverter, stream_sse_to_websocket
-from .http import HTTPAdapter
-from .interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
-from .proxy import ChatProxy, chat_proxy
 
 __all__ = [
-    "ChatInterface",
-    "ChatRequest",
-    "ChatEvent",
-    "ChatEventType",
-    "HTTPAdapter",
-    "ChatProxy",
-    "chat_proxy",
+    # Unified types from shared.models
+    "ExecutionRequest",
+    "ExecutionEvent",
+    "EventType",
+    # Converters
     "SSEToWebSocketConverter",
     "stream_sse_to_websocket",
 ]

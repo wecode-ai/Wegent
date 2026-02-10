@@ -7,15 +7,18 @@
 # -*- coding: utf-8 -*-
 
 """
-API routes module, defines FastAPI routes and models
+API routes module, defines FastAPI routes and models.
+
+Uses unified ExecutionRequest and ExecutionEvent from shared.models.execution.
 """
 
 import os
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
+import httpx
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -23,9 +26,10 @@ from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
-from shared.models.task import TasksRequest
+from shared.models.execution import EventType, ExecutionEvent, ExecutionRequest
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import (
     set_request_context,
@@ -219,30 +223,15 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-# Define callback request model
-class CallbackRequest(BaseModel):
-    task_id: int
-    subtask_id: int
-    task_title: Optional[str] = None
-    progress: int
-    executor_name: Optional[str] = None
-    executor_namespace: Optional[str] = None
-    status: Optional[str] = None
-    error_message: Optional[str] = None
-    result: Optional[Dict[str, Any]] = None
-    task_type: Optional[str] = (
-        None  # Task type: "validation" for validation tasks, None for regular tasks
-    )
-    sandbox_metadata: Optional[Dict[str, Any]] = None  # Sandbox metadata from task
-
-
 @api_router.post("/callback")
-async def callback_handler(request: CallbackRequest, http_request: Request):
+async def callback_handler(event_data: dict = Body(...), http_request: Request = None):
     """
     Receive callback interface for executor task progress and completion.
 
+    Uses unified ExecutionEvent from shared.models.execution.
+
     Args:
-        request: Request body containing task ID, pod name, and progress.
+        event_data: Event data dict that will be converted to ExecutionEvent.
 
     Returns:
         dict: Processing result
@@ -251,13 +240,16 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(f"Received callback from {client_ip}")
 
+        # Parse event using unified ExecutionEvent
+        event = ExecutionEvent.from_dict(event_data)
+
         # [DEBUG] Log result content for streaming debugging
-        if request.result:
-            result_value = request.result.get("value", "")
-            result_thinking = request.result.get("thinking", [])
+        if event.result:
+            result_value = event.result.get("value", "")
+            result_thinking = event.result.get("thinking", [])
             logger.info(
-                f"[DEBUG] Callback result: task_id={request.task_id}, "
-                f"status={request.status}, progress={request.progress}, "
+                f"[DEBUG] Callback result: task_id={event.task_id}, "
+                f"status={event.status}, progress={event.progress}, "
                 f"value_length={len(result_value) if result_value else 0}, "
                 f"thinking_count={len(result_thinking)}"
             )
@@ -269,58 +261,64 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
                 logger.info(f"[DEBUG] Content preview: {preview}...")
 
         # Set task context for tracing (function handles OTEL enabled check internally)
-        set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+        set_task_context(task_id=event.task_id, subtask_id=event.subtask_id)
+
+        # Check task type from event data (validation, sandbox, or regular)
+        # Use data field for task_type since ExecutionEvent doesn't have task_type directly
+        task_type = event.data.get("task_type", "")
 
         # Check if this is a validation task callback
         # Primary check: task_type == "validation"
         # Fallback check: validation_id in result (for backward compatibility)
-        is_validation_task = request.task_type == "validation" or (
-            request.result and request.result.get("validation_id")
+        is_validation_task = task_type == "validation" or (
+            event.result and event.result.get("validation_id")
         )
         if is_validation_task:
-            await _forward_validation_callback(request)
+            await _forward_validation_callback(event)
             # For validation tasks, we only need to forward to backend for Redis update
             # No need to update task status in database (validation tasks don't exist in DB)
             logger.info(
-                f"Successfully processed validation callback for task {request.task_id}"
+                f"Successfully processed validation callback for task {event.task_id}"
             )
             return {
                 "status": "success",
-                "message": f"Successfully processed validation callback for task {request.task_id}",
+                "message": f"Successfully processed validation callback for task {event.task_id}",
             }
 
         # Check if this is a Sandbox execution callback
-        is_sandbox_task = request.task_type == "sandbox"
+        is_sandbox_task = task_type == "sandbox"
         if is_sandbox_task:
-            await _handle_sandbox_callback(request)
+            await _handle_sandbox_callback(event)
             logger.info(
-                f"Successfully processed Sandbox callback for task {request.task_id}"
+                f"Successfully processed Sandbox callback for task {event.task_id}"
             )
             return {
                 "status": "success",
-                "message": f"Successfully processed Sandbox callback for task {request.task_id}",
+                "message": f"Successfully processed Sandbox callback for task {event.task_id}",
             }
 
         # For regular tasks, update task status in database
+        # Extract title from data field if present
+        task_title = event.data.get("task_title")
         success, result = api_client.update_task_status_by_fields(
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            progress=request.progress,
-            executor_name=request.executor_name,
-            executor_namespace=request.executor_namespace,
-            status=request.status,
-            error_message=request.error_message,
-            title=request.task_title,
-            result=request.result,
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            progress=event.progress,
+            executor_name=event.executor_name,
+            executor_namespace=event.executor_namespace,
+            status=event.status,
+            error_message=event.error,
+            title=task_title,
+            result=event.result,
         )
         if not success:
             logger.warning(
-                f"Failed to update status for task {request.task_id}: {result}"
+                f"Failed to update status for task {event.task_id}: {result}"
             )
 
         # Remove task from RunningTaskTracker when completed or failed
         # This prevents false-positive heartbeat timeout detection
-        status_lower = request.status.lower() if request.status else ""
+        status_lower = event.status.lower() if event.status else ""
         if status_lower in ("completed", "failed", "cancelled", "success"):
             try:
                 from executor_manager.services.task_heartbeat_manager import (
@@ -329,50 +327,52 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
 
                 tracker = get_running_task_tracker()
                 logger.info(
-                    f"[Callback] Removing task {request.task_id} from RunningTaskTracker "
+                    f"[Callback] Removing task {event.task_id} from RunningTaskTracker "
                     f"(source: callback, status={status_lower})"
                 )
-                tracker.remove_running_task(request.task_id)
+                tracker.remove_running_task(event.task_id)
             except Exception as e:
                 logger.warning(f"Failed to remove task from RunningTaskTracker: {e}")
 
-        logger.info(f"Successfully processed callback for task {request.task_id}")
+        logger.info(f"Successfully processed callback for task {event.task_id}")
         return {
             "status": "success",
-            "message": f"Successfully processed callback for task {request.task_id}",
+            "message": f"Successfully processed callback for task {event.task_id}",
         }
     except Exception as e:
         logger.error(f"Error processing callback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _forward_validation_callback(request: CallbackRequest):
-    """Forward validation task callback to Backend for Redis status update"""
-    import httpx
+async def _forward_validation_callback(event: ExecutionEvent):
+    """Forward validation task callback to Backend for Redis status update.
 
+    Args:
+        event: ExecutionEvent containing validation callback data
+    """
     # Get validation_id from result if available
-    validation_id = request.result.get("validation_id") if request.result else None
+    validation_id = event.result.get("validation_id") if event.result else None
     if not validation_id:
         # If no validation_id in result, we can't forward to backend
         # This can happen when task_type is "validation" but result is None (e.g., early failure)
         logger.warning(
-            f"Validation callback for task {request.task_id} has no validation_id, skipping forward"
+            f"Validation callback for task {event.task_id} has no validation_id, skipping forward"
         )
         return
 
     # Map callback status to validation status (case-insensitive)
-    status_lower = request.status.lower() if request.status else ""
+    status_lower = event.status.lower() if event.status else ""
     status_mapping = {
         "running": "running_checks",
         "completed": "completed",
         "failed": "completed",
     }
-    validation_status = status_mapping.get(status_lower, request.status)
+    validation_status = status_mapping.get(status_lower, event.status)
 
     # Extract validation result from callback
-    validation_result = request.result.get("validation_result", {})
-    stage = request.result.get("stage", "Running checks")
-    progress = request.progress
+    validation_result = event.result.get("validation_result", {})
+    stage = event.result.get("stage", "Running checks")
+    progress = event.progress
 
     # For failed status, ensure valid is False if not explicitly set
     valid_value = validation_result.get("valid")
@@ -387,8 +387,8 @@ async def _forward_validation_callback(request: CallbackRequest):
         "valid": valid_value,
         "checks": validation_result.get("checks"),
         "errors": validation_result.get("errors"),
-        "errorMessage": request.error_message,
-        "executor_name": request.executor_name,  # Include executor_name for container cleanup
+        "errorMessage": event.error,
+        "executor_name": event.executor_name,  # Include executor_name for container cleanup
     }
 
     # Get backend URL
@@ -410,25 +410,25 @@ async def _forward_validation_callback(request: CallbackRequest):
         logger.error(f"Error forwarding validation callback: {e}")
 
 
-async def _handle_sandbox_callback(request: CallbackRequest):
+async def _handle_sandbox_callback(event: ExecutionEvent):
     """Handle Sandbox execution callback.
 
     This function updates the execution status in sandbox_manager based on
     the callback from executor container.
 
     Args:
-        request: Callback request containing execution status and result
+        event: ExecutionEvent containing execution status and result
     """
     from executor_manager.services.sandbox import get_sandbox_manager
 
-    # Use task_id and subtask_id from callback request to identify execution
-    task_id = request.task_id
-    subtask_id = request.subtask_id
+    # Use task_id and subtask_id from event to identify execution
+    task_id = event.task_id
+    subtask_id = event.subtask_id
 
     logger.info(
         f"[SandboxCallback] Processing callback: "
         f"task_id={task_id}, subtask_id={subtask_id}, "
-        f"status={request.status}, progress={request.progress}"
+        f"status={event.status}, progress={event.progress}"
     )
 
     # Get sandbox manager
@@ -444,13 +444,13 @@ async def _handle_sandbox_callback(request: CallbackRequest):
         return
 
     # Update execution status based on callback
-    status_lower = request.status.lower() if request.status else ""
+    status_lower = event.status.lower() if event.status else ""
 
     if status_lower == "completed":
         # Extract result from callback
         result_value = None
-        if request.result:
-            result_value = request.result.get("value", "")
+        if event.result:
+            result_value = event.result.get("value", "")
 
         execution.set_completed(result_value or "")
         logger.info(
@@ -460,7 +460,7 @@ async def _handle_sandbox_callback(request: CallbackRequest):
         )
 
     elif status_lower == "failed":
-        error_msg = request.error_message or "Execution failed"
+        error_msg = event.error or "Execution failed"
         execution.set_failed(error_msg)
         logger.info(
             f"[SandboxCallback] Execution failed: "
@@ -469,16 +469,16 @@ async def _handle_sandbox_callback(request: CallbackRequest):
 
     elif status_lower == "running":
         # Update progress for running status
-        execution.progress = request.progress
+        execution.progress = event.progress
         logger.debug(
             f"[SandboxCallback] Execution progress: "
-            f"task_id={task_id}, subtask_id={subtask_id}, progress={request.progress}"
+            f"task_id={task_id}, subtask_id={subtask_id}, progress={event.progress}"
         )
 
     else:
         logger.warning(
             f"[SandboxCallback] Unknown status: "
-            f"task_id={task_id}, subtask_id={subtask_id}, status={request.status}"
+            f"task_id={task_id}, subtask_id={subtask_id}, status={event.status}"
         )
 
     # Save updated execution state to Redis
@@ -526,12 +526,15 @@ def _verify_task_token(auth_header: Optional[str]) -> bool:
 
 @api_router.post("/tasks/receive")
 async def receive_tasks(
-    request: TasksRequest,
-    http_request: Request,
+    request_data: dict = Body(...),
+    http_request: Request = None,
     queue_type: str = "online",
 ):
     """
     Receive tasks in batch via POST.
+
+    Uses unified ExecutionRequest from shared.models.execution.
+    Accepts a dict with 'tasks' key containing list of task dicts.
 
     This endpoint supports two modes controlled by TASK_DISPATCH_MODE:
     - pull (default): Process tasks directly via TaskProcessor
@@ -544,16 +547,26 @@ async def receive_tasks(
     Authentication is optional, controlled by TASK_RECEIVE_AUTH_REQUIRED env var.
 
     Args:
-        request: TasksRequest containing a list of tasks.
+        request_data: Dict with 'tasks' key containing list of ExecutionRequest dicts.
         queue_type: Queue type ('online' or 'offline'), default is 'online'.
     Returns:
         dict: result code
     """
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
+
+        # Parse tasks from request data
+        tasks_data = request_data.get("tasks", [])
+        if not tasks_data:
+            logger.warning(f"No tasks in request from {client_ip}")
+            return {"code": 0}
+
+        # Convert to ExecutionRequest objects for validation and processing
+        tasks = [ExecutionRequest.from_dict(task_dict) for task_dict in tasks_data]
+
         logger.info(
-            f"Received {len(request.tasks)} tasks (queue_type={queue_type}), "
-            f"first task: {request.tasks[0].task_title if request.tasks else 'None'} from {client_ip}"
+            f"Received {len(tasks)} tasks (queue_type={queue_type}), "
+            f"first task: {tasks[0].task_title if tasks else 'None'} from {client_ip}"
         )
 
         # Validate queue_type
@@ -575,13 +588,15 @@ async def receive_tasks(
 
         # Set task context for tracing (use first task's context)
         # Functions handle OTEL enabled check internally
-        if request.tasks:
-            first_task = request.tasks[0]
+        if tasks:
+            first_task = tasks[0]
             set_task_context(
                 task_id=first_task.task_id, subtask_id=first_task.subtask_id
             )
+            user_data = first_task.user
             set_user_context(
-                user_id=str(first_task.user.id), user_name=first_task.user.name
+                user_id=str(user_data.get("id", "")),
+                user_name=user_data.get("name", ""),
             )
 
         # Check dispatch mode
@@ -594,16 +609,19 @@ async def receive_tasks(
             service_pool = os.getenv("SERVICE_POOL", "default")
             queue_service = TaskQueueService(service_pool, queue_type)
 
-            tasks_data = [task.dict() for task in request.tasks]
-            enqueued = queue_service.enqueue_tasks(tasks_data)
+            # Convert ExecutionRequest objects to dicts for queue
+            tasks_dicts = [task.to_dict() for task in tasks]
+            enqueued = queue_service.enqueue_tasks(tasks_dicts)
 
             logger.info(
-                f"Push mode: enqueued {enqueued}/{len(request.tasks)} tasks to "
+                f"Push mode: enqueued {enqueued}/{len(tasks)} tasks to "
                 f"pool '{service_pool}' queue '{queue_type}'"
             )
         else:
             # Pull mode (default): process tasks directly
-            task_processor.process_tasks([task.dict() for task in request.tasks])
+            # Convert ExecutionRequest objects to dicts for task processor
+            tasks_dicts = [task.to_dict() for task in tasks]
+            task_processor.process_tasks(tasks_dicts)
 
         return {"code": 0}
     except HTTPException:
@@ -893,6 +911,323 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# V1 Transparent Proxy APIs
+# =============================================================================
+# These endpoints implement the transparent proxy pattern for task dispatch.
+# executor_manager only forwards requests to containers without business logic.
+# =============================================================================
+
+
+class ExecuteRequest(BaseModel):
+    """Request model for /v1/execute endpoint.
+
+    This is a transparent proxy request that forwards TaskExecutionRequest
+    to the appropriate executor container.
+    """
+
+    # Container identification (optional - if provided, forward to existing container)
+    executor_name: Optional[str] = None
+
+    # Task identification (required for new container creation)
+    task_id: int
+    subtask_id: int
+
+    # Shell type for routing (required for new container creation)
+    shell_type: Optional[str] = None
+
+    # Full request payload to forward to container
+    # This contains the complete TaskExecutionRequest data
+    payload: Dict[str, Any]
+
+
+class CancelRequest(BaseModel):
+    """Request model for /v1/cancel endpoint."""
+
+    task_id: int
+    subtask_id: Optional[int] = None
+    executor_name: Optional[str] = None
+
+
+async def _forward_to_container(
+    executor_name: str, request_data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Forward request to an existing container.
+
+    This is a pure proxy function - no business logic processing.
+
+    Args:
+        executor_name: Name of the target container
+        request_data: Request payload to forward
+
+    Returns:
+        Response from the container
+
+    Raises:
+        HTTPException: If container not found or forwarding fails
+    """
+    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+
+    # Get container port
+    port, error = executor._get_container_port(executor_name)
+    if not port:
+        logger.warning(f"Container {executor_name} not found or has no port: {error}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Container {executor_name} not found: {error}",
+        )
+
+    # Forward request to container
+    endpoint = f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/execute"
+    logger.info(f"Forwarding request to container {executor_name} at {endpoint}")
+
+    try:
+        # Propagate trace context headers
+        headers = {}
+        try:
+            from shared.telemetry.context import (
+                get_request_id,
+                inject_trace_context_to_headers,
+            )
+
+            headers = inject_trace_context_to_headers(headers)
+            request_id = get_request_id()
+            if request_id:
+                headers["X-Request-ID"] = request_id
+        except Exception as e:
+            logger.debug(f"Failed to inject trace context headers: {e}")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(endpoint, json=request_data, headers=headers)
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(
+                    f"Container {executor_name} returned error: "
+                    f"{response.status_code} {response.text}"
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Container error: {response.text}",
+                )
+
+    except httpx.RequestError as e:
+        logger.error(f"Failed to forward request to container {executor_name}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to communicate with container: {str(e)}",
+        )
+
+
+@api_router.post("/v1/execute")
+async def execute_task(request: ExecuteRequest, http_request: Request):
+    """Unified execution endpoint - transparent proxy.
+
+    This endpoint implements the transparent proxy pattern:
+    1. If executor_name is provided, forward request to existing container
+    2. Otherwise, create a new container and submit the task
+
+    The executor_manager does NOT process any business logic here.
+    It only handles container routing and forwarding.
+
+    Args:
+        request: ExecuteRequest containing task info and optional executor_name
+        http_request: HTTP request object
+
+    Returns:
+        dict: Execution result from container or container creation status
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"[v1/execute] Received request: task_id={request.task_id}, "
+        f"subtask_id={request.subtask_id}, executor_name={request.executor_name} "
+        f"from {client_ip}"
+    )
+
+    # Set task context for tracing
+    set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+    try:
+        if request.executor_name:
+            # Forward to existing container
+            logger.info(
+                f"[v1/execute] Forwarding to existing container: {request.executor_name}"
+            )
+            return await _forward_to_container(request.executor_name, request.payload)
+        else:
+            # Create new container and submit task
+            logger.info(
+                f"[v1/execute] Creating new container for task {request.task_id}"
+            )
+
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+
+            # Build task data for container creation
+            # The payload already contains the full TaskExecutionRequest
+            task_data = request.payload.copy()
+            task_data["task_id"] = request.task_id
+            task_data["subtask_id"] = request.subtask_id
+
+            # Submit to executor (creates container and sends task)
+            result = executor.submit_executor(task_data)
+
+            logger.info(
+                f"[v1/execute] Container creation result: status={result.get('status')}, "
+                f"executor_name={result.get('executor_name')}"
+            )
+
+            return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v1/execute] Error executing task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/v1/cancel")
+async def cancel_task_v1(request: CancelRequest, http_request: Request):
+    """Cancel task execution - transparent proxy.
+
+    This endpoint cancels a running task by:
+    1. If executor_name is provided, send cancel request directly to that container
+    2. Otherwise, find the container by task_id and send cancel request
+
+    Args:
+        request: CancelRequest containing task_id and optional executor_name
+        http_request: HTTP request object
+
+    Returns:
+        dict: Cancellation result
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"[v1/cancel] Received request: task_id={request.task_id}, "
+        f"subtask_id={request.subtask_id}, executor_name={request.executor_name} "
+        f"from {client_ip}"
+    )
+
+    # Set task context for tracing
+    set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+    try:
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+
+        if request.executor_name:
+            # Direct cancel to specified container
+            port, error = executor._get_container_port(request.executor_name)
+            if not port:
+                logger.warning(
+                    f"[v1/cancel] Container {request.executor_name} not found: {error}"
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Container {request.executor_name} not found: {error}",
+                )
+
+            # Send cancel request to container
+            cancel_url = (
+                f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel"
+                f"?task_id={request.task_id}"
+            )
+
+            try:
+                headers = {}
+                try:
+                    from shared.telemetry.context import (
+                        get_request_id,
+                        inject_trace_context_to_headers,
+                    )
+
+                    headers = inject_trace_context_to_headers(headers)
+                    request_id = get_request_id()
+                    if request_id:
+                        headers["X-Request-ID"] = request_id
+                except Exception as e:
+                    logger.debug(f"Failed to inject trace context headers: {e}")
+
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(cancel_url, headers=headers)
+                    response.raise_for_status()
+
+                logger.info(
+                    f"[v1/cancel] Successfully cancelled task {request.task_id} "
+                    f"in container {request.executor_name}"
+                )
+
+                # Clean up heartbeat data
+                await _cleanup_task_heartbeat(request.task_id)
+
+                return {
+                    "status": "success",
+                    "message": f"Task {request.task_id} cancellation requested",
+                    "executor_name": request.executor_name,
+                }
+
+            except httpx.RequestError as e:
+                logger.error(
+                    f"[v1/cancel] Failed to send cancel to container "
+                    f"{request.executor_name}: {e}"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to communicate with container: {str(e)}",
+                )
+
+        else:
+            # Find container by task_id and cancel
+            result = executor.cancel_task(request.task_id)
+
+            if result.get("status") == "success":
+                logger.info(
+                    f"[v1/cancel] Successfully cancelled task {request.task_id}"
+                )
+                await _cleanup_task_heartbeat(request.task_id)
+                return result
+            else:
+                logger.warning(
+                    f"[v1/cancel] Failed to cancel task {request.task_id}: "
+                    f"{result.get('error_msg')}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=result.get("error_msg", "Failed to cancel task"),
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v1/cancel] Error cancelling task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _cleanup_task_heartbeat(task_id: int) -> None:
+    """Clean up heartbeat data for a cancelled task.
+
+    Args:
+        task_id: Task ID to clean up
+    """
+    try:
+        from executor_manager.services.heartbeat_manager import (
+            HeartbeatType,
+            get_heartbeat_manager,
+        )
+        from executor_manager.services.task_heartbeat_manager import (
+            get_running_task_tracker,
+        )
+
+        task_id_str = str(task_id)
+        heartbeat_mgr = get_heartbeat_manager()
+        tracker = get_running_task_tracker()
+
+        await heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+        logger.info(f"[v1/cancel] Removing task {task_id} from RunningTaskTracker")
+        tracker.remove_running_task(task_id)
+    except Exception as e:
+        logger.warning(f"[v1/cancel] Failed to clean up heartbeat data: {e}")
 
 
 @api_router.post("/tasks/{task_id}/heartbeat")

@@ -79,14 +79,14 @@ async def _stream_response(
     """
     Stream response generator using ChatService.
 
-    Converts ResponseRequest to ChatRequest and uses ChatService for processing.
+    Converts ResponseRequest to ExecutionRequest and uses ChatService for processing.
     """
     import logging
 
     from chat_shell.core.config import settings
     from chat_shell.core.shutdown import shutdown_manager
-    from chat_shell.interface import ChatEventType, ChatRequest
     from chat_shell.services.chat_service import chat_service
+    from shared.models.execution import EventType, ExecutionRequest
 
     logger = logging.getLogger(__name__)
 
@@ -272,12 +272,12 @@ async def _stream_response(
         # Merge skill configs from tools and metadata
         all_skill_configs = skill_configs + skill_configs_from_meta
 
-        # Build ChatRequest for ChatService
-        chat_request = ChatRequest(
+        # Build ExecutionRequest for ChatService
+        execution_request = ExecutionRequest(
             task_id=task_id,
             subtask_id=subtask_id,
             user_subtask_id=user_subtask_id,  # User subtask ID for RAG persistence
-            message=message,
+            prompt=message,  # ExecutionRequest uses 'prompt' instead of 'message'
             user_id=user_id,
             user_name=user_name,
             team_id=team_id,
@@ -366,8 +366,8 @@ async def _stream_response(
             }
         )
 
-        # Stream from ChatService
-        async for event in chat_service.chat(chat_request):
+        # Stream from ChatService - now uses ExecutionRequest directly
+        async for event in chat_service.chat(execution_request):
             # Check for cancellation
             if cancel_event.is_set():
                 yield _format_sse_event(
@@ -379,12 +379,13 @@ async def _stream_response(
                 )
                 return
 
-            # Convert ChatEvent to SSE event
-            if event.type == ChatEventType.CHUNK:
-                chunk_text = event.data.get("content", "")
+            # Process ExecutionEvent - event.type is now a string (EventType value)
+            event_type = event.type
+            if event_type == EventType.CHUNK.value:
+                chunk_text = event.content or event.data.get("content", "")
 
                 # Check for thinking data, sources, blocks, and block_id in result
-                result = event.data.get("result")
+                result = event.result or event.data.get("result")
                 block_id = event.data.get(
                     "block_id"
                 )  # Extract block_id for text block streaming
@@ -491,32 +492,36 @@ async def _stream_response(
                                 ).model_dump(),
                             )
 
-            elif event.type == ChatEventType.THINKING:
-                thinking_text = event.data.get("content", "")
+            elif event_type == EventType.THINKING.value:
+                thinking_text = event.content or event.data.get("content", "")
                 if thinking_text:
                     yield _format_sse_event(
                         ResponseEventType.REASONING_DELTA.value,
                         ReasoningDelta(text=thinking_text).model_dump(),
                     )
 
-            elif event.type == ChatEventType.TOOL_START:
+            elif event_type == EventType.TOOL_START.value:
                 yield _format_sse_event(
                     ResponseEventType.TOOL_START.value,
                     ToolStart(
-                        id=event.data.get("tool_call_id", ""),
-                        name=event.data.get("tool_name", ""),
-                        input=event.data.get("tool_input", {}),
-                        display_name=event.data.get("tool_name"),
+                        id=event.tool_use_id or event.data.get("tool_call_id", ""),
+                        name=event.tool_name or event.data.get("tool_name", ""),
+                        input=event.tool_input or event.data.get("tool_input", {}),
+                        display_name=event.tool_name or event.data.get("tool_name"),
                         blocks=event.data.get("blocks", []),
                     ).model_dump(),
                 )
 
-            elif event.type == ChatEventType.TOOL_RESULT:
+            elif event_type == EventType.TOOL_RESULT.value:
                 yield _format_sse_event(
                     ResponseEventType.TOOL_DONE.value,
                     ToolDone(
-                        id=event.data.get("tool_call_id", ""),
-                        output=event.data.get("tool_output"),
+                        id=event.tool_use_id or event.data.get("tool_call_id", ""),
+                        output=(
+                            event.tool_output
+                            if event.tool_output is not None
+                            else event.data.get("tool_output")
+                        ),
                         blocks=event.data.get("blocks", []),
                         duration_ms=None,
                         error=None,
@@ -524,9 +529,9 @@ async def _stream_response(
                     ).model_dump(),
                 )
 
-            elif event.type == ChatEventType.DONE:
+            elif event_type == EventType.DONE.value:
                 # Extract usage info if available
-                result = event.data.get("result", {})
+                result = event.result or event.data.get("result", {})
                 usage = result.get("usage") if result else None
                 if usage:
                     total_input_tokens = usage.get("input_tokens", 0)
@@ -572,8 +577,8 @@ async def _stream_response(
                             list(done_extra_fields.keys()),
                         )
 
-            elif event.type == ChatEventType.ERROR:
-                error_msg = event.data.get("error", "Unknown error")
+            elif event_type == EventType.ERROR.value:
+                error_msg = event.error or event.data.get("error", "Unknown error")
                 yield _format_sse_event(
                     ResponseEventType.ERROR.value,
                     ErrorEvent(
@@ -584,7 +589,7 @@ async def _stream_response(
                 )
                 return
 
-            elif event.type == ChatEventType.CANCELLED:
+            elif event_type == EventType.CANCELLED.value:
                 yield _format_sse_event(
                     ResponseEventType.RESPONSE_CANCELLED.value,
                     ResponseCancelled(

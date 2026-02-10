@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
 from chat_shell.core.database import get_db_context
-from chat_shell.interface import ChatRequest
+from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,11 @@ class ChatContext:
       all execute concurrently
     """
 
-    def __init__(self, request: ChatRequest):
+    def __init__(self, request: ExecutionRequest):
         """Initialize chat context.
 
         Args:
-            request: The chat request containing all configuration
+            request: The execution request containing all configuration
         """
         self._request = request
         self._mcp_clients: list = []

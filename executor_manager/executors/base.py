@@ -2,19 +2,42 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+Base executor class.
+
+Uses unified ExecutionRequest from shared.models.execution.
+"""
+
 import abc
 import logging
 from typing import Any, Dict, Optional, Union
+
+from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
 
 class Executor(abc.ABC):
+    """Abstract base class for executors.
+
+    Uses unified ExecutionRequest from shared.models.execution.
+    """
 
     @abc.abstractmethod
     def submit_executor(
-        self, task: Dict[str, Any], callback: Optional[callable] = None
+        self,
+        task: Union[Dict[str, Any], ExecutionRequest],
+        callback: Optional[callable] = None,
     ) -> Dict[str, Any]:
+        """Submit a task for execution.
+
+        Args:
+            task: Task data as dict or ExecutionRequest
+            callback: Optional callback function for status updates
+
+        Returns:
+            Dict with execution result
+        """
         pass
 
     @abc.abstractmethod

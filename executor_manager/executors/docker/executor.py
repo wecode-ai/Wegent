@@ -7,15 +7,16 @@
 # -*- coding: utf-8 -*-
 
 """
-Docker executor for running tasks in Docker containers
+Docker executor for running tasks in Docker containers.
+
+Uses unified ExecutionRequest from shared.models.execution.
 """
 
 import json
 import os
 import subprocess
 import time
-from email import utils
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import httpx
 import requests
@@ -45,6 +46,7 @@ from executor_manager.executors.docker.utils import (
 )
 from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 
@@ -137,29 +139,34 @@ class DockerExecutor(Executor):
         return True
 
     def submit_executor(
-        self, task: Dict[str, Any], callback: Optional[callable] = None
+        self,
+        task: Union[Dict[str, Any], ExecutionRequest],
+        callback: Optional[callable] = None,
     ) -> Dict[str, Any]:
         """
         Submit a Docker container for the given task.
 
         Args:
-            task (Dict[str, Any]): Task information.
-            callback (Optional[callable]): Optional callback function.
+            task: Task information as dict or ExecutionRequest.
+            callback: Optional callback function.
 
         Returns:
             Dict[str, Any]: Submission result with unified structure.
         """
+        # Convert ExecutionRequest to dict for internal processing
+        task_dict = task.to_dict() if isinstance(task, ExecutionRequest) else task
+
         # Extract basic task information to avoid repeated retrieval
-        task_info = self._extract_task_info(task)
+        task_info = self._extract_task_info(task_dict)
         task_id = task_info["task_id"]
         subtask_id = task_info["subtask_id"]
         user_name = task_info["user_name"]
         executor_name = task_info["executor_name"]
 
         # Check if this is a validation task (validation tasks use negative task_id)
-        is_validation_task = task.get("type") == "validation"
+        is_validation_task = task_dict.get("type") == "validation"
         # Check if this is a Sandbox task (internal tasks with callback routing)
-        is_sandbox_task = task.get("type") == "sandbox"
+        is_sandbox_task = task_dict.get("type") == "sandbox"
 
         # Initialize execution status
         execution_status = {
@@ -173,14 +180,14 @@ class DockerExecutor(Executor):
         try:
             # Determine execution path based on whether container name exists
             if executor_name:
-                self._execute_in_existing_container(task, execution_status)
+                self._execute_in_existing_container(task_dict, execution_status)
             else:
                 # Generate new container name
                 execution_status["executor_name"] = generate_executor_name(
                     task_id, subtask_id, user_name
                 )
 
-                self._create_new_container(task, task_info, execution_status)
+                self._create_new_container(task_dict, task_info, execution_status)
         except Exception as e:
             # Unified exception handling
             self._handle_execution_exception(e, task_id, execution_status)

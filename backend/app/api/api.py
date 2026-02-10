@@ -47,6 +47,7 @@ from app.api.endpoints.adapter import (
 )
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
+    callback_router,
     chat_storage_router,
     rag_router,
     services_router,
@@ -157,4 +158,7 @@ api_router.include_router(
 )
 api_router.include_router(
     subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]
+)
+api_router.include_router(
+    callback_router, prefix="/internal", tags=["internal-callback"]
 )

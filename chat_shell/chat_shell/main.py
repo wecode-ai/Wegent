@@ -381,6 +381,11 @@ def create_app(
 
     app.include_router(v1_response_router)
 
+    # Include v1 execute router (unified execution interface)
+    from chat_shell.api.v1.execute import router as v1_execute_router
+
+    app.include_router(v1_execute_router)
+
     # Include deep research router
     from chat_shell.api.v1.deep_research import router as deep_research_router
 

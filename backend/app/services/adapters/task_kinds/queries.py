@@ -682,23 +682,8 @@ class TaskQueryMixin:
             # Initialize default values
             shell_type = ""
             agent_config = {}
-            system_prompt = ""
-            mcp_servers = {}
 
-            # Get Ghost data
-            ghost = kindReader.get_by_name_and_namespace(
-                db,
-                bot.user_id,
-                KindType.GHOST,
-                bot_crd.spec.ghostRef.namespace,
-                bot_crd.spec.ghostRef.name,
-            )
-            if ghost and ghost.json:
-                ghost_crd = Ghost.model_validate(ghost.json)
-                system_prompt = ghost_crd.spec.systemPrompt
-                mcp_servers = ghost_crd.spec.mcpServers or {}
-
-            # Get Model data
+            # Get Model data for agent_config
             if bot_crd.spec.modelRef:
                 model = kindReader.get_by_name_and_namespace(
                     db,
@@ -711,7 +696,7 @@ class TaskQueryMixin:
                     model_crd = Model.model_validate(model.json)
                     agent_config = model_crd.spec.modelConfig
 
-            # Get Shell data
+            # Get Shell data for shell_type
             shell = kindReader.get_by_name_and_namespace(
                 db,
                 bot.user_id,
@@ -723,14 +708,15 @@ class TaskQueryMixin:
                 shell_crd = Shell.model_validate(shell.json)
                 shell_type = shell_crd.spec.shellType
 
+            # Note: system_prompt and mcp_servers from Ghost are intentionally excluded
+            # from the response to avoid sending sensitive data to the frontend
+            # via WebSocket task:join events
             bot_dict = {
                 "id": bot.id,
                 "user_id": bot.user_id,
                 "name": bot.name,
                 "shell_type": shell_type,
                 "agent_config": agent_config,
-                "system_prompt": system_prompt,
-                "mcp_servers": mcp_servers,
                 "is_active": bot.is_active,
                 "created_at": (bot.created_at.isoformat() if bot.created_at else None),
                 "updated_at": (bot.updated_at.isoformat() if bot.updated_at else None),

@@ -197,7 +197,7 @@ class LangGraphAgentBuilder:
                         "[prompt_modifier] Final system prompt (len=%d)",
                         len(updated_content),
                     )
-                    logger.debug(
+                    logger.info(
                         "[prompt_modifier] Final system prompt content:\n%s",
                         updated_content,
                     )

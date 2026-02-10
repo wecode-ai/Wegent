@@ -7,21 +7,23 @@
 # -*- coding: utf-8 -*-
 
 """
-Callback client module, handles communication with the executor_manager callback API
+Callback client module, handles communication with the executor_manager callback API.
+
+Uses unified ExecutionEvent format from shared.models.execution for all callbacks.
+All legacy callback methods have been removed - use send_event() only.
 """
 
 import json
-import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import requests
 
 from executor.config import config
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionEvent
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
-from shared.utils.http_util import build_payload
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("callback_client")
@@ -66,7 +68,7 @@ class CallbackClient:
             max_retries: Maximum number of retries, defaults to self.max_retries
 
         Returns:
-            Tuple of (success, result)
+            Dict with status and optional error_msg
         """
         retries = 0
         delay = self.retry_delay
@@ -87,63 +89,23 @@ class CallbackClient:
                 retries += 1
                 delay *= self.retry_backoff
 
-    def send_callback(
-        self,
-        task_id: int,
-        subtask_id: int,
-        task_title: str,
-        subtask_title: str,
-        progress: int,
-        status: Optional[str] = None,
-        message: Optional[str] = None,
-        executor_name: Optional[str] = None,
-        executor_namespace: Optional[str] = None,
-        result: Optional[Dict[str, Any]] = None,
-        task_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    def send_event(self, event: ExecutionEvent) -> Dict[str, Any]:
         """
-        Send a callback to the executor_manager
+        Send an ExecutionEvent to the executor_manager.
+
+        This is the only method for sending events using the unified format.
 
         Args:
-            task_id: The ID of the task
-            task_title: The title of the task
-            progress: The progress percentage (0-100)
-            status: Optional status string
-            message: Optional message string
-            executor_name: Optional executor name
-            executor_namespace: Optional executor namespace
-            result: Optional result data dictionary
-            task_type: Optional task type (e.g., "validation" for validation tasks)
+            event: ExecutionEvent to send
 
         Returns:
             Dict[str, Any]: Result returned by the callback interface
         """
         logger.info(
-            f"Sending callback: task_id={task_id} subtask_id={subtask_id}, task_title={task_title}, progress={progress}, task_type={task_type}"
+            f"Sending event: type={event.type}, task_id={event.task_id}, subtask_id={event.subtask_id}"
         )
 
-        if executor_name is None:
-            executor_name = os.getenv("EXECUTOR_NAME")
-        if executor_namespace is None:
-            executor_namespace = os.getenv("EXECUTOR_NAMESPACE")
-        data = build_payload(
-            task_id=task_id,
-            subtask_id=subtask_id,
-            task_title=task_title,
-            subtask_title=subtask_title,
-            executor_name=executor_name,
-            executor_namespace=executor_namespace,
-            progress=progress,
-        )
-        # Add optional fields if provided
-        if status:
-            data["status"] = status
-        if message:
-            data["error_message"] = message
-        if result:
-            data["result"] = result
-        if task_type:
-            data["task_type"] = task_type
+        data = event.to_dict()
 
         try:
             return self._request_with_retry(lambda: self._do_send_callback(data))
@@ -151,7 +113,7 @@ class CallbackClient:
             logger.error(f"Failed to parse response data: {e}")
             return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
         except Exception as e:
-            logger.error(f"Unexpected error during send_callback: {e}")
+            logger.error(f"Unexpected error during send_event: {e}")
             return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
 
     def _do_send_callback(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -162,7 +124,7 @@ class CallbackClient:
             data: The data to send in the request
 
         Returns:
-            Tuple of (success, result)
+            Dict with status and optional data/error_msg
         """
         # Mask sensitive data in callback payload for logging
         masked_data = mask_sensitive_data(data)
@@ -210,7 +172,7 @@ class CallbackClient:
             response: The response object
 
         Returns:
-            Tuple of (success, result)
+            Dict with status and optional data/error_msg
         """
         logger.info(
             f"Received response from callback: {response.status_code}, {response.text}"
@@ -223,9 +185,7 @@ class CallbackClient:
 
         elif 400 <= response.status_code < 500:
             error_msg = f"Client error ({response.status_code}) during callback"
-            logger.error(
-                "error_msg: %s, handele_response: %s", error_msg, response.text
-            )
+            logger.error("error_msg: %s, handle_response: %s", error_msg, response.text)
             return {"status": TaskStatus.FAILED.value, "error_msg": error_msg}
         else:
             raise requests.RequestException(

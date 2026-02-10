@@ -5,13 +5,19 @@
 """
 OpenAPI v1/responses endpoint.
 Compatible with OpenAI Responses API format.
+
+This module uses the unified trigger architecture:
+- setup_chat_session: Creates task and subtasks
+- build_execution_request: Builds ExecutionRequest using TaskRequestBuilder
+- execution_dispatcher.dispatch: Unified dispatch with SSEResultEmitter for streaming
 """
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from slowapi import Limiter
 from sqlalchemy.orm import Session
 
@@ -31,14 +37,8 @@ from app.schemas.openapi_response import (
     ResponseError,
     ResponseObject,
 )
-from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.openapi.chat_response import (
-    create_streaming_response,
-    create_sync_response,
-)
 from app.services.openapi.helpers import (
-    check_team_supports_direct_chat,
     extract_input_text,
     parse_model_string,
     parse_wegent_tools,
@@ -294,95 +294,469 @@ async def create_response(
                     detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
                 )
 
-    # Check if team supports direct chat (Chat Shell type)
-    supports_direct_chat = check_team_supports_direct_chat(db, team, current_user.id)
-
-    if supports_direct_chat:
-        # Chat Shell type: use direct LLM call (streaming or sync)
-        if request_body.stream:
-            return await create_streaming_response(
-                db=db,
-                user=current_user,
-                team=team,
-                model_info=model_info,
-                request_body=request_body,
-                input_text=input_text,
-                tool_settings=tool_settings,
-                task_id=task_id,
-                api_key_name=api_key_name,
-            )
-        else:
-            return await create_sync_response(
-                db=db,
-                user=current_user,
-                team=team,
-                model_info=model_info,
-                request_body=request_body,
-                input_text=input_text,
-                tool_settings=tool_settings,
-                task_id=task_id,
-                api_key_name=api_key_name,
-            )
-
-    # Non-Chat Shell type (Executor-based): streaming not supported
+    # Use unified trigger architecture for all shell types
+    # ExecutionRouter will automatically select communication mode based on shell_type
     if request_body.stream:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Streaming is only supported for teams where all bots use Chat Shell type. "
-            "Please set stream=false to use the queued response mode.",
+        # Streaming mode: use dispatch_sse_stream
+        return await _create_streaming_response_unified(
+            db=db,
+            user=current_user,
+            team=team,
+            model_info=model_info,
+            request_body=request_body,
+            input_text=input_text,
+            tool_settings=tool_settings,
+            task_id=task_id,
+            api_key_name=api_key_name,
+        )
+    else:
+        # Sync mode: use dispatch_sse_sync or return queued response
+        return await _create_sync_response_unified(
+            db=db,
+            user=current_user,
+            team=team,
+            model_info=model_info,
+            request_body=request_body,
+            input_text=input_text,
+            tool_settings=tool_settings,
+            task_id=task_id,
+            api_key_name=api_key_name,
         )
 
-    # Non-Chat Shell type (Executor-based): create task and return queued response
-    workspace = tool_settings.get("workspace")
-    task_create = TaskCreate(
-        prompt=input_text,
-        team_name=model_info["team_name"],
-        team_namespace=model_info["namespace"],
-        task_type="code" if workspace else "chat",
-        type="online",
-        source="api",
-        model_id=model_info.get("model_id"),
-        force_override_bot_model=model_info.get("model_id") is not None,
-        api_key_name=api_key_name,
-        git_url=workspace.get("git_url", "") if workspace else "",
-        git_repo=workspace.get("git_repo", "") if workspace else "",
-        git_domain=workspace.get("git_domain", "") if workspace else "",
-        branch_name=workspace.get("branch", "") if workspace else "",
+
+async def _create_streaming_response_unified(
+    db: Session,
+    user: User,
+    team,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+) -> StreamingResponse:
+    """Create streaming response using unified trigger architecture.
+
+    Uses build_execution_request + dispatch_sse_stream for streaming.
+    Raises NotImplementedError if the shell type doesn't support streaming.
+    """
+    from app.db.session import SessionLocal
+    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.trigger.unified import build_execution_request
+    from app.services.execution import execution_dispatcher
+    from app.services.openapi.chat_session import setup_chat_session
+    from app.services.openapi.streaming import streaming_service
+    from shared.models import EventType
+
+    # Set up chat session (creates task and subtasks)
+    setup = setup_chat_session(
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_key_name,
     )
 
+    response_id = f"resp_{setup.task_id}"
+    created_at = int(datetime.now().timestamp())
+    assistant_subtask_id = setup.assistant_subtask.id
+    task_kind_id = setup.task_id
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+
+    # Extract data needed for streaming before closing db
+    user_id = user.id
+    user_name = user.user_name
+
+    # Build execution request using unified builder
     try:
-        task_dict = task_kinds_service.create_task_or_append(
-            db, obj_in=task_create, user=current_user, task_id=task_id
+        execution_request = await build_execution_request(
+            task=setup.task,
+            assistant_subtask=setup.assistant_subtask,
+            team=team,
+            user=user,
+            message=input_text,
+            enable_tools=enable_chat_bot,
+            enable_deep_thinking=enable_chat_bot,
+            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
         )
-    except HTTPException:
-        raise
+    finally:
+        # Close the database session before streaming starts
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        db.close()
+
+    async def raw_chat_stream():
+        """Generate raw text chunks from ExecutionDispatcher."""
+        import asyncio
+
+        from app.services.execution.emitters import SSEResultEmitter
+
+        accumulated_content = ""
+
+        try:
+            cancel_event = await session_manager.register_stream(assistant_subtask_id)
+
+            # Create SSEResultEmitter for streaming
+            emitter = SSEResultEmitter(
+                task_id=execution_request.task_id,
+                subtask_id=execution_request.subtask_id,
+            )
+
+            # Start dispatch task (runs concurrently)
+            dispatch_task = asyncio.create_task(
+                execution_dispatcher.dispatch(execution_request, emitter=emitter)
+            )
+
+            # Stream events from emitter
+            try:
+                async for event in emitter.stream():
+                    if cancel_event.is_set() or await session_manager.is_cancelled(
+                        assistant_subtask_id
+                    ):
+                        logger.info(
+                            f"Stream cancelled for subtask {assistant_subtask_id}"
+                        )
+                        break
+
+                    if event.type == EventType.CHUNK.value:
+                        content = event.content or ""
+                        if content:
+                            accumulated_content += content
+                            yield content
+                    elif event.type == EventType.ERROR.value:
+                        error_msg = event.error or "Unknown error"
+                        logger.error(f"[OPENAPI] Error from execution: {error_msg}")
+                        raise Exception(error_msg)
+                    elif event.type == EventType.DONE.value:
+                        logger.info(
+                            f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
+                        )
+            finally:
+                # Wait for dispatch task to complete
+                try:
+                    await dispatch_task
+                except Exception:
+                    pass  # Error already handled via emitter
+
+            # Stream completed (not cancelled)
+            if not cancel_event.is_set() and not await session_manager.is_cancelled(
+                assistant_subtask_id
+            ):
+                result = {"value": accumulated_content}
+                await session_manager.save_streaming_content(
+                    assistant_subtask_id, accumulated_content
+                )
+                await session_manager.append_user_and_assistant_messages(
+                    task_kind_id, input_text, accumulated_content
+                )
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "COMPLETED", result=result
+                )
+
+                # Update task status
+                stream_db = SessionLocal()
+                try:
+                    task_resource = (
+                        stream_db.query(TaskResource)
+                        .filter(TaskResource.id == task_kind_id)
+                        .first()
+                    )
+                    if task_resource:
+                        task_crd = Task.model_validate(task_resource.json)
+                        if task_crd.status:
+                            task_crd.status.status = "COMPLETED"
+                            task_crd.status.updatedAt = datetime.now()
+                            task_crd.status.completedAt = datetime.now()
+                            task_resource.json = task_crd.model_dump(mode="json")
+                            from sqlalchemy.orm.attributes import flag_modified
+
+                            flag_modified(task_resource, "json")
+                            stream_db.commit()
+                finally:
+                    stream_db.close()
+
+        except NotImplementedError as e:
+            # Streaming not supported for this shell type
+            logger.error(f"[OPENAPI] Streaming not supported: {e}")
+            await db_handler.update_subtask_status(
+                assistant_subtask_id, "FAILED", error=str(e)
+            )
+            raise
+        except Exception as e:
+            logger.exception(f"Error in streaming: {e}")
+            try:
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "FAILED", error=str(e)
+                )
+            except Exception:
+                pass
+            raise
+        finally:
+            await session_manager.unregister_stream(assistant_subtask_id)
+            await session_manager.delete_streaming_content(assistant_subtask_id)
+
+    async def generate():
+        try:
+            async for event in streaming_service.create_streaming_response(
+                response_id=response_id,
+                model_string=request_body.model,
+                chat_stream=raw_chat_stream(),
+                created_at=created_at,
+                previous_response_id=request_body.previous_response_id,
+            ):
+                yield event
+        except NotImplementedError as e:
+            # Return error in SSE format
+            import json
+
+            error_response = ResponseObject(
+                id=response_id,
+                created_at=created_at,
+                status="failed",
+                error=ResponseError(code="not_implemented", message=str(e)),
+                model=request_body.model,
+                output=[],
+                previous_response_id=request_body.previous_response_id,
+            )
+            yield f"data: {json.dumps({'response': error_response.model_dump(), 'type': 'response.failed'})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _create_sync_response_unified(
+    db: Session,
+    user: User,
+    team,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+):
+    """Create sync response using unified trigger architecture.
+
+    Uses build_execution_request + dispatch_sse_sync for SSE mode.
+    For non-SSE modes, creates task and returns queued response.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.db.session import SessionLocal
+    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.trigger.unified import build_execution_request
+    from app.services.execution import execution_dispatcher
+    from app.services.openapi.chat_session import setup_chat_session
+
+    # Set up chat session (creates task and subtasks)
+    setup = setup_chat_session(
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_key_name,
+    )
+
+    response_id = f"resp_{setup.task_id}"
+    created_at = int(datetime.now().timestamp())
+    assistant_subtask_id = setup.assistant_subtask.id
+    task_kind_id = setup.task_id
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+
+    # Extract data needed before closing db
+    user_id = user.id
+    user_name = user.user_name
+
+    # Build execution request using unified builder
+    try:
+        execution_request = await build_execution_request(
+            task=setup.task,
+            assistant_subtask=setup.assistant_subtask,
+            team=team,
+            user=user,
+            message=input_text,
+            enable_tools=enable_chat_bot,
+            enable_deep_thinking=enable_chat_bot,
+            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+        )
     except Exception as e:
-        logger.error(f"Failed to create task: {str(e)}")
+        logger.error(f"Failed to build execution request: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create task: {str(e)}",
+            detail=f"Failed to build execution request: {str(e)}",
         )
 
-    # Build previous_response_id for the response
-    prev_resp_id = None
-    if previous_task_id:
-        prev_resp_id = f"resp_{previous_task_id}"
+    # Check if streaming is supported (SSE mode)
+    if not execution_dispatcher.supports_streaming(execution_request):
+        # Non-SSE mode: close db and return queued response
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        db.close()
 
-    # Get subtasks for output
-    subtasks = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == task_dict.get("id"), Subtask.user_id == current_user.id
+        # Get subtasks for output
+        query_db = SessionLocal()
+        try:
+            subtasks = (
+                query_db.query(Subtask)
+                .filter(Subtask.task_id == task_kind_id, Subtask.user_id == user_id)
+                .order_by(Subtask.message_id.asc())
+                .all()
+            )
+
+            # Build previous_response_id for the response
+            prev_resp_id = None
+            if task_id:
+                prev_resp_id = f"resp_{task_id}"
+
+            task_dict = {
+                "id": task_kind_id,
+                "status": "PENDING",
+                "created_at": datetime.now(),
+            }
+
+            return _task_to_response_object(
+                task_dict,
+                request_body.model,
+                subtasks,
+                previous_response_id=prev_resp_id,
+            )
+        finally:
+            query_db.close()
+
+    # SSE mode: use SSEResultEmitter + dispatch + collect
+    import asyncio
+
+    from app.services.execution.emitters import SSEResultEmitter
+
+    try:
+        db.rollback()
+    except Exception:
+        pass
+    db.close()
+
+    try:
+        # Create SSEResultEmitter for collecting response
+        emitter = SSEResultEmitter(
+            task_id=execution_request.task_id,
+            subtask_id=execution_request.subtask_id,
         )
-        .order_by(Subtask.message_id.asc())
-        .all()
-    )
 
-    return _task_to_response_object(
-        task_dict,
-        request_body.model,
-        subtasks,
-        previous_response_id=prev_resp_id,
+        # Start dispatch task (runs concurrently)
+        dispatch_task = asyncio.create_task(
+            execution_dispatcher.dispatch(execution_request, emitter=emitter)
+        )
+
+        # Collect all content from emitter
+        accumulated_content, _ = await emitter.collect()
+
+        # Wait for dispatch task to complete
+        try:
+            await dispatch_task
+        except Exception:
+            pass  # Error already handled via emitter
+
+        logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
+
+        # Update subtask to completed
+        result = {"value": accumulated_content}
+        await db_handler.update_subtask_status(
+            assistant_subtask_id, "COMPLETED", result=result
+        )
+
+        # Save chat history
+        await session_manager.append_user_and_assistant_messages(
+            task_kind_id, input_text, accumulated_content
+        )
+
+        # Update task status
+        update_db = SessionLocal()
+        try:
+            task_resource = (
+                update_db.query(TaskResource)
+                .filter(TaskResource.id == task_kind_id)
+                .first()
+            )
+            if task_resource:
+                task_crd = Task.model_validate(task_resource.json)
+                if task_crd.status:
+                    task_crd.status.status = "COMPLETED"
+                    task_crd.status.updatedAt = datetime.now()
+                    task_crd.status.completedAt = datetime.now()
+                    task_crd.status.result = result
+                    task_resource.json = task_crd.model_dump(mode="json")
+                    task_resource.updated_at = datetime.now()
+                    flag_modified(task_resource, "json")
+                    update_db.commit()
+        finally:
+            update_db.close()
+
+    except Exception as e:
+        logger.exception(f"Error in sync chat response: {e}")
+        error_message = str(e)
+        await db_handler.update_subtask_status(
+            assistant_subtask_id, "FAILED", error=error_message
+        )
+
+        # Update task status to FAILED
+        error_db = SessionLocal()
+        try:
+            task_resource = (
+                error_db.query(TaskResource)
+                .filter(TaskResource.id == task_kind_id)
+                .first()
+            )
+            if task_resource:
+                task_crd = Task.model_validate(task_resource.json)
+                if task_crd.status:
+                    task_crd.status.status = "FAILED"
+                    task_crd.status.errorMessage = error_message
+                    task_crd.status.updatedAt = datetime.now()
+                    task_resource.json = task_crd.model_dump(mode="json")
+                    task_resource.updated_at = datetime.now()
+                    flag_modified(task_resource, "json")
+                    error_db.commit()
+        finally:
+            error_db.close()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"LLM request failed: {error_message}",
+        )
+
+    # Build response
+    message_id = f"msg_{assistant_subtask_id}"
+
+    return ResponseObject(
+        id=response_id,
+        created_at=created_at,
+        status="completed",
+        model=request_body.model,
+        output=[
+            OutputMessage(
+                id=message_id,
+                status="completed",
+                role="assistant",
+                content=[OutputTextContent(text=accumulated_content)],
+            )
+        ],
+        previous_response_id=request_body.previous_response_id,
     )
 
 

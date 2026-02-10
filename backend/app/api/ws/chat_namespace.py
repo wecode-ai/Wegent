@@ -538,10 +538,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
-            from app.services.chat.config import (
-                is_deep_research_protocol,
-                should_use_direct_chat,
-            )
+            from app.services.chat.config import is_deep_research_protocol
             from app.services.chat.storage import (
                 TaskCreationParams,
                 create_chat_task,
@@ -558,10 +555,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 return {
                     "error": "Deep Research does not support follow-up questions. Please start a new conversation."
                 }
-
-            # Check if team supports direct chat
-            supports_direct_chat = should_use_direct_chat(db, team, user_id)
-            logger.info(f"[WS] chat:send supports_direct_chat={supports_direct_chat}")
 
             # Get task JSON for group chat check
             task_json = {}
@@ -633,9 +626,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Create task and subtasks using unified function
             # Automatically handles Chat Shell vs Executor path based on team configuration
-            logger.info(
-                f"[WS] chat:send calling create_chat_task (supports_direct_chat={supports_direct_chat})..."
-            )
+            logger.info(f"[WS] chat:send calling create_chat_task...")
 
             # Build TaskCreationParams from request
             # Convert additional_skills to list of dicts if present
@@ -798,16 +789,16 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Uses unified trigger from chat.trigger module
             # enable_deep_thinking controls whether tools are enabled in chat_shell
             if should_trigger_ai and assistant_subtask:
-                from app.services.chat.trigger import trigger_ai_response
+                from app.services.chat.trigger import trigger_ai_response_unified
 
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
                 )
                 # Note: knowledge_base_ids is no longer passed separately.
-                # The unified context processing in trigger_ai_response will
+                # The unified context processing in trigger_ai_response_unified will
                 # retrieve both attachments and knowledge bases from the
                 # user_subtask's associated contexts.
-                await trigger_ai_response(
+                await trigger_ai_response_unified(
                     task=task,
                     assistant_subtask=assistant_subtask,
                     team=team,
@@ -815,7 +806,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                     message=payload.message,  # Original message
                     payload=payload,
                     task_room=task_room,
-                    supports_direct_chat=supports_direct_chat,
                     namespace=self,
                     user_subtask_id=(
                         user_subtask_for_context.id
@@ -1352,16 +1342,12 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Trigger AI response using unified trigger
             from app.models.user import User
-            from app.services.chat.config import should_use_direct_chat
-            from app.services.chat.trigger import trigger_ai_response
+            from app.services.chat.trigger import trigger_ai_response_unified
 
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 logger.error(f"[WS] chat:retry error: User not found id={user_id}")
                 return {"error": "User not found"}
-
-            supports_direct_chat = should_use_direct_chat(db, team, user_id)
-            logger.info(f"[WS] chat:retry supports_direct_chat={supports_direct_chat}")
 
             # Determine model to use for retry:
             # Use the SAME logic as normal message sending (ChatSendPayload handling):
@@ -1429,9 +1415,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 is_group_chat=False,
             )
 
-            # Trigger AI response
+            # Trigger AI response using unified trigger
             task_room = f"task:{payload.task_id}"
-            await trigger_ai_response(
+            await trigger_ai_response_unified(
                 task=task,
                 assistant_subtask=failed_ai_subtask,  # Reuse the same subtask
                 team=team,
@@ -1439,7 +1425,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=user_subtask.prompt or "",
                 payload=retry_payload,
                 task_room=task_room,
-                supports_direct_chat=supports_direct_chat,
                 namespace=self,
                 user_subtask_id=user_subtask.id,  # Pass user subtask ID for unified context processing
             )
