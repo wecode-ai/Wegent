@@ -7,7 +7,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
-import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -38,11 +37,15 @@ import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
  *
  * @see ChatPageMobile.tsx for mobile implementation
  */
-export function ChatPageDesktop() {
-  const { t } = useTranslation()
 
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
+interface ChatPageDesktopProps {
+  teams: Team[]
+  isTeamsLoading: boolean
+  refreshTeams: () => Promise<Team[]>
+}
+
+export function ChatPageDesktop({ teams, isTeamsLoading, refreshTeams }: ChatPageDesktopProps) {
+  const { t } = useTranslation()
 
   // Task context for refreshing task list
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
@@ -206,7 +209,12 @@ export function ChatPageDesktop() {
         />
       </div>
       {/* Create Group Chat Dialog */}
-      <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
+      <CreateGroupChatDialog
+        open={isCreateGroupChatOpen}
+        onOpenChange={setIsCreateGroupChatOpen}
+        teams={teams}
+        isTeamsLoading={isTeamsLoading}
+      />
       {/* Search Dialog - rendered at page level for global shortcut support */}
       <SearchDialog
         open={isSearchDialogOpen}

@@ -112,7 +112,19 @@ export default function ChatPage() {
         hasShareId={hasShareId}
       />
       {/* Route to mobile or desktop component based on screen size */}
-      {isMobile ? <ChatPageMobile /> : <ChatPageDesktop />}
+      {isMobile ? (
+        <ChatPageMobile
+          teams={teams}
+          isTeamsLoading={isTeamsLoading}
+          refreshTeams={handleRefreshTeams}
+        />
+      ) : (
+        <ChatPageDesktop
+          teams={teams}
+          isTeamsLoading={isTeamsLoading}
+          refreshTeams={handleRefreshTeams}
+        />
+      )}
     </>
   )
 }

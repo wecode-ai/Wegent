@@ -6,7 +6,6 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -31,13 +30,17 @@ import { ChatArea } from '@/features/tasks/components/chat'
  *
  * @see CodePageDesktop.tsx for desktop implementation
  */
-export function CodePageMobile() {
+
+interface CodePageMobileProps {
+  teams: Team[]
+  isTeamsLoading: boolean
+  refreshTeams: () => Promise<Team[]>
+}
+
+export function CodePageMobile({ teams, isTeamsLoading, refreshTeams }: CodePageMobileProps) {
   // Get search params to check for taskId
   const searchParams = useSearchParams()
   const _hasTaskId = !!searchParams.get('taskId')
-
-  // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Task context for workbench data
   const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =
