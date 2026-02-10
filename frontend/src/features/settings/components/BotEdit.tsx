@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import McpConfigImportModal from './McpConfigImportModal'
+import McpProviderModal from './McpProviderModal'
 import SkillManagementModal from './skills/SkillManagementModal'
 import DifyBotConfig from './DifyBotConfig'
 import { PromptFineTuneDialog } from './prompt-fine-tune'
@@ -170,6 +171,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [agentConfigError, setAgentConfigError] = useState(false)
 
   const [importModalVisible, setImportModalVisible] = useState(false)
+  const [providerModalOpen, setProviderModalOpen] = useState(false)
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false)
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
@@ -203,6 +205,48 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const handleImportMcpConfig = useCallback(() => {
     setImportModalVisible(true)
   }, [])
+
+  // Handle import server from provider
+  const handleImportServerFromProvider = useCallback(
+    (server: {
+      id: string
+      name: string
+      description?: string
+      type: string
+      base_url?: string
+      headers?: Record<string, string>
+    }) => {
+      try {
+        const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {}
+        const serverKey = server.id.replace(/[@\/]/g, '_')
+
+        const newServer: Record<string, unknown> = {
+          type: server.type === 'streamableHttp' ? 'streamable-http' : server.type,
+        }
+
+        if (server.base_url) {
+          newServer.url = server.base_url
+        }
+
+        if (server.headers && Object.keys(server.headers).length > 0) {
+          newServer.headers = server.headers
+        }
+
+        const mergedConfig = {
+          ...currentConfig,
+          [serverKey]: newServer,
+        }
+
+        setMcpConfig(JSON.stringify(mergedConfig, null, 2))
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: t('common:bot.errors.mcp_config_json'),
+        })
+      }
+    },
+    [mcpConfig, toast, t]
+  )
 
   // Handle import configuration confirmation
   const handleImportConfirm = useCallback(
@@ -1557,6 +1601,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     )}
                     <Button
                       size="sm"
+                      variant="outline"
+                      onClick={() => setProviderModalOpen(true)}
+                      className="text-xs gap-1.5"
+                    >
+                      {t('common:mcpProviders.provider_button')}
+                    </Button>
+                    <Button
+                      size="sm"
                       onClick={() => handleImportMcpConfig()}
                       className="text-xs gap-1.5"
                     >
@@ -1627,6 +1679,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         onImport={handleImportConfirm}
         toast={toast}
         agentType={agentName as 'ClaudeCode' | 'Agno'}
+      />
+
+      {/* MCP Provider Modal */}
+      <McpProviderModal
+        open={providerModalOpen}
+        onOpenChange={setProviderModalOpen}
+        onImportServer={handleImportServerFromProvider}
       />
 
       {/* Skill Management Modal */}
