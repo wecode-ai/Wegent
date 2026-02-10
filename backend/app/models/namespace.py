@@ -4,7 +4,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -33,6 +33,8 @@ class Namespace(Base):
     visibility = Column(String(20), nullable=False, default="private")
     # Group description
     description = Column(Text, nullable=False, default="")
+    # Group level: 'group' (default) or 'organization' (admin only)
+    level = Column(String(20), nullable=True, index=True, default="group")
     # Is group active
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())

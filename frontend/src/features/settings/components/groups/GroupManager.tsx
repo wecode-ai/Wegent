@@ -122,6 +122,9 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                     {t('groups:groups.visibility')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
+                    {t('groups:groups.level')}
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups:groups.myRole')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
@@ -145,6 +148,17 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                       <Badge variant={group.visibility === 'public' ? 'success' : 'secondary'}>
                         {t(`groups:groups.${group.visibility}`)}
                       </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {group.level === 'organization' ? (
+                        <Badge variant="default">
+                          {t('groups:levels.organization')}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">
+                          {t('groups:levels.group')}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {group.my_role ? (

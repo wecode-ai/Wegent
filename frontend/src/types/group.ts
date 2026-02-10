@@ -10,6 +10,8 @@ export type GroupRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
 
 export type GroupVisibility = 'private' | 'internal' | 'public'
 
+export type GroupLevel = 'group' | 'organization'
+
 export interface Group {
   id: number
   name: string
@@ -17,6 +19,7 @@ export interface Group {
   parent_name: string | null
   owner_user_id: number
   visibility: GroupVisibility
+  level?: GroupLevel | null
   description: string | null
   is_active: boolean
   member_count?: number
@@ -31,12 +34,14 @@ export interface GroupCreate {
   display_name?: string
   visibility?: GroupVisibility
   description?: string
+  level?: GroupLevel
 }
 
 export interface GroupUpdate {
   display_name?: string
   visibility?: GroupVisibility
   description?: string
+  level?: GroupLevel
 }
 
 export interface GroupMember {
