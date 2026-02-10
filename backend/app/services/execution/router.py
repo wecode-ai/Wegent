@@ -82,9 +82,9 @@ class ExecutionRouter:
 
     def _init_service_urls(self) -> None:
         """Initialize service URLs from settings."""
-        chat_shell_url = getattr(settings, "CHAT_SHELL_URL", "http://chat-shell:8100")
+        chat_shell_url = getattr(settings, "CHAT_SHELL_URL", "http://127.0.0.1:8100")
         executor_manager_url = getattr(
-            settings, "EXECUTOR_MANAGER_URL", "http://executor-manager:8001"
+            settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001/executor-manager"
         )
 
         self.EXECUTION_SERVICES["Chat"]["url"] = chat_shell_url
@@ -143,9 +143,7 @@ class ExecutionRouter:
                 )
 
         # Priority 3: Default configuration
-        default_url = getattr(
-            settings, "EXECUTOR_MANAGER_URL", "http://executor-manager:8001"
-        )
+        default_url = getattr(settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001")
         return ExecutionTarget(
             mode=CommunicationMode.HTTP_CALLBACK,
             url=default_url,

@@ -113,14 +113,15 @@ class RunningTaskTracker:
             self._sync_client.zadd(RUNNING_TASKS_ZSET, {task_id_str: start_time})
 
             # Store task metadata in a hash
+            # Guard against None values - Redis hset rejects NoneType
             meta_key = RUNNING_TASK_META_KEY.format(task_id=task_id)
             self._sync_client.hset(
                 meta_key,
                 mapping={
                     "task_id": str(task_id),
                     "subtask_id": str(subtask_id),
-                    "executor_name": executor_name,
-                    "task_type": task_type,
+                    "executor_name": executor_name or "",
+                    "task_type": task_type or "online",
                     "start_time": str(start_time),
                 },
             )

@@ -49,6 +49,7 @@ from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
+from shared.utils.http_client import traced_session, traced_sync_client
 
 logger = setup_logger(__name__)
 
@@ -56,16 +57,16 @@ logger = setup_logger(__name__)
 class DockerExecutor(Executor):
     """Docker executor for running tasks in Docker containers"""
 
-    def __init__(self, subprocess_module=subprocess, requests_module=requests):
+    def __init__(self, subprocess_module=subprocess, requests_module=None):
         """
         Initialize Docker executor with dependency injection for better testability
 
         Args:
             subprocess_module: Module for subprocess operations (default: subprocess)
-            requests_module: Module for HTTP requests (default: requests)
+            requests_module: HTTP session for requests (default: traced_session with auto trace context)
         """
         self.subprocess = subprocess_module
-        self.requests = requests_module
+        self.requests = requests_module or traced_session()
 
         # Check if Docker is available
         self._check_docker_availability()
@@ -255,7 +256,7 @@ class DockerExecutor(Executor):
             # This handles re-execution cases where Redis keys were cleaned up after first completion
             task_id = task.get("task_id")
             subtask_id = task.get("subtask_id")
-            task_type = task.get("type", "online")
+            task_type = task.get("type") or "online"
 
             self.register_task_for_heartbeat(
                 task_id=task_id,
@@ -304,25 +305,7 @@ class DockerExecutor(Executor):
         endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
         logger.info(f"Sending task to {endpoint}")
 
-        # Propagate trace context (traceparent/tracestate) and request_id to executor via headers
-        headers = {}
-        try:
-            from shared.telemetry.context import (
-                get_request_id,
-                inject_trace_context_to_headers,
-            )
-
-            # Inject W3C Trace Context headers for distributed tracing
-            headers = inject_trace_context_to_headers(headers)
-
-            # Also add request_id for logging correlation
-            request_id = get_request_id()
-            if request_id:
-                headers["X-Request-ID"] = request_id
-        except Exception as e:
-            logger.debug(f"Failed to inject trace context headers: {e}")
-
-        return self.requests.post(endpoint, json=task, headers=headers)
+        return self.requests.post(endpoint, json=task)
 
     def _create_new_container(
         self, task: Dict[str, Any], task_info: Dict[str, Any], status: Dict[str, Any]
@@ -369,7 +352,7 @@ class DockerExecutor(Executor):
                 task_id=task_id,
                 subtask_id=task_info["subtask_id"],
                 executor_name=executor_name,
-                task_type=task.get("type", "online"),
+                task_type=task.get("type") or "online",
             )
 
             # For validation tasks, report starting_container stage
@@ -992,25 +975,7 @@ class DockerExecutor(Executor):
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
 
             try:
-                # Propagate trace context (traceparent/tracestate) and request_id to executor via headers
-                headers = {}
-                try:
-                    from shared.telemetry.context import (
-                        get_request_id,
-                        inject_trace_context_to_headers,
-                    )
-
-                    # Inject W3C Trace Context headers for distributed tracing
-                    headers = inject_trace_context_to_headers(headers)
-
-                    # Also add request_id for logging correlation
-                    request_id = get_request_id()
-                    if request_id:
-                        headers["X-Request-ID"] = request_id
-                except Exception as e:
-                    logger.debug(f"Failed to inject trace context headers: {e}")
-
-                response = self.requests.post(cancel_url, timeout=10, headers=headers)
+                response = self.requests.post(cancel_url, timeout=10)
                 response.raise_for_status()
 
                 logger.info(f"Successfully cancelled task {task_id}")
@@ -1020,7 +985,7 @@ class DockerExecutor(Executor):
                     "containers": containers,
                     "message": f"Task {task_id} cancellation requested successfully",
                 }
-            except self.requests.exceptions.RequestException as e:
+            except requests.RequestException as e:
                 logger.info(f"Failed to call cancel API for task {task_id}: {e}")
                 return {
                     "status": "failed",
@@ -1193,7 +1158,7 @@ class DockerExecutor(Executor):
         }
 
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with traced_sync_client(timeout=10.0) as client:
                 response = client.post(update_url, json=update_payload)
                 if response.status_code == 200:
                     logger.info(

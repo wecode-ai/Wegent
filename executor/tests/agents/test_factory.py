@@ -20,7 +20,7 @@ class TestAgentFactory:
         """
         Mock all HTTP requests to prevent actual network calls during tests.
         - requests.get: DifyAgent.__init__ calls _get_app_mode() which makes GET to /v1/info
-        - requests.post: CallbackClient.send_callback() makes POST to callback URL
+        - requests.post: CallbackClient.send_event() makes POST to callback URL
         """
         with (
             patch("executor.agents.dify.dify_agent.requests.get") as mock_get,

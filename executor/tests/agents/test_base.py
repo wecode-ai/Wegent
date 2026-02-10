@@ -81,7 +81,7 @@ class TestAgent:
             result={"key": "value"},
         )
 
-        mock_callback.send_callback.assert_called_once()
+        mock_callback.send_event.assert_called_once()
 
     @patch("executor.agents.base.git_util.clone_repo")
     @patch("executor.agents.base.git_util.get_repo_name_from_url")

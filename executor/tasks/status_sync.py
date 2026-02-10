@@ -15,6 +15,8 @@ from typing import Optional
 
 from executor.callback.callback_client import CallbackClient
 from shared.logger import setup_logger
+from shared.models.execution import EventType, ExecutionEvent
+from shared.status import TaskStatus
 
 logger = setup_logger("status_sync")
 
@@ -47,13 +49,18 @@ class StatusSynchronizer:
         """
         try:
             # Send cancel status update
-            success = await self.callback_client.report_progress_async(
+            event = ExecutionEvent.create(
+                event_type=EventType.CANCELLED,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 progress=100,
-                status="CANCELLED",
+                status=TaskStatus.CANCELLED.value,
+                content="Task was cancelled by user",
                 executor_name=executor_name,
-                error_message="Task was cancelled by user",
+            )
+            result = await asyncio.to_thread(self.callback_client.send_event, event)
+            success = (
+                result is not None and result.get("status") == TaskStatus.SUCCESS.value
             )
 
             if success:
@@ -122,13 +129,18 @@ class StatusSynchronizer:
             Whether synchronization was successful
         """
         try:
-            success = await self.callback_client.report_progress_async(
+            event = ExecutionEvent.create(
+                event_type=EventType.PROGRESS,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 progress=progress,
                 status=status,
+                content=error_message or "",
                 executor_name=executor_name,
-                error_message=error_message,
+            )
+            result = await asyncio.to_thread(self.callback_client.send_event, event)
+            success = (
+                result is not None and result.get("status") == TaskStatus.SUCCESS.value
             )
 
             if success:

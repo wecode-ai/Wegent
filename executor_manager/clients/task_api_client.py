@@ -30,6 +30,7 @@ from executor_manager.config.config import (
 # Import the shared logger
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from shared.logger import setup_logger
+from shared.utils.http_client import traced_session
 from shared.utils.http_util import build_payload
 
 logger = setup_logger(__name__)
@@ -57,6 +58,8 @@ class TaskApiClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.retry_backoff = retry_backoff
+        # Traced session auto-injects W3C trace context and X-Request-ID
+        self._session = traced_session()
 
     def _request_with_retry(self, request_func, max_retries=None):
         """Generic request retry logic"""
@@ -96,7 +99,7 @@ class TaskApiClient:
         # Build URL with query parameters
         url = f"{self.fetch_task_api_base_url}?limit={self.limit}&task_status={self.task_status}"
         logger.info(f"Fetching tasks from: {url}")
-        response = requests.post(url, timeout=self.timeout)
+        response = self._session.post(url, timeout=self.timeout)
         return self._handle_response(
             response, expect_json=True, context="fetching tasks"
         )
@@ -161,7 +164,7 @@ class TaskApiClient:
     def _do_update_task_status(self, data):
         task_id = data["task_id"]
         url = f"{self.callback_task_api_url}?task_id={task_id}"
-        response = requests.put(url, json=data, timeout=self.timeout)
+        response = self._session.put(url, json=data, timeout=self.timeout)
         return self._handle_response(
             response, expect_json=True, context=f"updating status for task {task_id}"
         )
@@ -204,7 +207,7 @@ class TaskApiClient:
         # Build URL with query parameters
         url = f"{self.fetch_task_api_base_url}?task_ids={task_id}&task_status={self.task_status}"
         logger.info(f"Fetching subtasks from: {url}")
-        response = requests.post(url, timeout=self.timeout)
+        response = self._session.post(url, timeout=self.timeout)
         return self._handle_response(
             response, expect_json=True, context=f"fetching subtasks for task {task_id}"
         )
@@ -226,7 +229,7 @@ class TaskApiClient:
         # Build URL with query parameters for offline tasks
         url = f"{self.fetch_task_api_base_url}?limit={self.offline_limit}&task_status={self.task_status}&type=offline"
         logger.info(f"Fetching offline tasks from: {url}")
-        response = requests.post(url, timeout=self.timeout)
+        response = self._session.post(url, timeout=self.timeout)
         return self._handle_response(
             response, expect_json=True, context="fetching offline tasks"
         )
@@ -252,7 +255,7 @@ class TaskApiClient:
             url = f"{self.fetch_task_api_base_url}/{task_id}/subtasks/{subtask_id}"
             logger.debug(f"Getting task status from: {url}")
 
-            response = requests.get(url, timeout=self.timeout)
+            response = self._session.get(url, timeout=self.timeout)
 
             if response.status_code == 200:
                 return response.json()
