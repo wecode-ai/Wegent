@@ -15,24 +15,20 @@ Input format: OpenAI Responses API standard format
 """
 
 import asyncio
+import json
 import logging
 import time
 import uuid
-from typing import Any, AsyncGenerator, Optional, Union
+from typing import AsyncGenerator, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from shared.models import ExecutionRequest, OpenAIRequestConverter
+from shared.models.emitter import GeneratorTransport, ResponsesAPIEmitter
 from shared.models.execution import EventType
-from shared.models.responses_api import (
-    ResponsesAPIStreamEvents,
-    create_error_event,
-    create_output_text_delta_event,
-    create_response_completed_event,
-    create_response_created_event,
-)
+from shared.models.responses_api import ResponsesAPIStreamEvents
 
 router = APIRouter(prefix="/v1", tags=["responses"])
 logger = logging.getLogger(__name__)
@@ -117,8 +113,6 @@ def _create_sse_event(event_type: str, data: dict) -> ServerSentEvent:
     Returns:
         ServerSentEvent object
     """
-    import json
-
     return ServerSentEvent(
         event=event_type,
         data=json.dumps(data, ensure_ascii=False),
@@ -165,6 +159,7 @@ async def _stream_response(
 
     Converts OpenAI format request to ExecutionRequest and uses ChatService for processing.
     Output format is compatible with OpenAI Responses API.
+    Uses ResponsesAPIEmitter with GeneratorTransport for unified event generation.
     """
     from chat_shell.core.shutdown import shutdown_manager
     from chat_shell.services.chat_service import chat_service
@@ -172,76 +167,55 @@ async def _stream_response(
     # Register stream with shutdown manager
     await shutdown_manager.register_stream(request_id)
 
-    response_id = f"resp_{uuid.uuid4().hex[:24]}"
-    item_id = f"msg_{uuid.uuid4().hex[:24]}"
+    # Extract metadata
+    metadata = request.metadata or {}
+    task_id = metadata.get("task_id", 0)
+    subtask_id = metadata.get("subtask_id", 0)
+
+    # Create emitter with GeneratorTransport
+    transport = GeneratorTransport()
+    emitter = ResponsesAPIEmitter(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        transport=transport,
+        model=request.model,
+    )
+
     full_content = ""
     total_input_tokens = 0
     total_output_tokens = 0
     emitted_tool_run_ids: set[str] = set()
     accumulated_sources: list[dict] = []
-    accumulated_blocks: list[dict] = []
     is_silent_exit = False
     silent_exit_reason = ""
     done_extra_fields: dict = {}
-    content_index = 0
-    output_index = 0
-    created_at = int(time.time())
-    model_id = request.model
 
     try:
         # Send response.created event
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
-            create_response_created_event(response_id, model_id, created_at),
-        )
+        event_type, data = await emitter.start()
+        yield _create_sse_event(event_type, data)
 
         # Send response.in_progress event
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
-            {
-                "type": ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
-                "response": {
-                    "id": response_id,
-                    "object": "response",
-                    "created_at": created_at,
-                    "model": model_id,
-                    "status": "in_progress",
-                    "output": [],
-                },
-            },
-        )
+        event_type, data = await emitter.in_progress()
+        yield _create_sse_event(event_type, data)
 
         # Send output_item.added event for the message
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
-            {
-                "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
-                "output_index": output_index,
-                "item": {
-                    "type": "message",
-                    "id": item_id,
-                    "status": "in_progress",
-                    "role": "assistant",
-                    "content": [],
-                },
-            },
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.output_item_added(),
         )
+        yield _create_sse_event(event_type, data)
 
         # Send content_part.added event
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
-            {
-                "type": ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
-                "item_id": item_id,
-                "output_index": output_index,
-                "content_index": content_index,
-                "part": {
-                    "type": "output_text",
-                    "text": "",
-                    "annotations": [],
-                },
-            },
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.content_part_added(),
         )
+        yield _create_sse_event(event_type, data)
 
         # Convert OpenAI format to ExecutionRequest using shared converter
         openai_dict = {
@@ -253,16 +227,11 @@ async def _stream_response(
         }
         execution_request = OpenAIRequestConverter.to_execution_request(openai_dict)
 
-        # Extract metadata for logging
-        metadata = request.metadata or {}
-        task_id = metadata.get("task_id", 0)
-        subtask_id = metadata.get("subtask_id", 0)
-
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, model=%s",
             task_id,
             subtask_id,
-            model_id,
+            request.model,
         )
 
         # Record request details to trace
@@ -296,56 +265,21 @@ async def _stream_response(
         async for event in chat_service.chat(execution_request):
             # Check for cancellation
             if cancel_event.is_set():
-                yield _create_sse_event(
-                    ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                    {
-                        "type": ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                        "response": {
-                            "id": response_id,
-                            "object": "response",
-                            "status": "incomplete",
-                            "incomplete_details": {"reason": "cancelled"},
-                            "output": [
-                                {
-                                    "type": "message",
-                                    "id": item_id,
-                                    "role": "assistant",
-                                    "content": [
-                                        {
-                                            "type": "output_text",
-                                            "text": full_content,
-                                        }
-                                    ],
-                                }
-                            ],
-                        },
-                    },
-                )
+                event_type, data = await emitter.incomplete("cancelled", full_content)
+                yield _create_sse_event(event_type, data)
                 return
 
             # Process ExecutionEvent
-            event_type = event.type
-            if event_type == EventType.CHUNK.value:
+            event_type_str = event.type
+            if event_type_str == EventType.CHUNK.value:
                 chunk_text = event.content or event.data.get("content", "")
                 result = event.result or event.data.get("result")
-                block_id = event.data.get("block_id")
-                block_offset = event.data.get("block_offset")
 
                 # Send output_text.delta event
                 if chunk_text:
                     full_content += chunk_text
-                    yield _create_sse_event(
-                        ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value,
-                        create_output_text_delta_event(
-                            item_id=item_id,
-                            output_index=output_index,
-                            content_index=content_index,
-                            delta=chunk_text,
-                            result=result,
-                            block_id=block_id,
-                            block_offset=block_offset,
-                        ),
-                    )
+                    event_type, data = await emitter.text_delta(chunk_text)
+                    yield _create_sse_event(event_type, data)
 
                 # Accumulate sources
                 if result and result.get("sources"):
@@ -358,17 +292,16 @@ async def _stream_response(
                         if key not in existing_keys:
                             accumulated_sources.append(source)
 
-                # Process thinking steps for tool events
+                # Process thinking steps for tool events (OpenAI standard format)
                 if result and result.get("thinking"):
+                    # Get blocks for display_name lookup (Wegent extension)
+                    blocks = result.get("blocks", [])
                     for step in result["thinking"]:
                         details = step.get("details", {})
                         status = details.get("status")
                         tool_name = details.get("tool_name", details.get("name", ""))
-                        # Use tool_use_id as the primary identifier (matches blocks)
-                        # Fallback to run_id for backward compatibility
                         tool_use_id = step.get("tool_use_id") or step.get("run_id", "")
-                        title = step.get("title", "")
-                        blocks = result.get("blocks", [])
+                        tool_input = details.get("input", {})
 
                         event_key = f"{tool_use_id}:{status}"
                         if event_key in emitted_tool_run_ids:
@@ -376,104 +309,66 @@ async def _stream_response(
                         emitted_tool_run_ids.add(event_key)
 
                         if status == "started":
-                            yield _create_sse_event(
-                                ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
-                                {
-                                    "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
-                                    "item_id": tool_use_id,
-                                    "output_index": output_index,
-                                    "call_id": tool_use_id,
-                                    "delta": "",
-                                    "tool_name": tool_name,
-                                    "tool_input": details.get("input", {}),
-                                    "display_name": title,
-                                    "blocks": blocks,
-                                    "status": "started",
-                                },
-                            )
-                        elif status in ("completed", "failed"):
-                            yield _create_sse_event(
-                                ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
-                                {
-                                    "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
-                                    "item_id": tool_use_id,
-                                    "output_index": output_index,
-                                    "call_id": tool_use_id,
-                                    "arguments": "",
-                                    "tool_name": tool_name,
-                                    "output": details.get(
-                                        "output", details.get("content")
-                                    ),
-                                    "error": (
-                                        details.get("error")
-                                        if status == "failed"
-                                        else None
-                                    ),
-                                    "display_name": (
-                                        title if status == "failed" else None
-                                    ),
-                                    "blocks": blocks,
-                                    "status": status,
-                                },
-                            )
+                            # Find display_name from blocks (Wegent extension)
+                            display_name = None
+                            for block in blocks:
+                                if (
+                                    block.get("id") == tool_use_id
+                                    or block.get("tool_use_id") == tool_use_id
+                                ):
+                                    display_name = block.get("display_name")
+                                    break
 
-            elif event_type == EventType.THINKING.value:
+                            # Send tool start events
+                            event_type, data = await emitter.tool_start(
+                                tool_use_id, tool_name, tool_input, display_name
+                            )
+                            # tool_start sends two events, get them from transport
+                            for evt_type, evt_data in transport.get_events():
+                                yield _create_sse_event(evt_type, evt_data)
+                            yield _create_sse_event(event_type, data)
+
+                        elif status in ("completed", "failed"):
+                            # Send tool done events
+                            event_type, data = await emitter.tool_done(
+                                tool_use_id, tool_name, tool_input
+                            )
+                            # tool_done sends two events, get them from transport
+                            for evt_type, evt_data in transport.get_events():
+                                yield _create_sse_event(evt_type, evt_data)
+                            yield _create_sse_event(event_type, data)
+
+            elif event_type_str == EventType.THINKING.value:
                 thinking_text = event.content or event.data.get("content", "")
                 if thinking_text:
-                    yield _create_sse_event(
-                        ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value,
-                        {
-                            "type": ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value,
-                            "item_id": item_id,
-                            "output_index": output_index,
-                            "part": {
-                                "type": "reasoning",
-                                "text": thinking_text,
-                            },
-                        },
-                    )
+                    event_type, data = await emitter.reasoning(thinking_text)
+                    yield _create_sse_event(event_type, data)
 
-            elif event_type == EventType.TOOL_START.value:
-                yield _create_sse_event(
-                    ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
-                    {
-                        "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
-                        "item_id": event.tool_use_id
-                        or event.data.get("tool_call_id", ""),
-                        "output_index": output_index,
-                        "call_id": event.tool_use_id
-                        or event.data.get("tool_call_id", ""),
-                        "delta": "",
-                        "tool_name": event.tool_name or event.data.get("tool_name", ""),
-                        "tool_input": event.tool_input
-                        or event.data.get("tool_input", {}),
-                        "blocks": event.data.get("blocks", []),
-                        "status": "started",
-                    },
+            elif event_type_str == EventType.TOOL_START.value:
+                tool_use_id = event.tool_use_id or event.data.get("tool_call_id", "")
+                tool_name = event.tool_name or event.data.get("tool_name", "")
+                tool_input = event.tool_input or event.data.get("tool_input", {})
+
+                # Send tool start events
+                event_type, data = await emitter.tool_start(
+                    tool_use_id, tool_name, tool_input
                 )
+                # tool_start sends two events, get them from transport
+                for evt_type, evt_data in transport.get_events():
+                    yield _create_sse_event(evt_type, evt_data)
+                yield _create_sse_event(event_type, data)
 
-            elif event_type == EventType.TOOL_RESULT.value:
-                yield _create_sse_event(
-                    ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
-                    {
-                        "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
-                        "item_id": event.tool_use_id
-                        or event.data.get("tool_call_id", ""),
-                        "output_index": output_index,
-                        "call_id": event.tool_use_id
-                        or event.data.get("tool_call_id", ""),
-                        "arguments": "",
-                        "output": (
-                            event.tool_output
-                            if event.tool_output is not None
-                            else event.data.get("tool_output")
-                        ),
-                        "blocks": event.data.get("blocks", []),
-                        "status": "completed",
-                    },
-                )
+            elif event_type_str == EventType.TOOL_RESULT.value:
+                tool_use_id = event.tool_use_id or event.data.get("tool_call_id", "")
 
-            elif event_type == EventType.DONE.value:
+                # Send tool done events
+                event_type, data = await emitter.tool_done(tool_use_id, "", None)
+                # tool_done sends two events, get them from transport
+                for evt_type, evt_data in transport.get_events():
+                    yield _create_sse_event(evt_type, evt_data)
+                yield _create_sse_event(event_type, data)
+
+            elif event_type_str == EventType.DONE.value:
                 result = event.result or event.data.get("result", {})
                 usage = result.get("usage") if result else None
                 if usage:
@@ -482,8 +377,6 @@ async def _stream_response(
                 if result and result.get("silent_exit"):
                     is_silent_exit = True
                     silent_exit_reason = result.get("silent_exit_reason", "")
-                if result and result.get("blocks"):
-                    accumulated_blocks = result["blocks"]
                 # Collect extra fields
                 known_fields = {
                     "usage",
@@ -500,95 +393,58 @@ async def _stream_response(
                         if key not in known_fields and value is not None:
                             done_extra_fields[key] = value
 
-            elif event_type == EventType.ERROR.value:
+            elif event_type_str == EventType.ERROR.value:
                 error_msg = event.error or event.data.get("error", "Unknown error")
-                yield _create_sse_event(
-                    ResponsesAPIStreamEvents.ERROR.value,
-                    create_error_event(
-                        code="internal_error",
-                        message=error_msg,
-                    ),
-                )
+                event_type, data = await emitter.error(error_msg)
+                yield _create_sse_event(event_type, data)
                 return
 
-            elif event_type == EventType.CANCELLED.value:
-                yield _create_sse_event(
-                    ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                    {
-                        "type": ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                        "response": {
-                            "id": response_id,
-                            "object": "response",
-                            "status": "incomplete",
-                            "incomplete_details": {"reason": "cancelled"},
-                        },
-                    },
-                )
+            elif event_type_str == EventType.CANCELLED.value:
+                event_type, data = await emitter.incomplete("cancelled")
+                yield _create_sse_event(event_type, data)
                 return
 
         # Send output_text.done event
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
-            {
-                "type": ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
-                "item_id": item_id,
-                "output_index": output_index,
-                "content_index": content_index,
-                "text": full_content,
-            },
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.text_done(full_content),
         )
+        yield _create_sse_event(event_type, data)
+
+        # Build annotations from sources
+        annotations = []
+        if accumulated_sources:
+            annotations = [
+                {
+                    "type": "url_citation",
+                    "start_index": 0,
+                    "end_index": 0,
+                    "url": s.get("url", ""),
+                    "title": s.get("title", ""),
+                }
+                for s in accumulated_sources
+                if s.get("url")
+            ]
 
         # Send content_part.done event
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
-            {
-                "type": ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
-                "item_id": item_id,
-                "output_index": output_index,
-                "content_index": content_index,
-                "part": {
-                    "type": "output_text",
-                    "text": full_content,
-                    "annotations": (
-                        [
-                            {
-                                "type": "url_citation",
-                                "start_index": 0,
-                                "end_index": 0,
-                                "url": s.get("url", ""),
-                                "title": s.get("title", ""),
-                            }
-                            for s in accumulated_sources
-                            if s.get("url")
-                        ]
-                        if accumulated_sources
-                        else []
-                    ),
-                },
-            },
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.content_part_done(full_content, annotations),
         )
+        yield _create_sse_event(event_type, data)
 
         # Send output_item.done event
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
-            {
-                "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
-                "output_index": output_index,
-                "item": {
-                    "type": "message",
-                    "id": item_id,
-                    "status": "completed",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": full_content,
-                            "annotations": [],
-                        }
-                    ],
-                },
-            },
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.output_item_done(full_content),
         )
+        yield _create_sse_event(event_type, data)
 
         # Build sources for response
         formatted_sources = None
@@ -614,16 +470,11 @@ async def _stream_response(
             }
 
         # Send response.completed event
-        response_data = create_response_completed_event(
-            response_id=response_id,
-            model=model_id,
-            created_at=created_at,
-            item_id=item_id,
+        event_type, data = await emitter.done(
             content=full_content,
             usage=usage_dict,
-            sources=formatted_sources,
-            blocks=accumulated_blocks if accumulated_blocks else None,
             stop_reason="silent_exit" if is_silent_exit else "end_turn",
+            sources=formatted_sources,
             silent_exit=is_silent_exit if is_silent_exit else None,
             silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
             **done_extra_fields,
@@ -633,41 +484,22 @@ async def _stream_response(
             "[RESPONSE] Sending response.completed: subtask_id=%d, "
             "loaded_skills=%s, extra_fields=%s",
             subtask_id,
-            response_data["response"].get("loaded_skills"),
+            data.get("response", {}).get("loaded_skills"),
             list(done_extra_fields.keys()),
         )
 
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-            response_data,
-        )
+        yield _create_sse_event(event_type, data)
 
     except asyncio.CancelledError:
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-            {
-                "type": ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                "response": {
-                    "id": response_id,
-                    "object": "response",
-                    "status": "incomplete",
-                    "incomplete_details": {"reason": "cancelled"},
-                },
-            },
-        )
+        event_type, data = await emitter.incomplete("cancelled")
+        yield _create_sse_event(event_type, data)
 
     except Exception as e:
         import traceback
 
         logger.error("[RESPONSE] Error: %s\n%s", e, traceback.format_exc())
-        yield _create_sse_event(
-            ResponsesAPIStreamEvents.ERROR.value,
-            create_error_event(
-                code="internal_error",
-                message=str(e),
-                details={"type": type(e).__name__},
-            ),
-        )
+        event_type, data = await emitter.error(str(e))
+        yield _create_sse_event(event_type, data)
 
     finally:
         await shutdown_manager.unregister_stream(request_id)

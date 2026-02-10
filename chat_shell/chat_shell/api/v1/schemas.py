@@ -2,68 +2,22 @@
 API v1 schemas for chat_shell.
 
 Defines request and response schemas for /v1/responses API.
-Response event types are imported from shared.models.responses_api for cross-module consistency.
 """
 
 from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
-# Import response event types from shared module
+# Import only what we actually use from shared module
 from shared.models.responses_api import (
-    Clarification,
-    ClarificationOption,
-    ContentDelta,
-    ErrorEvent,
-    ReasoningDelta,
-    ResponseCancelled,
-    ResponseDone,
-    ResponseEvent,
-    ResponseEventType,
     ResponsesAPIStreamEvents,
     ResponsesAPIStreamingResponse,
-    SourceItem,
-    SourcesUpdate,
-    ThinkingDelta,
-    ToolCallRequired,
-    ToolDone,
-    ToolLimitReached,
-    ToolProgress,
-    ToolStart,
-    UsageInfo,
-    create_error_event,
-    create_output_text_delta_event,
-    create_response_completed_event,
-    create_response_created_event,
 )
 
-# Re-export for convenience
 __all__ = [
     # From shared.models.responses_api
     "ResponsesAPIStreamEvents",
     "ResponsesAPIStreamingResponse",
-    "ResponseEventType",
-    "ContentDelta",
-    "ThinkingDelta",
-    "ReasoningDelta",
-    "ToolStart",
-    "ToolProgress",
-    "ToolDone",
-    "ToolCallRequired",
-    "SourceItem",
-    "SourcesUpdate",
-    "ClarificationOption",
-    "Clarification",
-    "ToolLimitReached",
-    "UsageInfo",
-    "ResponseDone",
-    "ResponseCancelled",
-    "ErrorEvent",
-    "ResponseEvent",
-    "create_response_created_event",
-    "create_output_text_delta_event",
-    "create_response_completed_event",
-    "create_error_event",
     # Request schemas (defined in this module)
     "ModelConfig",
     "MessageContent",

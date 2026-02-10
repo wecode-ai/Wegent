@@ -9,29 +9,35 @@
 """
 Callback module for executor.
 
-Uses unified ExecutionEvent format from shared.models.execution.
-All legacy callback functions have been removed.
+Uses OpenAI Responses API format from shared.models.responses_api for all callbacks.
+This ensures consistency with SSE mode (chat_shell) event format.
 """
 
 from executor.callback.callback_client import CallbackClient
 from executor.callback.callback_handler import (
+    send_callback_event,
     send_cancelled_event,
     send_chunk_event,
     send_done_event,
     send_error_event,
-    send_execution_event,
     send_progress_event,
     send_start_event,
+    send_thinking_event,
+    send_tool_result_event,
+    send_tool_start_event,
 )
 
 __all__ = [
     # Client
     "CallbackClient",
-    # Unified ExecutionEvent-based functions
-    "send_execution_event",
+    # OpenAI Responses API format functions
+    "send_callback_event",
     "send_start_event",
     "send_progress_event",
     "send_chunk_event",
+    "send_thinking_event",
+    "send_tool_start_event",
+    "send_tool_result_event",
     "send_done_event",
     "send_error_event",
     "send_cancelled_event",

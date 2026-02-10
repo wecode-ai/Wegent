@@ -9,20 +9,20 @@
 """
 API routes module, defines FastAPI routes and models.
 
-Uses unified ExecutionRequest and ExecutionEvent from shared.models.execution.
+Callback endpoint uses pure transparent proxy pattern - forwards all events
+to backend's callback endpoint without processing.
 """
 
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
@@ -30,7 +30,7 @@ from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
 from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
-from shared.models.execution import EventType, ExecutionEvent, ExecutionRequest
+from shared.models.execution import ExecutionRequest
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import (
     set_request_context,
@@ -74,8 +74,6 @@ api_router.include_router(wegent_e2b_proxy_router, prefix="/e2b/proxy")
 
 # Create task processor for handling callbacks
 task_processor = TaskProcessor()
-# Create API client for direct API calls
-api_client = TaskApiClient()
 
 # Health check paths that should skip logging to reduce overhead
 HEALTH_CHECK_PATHS = {"/", "/health"}
@@ -230,98 +228,52 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
     """
     Receive callback interface for executor task progress and completion.
 
-    Uses unified ExecutionEvent from shared.models.execution.
+    Pure transparent proxy - forwards all events to backend's callback endpoint.
+    Event format is OpenAI Responses API format from executor.
 
     Args:
-        event_data: Event data dict that will be converted to ExecutionEvent.
+        event_data: Event data dict in OpenAI Responses API format.
 
     Returns:
         dict: Processing result
     """
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
-        logger.info(f"Received callback from {client_ip}")
 
-        # Parse event using unified ExecutionEvent
-        event = ExecutionEvent.from_dict(event_data)
+        # Extract task_id and subtask_id for logging and tracing
+        task_id = event_data.get("task_id", 0)
+        subtask_id = event_data.get("subtask_id", 0)
+        event_type = event_data.get("event_type", "")
 
-        # [DEBUG] Log result content for streaming debugging
-        if event.result:
-            result_value = event.result.get("value", "")
-            result_thinking = event.result.get("thinking", [])
-            logger.info(
-                f"[DEBUG] Callback result: task_id={event.task_id}, "
-                f"status={event.status}, progress={event.progress}, "
-                f"value_length={len(result_value) if result_value else 0}, "
-                f"thinking_count={len(result_thinking)}"
-            )
-            if result_value:
-                # Log first 200 chars of content
-                preview = (
-                    result_value[:200] if len(result_value) > 200 else result_value
+        logger.info(
+            f"[Callback] Received from {client_ip}: "
+            f"event_type={event_type}, task_id={task_id}, subtask_id={subtask_id}"
+        )
+
+        # Set task context for tracing
+        set_task_context(task_id=task_id, subtask_id=subtask_id)
+
+        # Pure transparent proxy - forward to backend
+        task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
+        callback_url = f"{task_api_domain}/api/internal/callback"
+
+        async with traced_async_client(timeout=30.0) as client:
+            response = await client.post(callback_url, json=event_data)
+            if response.status_code != 200:
+                logger.warning(
+                    f"[Callback] Backend returned error: "
+                    f"{response.status_code} {response.text}"
                 )
-                logger.info(f"[DEBUG] Content preview: {preview}...")
 
-        # Set task context for tracing (function handles OTEL enabled check internally)
-        set_task_context(task_id=event.task_id, subtask_id=event.subtask_id)
+        # Handle terminal events - remove from RunningTaskTracker
+        from shared.models.responses_api import ResponsesAPIStreamEvents
 
-        # Check task type from event data (validation, sandbox, or regular)
-        # Use data field for task_type since ExecutionEvent doesn't have task_type directly
-        task_type = event.data.get("task_type", "")
-
-        # Check if this is a validation task callback
-        # Primary check: task_type == "validation"
-        # Fallback check: validation_id in result (for backward compatibility)
-        is_validation_task = task_type == "validation" or (
-            event.result and event.result.get("validation_id")
-        )
-        if is_validation_task:
-            await _forward_validation_callback(event)
-            # For validation tasks, we only need to forward to backend for Redis update
-            # No need to update task status in database (validation tasks don't exist in DB)
-            logger.info(
-                f"Successfully processed validation callback for task {event.task_id}"
-            )
-            return {
-                "status": "success",
-                "message": f"Successfully processed validation callback for task {event.task_id}",
-            }
-
-        # Check if this is a Sandbox execution callback
-        is_sandbox_task = task_type == "sandbox"
-        if is_sandbox_task:
-            await _handle_sandbox_callback(event)
-            logger.info(
-                f"Successfully processed Sandbox callback for task {event.task_id}"
-            )
-            return {
-                "status": "success",
-                "message": f"Successfully processed Sandbox callback for task {event.task_id}",
-            }
-
-        # For regular tasks, update task status in database
-        # Extract title from data field if present
-        task_title = event.data.get("task_title")
-        success, result = api_client.update_task_status_by_fields(
-            task_id=event.task_id,
-            subtask_id=event.subtask_id,
-            progress=event.progress,
-            executor_name=event.executor_name,
-            executor_namespace=event.executor_namespace,
-            status=event.status,
-            error_message=event.error,
-            title=task_title,
-            result=event.result,
-        )
-        if not success:
-            logger.warning(
-                f"Failed to update status for task {event.task_id}: {result}"
-            )
-
-        # Remove task from RunningTaskTracker when completed or failed
-        # This prevents false-positive heartbeat timeout detection
-        status_lower = event.status.lower() if event.status else ""
-        if status_lower in ("completed", "failed", "cancelled", "success"):
+        terminal_events = {
+            ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+            ResponsesAPIStreamEvents.ERROR.value,
+            ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+        }
+        if event_type in terminal_events:
             try:
                 from executor_manager.services.task_heartbeat_manager import (
                     get_running_task_tracker,
@@ -329,168 +281,21 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
 
                 tracker = get_running_task_tracker()
                 logger.info(
-                    f"[Callback] Removing task {event.task_id} from RunningTaskTracker "
-                    f"(source: callback, status={status_lower})"
+                    f"[Callback] Removing task {task_id} from RunningTaskTracker "
+                    f"(source: callback, event_type={event_type})"
                 )
-                tracker.remove_running_task(event.task_id)
+                tracker.remove_running_task(task_id)
             except Exception as e:
                 logger.warning(f"Failed to remove task from RunningTaskTracker: {e}")
 
-        logger.info(f"Successfully processed callback for task {event.task_id}")
+        logger.info(f"[Callback] Successfully forwarded for task {task_id}")
         return {
             "status": "success",
-            "message": f"Successfully processed callback for task {event.task_id}",
+            "message": f"Successfully forwarded callback for task {task_id}",
         }
     except Exception as e:
-        logger.error(f"Error processing callback: {e}")
+        logger.error(f"[Callback] Error processing callback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _forward_validation_callback(event: ExecutionEvent):
-    """Forward validation task callback to Backend for Redis status update.
-
-    Args:
-        event: ExecutionEvent containing validation callback data
-    """
-    # Get validation_id from result if available
-    validation_id = event.result.get("validation_id") if event.result else None
-    if not validation_id:
-        # If no validation_id in result, we can't forward to backend
-        # This can happen when task_type is "validation" but result is None (e.g., early failure)
-        logger.warning(
-            f"Validation callback for task {event.task_id} has no validation_id, skipping forward"
-        )
-        return
-
-    # Map callback status to validation status (case-insensitive)
-    status_lower = event.status.lower() if event.status else ""
-    status_mapping = {
-        "running": "running_checks",
-        "completed": "completed",
-        "failed": "completed",
-    }
-    validation_status = status_mapping.get(status_lower, event.status)
-
-    # Extract validation result from callback
-    validation_result = event.result.get("validation_result", {})
-    stage = event.result.get("stage", "Running checks")
-    progress = event.progress
-
-    # For failed status, ensure valid is False if not explicitly set
-    valid_value = validation_result.get("valid")
-    if status_lower == "failed" and valid_value is None:
-        valid_value = False
-
-    # Build update payload
-    update_payload = {
-        "status": validation_status,
-        "stage": stage,
-        "progress": progress,
-        "valid": valid_value,
-        "checks": validation_result.get("checks"),
-        "errors": validation_result.get("errors"),
-        "errorMessage": event.error,
-        "executor_name": event.executor_name,  # Include executor_name for container cleanup
-    }
-
-    # Get backend URL
-    task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
-    update_url = f"{task_api_domain}/api/shells/validation-status/{validation_id}"
-
-    try:
-        async with traced_async_client(timeout=10.0) as client:
-            response = await client.post(update_url, json=update_payload)
-            if response.status_code == 200:
-                logger.info(
-                    f"Successfully forwarded validation callback: {validation_id} -> {validation_status}, valid={valid_value}"
-                )
-            else:
-                logger.warning(
-                    f"Failed to forward validation callback: {response.status_code} {response.text}"
-                )
-    except Exception as e:
-        logger.error(f"Error forwarding validation callback: {e}")
-
-
-async def _handle_sandbox_callback(event: ExecutionEvent):
-    """Handle Sandbox execution callback.
-
-    This function updates the execution status in sandbox_manager based on
-    the callback from executor container.
-
-    Args:
-        event: ExecutionEvent containing execution status and result
-    """
-    from executor_manager.services.sandbox import get_sandbox_manager
-
-    # Use task_id and subtask_id from event to identify execution
-    task_id = event.task_id
-    subtask_id = event.subtask_id
-
-    logger.info(
-        f"[SandboxCallback] Processing callback: "
-        f"task_id={task_id}, subtask_id={subtask_id}, "
-        f"status={event.status}, progress={event.progress}"
-    )
-
-    # Get sandbox manager
-    manager = get_sandbox_manager()
-
-    # Load execution from Redis Hash by task_id and subtask_id
-    execution = manager._repository.load_execution(task_id, subtask_id)
-    if not execution:
-        logger.error(
-            f"[SandboxCallback] Execution not found in Redis: "
-            f"task_id={task_id}, subtask_id={subtask_id}"
-        )
-        return
-
-    # Update execution status based on callback
-    status_lower = event.status.lower() if event.status else ""
-
-    if status_lower == "completed":
-        # Extract result from callback
-        result_value = None
-        if event.result:
-            result_value = event.result.get("value", "")
-
-        execution.set_completed(result_value or "")
-        logger.info(
-            f"[SandboxCallback] Execution completed: "
-            f"task_id={task_id}, subtask_id={subtask_id}, "
-            f"result_length={len(result_value) if result_value else 0}"
-        )
-
-    elif status_lower == "failed":
-        error_msg = event.error or "Execution failed"
-        execution.set_failed(error_msg)
-        logger.info(
-            f"[SandboxCallback] Execution failed: "
-            f"task_id={task_id}, subtask_id={subtask_id}, error={error_msg}"
-        )
-
-    elif status_lower == "running":
-        # Update progress for running status
-        execution.progress = event.progress
-        logger.debug(
-            f"[SandboxCallback] Execution progress: "
-            f"task_id={task_id}, subtask_id={subtask_id}, progress={event.progress}"
-        )
-
-    else:
-        logger.warning(
-            f"[SandboxCallback] Unknown status: "
-            f"task_id={task_id}, subtask_id={subtask_id}, status={event.status}"
-        )
-
-    # Save updated execution state to Redis
-    # Set update_activity=True because callback indicates the sandbox is actively being used
-    manager._repository.save_execution(execution, update_activity=True)
-
-    logger.info(
-        f"[SandboxCallback] Execution updated: "
-        f"task_id={task_id}, subtask_id={subtask_id}, status={execution.status.value}"
-    )
 
 
 def _verify_task_token(auth_header: Optional[str]) -> bool:

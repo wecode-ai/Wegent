@@ -117,7 +117,7 @@ class Agent:
         result: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        Report progress to the executor_manager
+        Report progress to the executor_manager using OpenAI Responses API format.
 
         Args:
             progress: The progress percentage (0-100)
@@ -125,20 +125,19 @@ class Agent:
             message: Optional message string
             result: Optional result data dictionary
         """
+        from executor.callback.callback_handler import send_progress_event
+
         logger.info(
             f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}"
         )
         try:
-            event = ExecutionEvent.create(
-                event_type=EventType.PROGRESS,
+            send_progress_event(
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
                 progress=progress,
                 status=status or "",
                 content=message or "",
-                result=result,
             )
-            self.callback_client.send_event(event)
         except Exception as e:
             logger.critical(
                 f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "

@@ -12,8 +12,8 @@ Unified execution protocol - all modules use these classes:
 
 OpenAI Responses API - standardized streaming events:
 - ResponsesAPIStreamEvents: Standard event types from LiteLLM
-- ResponseEventType: Event type mapping with Wegent extensions
-- Helper functions for creating standard events
+- ResponsesAPIEventBuilder: Stateful builder for creating events with minimal parameters
+- ResponsesAPIEmitter: Unified emitter with transport abstraction
 
 OpenAI Request Converter - bidirectional conversion:
 - OpenAIRequestConverter: Convert between ExecutionRequest and OpenAI format
@@ -22,38 +22,26 @@ OpenAI Request Converter - bidirectional conversion:
 
 from . import db
 
+# Unified event emitter
+from .emitter import (
+    CallbackTransport,
+    EventTransport,
+    GeneratorTransport,
+    ResponsesAPIEmitter,
+    WebSocketTransport,
+)
+
 # Unified execution protocol
 from .execution import EventType, ExecutionEvent, ExecutionRequest
 
 # OpenAI Request Converter
 from .openai_converter import OpenAIEventConverter, OpenAIRequestConverter
 
-# OpenAI Responses API types
+# OpenAI Responses API types and event builder
 from .responses_api import (
-    Clarification,
-    ClarificationOption,
-    ContentDelta,
-    ErrorEvent,
-    ReasoningDelta,
-    ResponseCancelled,
-    ResponseDone,
-    ResponseEvent,
-    ResponseEventType,
+    ResponsesAPIEventBuilder,
     ResponsesAPIStreamEvents,
     ResponsesAPIStreamingResponse,
-    SourceItem,
-    SourcesUpdate,
-    ThinkingDelta,
-    ToolCallRequired,
-    ToolDone,
-    ToolLimitReached,
-    ToolProgress,
-    ToolStart,
-    UsageInfo,
-    create_error_event,
-    create_output_text_delta_event,
-    create_response_completed_event,
-    create_response_created_event,
 )
 
 __all__ = [
@@ -62,31 +50,16 @@ __all__ = [
     "EventType",
     "ExecutionEvent",
     "ExecutionRequest",
-    # OpenAI Responses API types
+    # OpenAI Responses API
     "ResponsesAPIStreamEvents",
     "ResponsesAPIStreamingResponse",
-    "ResponseEventType",
-    "ContentDelta",
-    "ThinkingDelta",
-    "ReasoningDelta",
-    "ToolStart",
-    "ToolProgress",
-    "ToolDone",
-    "ToolCallRequired",
-    "SourceItem",
-    "SourcesUpdate",
-    "ClarificationOption",
-    "Clarification",
-    "ToolLimitReached",
-    "UsageInfo",
-    "ResponseDone",
-    "ResponseCancelled",
-    "ErrorEvent",
-    "ResponseEvent",
-    "create_response_created_event",
-    "create_output_text_delta_event",
-    "create_response_completed_event",
-    "create_error_event",
+    "ResponsesAPIEventBuilder",
+    # Unified event emitter
+    "ResponsesAPIEmitter",
+    "EventTransport",
+    "CallbackTransport",
+    "WebSocketTransport",
+    "GeneratorTransport",
     # OpenAI Request Converter
     "OpenAIRequestConverter",
     "OpenAIEventConverter",

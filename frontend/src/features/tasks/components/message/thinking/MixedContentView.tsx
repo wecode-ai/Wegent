@@ -110,9 +110,37 @@ const MixedContentView = memo(function MixedContentView({
           return null
         })
         .filter(Boolean)
+
+      // CRITICAL FIX: When blocks exist but no text blocks, we need to also render
+      // the main content. This handles the case where:
+      // 1. chat:block_created creates a tool block
+      // 2. chat:chunk sends text content (accumulated in message.content)
+      // 3. Without this fix, only tool blocks are rendered, text content is lost
+      const hasTextBlock = blocks.some(b => b.type === 'text')
+      if (!hasTextBlock && content && content.trim()) {
+        // Handle ${$$}$ separator - only show the result part (after separator)
+        // This separator is used to split prompt and result in some message formats
+        let contentToRender = content
+        if (content.includes('${$$}$')) {
+          const parts = content.split('${$$}$')
+          contentToRender = parts[1] || ''
+        }
+
+        if (contentToRender && contentToRender.trim()) {
+          // Add main content at the end (after tool blocks)
+          mapped.push({
+            type: 'content' as const,
+            content: contentToRender,
+            blockId: 'main-content',
+          })
+        }
+      }
+
       console.log('[MixedContentView] After mapping and filtering:', {
         mappedCount: mapped.length,
         mappedTypes: mapped.map(m => (m as { type: string }).type),
+        hasTextBlock,
+        hasMainContent: !hasTextBlock && content && content.trim(),
       })
       return mapped
     }

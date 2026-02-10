@@ -9,8 +9,8 @@
 """
 Callback client module, handles communication with the executor_manager callback API.
 
-Uses unified ExecutionEvent format from shared.models.execution for all callbacks.
-All legacy callback methods have been removed - use send_event() only.
+Uses OpenAI Responses API format from shared.models.responses_api for all callbacks.
+This ensures consistency with SSE mode (chat_shell) event format.
 """
 
 import json
@@ -21,7 +21,6 @@ import requests
 
 from executor.config import config
 from shared.logger import setup_logger
-from shared.models.execution import ExecutionEvent
 from shared.status import TaskStatus
 from shared.utils.http_client import traced_session
 from shared.utils.sensitive_data_masker import mask_sensitive_data
@@ -30,7 +29,10 @@ logger = setup_logger("callback_client")
 
 
 class CallbackClient:
-    """Callback client class, responsible for sending callbacks to executor_manager"""
+    """Callback client class, responsible for sending callbacks to executor_manager.
+
+    Uses OpenAI Responses API format for all events.
+    """
 
     def __init__(
         self,
@@ -91,31 +93,39 @@ class CallbackClient:
                 retries += 1
                 delay *= self.retry_backoff
 
-    def send_event(self, event: ExecutionEvent) -> Dict[str, Any]:
+    def send_event_dict(self, event_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Send an ExecutionEvent to the executor_manager.
+        Send an event dictionary to the executor_manager.
 
-        This is the only method for sending events using the unified format.
+        This is the primary method for sending events in OpenAI Responses API format.
 
         Args:
-            event: ExecutionEvent to send
+            event_dict: Event dictionary in OpenAI Responses API format with structure:
+                {
+                    "event_type": str,  # OpenAI Responses API event type
+                    "task_id": int,
+                    "subtask_id": int,
+                    "data": dict,  # Event data in OpenAI Responses API format
+                    "message_id": Optional[int],
+                    "executor_name": Optional[str],
+                    "executor_namespace": Optional[str],
+                }
 
         Returns:
             Dict[str, Any]: Result returned by the callback interface
         """
         logger.info(
-            f"Sending event: type={event.type}, task_id={event.task_id}, subtask_id={event.subtask_id}"
+            f"Sending event: type={event_dict.get('event_type')}, "
+            f"task_id={event_dict.get('task_id')}, subtask_id={event_dict.get('subtask_id')}"
         )
 
-        data = event.to_dict()
-
         try:
-            return self._request_with_retry(lambda: self._do_send_callback(data))
+            return self._request_with_retry(lambda: self._do_send_callback(event_dict))
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse response data: {e}")
             return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
         except Exception as e:
-            logger.error(f"Unexpected error during send_event: {e}")
+            logger.error(f"Unexpected error during send_event_dict: {e}")
             return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
 
     def _do_send_callback(self, data: Dict[str, Any]) -> Dict[str, Any]:

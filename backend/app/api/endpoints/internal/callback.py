@@ -9,40 +9,50 @@ This module provides a unified callback endpoint for receiving execution events
 from different sources (executor_manager, device, etc.) and forwarding them
 to the frontend via WebSocket.
 
-This is part of the Phase 3 refactoring to unify task dispatch architecture.
+All callback events use OpenAI Responses API format for consistency with SSE mode.
+The ResponsesAPIEventParser is used to parse events into ExecutionEvent format.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
-from shared.models import EventType, ExecutionEvent
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/callback", tags=["execution-callback"])
 
+# Shared event parser instance
+_event_parser = ResponsesAPIEventParser()
+
 
 class CallbackRequest(BaseModel):
-    """Request model for execution callback."""
+    """Request model for execution callback.
 
-    type: str = Field(
-        ..., description="Event type (start, chunk, done, error, progress)"
+    Uses OpenAI Responses API format for consistency with SSE mode.
+    The event_type field corresponds to ResponsesAPIStreamEvents values.
+    """
+
+    # OpenAI Responses API format fields
+    event_type: str = Field(
+        ...,
+        description="OpenAI Responses API event type (e.g., response.output_text.delta)",
     )
     task_id: int = Field(..., description="Task ID")
     subtask_id: int = Field(..., description="Subtask ID")
-    content: Optional[str] = Field(None, description="Content for chunk events")
-    offset: Optional[int] = Field(None, description="Offset for chunk events")
-    result: Optional[dict] = Field(None, description="Result data for done events")
-    error: Optional[str] = Field(None, description="Error message for error events")
     message_id: Optional[int] = Field(None, description="Message ID for ordering")
-    progress: Optional[int] = Field(None, description="Progress percentage")
-    status: Optional[str] = Field(None, description="Status for progress events")
+    executor_name: Optional[str] = Field(None, description="Executor name")
+    executor_namespace: Optional[str] = Field(None, description="Executor namespace")
+    data: dict = Field(
+        default_factory=dict,
+        description="Event data in OpenAI Responses API format",
+    )
 
 
 class CallbackResponse(BaseModel):
@@ -59,48 +69,38 @@ async def handle_callback(
 ) -> CallbackResponse:
     """Handle execution callback.
 
-    This endpoint receives execution events from executors and forwards them
-    to the frontend via WebSocketResultEmitter.
+    This endpoint receives execution events in OpenAI Responses API format
+    from executors and forwards them to the frontend via WebSocketResultEmitter.
 
-    Unified event handling:
-    - Uses WebSocketResultEmitter to emit events to WebSocket
-    - Supports all event types: start, chunk, done, error, progress
+    The event format is the same as SSE mode, ensuring consistency across
+    all execution modes (SSE, callback, device).
 
     Args:
-        request: Callback request with event data
+        request: Callback request with event data in OpenAI Responses API format
         db: Database session
 
     Returns:
         CallbackResponse indicating success
     """
     logger.info(
-        f"[Callback] Received event: type={request.type}, "
+        f"[Callback] Received event: event_type={request.event_type}, "
         f"task_id={request.task_id}, subtask_id={request.subtask_id}"
     )
 
     try:
-        # Parse event type
-        try:
-            event_type = EventType(request.type)
-        except ValueError:
-            logger.warning(f"[Callback] Unknown event type: {request.type}")
-            raise HTTPException(
-                status_code=400, detail=f"Unknown event type: {request.type}"
-            )
-
-        # Create execution event
-        event = ExecutionEvent(
-            type=event_type,
+        # Parse OpenAI Responses API event using shared parser
+        event = _event_parser.parse(
             task_id=request.task_id,
             subtask_id=request.subtask_id,
-            content=request.content or "",
-            offset=request.offset or 0,
-            result=request.result,
-            error=request.error,
             message_id=request.message_id,
-            progress=request.progress,
-            status=request.status,
+            event_type=request.event_type,
+            data=request.data,
         )
+
+        if event is None:
+            # Lifecycle events are skipped
+            logger.debug(f"[Callback] Skipping lifecycle event: {request.event_type}")
+            return CallbackResponse(status="ok", message="Lifecycle event skipped")
 
         # Emit event via WebSocketResultEmitter
         emitter = WebSocketResultEmitter(
@@ -111,7 +111,7 @@ async def handle_callback(
         await emitter.close()
 
         logger.info(
-            f"[Callback] Event emitted: type={event_type.value}, "
+            f"[Callback] Event emitted: type={event.type}, "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
 
@@ -131,10 +131,11 @@ async def handle_batch_callback(
 ) -> CallbackResponse:
     """Handle batch execution callbacks.
 
-    This endpoint receives multiple execution events and processes them in order.
+    This endpoint receives multiple execution events in OpenAI Responses API format
+    and processes them in order.
 
     Args:
-        events: List of callback requests
+        events: List of callback requests in OpenAI Responses API format
         db: Database session
 
     Returns:
@@ -143,30 +144,24 @@ async def handle_batch_callback(
     logger.info(f"[Callback] Received batch of {len(events)} events")
 
     processed = 0
+    skipped = 0
     errors = []
 
     for request in events:
         try:
-            # Parse event type
-            try:
-                event_type = EventType(request.type)
-            except ValueError:
-                errors.append(f"Unknown event type: {request.type}")
-                continue
-
-            # Create execution event
-            event = ExecutionEvent(
-                type=event_type,
+            # Parse OpenAI Responses API event using shared parser
+            event = _event_parser.parse(
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
-                content=request.content or "",
-                offset=request.offset or 0,
-                result=request.result,
-                error=request.error,
                 message_id=request.message_id,
-                progress=request.progress,
-                status=request.status,
+                event_type=request.event_type,
+                data=request.data,
             )
+
+            if event is None:
+                # Lifecycle events are skipped
+                skipped += 1
+                continue
 
             # Emit event via WebSocketResultEmitter
             emitter = WebSocketResultEmitter(
@@ -182,7 +177,10 @@ async def handle_batch_callback(
                 f"Error processing event for subtask {request.subtask_id}: {str(e)}"
             )
 
-    logger.info(f"[Callback] Batch processed: {processed}/{len(events)} events")
+    logger.info(
+        f"[Callback] Batch processed: {processed}/{len(events)} events, "
+        f"{skipped} skipped"
+    )
 
     if errors:
         return CallbackResponse(
@@ -190,4 +188,7 @@ async def handle_batch_callback(
             message=f"Processed {processed}/{len(events)} events. Errors: {'; '.join(errors[:5])}",
         )
 
-    return CallbackResponse(status="ok", message=f"Processed {processed} events")
+    return CallbackResponse(
+        status="ok",
+        message=f"Processed {processed} events, {skipped} skipped",
+    )

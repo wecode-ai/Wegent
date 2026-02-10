@@ -5,15 +5,14 @@
 """
 Event type definitions for local executor mode.
 
-Protocol aligned with LocalDeviceClient for device-based communication.
+Uses OpenAI Responses API event types from shared.models.responses_api.
+This ensures consistency across all execution modes (SSE, callback, device).
 
-This module defines:
-1. Socket.IO event names (DeviceEvents, TaskEvents, ChatEvents) - used for WebSocket communication
-2. Re-exports unified ExecutionEvent and EventType from shared.models.execution
+Socket.IO event names are now based on OpenAI Responses API event types.
 """
 
-# Re-export unified event types from shared module
-from shared.models.execution import EventType, ExecutionEvent
+# Re-export OpenAI Responses API event types from shared module
+from shared.models.responses_api import ResponsesAPIStreamEvents
 
 
 class DeviceEvents:
@@ -24,32 +23,43 @@ class DeviceEvents:
 
 
 class TaskEvents:
-    """Task execution events (Socket.IO event names)."""
+    """Task execution events (Socket.IO event names).
+
+    These are Wegent-specific events for task lifecycle management.
+    """
 
     EXECUTE = "task:execute"
-    PROGRESS = "task:progress"
     COMPLETE = "task:complete"
-    CANCEL = "task:cancel"
     CLOSE_SESSION = "task:close-session"
 
 
 class ChatEvents:
-    """Chat streaming events (Socket.IO event names)."""
+    """Chat streaming events using OpenAI Responses API event types.
 
-    MESSAGE = "chat:message"
-    CHUNK = "chat:chunk"
-    DONE = "chat:done"
-    START = "chat:start"
-    ERROR = "chat:error"
+    These event names are used as Socket.IO event names and match
+    the OpenAI Responses API event types for consistency.
+    """
 
+    # Lifecycle events
+    START = ResponsesAPIStreamEvents.RESPONSE_CREATED.value
+    IN_PROGRESS = ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value
+    DONE = ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value
+    INCOMPLETE = ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value
+    ERROR = ResponsesAPIStreamEvents.ERROR.value
 
-# Mapping from EventType to Socket.IO event names
-EVENT_TYPE_TO_SOCKET_EVENT = {
-    EventType.START: ChatEvents.START,
-    EventType.CHUNK: ChatEvents.CHUNK,
-    EventType.DONE: ChatEvents.DONE,
-    EventType.ERROR: ChatEvents.ERROR,
-    EventType.PROGRESS: TaskEvents.PROGRESS,
-    EventType.CANCEL: TaskEvents.CANCEL,
-    EventType.CANCELLED: TaskEvents.CANCEL,
-}
+    # Content streaming events
+    CHUNK = ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value
+    TEXT_DONE = ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value
+
+    # Tool events
+    TOOL_START = ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value
+    TOOL_DONE = ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value
+
+    # Reasoning events
+    THINKING = ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value
+
+    # Output item events
+    OUTPUT_ITEM_ADDED = ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value
+    OUTPUT_ITEM_DONE = ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value
+    CONTENT_PART_ADDED = ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value
+    CONTENT_PART_DONE = ResponsesAPIStreamEvents.CONTENT_PART_DONE.value

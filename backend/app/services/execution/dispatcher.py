@@ -17,6 +17,7 @@ For SSE mode (Chat shell), uses OpenAI AsyncClient to consume the
 OpenAI Responses API compatible endpoint.
 """
 
+import json
 import logging
 from typing import Any, List, Optional
 
@@ -128,21 +129,10 @@ class ResponsesAPIEventParser:
             )
 
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value:
-            # function_call_arguments.delta -> TOOL_START (only when status=started)
-            if data.get("status") == "started":
-                return ExecutionEvent(
-                    type=EventType.TOOL_START,
-                    task_id=task_id,
-                    subtask_id=subtask_id,
-                    tool_use_id=data.get("call_id", data.get("item_id")),
-                    tool_name=data.get("tool_name", ""),
-                    tool_input=data.get("tool_input", {}),
-                    data={
-                        "blocks": data.get("blocks", []),
-                        "display_name": data.get("display_name"),
-                    },
-                    message_id=message_id,
-                )
+            # function_call_arguments.delta -> incremental arguments update
+            # Standard OpenAI protocol: this event only contains delta, no status field
+            # Tool start is signaled by response.output_item.added with type=function_call
+            # We skip this event as it's just incremental argument streaming
             return None
 
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value:
@@ -170,10 +160,42 @@ class ResponsesAPIEventParser:
                 )
             return None
 
+        elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value:
+            # response.output_item.added -> check if it's a function_call
+            # Standard OpenAI protocol: when item.type == "function_call", it signals tool start
+            item = data.get("item", {})
+            if item.get("type") == "function_call":
+                # Extract function call info from item
+                call_id = item.get("call_id") or item.get("id", "")
+                name = item.get("name", "")
+                # Arguments may be empty string initially, parse if present
+                arguments_str = item.get("arguments", "")
+                arguments = {}
+                if arguments_str:
+                    try:
+                        arguments = json.loads(arguments_str)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                return ExecutionEvent(
+                    type=EventType.TOOL_START,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=call_id,
+                    tool_name=name,
+                    tool_input=arguments,
+                    data={
+                        "blocks": data.get("blocks", []),
+                        "display_name": data.get("display_name"),
+                    },
+                    message_id=message_id,
+                )
+            # Other item types (message) are lifecycle events, skip
+            return None
+
         elif event_type in (
             ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
-            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
             ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
