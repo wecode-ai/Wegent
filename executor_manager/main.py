@@ -84,7 +84,7 @@ async def lifespan(app):
     # Check dispatch mode to determine whether to start scheduler or queue consumer
     import os
 
-    dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "pull")
+    dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "push")
     service_pool = os.getenv("SERVICE_POOL", "default")
 
     scheduler_instance = None
@@ -115,7 +115,11 @@ async def lifespan(app):
         except Exception as e:
             logger.error(f"Failed to start task queue consumers: {e}")
     else:
-        # Pull mode (default): start the task scheduler
+        # DEPRECATED: Pull mode is deprecated and will be removed in a future version.
+        # Use push mode (TASK_DISPATCH_MODE=push) instead.
+        logger.warning(
+            "Pull mode is deprecated. Please switch to push mode (TASK_DISPATCH_MODE=push)."
+        )
         logger.info("Pull mode enabled: starting task scheduler")
         scheduler_instance = TaskScheduler()
 

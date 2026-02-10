@@ -806,6 +806,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     message=payload.message,  # Original message
                     payload=payload,
                     task_room=task_room,
+                    device_id=payload.device_id,
                     namespace=self,
                     user_subtask_id=(
                         user_subtask_for_context.id
@@ -1415,6 +1416,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 is_group_chat=False,
             )
 
+            device_id = get_device_id(task)
             # Trigger AI response using unified trigger
             task_room = f"task:{payload.task_id}"
             await trigger_ai_response_unified(
@@ -1425,6 +1427,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=user_subtask.prompt or "",
                 payload=retry_payload,
                 task_room=task_room,
+                device_id=device_id,
                 namespace=self,
                 user_subtask_id=user_subtask.id,  # Pass user subtask ID for unified context processing
             )
@@ -1685,3 +1688,8 @@ def register_chat_namespace(sio: socketio.AsyncServer):
     chat_ns = ChatNamespace("/chat")
     sio.register_namespace(chat_ns)
     logger.info("Chat namespace registered at /chat")
+
+
+def get_device_id(task):
+    task_crd = Task.model_validate(task.json)
+    return task_crd.spec.device_id if task_crd.spec else None

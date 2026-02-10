@@ -309,7 +309,12 @@ class LocalRunner:
                     logger.exception(
                         f"Task execution failed for task_id={task_id}: {e}"
                     )
-                    await self._report_task_failure(task_data, str(e))
+                    try:
+                        await self._report_task_failure(task_data, str(e))
+                    except Exception as report_err:
+                        logger.exception(
+                            f"Failed to report task failure for task_id={task_id}: {report_err}"
+                        )
                 finally:
                     self.current_task = None
                     self.current_agent = None
@@ -334,8 +339,6 @@ class LocalRunner:
             websocket_client=self.websocket_client,
             task_id=task_id,
             subtask_id=subtask_id,
-            task_title=task_data.get("task_title", ""),
-            subtask_title=task_data.get("subtask_title", ""),
         )
 
         task_data["_local_progress_reporter"] = progress_reporter
@@ -446,8 +449,6 @@ class LocalRunner:
             websocket_client=self.websocket_client,
             task_id=task_id,
             subtask_id=subtask_id,
-            task_title=task_data.get("task_title", ""),
-            subtask_title=task_data.get("subtask_title", ""),
         )
 
         await progress_reporter.report_result(

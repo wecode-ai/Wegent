@@ -28,7 +28,7 @@ class TaskEvents:
 
     EXECUTE = "task:execute"
     PROGRESS = "task:progress"
-    RESULT = "task:result"
+    COMPLETE = "task:complete"
     CANCEL = "task:cancel"
     CLOSE_SESSION = "task:close-session"
 

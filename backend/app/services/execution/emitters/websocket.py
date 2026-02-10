@@ -61,10 +61,12 @@ class WebSocketResultEmitter(BaseResultEmitter):
 
         # Call corresponding WebSocket method based on event type
         if event.type == EventType.START.value:
+            shell_type = event.data.get("shell_type", "Chat") if event.data else "Chat"
             await ws_emitter.emit_chat_start(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 message_id=event.message_id,
+                shell_type=shell_type,
             )
 
         elif event.type == EventType.CHUNK.value:

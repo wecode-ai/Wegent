@@ -125,7 +125,7 @@ class ExecutionDispatcher:
             if target.mode == CommunicationMode.SSE:
                 await self._dispatch_sse(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.WEBSOCKET:
-                await self._dispatch_websocket(request, target)
+                await self._dispatch_websocket(request, target, wrapped_emitter)
             else:
                 await self._dispatch_http_callback(request, target, wrapped_emitter)
         except Exception as e:
@@ -159,6 +159,44 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] Failed to update subtask {subtask_id} to RUNNING: {e}"
             )
 
+    async def _set_subtask_executor(
+        self,
+        subtask_id: int,
+        device_id: str,
+        user_id: Optional[int],
+    ) -> None:
+        """Set executor info on subtask for device-mode dispatch.
+
+        This is required so that subsequent progress/result events from the device
+        pass the ownership check in device_namespace._update_subtask_progress().
+
+        Args:
+            subtask_id: Subtask ID to update
+            device_id: Device ID
+            user_id: User ID
+        """
+        from app.db.session import SessionLocal
+        from app.models.subtask import Subtask
+
+        db = SessionLocal()
+        try:
+            subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+            if subtask:
+                subtask.executor_name = f"device-{device_id}"
+                subtask.executor_namespace = f"user-{user_id}" if user_id else None
+                db.commit()
+                logger.info(
+                    f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
+                    f"executor_name=device-{device_id}"
+                )
+        except Exception as e:
+            logger.error(
+                f"[ExecutionDispatcher] Failed to set executor on subtask {subtask_id}: {e}"
+            )
+            db.rollback()
+        finally:
+            db.close()
+
     def supports_streaming(self, request: ExecutionRequest) -> bool:
         """Check if the request supports streaming.
 
@@ -172,6 +210,20 @@ class ExecutionDispatcher:
         """
         target = self.router.route(request, device_id=None)
         return target.mode == CommunicationMode.SSE
+
+    @staticmethod
+    def _get_shell_type(request: ExecutionRequest) -> str:
+        """Extract shell_type from execution request.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            Shell type string (e.g., "ClaudeCode", "Chat", "Agno")
+        """
+        if request.bot and len(request.bot) > 0:
+            return request.bot[0].get("shell_type", "Chat")
+        return "Chat"
 
     async def dispatch_with_composite(
         self,
@@ -220,6 +272,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
+            data={"shell_type": self._get_shell_type(request)},
         )
 
         # Send SSE request and process stream
@@ -246,6 +299,7 @@ class ExecutionDispatcher:
         self,
         request: ExecutionRequest,
         target: ExecutionTarget,
+        emitter: ResultEmitter,
     ) -> None:
         """Dispatch task via WebSocket - passive request with long connection.
 
@@ -254,10 +308,28 @@ class ExecutionDispatcher:
         Args:
             request: Execution request
             target: Execution target configuration
+            emitter: Result emitter for event emission
         """
         from app.core.socketio import get_sio
 
         sio = get_sio()
+
+        # Set executor_name on subtask so progress/result events pass ownership check
+        # target.room format: "device:{user_id}:{device_id}"
+        if target.room:
+            parts = target.room.split(":")
+            if len(parts) == 3 and parts[0] == "device":
+                device_id = parts[2]
+                user_id = request.user.get("id") if request.user else None
+                await self._set_subtask_executor(request.subtask_id, device_id, user_id)
+
+        # Send START event to frontend (creates AI message placeholder)
+        await emitter.emit_start(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            message_id=request.message_id,
+            data={"shell_type": self._get_shell_type(request)},
+        )
 
         # Send task to specified room
         await sio.emit(
@@ -272,7 +344,7 @@ class ExecutionDispatcher:
             f"namespace={target.namespace}, room={target.room}, event={target.event}"
         )
 
-        # In WebSocket mode, events are handled by DeviceNamespace's
+        # In WebSocket mode, subsequent events are handled by DeviceNamespace's
         # on_task_progress/on_task_complete
         # No need to wait for response here
 
@@ -328,6 +400,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
+            data={"shell_type": self._get_shell_type(request)},
         )
 
     def _parse_sse_event(self, request: ExecutionRequest, data: dict) -> ExecutionEvent:
