@@ -446,6 +446,24 @@ def create_assistant_subtask(
     Returns:
         Created Subtask
     """
+    # Resolve executor_name from previous subtasks for container reuse
+    executor_name = ""
+    executor_namespace = ""
+    previous = (
+        db.query(Subtask.executor_name, Subtask.executor_namespace)
+        .filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+            Subtask.executor_name != "",
+            Subtask.executor_name.isnot(None),
+        )
+        .order_by(Subtask.id.desc())
+        .first()
+    )
+    if previous:
+        executor_name = previous.executor_name or ""
+        executor_namespace = previous.executor_namespace or ""
+
     # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
     # It will be updated when the stream completes
     assistant_subtask = Subtask(
@@ -455,8 +473,8 @@ def create_assistant_subtask(
         title="Assistant response",
         bot_ids=bot_ids,
         role=SubtaskRole.ASSISTANT,
-        executor_namespace="",
-        executor_name="",
+        executor_namespace=executor_namespace,
+        executor_name=executor_name,
         prompt="",
         status=SubtaskStatus.PENDING,
         progress=0,

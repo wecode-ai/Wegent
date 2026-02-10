@@ -27,6 +27,7 @@ from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
+from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
 from shared.models.execution import EventType, ExecutionEvent, ExecutionRequest
@@ -36,6 +37,7 @@ from shared.telemetry.context import (
     set_task_context,
     set_user_context,
 )
+from shared.utils.http_client import traced_async_client
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -396,7 +398,7 @@ async def _forward_validation_callback(event: ExecutionEvent):
     update_url = f"{task_api_domain}/api/shells/validation-status/{validation_id}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with traced_async_client(timeout=10.0) as client:
             response = await client.post(update_url, json=update_payload)
             if response.status_code == 200:
                 logger.info(
@@ -984,23 +986,8 @@ async def _forward_to_container(
     logger.info(f"Forwarding request to container {executor_name} at {endpoint}")
 
     try:
-        # Propagate trace context headers
-        headers = {}
-        try:
-            from shared.telemetry.context import (
-                get_request_id,
-                inject_trace_context_to_headers,
-            )
-
-            headers = inject_trace_context_to_headers(headers)
-            request_id = get_request_id()
-            if request_id:
-                headers["X-Request-ID"] = request_id
-        except Exception as e:
-            logger.debug(f"Failed to inject trace context headers: {e}")
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(endpoint, json=request_data, headers=headers)
+        async with traced_async_client(timeout=30.0) as client:
+            response = await client.post(endpoint, json=request_data)
 
             if response.status_code == 200:
                 return response.json()
@@ -1022,13 +1009,51 @@ async def _forward_to_container(
         )
 
 
+def _find_running_container_for_task(task_id: int) -> Optional[str]:
+    """Find a running container for the given task_id via Docker label lookup.
+
+    In multi-turn conversations, a container from a previous subtask may still
+    be running. This function checks Docker labels to find it.
+
+    Args:
+        task_id: Task ID to search for
+
+    Returns:
+        Container name if found, None otherwise
+    """
+    try:
+        result = get_running_task_details(label_selector=f"task_id={task_id}")
+        if result.get("status") != "success":
+            return None
+
+        containers = result.get("containers", [])
+        if not containers:
+            return None
+
+        # Return the first matching container
+        container_name = containers[0].get("container_name")
+        if container_name:
+            logger.info(
+                f"[v1/execute] Found existing container for task {task_id}: "
+                f"{container_name}"
+            )
+        return container_name
+
+    except Exception as e:
+        logger.warning(
+            f"[v1/execute] Error looking up container for task {task_id}: {e}"
+        )
+        return None
+
+
 @api_router.post("/v1/execute")
 async def execute_task(request: ExecuteRequest, http_request: Request):
     """Unified execution endpoint - transparent proxy.
 
     This endpoint implements the transparent proxy pattern:
     1. If executor_name is provided, forward request to existing container
-    2. Otherwise, create a new container and submit the task
+    2. Otherwise, check Docker labels for a running container with matching task_id
+    3. If no running container found, create a new container and submit the task
 
     The executor_manager does NOT process any business logic here.
     It only handles container routing and forwarding.
@@ -1051,35 +1076,48 @@ async def execute_task(request: ExecuteRequest, http_request: Request):
     set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
 
     try:
-        if request.executor_name:
-            # Forward to existing container
+        # Resolve executor_name: explicit > label lookup
+        executor_name = request.executor_name or _find_running_container_for_task(
+            request.task_id
+        )
+
+        if executor_name:
+            # Try to forward to existing container
             logger.info(
-                f"[v1/execute] Forwarding to existing container: {request.executor_name}"
+                f"[v1/execute] Forwarding to existing container: {executor_name}"
             )
-            return await _forward_to_container(request.executor_name, request.payload)
-        else:
-            # Create new container and submit task
-            logger.info(
-                f"[v1/execute] Creating new container for task {request.task_id}"
-            )
+            try:
+                return await _forward_to_container(executor_name, request.payload)
+            except HTTPException as e:
+                if e.status_code == 404:
+                    # Container no longer exists, fall through to create a new one
+                    logger.info(
+                        f"[v1/execute] Container {executor_name} no longer exists, "
+                        f"creating new container for task {request.task_id}"
+                    )
+                else:
+                    raise
 
-            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        # Create new container and submit task
+        logger.info(f"[v1/execute] Creating new container for task {request.task_id}")
 
-            # Build task data for container creation
-            # The payload already contains the full TaskExecutionRequest
-            task_data = request.payload.copy()
-            task_data["task_id"] = request.task_id
-            task_data["subtask_id"] = request.subtask_id
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
 
-            # Submit to executor (creates container and sends task)
-            result = executor.submit_executor(task_data)
+        # Build task data for container creation
+        # The payload already contains the full TaskExecutionRequest
+        task_data = request.payload.copy()
+        task_data["task_id"] = request.task_id
+        task_data["subtask_id"] = request.subtask_id
 
-            logger.info(
-                f"[v1/execute] Container creation result: status={result.get('status')}, "
-                f"executor_name={result.get('executor_name')}"
-            )
+        # Submit to executor (creates container and sends task)
+        result = executor.submit_executor(task_data)
 
-            return result
+        logger.info(
+            f"[v1/execute] Container creation result: status={result.get('status')}, "
+            f"executor_name={result.get('executor_name')}"
+        )
+
+        return result
 
     except HTTPException:
         raise
@@ -1135,22 +1173,8 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
             )
 
             try:
-                headers = {}
-                try:
-                    from shared.telemetry.context import (
-                        get_request_id,
-                        inject_trace_context_to_headers,
-                    )
-
-                    headers = inject_trace_context_to_headers(headers)
-                    request_id = get_request_id()
-                    if request_id:
-                        headers["X-Request-ID"] = request_id
-                except Exception as e:
-                    logger.debug(f"Failed to inject trace context headers: {e}")
-
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.post(cancel_url, headers=headers)
+                async with traced_async_client(timeout=10.0) as client:
+                    response = await client.post(cancel_url)
                     response.raise_for_status()
 
                 logger.info(
