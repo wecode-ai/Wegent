@@ -46,3 +46,23 @@ class ErrorResponse(BaseModel):
 
     message: str
     code: int
+
+
+class WorkspaceFile(BaseModel):
+    """Workspace file/directory information for tree display"""
+
+    name: str  # File/directory name
+    path: str  # Relative path from workspace root
+    type: str  # 'file' or 'directory'
+    size: Optional[int] = None  # File size in bytes (only for files)
+    children: Optional[list["WorkspaceFile"]] = (
+        None  # Child items (only for directories)
+    )
+
+
+class WorkspaceFilesResponse(BaseModel):
+    """Response model for workspace files listing"""
+
+    files: list[WorkspaceFile]
+    total_files: int
+    total_size: int

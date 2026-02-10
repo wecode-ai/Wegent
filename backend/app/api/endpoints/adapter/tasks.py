@@ -684,3 +684,213 @@ def delete_task_services(
     db.refresh(task)
 
     return {"app": app_data}
+
+
+# ============================================================================
+# Workspace Files API - for "no repository mode" file display and download
+# ============================================================================
+
+
+from pydantic import BaseModel
+
+
+class WorkspaceFile(BaseModel):
+    """Workspace file/directory information"""
+
+    name: str
+    path: str
+    type: str  # 'file' or 'directory'
+    size: Optional[int] = None
+    children: Optional[list["WorkspaceFile"]] = None
+
+
+class WorkspaceFilesResponse(BaseModel):
+    """Response model for workspace files listing"""
+
+    files: list[WorkspaceFile]
+    total_files: int
+    total_size: int
+
+
+@router.get("/{task_id}/workspace/files", response_model=WorkspaceFilesResponse)
+async def get_workspace_files(
+    task_id: int = Depends(with_task_telemetry),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get workspace files for a task (no-repository mode).
+
+    Returns a tree structure of files in the executor container's workspace.
+    Useful for tasks without a Git repository to browse generated files.
+    """
+    import httpx
+
+    from app.models.task import TaskResource
+    from app.services.sandbox_file_syncer import get_sandbox_file_syncer
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check if sandbox is healthy
+    syncer = get_sandbox_file_syncer()
+    is_healthy, base_url = await syncer.is_sandbox_healthy(task_id)
+
+    if not is_healthy or not base_url:
+        raise HTTPException(
+            status_code=503,
+            detail="Container is not running. Files are only available while the executor is active.",
+        )
+
+    # Call envd /files/list endpoint
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{base_url}/files/list")
+
+            if response.status_code != 200:
+                logger.error(
+                    f"Failed to get workspace files: HTTP {response.status_code}"
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to get workspace files: {response.text[:200]}",
+                )
+
+            data = response.json()
+            return WorkspaceFilesResponse(
+                files=data.get("files", []),
+                total_files=data.get("total_files", 0),
+                total_size=data.get("total_size", 0),
+            )
+
+    except httpx.TimeoutException:
+        logger.error(f"Timeout getting workspace files for task {task_id}")
+        raise HTTPException(
+            status_code=504,
+            detail="Request timeout while getting workspace files",
+        )
+    except httpx.ConnectError as e:
+        logger.error(f"Connection error getting workspace files: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Container is not reachable. It may have stopped.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting workspace files: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get workspace files: {str(e)}",
+        )
+
+
+@router.get("/{task_id}/workspace/download")
+async def download_workspace_files(
+    task_id: int = Depends(with_task_telemetry),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Download all workspace files as a ZIP archive.
+
+    Downloads files from the executor container's workspace directory
+    with smart filtering applied (excludes node_modules, .git, etc.).
+    """
+    import httpx
+
+    from app.models.task import TaskResource
+    from app.services.sandbox_file_syncer import get_sandbox_file_syncer
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check if sandbox is healthy
+    syncer = get_sandbox_file_syncer()
+    is_healthy, base_url = await syncer.is_sandbox_healthy(task_id)
+
+    if not is_healthy or not base_url:
+        raise HTTPException(
+            status_code=503,
+            detail="Container is not running. Files are only available while the executor is active.",
+        )
+
+    # Stream the ZIP file from envd
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.get(f"{base_url}/files/download-zip")
+
+            if response.status_code != 200:
+                logger.error(
+                    f"Failed to download workspace files: HTTP {response.status_code}"
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to download workspace files: {response.text[:200]}",
+                )
+
+            # Get filename from Content-Disposition header if available
+            content_disposition = response.headers.get("content-disposition", "")
+            filename = f"task_{task_id}_files.zip"
+            if "filename=" in content_disposition:
+                try:
+                    filename = content_disposition.split("filename=")[1].strip('"')
+                except Exception:
+                    pass
+
+            return StreamingResponse(
+                iter([response.content]),
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
+    except httpx.TimeoutException:
+        logger.error(f"Timeout downloading workspace files for task {task_id}")
+        raise HTTPException(
+            status_code=504,
+            detail="Request timeout while downloading workspace files",
+        )
+    except httpx.ConnectError as e:
+        logger.error(f"Connection error downloading workspace files: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Container is not reachable. It may have stopped.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error downloading workspace files: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to download workspace files: {str(e)}",
+        )
