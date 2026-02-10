@@ -116,6 +116,10 @@ class TaskKnowledgeBaseService:
         if kb.namespace == "default":
             return kb.user_id == user_id
 
+        # For organization knowledge base, all authenticated users have access
+        if kb.namespace == "organization":
+            return True
+
         # For team knowledge base, check group membership
         role = get_effective_role_in_group(db, user_id, kb.namespace)
         return role is not None

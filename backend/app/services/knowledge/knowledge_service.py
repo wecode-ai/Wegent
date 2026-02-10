@@ -361,9 +361,10 @@ class KnowledgeService:
             )
             shared_kb_ids = [p.resource_id for p in shared_permissions]
 
-            # Single query to get personal, team, and shared knowledge bases
+            # Single query to get personal, team, organization, and shared knowledge bases
             # Personal: user_id matches and namespace is "default"
             # Team: namespace is in accessible_groups
+            # Organization: namespace is "organization" (accessible to all authenticated users)
             # Shared: id is in shared_kb_ids
             all_kbs = (
                 db.query(Kind)
@@ -376,21 +377,27 @@ class KnowledgeService:
                         if accessible_groups
                         else False
                     )
+                    | (Kind.namespace == "organization")
                     | ((Kind.id.in_(shared_kb_ids)) if shared_kb_ids else False),
                 )
                 .all()
             )
 
-            # Separate into personal, team, and shared
+            # Separate into personal, team, organization, and shared
             personal = [
                 kb
                 for kb in all_kbs
                 if kb.user_id == user_id and kb.namespace == "default"
             ]
             team = [kb for kb in all_kbs if kb.namespace in accessible_groups]
-            shared = [kb for kb in all_kbs if kb not in personal and kb not in team]
+            organization = [kb for kb in all_kbs if kb.namespace == "organization"]
+            shared = [
+                kb
+                for kb in all_kbs
+                if kb not in personal and kb not in team and kb not in organization
+            ]
 
-            return personal + team + shared
+            return personal + team + organization + shared
 
     @staticmethod
     def update_knowledge_base(
@@ -1083,7 +1090,10 @@ class KnowledgeService:
                             # Get the correct user_id for index naming
                             # For group knowledge bases, use the KB creator's user_id
                             # This ensures we delete from the same index where documents were stored
-                            if kb.namespace == "default" or kb.namespace == "organization":
+                            if (
+                                kb.namespace == "default"
+                                or kb.namespace == "organization"
+                            ):
                                 # Personal/Organization knowledge base - use current user's ID
                                 index_owner_user_id = user_id
                             else:
@@ -1231,7 +1241,7 @@ class KnowledgeService:
             user_id: Requesting user ID
 
         Returns:
-            AccessibleKnowledgeResponse with personal and team knowledge bases
+            AccessibleKnowledgeResponse with personal, team, and organization knowledge bases
         """
         # Get personal knowledge bases
         personal_kbs = (
@@ -1306,6 +1316,39 @@ class KnowledgeService:
                         ],
                     )
                 )
+
+        # Get organization knowledge bases (accessible to all authenticated users)
+        org_kbs = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.namespace == "organization",
+                Kind.is_active == True,
+            )
+            .order_by(Kind.updated_at.desc())
+            .all()
+        )
+
+        if org_kbs:
+            team_groups.append(
+                TeamKnowledgeGroup(
+                    group_name="organization",
+                    group_display_name="公司知识库",
+                    knowledge_bases=[
+                        AccessibleKnowledgeBase(
+                            id=kb.id,
+                            name=kb.json.get("spec", {}).get("name", ""),
+                            description=kb.json.get("spec", {}).get("description")
+                            or None,  # Convert empty string to None
+                            document_count=KnowledgeService.get_active_document_count(
+                                db, kb.id
+                            ),
+                            updated_at=kb.updated_at,
+                        )
+                        for kb in org_kbs
+                    ],
+                )
+            )
 
         return AccessibleKnowledgeResponse(personal=personal, team=team_groups)
 

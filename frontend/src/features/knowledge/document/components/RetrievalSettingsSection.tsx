@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { SearchableSelect } from '@/components/ui/searchable-select'
@@ -59,6 +59,12 @@ export function RetrievalSettingsSection({
   const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.7)
   const [vectorWeight, setVectorWeight] = useState(config.hybrid_weights?.vector_weight ?? 0.7)
 
+  // Use ref to store the latest config to avoid stale closure issues in useEffect
+  const configRef = useRef(config)
+  useEffect(() => {
+    configRef.current = config
+  }, [config])
+
   // Sync local state with config prop changes (e.g., when data is loaded from backend)
   useEffect(() => {
     setTopK(config.top_k ?? 5)
@@ -72,15 +78,20 @@ export function RetrievalSettingsSection({
     setVectorWeight(config.hybrid_weights?.vector_weight ?? 0.7)
   }, [config.hybrid_weights?.vector_weight])
 
+  // Extract specific field values to use as stable dependencies
+  // This avoids issues with object reference changes triggering unnecessary re-renders
+  const retrieverName = config.retriever_name
+  const retrieverNamespace = config.retriever_namespace
+  const embeddingModelName = config.embedding_config?.model_name
+  const retrievalMode = config.retrieval_mode
+
   // Generate unique key for retriever (name + namespace)
   // Use '::' as separator since it's unlikely to appear in names/namespaces
   const getRetrieverKey = (name: string, namespace: string) => `${namespace}::${name}`
 
   // Get current retriever key from config
   const currentRetrieverKey =
-    config.retriever_name && config.retriever_namespace
-      ? getRetrieverKey(config.retriever_name, config.retriever_namespace)
-      : ''
+    retrieverName && retrieverNamespace ? getRetrieverKey(retrieverName, retrieverNamespace) : ''
 
   // Get available retrieval modes for selected retriever
   const selectedRetriever = retrievers.find(
@@ -99,12 +110,19 @@ export function RetrievalSettingsSection({
       !loadingRetrievers &&
       !loadingMethods &&
       selectedRetriever &&
-      config.retrieval_mode &&
-      !availableModes.includes(config.retrieval_mode)
+      retrievalMode &&
+      !availableModes.includes(retrievalMode)
     ) {
-      onChange({ ...config, retrieval_mode: 'vector' })
+      onChange({ ...configRef.current, retrieval_mode: 'vector' })
     }
-  }, [availableModes, config, onChange, loadingRetrievers, loadingMethods, selectedRetriever])
+  }, [
+    availableModes,
+    retrievalMode,
+    onChange,
+    loadingRetrievers,
+    loadingMethods,
+    selectedRetriever,
+  ])
 
   // Auto-select retriever when:
   // 1. No retriever is selected, OR
@@ -116,22 +134,20 @@ export function RetrievalSettingsSection({
   useEffect(() => {
     if (!loadingRetrievers && retrievers.length > 0) {
       const currentRetrieverExists =
-        config.retriever_name &&
-        retrievers.some(
-          r => r.name === config.retriever_name && r.namespace === config.retriever_namespace
-        )
+        retrieverName &&
+        retrievers.some(r => r.name === retrieverName && r.namespace === retrieverNamespace)
 
       // Auto-select first retriever if no selection or current selection is not available
-      if (!config.retriever_name || !currentRetrieverExists) {
+      if (!retrieverName || !currentRetrieverExists) {
         const firstRetriever = retrievers[0]
         onChange({
-          ...config,
+          ...configRef.current,
           retriever_name: firstRetriever.name,
           retriever_namespace: firstRetriever.namespace,
         })
       }
     }
-  }, [loadingRetrievers, retrievers, config, onChange])
+  }, [loadingRetrievers, retrievers, retrieverName, retrieverNamespace, onChange])
 
   // Auto-select embedding model when:
   // 1. No model is selected, OR
@@ -139,14 +155,13 @@ export function RetrievalSettingsSection({
   useEffect(() => {
     if (!loadingModels && embeddingModels.length > 0) {
       const currentModelExists =
-        config.embedding_config?.model_name &&
-        embeddingModels.some(m => m.name === config.embedding_config?.model_name)
+        embeddingModelName && embeddingModels.some(m => m.name === embeddingModelName)
 
       // Auto-select first model if no selection or current selection is not available
-      if (!config.embedding_config?.model_name || !currentModelExists) {
+      if (!embeddingModelName || !currentModelExists) {
         const firstModel = embeddingModels[0]
         onChange({
-          ...config,
+          ...configRef.current,
           embedding_config: {
             model_name: firstModel.name,
             model_namespace: firstModel.namespace || 'default',
@@ -154,7 +169,7 @@ export function RetrievalSettingsSection({
         })
       }
     }
-  }, [loadingModels, embeddingModels, config, onChange])
+  }, [loadingModels, embeddingModels, embeddingModelName, onChange])
 
   const handleRetrieverChange = (value: string) => {
     // value is in format "namespace::name" (generated by getRetrieverKey)
@@ -192,18 +207,18 @@ export function RetrievalSettingsSection({
     (values: number[]) => {
       const newValue = values[0]
       setTopK(newValue)
-      onChange({ ...config, top_k: newValue })
+      onChange({ ...configRef.current, top_k: newValue })
     },
-    [config, onChange]
+    [onChange]
   )
 
   const handleScoreThresholdChange = useCallback(
     (values: number[]) => {
       const newValue = values[0]
       setScoreThreshold(newValue)
-      onChange({ ...config, score_threshold: newValue })
+      onChange({ ...configRef.current, score_threshold: newValue })
     },
-    [config, onChange]
+    [onChange]
   )
 
   const handleWeightChange = useCallback(
@@ -211,14 +226,14 @@ export function RetrievalSettingsSection({
       setVectorWeight(value)
       const newKeywordWeight = Math.round((1 - value) * 100) / 100
       onChange({
-        ...config,
+        ...configRef.current,
         hybrid_weights: {
           vector_weight: value,
           keyword_weight: newKeywordWeight,
         },
       })
     },
-    [config, onChange]
+    [onChange]
   )
 
   // Helper function to get source type label

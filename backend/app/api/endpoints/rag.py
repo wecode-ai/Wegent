@@ -124,6 +124,11 @@ def get_index_owner_user_id(
                 detail="Access denied to this knowledge base",
             )
         return current_user_id
+    elif kb.namespace == "organization":
+        # Organization knowledge base - accessible to all authenticated users
+        # Return the knowledge base creator's user_id for index naming
+        # This ensures all users access the same index
+        return kb.user_id
     else:
         # Group knowledge base - check if user has access to the group
         role = get_effective_role_in_group(db, current_user_id, kb.namespace)

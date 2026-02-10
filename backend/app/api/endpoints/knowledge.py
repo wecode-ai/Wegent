@@ -512,20 +512,41 @@ def _extract_rag_config_from_knowledge_base(
     spec = (knowledge_base.json or {}).get("spec", {})
     retrieval_config = spec.get("retrievalConfig")
 
+    # Debug logging to diagnose incomplete retrieval_config issues
+    logger.info(
+        f"[RAG Config Debug] KB {knowledge_base.id}: retrievalConfig = {retrieval_config}"
+    )
+
     if not retrieval_config:
+        logger.warning(
+            f"[RAG Config Debug] KB {knowledge_base.id}: No retrievalConfig found in spec"
+        )
         return None
 
     retriever_name = retrieval_config.get("retriever_name")
     retriever_namespace = retrieval_config.get("retriever_namespace", "default")
     embedding_config = retrieval_config.get("embedding_config")
 
+    logger.info(
+        f"[RAG Config Debug] KB {knowledge_base.id}: retriever_name={retriever_name}, "
+        f"retriever_namespace={retriever_namespace}, embedding_config={embedding_config}"
+    )
+
     if not retriever_name or not embedding_config:
+        logger.warning(
+            f"[RAG Config Debug] KB {knowledge_base.id}: Missing retriever_name or embedding_config. "
+            f"retriever_name={retriever_name}, embedding_config={embedding_config}"
+        )
         return None
 
     embedding_model_name = embedding_config.get("model_name")
     embedding_model_namespace = embedding_config.get("model_namespace", "default")
 
     if not embedding_model_name:
+        logger.warning(
+            f"[RAG Config Debug] KB {knowledge_base.id}: Missing embedding model_name. "
+            f"embedding_config={embedding_config}"
+        )
         return None
 
     # Pre-compute KB index info

@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { Check, Database, ArrowRight, Users, Table2 } from 'lucide-react'
+import { Check, Database, ArrowRight, Users, Table2, User, Building2 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import Link from 'next/link'
 import {
@@ -27,6 +27,29 @@ import type { ContextItem, KnowledgeBaseContext, TableContext } from '@/types/co
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+
+// Grouped knowledge bases structure
+interface GroupedKnowledgeBases {
+  personal: KnowledgeBase[]
+  group: KnowledgeBase[]
+  organization: KnowledgeBase[]
+}
+
+/**
+ * Categorize knowledge base by namespace
+ * - 'default' -> personal
+ * - 'organization' -> organization
+ * - others -> group
+ */
+function categorizeKnowledgeBase(kb: KnowledgeBase): keyof GroupedKnowledgeBases {
+  if (kb.namespace === 'default') {
+    return 'personal'
+  } else if (kb.namespace === 'organization') {
+    return 'organization'
+  } else {
+    return 'group'
+  }
+}
 
 interface ContextSelectorProps {
   open: boolean
@@ -185,14 +208,38 @@ export default function ContextSelector({
     fetchTables()
   }, [fetchTables])
 
-  // Sort knowledge bases by name and exclude bound ones and current notebook KB from user list
-  const sortedKnowledgeBases = useMemo(() => {
+  // Group knowledge bases by category (personal, group, organization)
+  // and exclude bound ones and current notebook KB from user list
+  const groupedKnowledgeBases = useMemo((): GroupedKnowledgeBases => {
     const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id))
-    return [...knowledgeBases]
+    const filtered = knowledgeBases
       .filter(kb => !boundIds.has(kb.id))
       .filter(kb => excludeKnowledgeBaseId === undefined || kb.id !== excludeKnowledgeBaseId)
-      .sort((a, b) => a.name.localeCompare(b.name))
+
+    const groups: GroupedKnowledgeBases = {
+      personal: [],
+      group: [],
+      organization: [],
+    }
+
+    for (const kb of filtered) {
+      const category = categorizeKnowledgeBase(kb)
+      groups[category].push(kb)
+    }
+
+    // Sort each group by name
+    groups.personal.sort((a, b) => a.name.localeCompare(b.name))
+    groups.group.sort((a, b) => a.name.localeCompare(b.name))
+    groups.organization.sort((a, b) => a.name.localeCompare(b.name))
+
+    return groups
   }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId])
+
+  // Check if there are any knowledge bases to show
+  const hasKnowledgeBases =
+    groupedKnowledgeBases.personal.length > 0 ||
+    groupedKnowledgeBases.group.length > 0 ||
+    groupedKnowledgeBases.organization.length > 0
 
   // Check if a context item is selected
   const isSelected = (id: number | string) => {
@@ -335,7 +382,7 @@ export default function ContextSelector({
                       {t('common:actions.retry')}
                     </button>
                   </div>
-                ) : sortedKnowledgeBases.length === 0 && boundKnowledgeBases.length === 0 ? (
+                ) : !hasKnowledgeBases && boundKnowledgeBases.length === 0 ? (
                   <div className="py-6 px-4 text-center">
                     <p className="text-sm text-text-muted mb-3">
                       {t('knowledge:no_knowledge_bases')}
@@ -417,22 +464,21 @@ export default function ContextSelector({
                             )
                           })}
                         </CommandGroup>
-                        {sortedKnowledgeBases.length > 0 && <CommandSeparator />}
+                        {hasKnowledgeBases && <CommandSeparator />}
                       </>
                     )}
 
-                    {/* User's Knowledge Bases */}
-                    {sortedKnowledgeBases.length > 0 && (
+                    {/* Personal Knowledge Bases */}
+                    {groupedKnowledgeBases.personal.length > 0 && (
                       <CommandGroup
                         heading={
-                          boundKnowledgeBases.length > 0 ? (
-                            <span className="text-xs font-medium text-text-muted">
-                              {t('chat:groupChat.knowledge.otherKnowledgeBases')}
-                            </span>
-                          ) : undefined
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                            <User className="w-3 h-3" />
+                            {t('knowledge:document.tabs.personal')}
+                          </div>
                         }
                       >
-                        {sortedKnowledgeBases.map(kb => (
+                        {groupedKnowledgeBases.personal.map(kb => (
                           <KnowledgeBaseItem
                             key={kb.id}
                             kb={kb}
@@ -441,6 +487,55 @@ export default function ContextSelector({
                           />
                         ))}
                       </CommandGroup>
+                    )}
+
+                    {/* Group Knowledge Bases */}
+                    {groupedKnowledgeBases.group.length > 0 && (
+                      <>
+                        {groupedKnowledgeBases.personal.length > 0 && <CommandSeparator />}
+                        <CommandGroup
+                          heading={
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                              <Users className="w-3 h-3" />
+                              {t('knowledge:document.tabs.group')}
+                            </div>
+                          }
+                        >
+                          {groupedKnowledgeBases.group.map(kb => (
+                            <KnowledgeBaseItem
+                              key={kb.id}
+                              kb={kb}
+                              isSelected={isSelected(kb.id)}
+                              onSelect={() => handleSelect(kb)}
+                            />
+                          ))}
+                        </CommandGroup>
+                      </>
+                    )}
+
+                    {/* Organization Knowledge Bases */}
+                    {groupedKnowledgeBases.organization.length > 0 && (
+                      <>
+                        {(groupedKnowledgeBases.personal.length > 0 ||
+                          groupedKnowledgeBases.group.length > 0) && <CommandSeparator />}
+                        <CommandGroup
+                          heading={
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                              <Building2 className="w-3 h-3" />
+                              {t('knowledge:document.tabs.organization')}
+                            </div>
+                          }
+                        >
+                          {groupedKnowledgeBases.organization.map(kb => (
+                            <KnowledgeBaseItem
+                              key={kb.id}
+                              kb={kb}
+                              isSelected={isSelected(kb.id)}
+                              onSelect={() => handleSelect(kb)}
+                            />
+                          ))}
+                        </CommandGroup>
+                      </>
                     )}
                   </>
                 )}
