@@ -55,7 +55,7 @@ class ExecutionRouter:
         "Chat": {
             "mode": "sse",
             "url": None,  # Will be set from settings
-            "endpoint": "/v1/execute",
+            "endpoint": "/v1/responses",  # OpenAI Responses API compatible endpoint
         },
         # HTTP+Callback mode services
         "ClaudeCode": {

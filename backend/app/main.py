@@ -60,6 +60,10 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI application.
     Handles startup and shutdown events.
     """
+    # Re-apply logging configuration after uvicorn's default config
+    # uvicorn applies its LOGGING_CONFIG which overrides our setup_logging()
+    setup_logging()
+
     logger = _logger
 
     # ==================== MCP SERVER LIFESPAN ====================

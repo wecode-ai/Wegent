@@ -706,6 +706,11 @@ export class TaskStateMachine {
 
   /**
    * Merge blocks for pending chunk (similar to mergeBlocks but for PendingChunkEvent)
+   *
+   * Handles three cases:
+   * 1. Text block streaming: blockId + content -> append content to existing text block
+   * 2. No incoming blocks: keep existing blocks unchanged
+   * 3. Tool/other blocks: merge by block.id, preserving existing fields for partial updates
    */
   private mergeBlocksFromPendingChunk(
     existingMessage: UnifiedMessage,
@@ -744,10 +749,20 @@ export class TaskStateMachine {
       return existingBlocks
     }
 
-    // Case 3: Tool blocks - merge by block.id
+    // Case 3: Tool/other blocks - merge by block.id
+    // CRITICAL: For partial updates (e.g., block_updated with only status),
+    // we must merge with existing block to preserve all fields
     const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
     incomingBlocks.forEach(incomingBlock => {
-      blocksMap.set(incomingBlock.id, incomingBlock)
+      const existingBlock = blocksMap.get(incomingBlock.id)
+      if (existingBlock) {
+        // Merge: existing fields + incoming updates
+        // This preserves tool_name, tool_use_id, etc. when only status is updated
+        blocksMap.set(incomingBlock.id, { ...existingBlock, ...incomingBlock })
+      } else {
+        // New block - add as-is
+        blocksMap.set(incomingBlock.id, incomingBlock)
+      }
     })
 
     return Array.from(blocksMap.values())
@@ -1047,6 +1062,11 @@ export class TaskStateMachine {
 
   /**
    * Merge blocks for incremental updates
+   *
+   * Handles three cases:
+   * 1. Text block streaming: blockId + content -> append content to existing text block
+   * 2. No incoming blocks: keep existing blocks unchanged
+   * 3. Tool/other blocks: merge by block.id, preserving existing fields for partial updates
    */
   private mergeBlocks(
     existingMessage: UnifiedMessage,
@@ -1085,10 +1105,20 @@ export class TaskStateMachine {
       return existingBlocks
     }
 
-    // Case 3: Tool blocks - merge by block.id
+    // Case 3: Tool/other blocks - merge by block.id
+    // CRITICAL: For partial updates (e.g., block_updated with only status),
+    // we must merge with existing block to preserve all fields
     const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
     incomingBlocks.forEach(incomingBlock => {
-      blocksMap.set(incomingBlock.id, incomingBlock)
+      const existingBlock = blocksMap.get(incomingBlock.id)
+      if (existingBlock) {
+        // Merge: existing fields + incoming updates
+        // This preserves tool_name, tool_use_id, etc. when only status is updated
+        blocksMap.set(incomingBlock.id, { ...existingBlock, ...incomingBlock })
+      } else {
+        // New block - add as-is
+        blocksMap.set(incomingBlock.id, incomingBlock)
+      }
     })
 
     return Array.from(blocksMap.values())

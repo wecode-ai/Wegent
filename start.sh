@@ -844,7 +844,9 @@ stop_services() {
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping $service (PID: $pid)..."
-                kill "$pid" 2>/dev/null || true
+                # Kill the process group to ensure child processes are also killed
+                # uvicorn --reload creates child processes that need to be terminated
+                kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
                 # Wait for process to exit
                 for i in {1..10}; do
                     if ! kill -0 "$pid" 2>/dev/null; then
@@ -854,7 +856,7 @@ stop_services() {
                 done
                 # Force terminate
                 if kill -0 "$pid" 2>/dev/null; then
-                    kill -9 "$pid" 2>/dev/null || true
+                    kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
                 fi
             fi
             rm -f "$pid_file"
@@ -875,6 +877,25 @@ stop_services() {
                 echo "$pids" | xargs kill -9 2>/dev/null || true
             fi
         fi
+    done
+
+    # Wait for all ports to be fully released before returning
+    echo -e "  Waiting for ports to be released..."
+    local max_wait=10
+    local waited=0
+    while [ $waited -lt $max_wait ]; do
+        local ports_in_use=0
+        for port in $BACKEND_PORT $CHAT_SHELL_PORT $EXECUTOR_MANAGER_PORT $WEGENT_FRONTEND_PORT; do
+            if lsof -ti :$port >/dev/null 2>&1; then
+                ports_in_use=1
+                break
+            fi
+        done
+        if [ $ports_in_use -eq 0 ]; then
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
     done
 
     echo -e "${GREEN}All services stopped${NC}"
@@ -1084,13 +1105,14 @@ start_services() {
     # 1. Start Backend
     # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
     # CHAT_SHELL_URL: URL for backend to call chat_shell service
+    # LOG_LEVEL: Application log level (DEBUG enables debug logging)
     start_service "backend" "backend" \
-        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
+        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
 
     # 2. Start Chat Shell
     # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port $CHAT_SHELL_PORT"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug"
 
     # 3. Start Executor Manager
     # TASK_API_DOMAIN: URL for executor_manager to call backend (uses local IP so docker containers can access)
@@ -1098,7 +1120,7 @@ start_services() {
     # CALLBACK_HOST: URL for executor containers to call back to executor_manager (uses local IP so docker containers can access)
     local CALLBACK_HOST="http://$LOCAL_IP:$EXECUTOR_MANAGER_PORT"
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."

@@ -214,6 +214,16 @@ class SSEEmitter(StreamEmitter):
 
         This is a sync method for compatibility with tool callbacks.
         """
+        # Debug log for blocks in tool events
+        result = data.get("result", {})
+        blocks = result.get("blocks", []) if result else []
+        if data.get("type") == "chunk" and result:
+            logger.info(
+                "[SSE_EMITTER] emit_json chunk: subtask_id=%s, blocks_count=%d, result_keys=%s",
+                data.get("subtask_id"),
+                len(blocks),
+                list(result.keys()) if result else [],
+            )
         self._events.append(self.format_sse(data))
 
     def get_event(self) -> Optional[str]:

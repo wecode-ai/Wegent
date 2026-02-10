@@ -197,10 +197,10 @@ class LangGraphAgentBuilder:
                         "[prompt_modifier] Final system prompt (len=%d)",
                         len(updated_content),
                     )
-                    logger.info(
-                        "[prompt_modifier] Final system prompt content:\n%s",
-                        updated_content,
-                    )
+                    # logger.debug(
+                    #     "[prompt_modifier] Final system prompt content:\n%s",
+                    #     updated_content,
+                    # )
 
                 else:
                     new_messages.append(msg)
