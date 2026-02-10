@@ -539,8 +539,8 @@ async def receive_tasks(
     Accepts a dict with 'tasks' key containing list of task dicts.
 
     This endpoint supports two modes controlled by TASK_DISPATCH_MODE:
-    - pull (default): Process tasks directly via TaskProcessor
-    - push: Enqueue tasks to Redis for async processing with backpressure
+    - push (default): Enqueue tasks to Redis for async processing with backpressure
+    - pull (deprecated): Process tasks directly via TaskProcessor
 
     In push mode, tasks are routed to either online or offline queue:
     - online (default): Processed immediately by online consumer
@@ -602,7 +602,7 @@ async def receive_tasks(
             )
 
         # Check dispatch mode
-        dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "pull")
+        dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "push")
 
         if dispatch_mode == "push":
             # Push mode: enqueue to Redis for async processing with backpressure
@@ -620,6 +620,8 @@ async def receive_tasks(
                 f"pool '{service_pool}' queue '{queue_type}'"
             )
         else:
+            # DEPRECATED: Pull mode is deprecated and will be removed in a future version.
+            # Use push mode (TASK_DISPATCH_MODE=push) instead.
             # Pull mode (default): process tasks directly
             # Convert ExecutionRequest objects to dicts for task processor
             tasks_dicts = [task.to_dict() for task in tasks]

@@ -279,7 +279,11 @@ class WebSocketProgressReporter:
         """
         try:
             # Determine event type based on status
-            event_type = EventType.DONE if status == "completed" else EventType.ERROR
+            event_type = (
+                EventType.DONE
+                if status.upper() in ("COMPLETED", "SUCCESS")
+                else EventType.ERROR
+            )
 
             # Create unified ExecutionEvent
             event = ExecutionEvent.create(
@@ -298,7 +302,7 @@ class WebSocketProgressReporter:
             data_str = str(data)
             truncated_data = data_str[:20] + "..." if len(data_str) > 20 else data_str
             logger.info(f"Reporting result: {truncated_data}")
-            await self.client.emit(TaskEvents.RESULT, data)
+            await self.client.emit(TaskEvents.COMPLETE, data)
             logger.info(f"Result reported: task_id={self.task_id}, status={status}")
         except Exception as e:
             logger.exception(f"Failed to report result for task {self.task_id}: {e}")
