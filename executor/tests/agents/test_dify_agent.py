@@ -21,10 +21,14 @@ class TestDifyAgent:
         - requests.get: DifyAgent.__init__ calls _get_app_mode() which makes GET to /v1/info
         - CallbackClient: Uses TracedSession (not raw requests.post), so we mock
           the entire class to prevent retry loops with exponential backoff on empty URLs.
+        - send_progress_event: Mock to prevent asyncio event loop issues in tests.
         """
         with (
             patch("executor.agents.dify.dify_agent.requests.get") as mock_get,
             patch("executor.agents.base.CallbackClient") as mock_callback_cls,
+            patch(
+                "executor.callback.callback_handler.send_progress_event"
+            ) as mock_progress,
         ):
             # Mock GET response for _get_app_mode()
             mock_get_response = MagicMock()
@@ -37,7 +41,14 @@ class TestDifyAgent:
             mock_callback.send_event.return_value = {"status": "success"}
             mock_callback_cls.return_value = mock_callback
 
-            yield {"get": mock_get, "callback": mock_callback}
+            # Mock send_progress_event to prevent asyncio issues
+            mock_progress.return_value = {"status": "success"}
+
+            yield {
+                "get": mock_get,
+                "callback": mock_callback,
+                "progress": mock_progress,
+            }
 
     @pytest.fixture
     def task_data(self):

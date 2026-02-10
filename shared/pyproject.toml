@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.26.0",
     "requests>=2.31.0",
     "dacite>=1.8.0", # For dataclass deserialization
+    "litellm>=1.72.0", # For OpenAI Responses API types
     # Database ORM
     "sqlalchemy>=2.0.25",
     "pymysql>=1.1.0",

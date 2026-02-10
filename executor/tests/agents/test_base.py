@@ -65,23 +65,23 @@ class TestAgent:
         status = agent.initialize()
         assert status == TaskStatus.SUCCESS
 
-    @patch("executor.agents.base.CallbackClient")
-    def test_report_progress(self, mock_callback_class, agent):
+    @patch("executor.callback.callback_handler.send_progress_event")
+    def test_report_progress(self, mock_send_progress, agent):
         """Test report_progress sends callback"""
-        mock_callback = MagicMock()
-        mock_callback_class.return_value = mock_callback
-
-        # Create new agent to use mocked callback
-        agent_with_mock = Agent(agent.task_data)
-
-        agent_with_mock.report_progress(
+        agent.report_progress(
             progress=50,
             status="running",
             message="Test message",
             result={"key": "value"},
         )
 
-        mock_callback.send_event.assert_called_once()
+        mock_send_progress.assert_called_once_with(
+            task_id=agent.task_id,
+            subtask_id=agent.subtask_id,
+            progress=50,
+            status="running",
+            content="Test message",
+        )
 
     @patch("executor.agents.base.git_util.clone_repo")
     @patch("executor.agents.base.git_util.get_repo_name_from_url")
