@@ -384,6 +384,30 @@ export class TaskStateMachine {
   }
 
   /**
+   * Merge older messages into state (for pagination)
+   * Only adds messages that don't already exist
+   */
+  mergeOlderMessages(messages: UnifiedMessage[]): void {
+    if (messages.length === 0) return
+
+    const newMessages = new Map(this.state.messages)
+    let addedCount = 0
+
+    for (const msg of messages) {
+      // Only add if not already exists
+      if (!newMessages.has(msg.id)) {
+        newMessages.set(msg.id, msg)
+        addedCount++
+      }
+    }
+
+    if (addedCount > 0) {
+      this.state = { ...this.state, messages: newMessages }
+      this.notifyListeners()
+    }
+  }
+
+  /**
    * Set stopping state
    */
   setStopping(isStopping: boolean): void {

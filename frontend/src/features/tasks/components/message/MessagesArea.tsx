@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react'
 import { useTaskContext } from '../../contexts/taskContext'
 import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import {
@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Users,
   MoreHorizontal,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -40,6 +41,7 @@ import { subtaskApis } from '@/apis/subtasks'
 import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
+import { useMessagePagination } from '../../hooks/useMessagePagination'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
@@ -215,6 +217,96 @@ export default function MessagesArea({
     isGroupChat,
     pendingTaskId,
   })
+
+  // Use message pagination hook for infinite scroll
+  const {
+    hasMoreMessages,
+    isLoadingMore,
+    loadedCount,
+    totalCount,
+    loadMoreMessages,
+    error: _paginationError,
+  } = useMessagePagination({
+    taskId: selectedTaskDetail?.id,
+    totalMessages: selectedTaskDetail?.total_messages ?? 0,
+    teamName: selectedTeam?.name,
+    isGroupChat,
+    currentUserId: user?.id,
+    currentUserName: user?.user_name,
+  })
+
+  // Ref for scroll container observation
+  const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLElement | null>(null)
+
+  // Scroll position preservation for loading more messages
+  const [isPreservingScroll, setIsPreservingScroll] = useState(false)
+  const prevScrollHeightRef = useRef<number>(0)
+
+  // Find and cache the scroll container on mount
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      // Try data-scroll-container first, then fallback to parent with overflow scroll
+      let container: HTMLElement | null =
+        messagesContainerRef.current.closest('[data-scroll-container]')
+      if (!container) {
+        // Fallback: find parent with scrollable overflow
+        let parent = messagesContainerRef.current.parentElement
+        while (parent) {
+          const overflow = window.getComputedStyle(parent).overflowY
+          if (overflow === 'auto' || overflow === 'scroll') {
+            container = parent
+            break
+          }
+          parent = parent.parentElement
+        }
+      }
+      scrollContainerRef.current = container
+    }
+  }, [])
+
+  // IntersectionObserver for infinite scroll - trigger when top sentinel becomes visible
+  useEffect(() => {
+    const triggerEl = loadMoreTriggerRef.current
+    const containerEl = messagesContainerRef.current
+    if (!triggerEl || !containerEl || !hasMoreMessages || isLoadingMore) return
+
+    const observer = new IntersectionObserver(
+      entries => {
+        const [entry] = entries
+        if (entry.isIntersecting && hasMoreMessages && !isLoadingMore) {
+          // Save scroll height before loading
+          if (containerEl) {
+            prevScrollHeightRef.current = containerEl.scrollHeight
+            setIsPreservingScroll(true)
+          }
+          loadMoreMessages()
+        }
+      },
+      {
+        root: scrollContainerRef.current, // Use the scroll container as root
+        threshold: 0.1,
+        rootMargin: '100px 0px 0px 0px', // Trigger 100px before reaching the top
+      }
+    )
+
+    observer.observe(triggerEl)
+    return () => observer.disconnect()
+  }, [hasMoreMessages, isLoadingMore, loadMoreMessages])
+
+  // Preserve scroll position after loading more messages
+  // Use useLayoutEffect to run synchronously before paint
+  useLayoutEffect(() => {
+    if (isPreservingScroll && !isLoadingMore && messagesContainerRef.current) {
+      const newScrollHeight = messagesContainerRef.current.scrollHeight
+      const scrollDiff = newScrollHeight - prevScrollHeightRef.current
+      if (scrollDiff > 0 && scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop += scrollDiff
+      }
+      setIsPreservingScroll(false)
+    }
+  }, [isLoadingMore, isPreservingScroll])
 
   // Task share modal state
   const [showShareModal, setShowShareModal] = useState(false)
@@ -1073,7 +1165,33 @@ export default function MessagesArea({
         streamingSubtaskIds.length > 0 ||
         selectedTaskDetail?.id ||
         hasMessagesFromParent) && (
-        <div className="flex-1 space-y-8 messages-container">
+        <div className="flex-1 space-y-8 messages-container" ref={messagesContainerRef}>
+          {/* Load more trigger sentinel - placed at top for infinite scroll */}
+          {hasMoreMessages && (
+            <div ref={loadMoreTriggerRef} className="flex justify-center py-2">
+              {isLoadingMore ? (
+                <div className="flex items-center gap-2 text-sm text-text-secondary">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>{t('chat:pagination.loading_more')}</span>
+                </div>
+              ) : (
+                <div className="text-xs text-text-muted">
+                  {t('chat:pagination.loaded_count', {
+                    loaded: loadedCount,
+                    total: totalCount,
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Show "All messages loaded" indicator when all messages are loaded */}
+          {!hasMoreMessages && totalCount > 0 && loadedCount >= totalCount && (
+            <div className="flex justify-center py-2">
+              <div className="text-xs text-text-muted">{t('chat:pagination.all_loaded')}</div>
+            </div>
+          )}
+
           {messages.map((msg, index) => {
             const messageKey = msg.subtaskId
               ? `${msg.type}-${msg.subtaskId}`
