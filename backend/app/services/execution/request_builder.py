@@ -960,6 +960,14 @@ class TaskRequestBuilder:
     def _build_mcp_servers(self, bot: Kind, team: Kind) -> list[dict]:
         """Build MCP servers configuration.
 
+        Converts Ghost CRD mcpServers dict format to list format expected by chat_shell.
+
+        Ghost CRD format (dict):
+            {"server_name": {"url": "...", "type": "...", "headers": {...}}}
+
+        Output format (list):
+            [{"name": "server_name", "url": "...", "type": "...", "auth": {...}}]
+
         Args:
             bot: Bot Kind object
             team: Team Kind object
@@ -989,9 +997,26 @@ class TaskRequestBuilder:
             return []
 
         ghost_crd = Ghost.model_validate(ghost.json)
-        mcp_servers_dict = ghost_crd.spec.mcpServers or {}
-        # Convert dict format to list format with name field
-        return [{"name": name, **config} for name, config in mcp_servers_dict.items()]
+        mcp_servers_dict = ghost_crd.spec.mcpServers
+
+        if not mcp_servers_dict:
+            return []
+
+        # Convert dict format to list format for chat_shell compatibility
+        mcp_servers_list = []
+        for server_name, server_config in mcp_servers_dict.items():
+            if isinstance(server_config, dict):
+                server_entry = {
+                    "name": server_name,
+                    "url": server_config.get("url", ""),
+                    "type": server_config.get("type", "streamable-http"),
+                }
+                # Convert "headers" to "auth" for chat_shell compatibility
+                if "headers" in server_config:
+                    server_entry["auth"] = server_config["headers"]
+                mcp_servers_list.append(server_entry)
+
+        return mcp_servers_list
 
     # =========================================================================
     # Helper Methods

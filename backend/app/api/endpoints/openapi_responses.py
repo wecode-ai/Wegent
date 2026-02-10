@@ -603,12 +603,24 @@ async def _create_sync_response_unified(
 
     # Check if streaming is supported (SSE mode)
     if not execution_dispatcher.supports_streaming(execution_request):
-        # Non-SSE mode: close db and return queued response
+        # Non-SSE mode: dispatch task asynchronously and return queued response
         try:
             db.rollback()
         except Exception:
             pass
         db.close()
+
+        # Dispatch task asynchronously via HTTP+Callback mode
+        # The executor_manager will execute the task and send results via callback
+        import asyncio
+
+        asyncio.create_task(
+            execution_dispatcher.dispatch(execution_request, emitter=None)
+        )
+        logger.info(
+            f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
+            f"subtask_id={assistant_subtask_id}"
+        )
 
         # Get subtasks for output
         query_db = SessionLocal()
