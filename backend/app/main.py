@@ -437,10 +437,8 @@ def create_app():
         if request.url.path == "/":
             return await call_next(request)
 
-        # Generate a unique request ID
-        request_id = str(uuid.uuid4())[
-            :8
-        ]  # Use first 8 characters of UUID as request ID
+        # Reuse X-Request-ID from upstream if present, otherwise generate new one
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
         request.state.request_id = request_id
 
         start_time = time.time()

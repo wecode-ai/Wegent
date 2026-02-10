@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 from executor.callback.callback_client import CallbackClient
 from executor.config import config
 from shared.logger import setup_logger
+from shared.models.execution import EventType, ExecutionEvent
 from shared.status import TaskStatus
 from shared.utils import git_util
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
@@ -128,17 +129,16 @@ class Agent:
             f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}"
         )
         try:
-            self.callback_client.send_callback(
+            event = ExecutionEvent.create(
+                event_type=EventType.PROGRESS,
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
-                task_title=self.task_title,
-                subtask_title=self.subtask_title,
                 progress=progress,
-                status=status,
-                message=message,
+                status=status or "",
+                content=message or "",
                 result=result,
-                task_type=self.task_type,
             )
+            self.callback_client.send_event(event)
         except Exception as e:
             logger.critical(
                 f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "

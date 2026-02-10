@@ -21,6 +21,7 @@ from typing import List, Optional
 import httpx
 
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
+from shared.utils.http_client import traced_async_client
 
 from .emitters import (
     CompositeResultEmitter,
@@ -52,7 +53,7 @@ class ExecutionDispatcher:
     def __init__(self):
         """Initialize the execution dispatcher."""
         self.router = ExecutionRouter()
-        self.http_client = httpx.AsyncClient(timeout=300.0)
+        self.http_client = traced_async_client(timeout=300.0)
 
     async def dispatch(
         self,
@@ -90,7 +91,10 @@ class ExecutionDispatcher:
         """
         # Route to execution target
         target = self.router.route(request, device_id)
-
+        logger.info(
+            f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
+            f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
+        )
         # Create default emitter if not provided
         if emitter is None:
             emitter = WebSocketResultEmitter(
@@ -289,15 +293,29 @@ class ExecutionDispatcher:
             emitter: Result emitter for event emission
         """
         url = f"{target.url}{target.endpoint}"
+        logger.info(f"[ExecutionDispatcher] HTTP+Callback dispatch: url={url}")
+
+        # Build ExecuteRequest payload expected by executor_manager
+        shell_type = request.bot[0].get("shell_type") if request.bot else None
+        execute_request = {
+            "task_id": request.task_id,
+            "subtask_id": request.subtask_id,
+            "executor_name": request.executor_name,
+            "shell_type": shell_type,
+            "payload": request.to_dict(),
+        }
 
         # Send request
         response = await self.http_client.post(
             url,
-            json=request.to_dict(),
+            json=execute_request,
         )
 
         if response.status_code != 200:
-            raise Exception(f"HTTP dispatch failed: {response.status_code}")
+            detail = response.text[:500] if response.text else "no detail"
+            raise Exception(
+                f"HTTP dispatch failed: {response.status_code}, detail={detail}"
+            )
 
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch: "

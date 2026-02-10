@@ -23,7 +23,7 @@ from executor.config import config
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionEvent
 from shared.status import TaskStatus
-from shared.telemetry.config import get_otel_config
+from shared.utils.http_client import traced_session
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("callback_client")
@@ -58,6 +58,8 @@ class CallbackClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.retry_backoff = retry_backoff
+        # Traced session auto-injects W3C trace context and X-Request-ID
+        self._session = traced_session()
 
     def _request_with_retry(self, request_func, max_retries=None) -> Dict[str, Any]:
         """
@@ -136,31 +138,9 @@ class CallbackClient:
         )
         logger.debug("Callback body: %s", masked_data)
 
-        # Prepare headers with trace context for distributed tracing
-        headers = {"Content-Type": "application/json"}
-
-        # Inject X-Request-ID for log correlation
-        try:
-            from shared.telemetry.context import get_request_id
-
-            request_id = get_request_id()
-            if request_id:
-                headers["X-Request-ID"] = request_id
-        except Exception:
-            pass
-
-        # Inject OpenTelemetry trace context if enabled
-        otel_config = get_otel_config()
-        if otel_config.enabled:
-            from shared.telemetry.context import inject_trace_context_to_headers
-            from shared.telemetry.core import is_telemetry_enabled
-
-            if is_telemetry_enabled():
-                headers = inject_trace_context_to_headers(headers)
-
-        # Send original unmasked data
-        response = requests.post(
-            self.callback_url, json=data, headers=headers, timeout=self.timeout
+        # Send original unmasked data (trace context auto-injected by traced session)
+        response = self._session.post(
+            self.callback_url, json=data, timeout=self.timeout
         )
         return self._handle_response(response)
 

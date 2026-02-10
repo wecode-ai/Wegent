@@ -170,7 +170,14 @@ class TaskRequestBuilder:
         )
 
         # Build bot configuration
-        bot_config = self._build_bot_config(team, team_crd, bot)
+        bot_config = self._build_bot_config(
+            team,
+            team_crd,
+            bot,
+            user_id=user.id,
+            override_model_name=override_model_name,
+            force_override=force_override,
+        )
 
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
@@ -224,6 +231,7 @@ class TaskRequestBuilder:
             is_subscription=is_subscription,
             system_mcp_config=system_mcp_config,
             trace_context=trace_context,
+            executor_name=subtask.executor_name,
         )
 
     # =========================================================================
@@ -818,7 +826,13 @@ class TaskRequestBuilder:
     # =========================================================================
 
     def _build_bot_config(
-        self, team: Kind, team_crd: Team, first_bot: Kind
+        self,
+        team: Kind,
+        team_crd: Team,
+        first_bot: Kind,
+        user_id: int,
+        override_model_name: str | None = None,
+        force_override: bool = False,
     ) -> list[dict]:
         """Build bot configuration list.
 
@@ -826,10 +840,17 @@ class TaskRequestBuilder:
             team: Team Kind object
             team_crd: Parsed Team CRD
             first_bot: First bot Kind object (already resolved)
+            user_id: User ID for model resolution
+            override_model_name: Optional model name override from task
+            force_override: Whether override takes priority
 
         Returns:
             List of bot configuration dictionaries
         """
+        from app.services.chat.config.model_resolver import (
+            build_agent_config_for_bot,
+        )
+
         members = team_crd.spec.members or []
 
         bot_configs = []
@@ -887,11 +908,20 @@ class TaskRequestBuilder:
                     ghost_mcp_servers = ghost_crd.spec.mcpServers or []
                     ghost_skills = ghost_crd.spec.skills or []
 
+            # Resolve agent_config from model binding
+            agent_config = build_agent_config_for_bot(
+                self.db,
+                bot,
+                user_id,
+                override_model_name=override_model_name,
+                force_override=force_override,
+            )
+
             bot_config = {
                 "id": bot.id,
                 "name": bot.name,
                 "shell_type": shell_type,
-                "agent_config": bot_spec_json.get("agent_config", {}),
+                "agent_config": agent_config,
                 "system_prompt": ghost_system_prompt,
                 "mcp_servers": ghost_mcp_servers,
                 "skills": ghost_skills,
