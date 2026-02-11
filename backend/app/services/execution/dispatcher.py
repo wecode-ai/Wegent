@@ -468,16 +468,22 @@ class ExecutionDispatcher:
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
 
+        # Get tools from openai_request (includes MCP servers converted to tools)
+        tools = openai_request.get("tools", [])
+
         logger.info(
             f"[ExecutionDispatcher] Sending OpenAI request: model={openai_request.get('model')}, "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+            f"tools_count={len(tools)}"
         )
 
         # Stream response using OpenAI client
+        # Note: tools is a first-class parameter in OpenAI Responses API, not in extra_body
         stream = await client.responses.create(
             model=openai_request.get("model", ""),
             input=openai_request.get("input", ""),
             instructions=openai_request.get("instructions"),
+            tools=tools if tools else None,
             stream=True,
             extra_body={
                 "metadata": openai_request.get("metadata", {}),

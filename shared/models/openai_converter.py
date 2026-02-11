@@ -66,14 +66,18 @@ class OpenAIRequestConverter:
         tools = []
         if request.mcp_servers:
             for server in request.mcp_servers:
-                tools.append(
-                    {
-                        "type": "mcp",
-                        "server_label": server.get("name", ""),
-                        "server_url": server.get("url", ""),
-                        "require_approval": "never",
-                    }
-                )
+                tool = {
+                    "type": "mcp",
+                    "server_label": server.get("name", ""),
+                    "server_url": server.get("url", ""),
+                    "server_type": server.get("type", "streamable-http"),
+                    "require_approval": "never",
+                }
+                # Include auth/headers if present
+                auth = server.get("auth") or server.get("headers")
+                if auth:
+                    tool["server_auth"] = auth
+                tools.append(tool)
 
         # Build the OpenAI format request
         openai_request: dict[str, Any] = {
@@ -174,13 +178,16 @@ class OpenAIRequestConverter:
         tools = openai_request.get("tools", [])
         for tool in tools:
             if isinstance(tool, dict) and tool.get("type") == "mcp":
-                mcp_servers.append(
-                    {
-                        "name": tool.get("server_label", ""),
-                        "url": tool.get("server_url", ""),
-                        "type": "streamable-http",
-                    }
-                )
+                server = {
+                    "name": tool.get("server_label", ""),
+                    "url": tool.get("server_url", ""),
+                    "type": tool.get("server_type", "streamable-http"),
+                }
+                # Include auth/headers if present
+                auth = tool.get("server_auth")
+                if auth:
+                    server["auth"] = auth
+                mcp_servers.append(server)
 
         # Get user dict directly from metadata (passed from from_execution_request)
         user_dict = metadata.get("user", {})
