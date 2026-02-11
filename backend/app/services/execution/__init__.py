@@ -25,7 +25,6 @@ from .emitters import (
     ResultEmitterFactory,
     SSEResultEmitter,
     StreamableEmitter,
-    SubscriptionResultEmitter,
     WebSocketResultEmitter,
 )
 from .request_builder import TaskRequestBuilder
@@ -54,7 +53,6 @@ __all__ = [
     "CallbackResultEmitter",
     "BatchCallbackEmitter",
     "CompositeResultEmitter",
-    "SubscriptionResultEmitter",
     # Emitters - Factory
     "EmitterType",
     "ResultEmitterFactory",

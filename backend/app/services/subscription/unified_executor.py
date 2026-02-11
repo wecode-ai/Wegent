@@ -9,6 +9,8 @@ This module provides a unified execution path for subscription tasks,
 using the ExecutionDispatcher to handle different shell types:
 - Chat Shell -> SSE mode (synchronous execution)
 - ClaudeCode/Agno/Dify -> HTTP+Callback mode (asynchronous execution)
+
+All execution modes publish TaskCompletedEvent for unified handling.
 """
 
 import logging
@@ -76,12 +78,8 @@ async def execute_subscription_unified(
     - Chat Shell -> SSE mode (synchronous, waits for completion)
     - ClaudeCode/Agno/Dify -> HTTP+Callback mode (asynchronous)
 
-    For SSE mode, this function waits for the AI response to complete
-    and updates the BackgroundExecution status directly.
-
-    For HTTP+Callback mode, this function returns immediately after
-    dispatching the task. The status update comes through the
-    /internal/callback API.
+    Both modes publish TaskCompletedEvent for unified handling by
+    SubscriptionTaskCompletionHandler.
 
     Args:
         db: Database session
@@ -96,11 +94,7 @@ async def execute_subscription_unified(
     from app.services.execution import (
         CommunicationMode,
         ExecutionRouter,
-        SubscriptionResultEmitter,
         execution_dispatcher,
-    )
-    from app.services.subscription.event_handler import (
-        create_subscription_event_handler,
     )
 
     logger.info(
@@ -138,31 +132,15 @@ async def execute_subscription_unified(
         f"mode={target.mode.value}, url={target.url}"
     )
 
-    # Get base URL for detail link
-    base_url = getattr(settings, "TASK_SHARE_BASE_URL", None)
-
-    # Create event handler for notifications
-    event_handler = create_subscription_event_handler(
-        subscription_id=execution_data.subscription_id,
-        execution_id=execution_data.execution_id,
-        subscription_display_name=execution_data.subscription_display_name,
-        team_display_name=execution_data.team_display_name,
-        trigger_reason=execution_data.trigger_reason,
-        task_id=execution_data.task_id,
-        base_url=base_url,
-    )
-
     if target.mode == CommunicationMode.SSE:
         # SSE mode (Chat Shell) - synchronous execution
-        # Use SSEResultEmitter + dispatch + collect to wait for completion
         await _execute_sse_sync(
             request=request,
             execution_data=execution_data,
-            event_handler=event_handler,
         )
     else:
         # HTTP+Callback mode (ClaudeCode/Agno/Dify) - asynchronous execution
-        # Dispatch and return immediately, status update via callback
+        # Task completion will be handled by /internal/callback publishing TaskCompletedEvent
         await _execute_http_callback(
             request=request,
             execution_data=execution_data,
@@ -172,20 +150,19 @@ async def execute_subscription_unified(
 async def _execute_sse_sync(
     request: Any,
     execution_data: SubscriptionExecutionData,
-    event_handler: Any,
 ) -> None:
     """Execute subscription via SSE mode (synchronous).
 
-    Waits for the AI response to complete and updates status.
+    Waits for the AI response to complete and publishes TaskCompletedEvent.
 
     Args:
         request: ExecutionRequest
         execution_data: Subscription execution data
-        event_handler: Event handler for notifications
     """
     import asyncio
 
-    from app.services.execution import SubscriptionResultEmitter, execution_dispatcher
+    from app.core.events import TaskCompletedEvent, get_event_bus
+    from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
 
     logger.info(
@@ -193,13 +170,8 @@ async def _execute_sse_sync(
         f"execution_id={execution_data.execution_id}"
     )
 
-    # Create subscription result emitter for status callbacks
-    subscription_emitter = SubscriptionResultEmitter(
-        task_id=execution_data.task_id,
-        subtask_id=execution_data.subtask_id,
-        execution_id=execution_data.execution_id,
-        on_status_changed=event_handler.on_execution_completed,
-    )
+    event_bus = get_event_bus()
+    accumulated_content = ""
 
     try:
         # Create SSEResultEmitter for collecting response
@@ -228,16 +200,23 @@ async def _execute_sse_sync(
             f"content_length={len(accumulated_content)}"
         )
 
-        # Emit DONE event to trigger status update via subscription emitter
-        from shared.models import EventType, ExecutionEvent
+        # Build result from accumulated content or final_event
+        result = None
+        if accumulated_content:
+            result = {"value": accumulated_content}
+        elif final_event and final_event.result:
+            result = final_event.result
 
-        done_event = ExecutionEvent(
-            type=EventType.DONE,
-            task_id=execution_data.task_id,
-            subtask_id=execution_data.subtask_id,
-            result=final_event.result if final_event else None,
+        # Publish TaskCompletedEvent for unified handling
+        await event_bus.publish(
+            TaskCompletedEvent(
+                task_id=execution_data.task_id,
+                subtask_id=execution_data.subtask_id,
+                user_id=execution_data.user_id,
+                status="COMPLETED",
+                result=result,
+            )
         )
-        await subscription_emitter.emit(done_event)
 
     except Exception as e:
         logger.error(
@@ -246,19 +225,16 @@ async def _execute_sse_sync(
             exc_info=True,
         )
 
-        # Emit ERROR event to trigger status update via subscription emitter
-        from shared.models import EventType, ExecutionEvent
-
-        error_event = ExecutionEvent(
-            type=EventType.ERROR,
-            task_id=execution_data.task_id,
-            subtask_id=execution_data.subtask_id,
-            error=str(e),
+        # Publish TaskCompletedEvent with FAILED status
+        await event_bus.publish(
+            TaskCompletedEvent(
+                task_id=execution_data.task_id,
+                subtask_id=execution_data.subtask_id,
+                user_id=execution_data.user_id,
+                status="FAILED",
+                error=str(e),
+            )
         )
-        await subscription_emitter.emit(error_event)
-
-    finally:
-        await subscription_emitter.close()
 
 
 async def _execute_http_callback(
@@ -268,7 +244,7 @@ async def _execute_http_callback(
     """Execute subscription via HTTP+Callback mode (asynchronous).
 
     Dispatches the task and returns immediately.
-    Status update comes through /internal/callback API.
+    Task completion is handled by /internal/callback API publishing TaskCompletedEvent.
 
     Args:
         request: ExecutionRequest
@@ -284,6 +260,7 @@ async def _execute_http_callback(
     try:
         # Dispatch task - this returns immediately
         # The executor_manager will call /internal/callback when done
+        # which will publish TaskCompletedEvent
         await execution_dispatcher.dispatch(request, device_id=None, emitter=None)
 
         logger.info(
@@ -299,18 +276,19 @@ async def _execute_http_callback(
             exc_info=True,
         )
 
-        # Update execution status to FAILED
-        from app.db.session import get_db_session
-        from app.schemas.subscription import BackgroundExecutionStatus
-        from app.services.subscription import subscription_service
+        # Publish TaskCompletedEvent for dispatch failure
+        from app.core.events import TaskCompletedEvent, get_event_bus
 
-        with get_db_session() as db:
-            subscription_service.update_execution_status(
-                db,
-                execution_id=execution_data.execution_id,
-                status=BackgroundExecutionStatus.FAILED,
-                error_message=f"Failed to dispatch task: {e}",
+        event_bus = get_event_bus()
+        await event_bus.publish(
+            TaskCompletedEvent(
+                task_id=execution_data.task_id,
+                subtask_id=execution_data.subtask_id,
+                user_id=execution_data.user_id,
+                status="FAILED",
+                error=f"Failed to dispatch task: {e}",
             )
+        )
 
 
 def extract_subscription_execution_data(
