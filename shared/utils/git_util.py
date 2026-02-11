@@ -26,9 +26,20 @@ def get_repo_name_from_url(url):
     return repo_name
 
 
-def clone_repo(project_url, branch, project_path, user_name=None, token=None):
+def clone_repo(
+    project_url, branch, project_path, user_name=None, token=None, repo_type=None
+):
     """
     Clone repository to specified path
+
+    Args:
+        project_url: Git repository URL
+        branch: Branch name to clone
+        project_path: Local path to clone to
+        user_name: Git username for authentication
+        token: Git token for authentication
+        repo_type: Repository type (github, gitlab, gitee, gitea, gerrit).
+                   If provided and is 'gerrit', URL encoding will be applied to credentials.
 
     Returns:
         Tuple (success, message):
@@ -48,7 +59,7 @@ def clone_repo(project_url, branch, project_path, user_name=None, token=None):
     )
     if token:
         return clone_repo_with_token(
-            project_url, branch, project_path, user_name, token
+            project_url, branch, project_path, user_name, token, repo_type
         )
     return False, "Token is not provided"
 
@@ -94,29 +105,56 @@ def is_gerrit_url(url):
     return False
 
 
-def clone_repo_with_token(project_url, branch, project_path, username, token):
+def clone_repo_with_token(
+    project_url, branch, project_path, username, token, repo_type=None
+):
+    """
+    Clone repository with authentication credentials.
 
+    Args:
+        project_url: Git repository URL
+        branch: Branch name to clone
+        project_path: Local path to clone to
+        username: Git username for authentication
+        token: Git token for authentication
+        repo_type: Repository type (github, gitlab, gitee, gitea, gerrit).
+                   If 'gerrit' or if URL contains 'gerrit', credentials will be URL encoded.
+
+    Returns:
+        Tuple (success, message):
+        - On success: (True, None)
+        - On failure: (False, error_message)
+    """
     if project_url.startswith("https://") or project_url.startswith("http://"):
         protocol, rest = project_url.split("://", 1)
 
-        # Only URL encode credentials for Gerrit repositories
-        # Gerrit passwords may contain special characters like '/' that need encoding
-        # GitHub, GitLab, and Gitee don't have this issue
-        if is_gerrit_url(project_url):
+        # URL encode credentials for Gerrit repositories
+        # Gerrit tokens may contain special characters like '/' that need encoding
+        # Check both repo_type parameter and URL heuristics for maximum compatibility
+        should_encode = (
+            repo_type == "gerrit"
+            if repo_type is not None
+            else is_gerrit_url(project_url)
+        )
+
+        if should_encode:
             # URL encode username and token to handle special characters
             # safe='' means encode all special characters including /
             encoded_username = quote(username, safe="")
             encoded_token = quote(token, safe="")
             auth_url = f"{protocol}://{encoded_username}:{encoded_token}@{rest}"
-            logger.info(f"Auth URL: {auth_url}")
+            logger.debug(
+                f"Using URL-encoded credentials for Gerrit repository (repo_type={repo_type})"
+            )
         else:
             # For non-Gerrit repos (GitHub, GitLab, etc.), use credentials as-is
             auth_url = f"{protocol}://{username}:{token}@{rest}"
     else:
         auth_url = project_url
 
+    # Log clone operation without exposing credentials
     logger.info(
-        f"Git clone {auth_url} to {project_path}, branch: {branch if branch else '(default)'}"
+        f"Git clone {project_url} to {project_path}, branch: {branch if branch else '(default)'}"
     )
 
     # Build basic command
