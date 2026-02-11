@@ -589,41 +589,26 @@ export default function ChatInput({
 
       // Handle text insertion if there is text content
       if (hasText && editableRef.current) {
-        // Get current selection
-        let selection = window.getSelection()
-
-        // Fallback: if no selection exists (edge case), focus the input and create a selection at the end
-        if (!selection || selection.rangeCount === 0) {
+        // Ensure input is focused for execCommand to work
+        if (document.activeElement !== editableRef.current) {
           editableRef.current.focus()
-          selection = window.getSelection()
-
-          // If still no selection after focus, create one at the end of the input
-          if (selection) {
+          // If no selection exists, create one at the end
+          const selection = window.getSelection()
+          if (selection && selection.rangeCount === 0) {
             const range = document.createRange()
             range.selectNodeContents(editableRef.current)
-            range.collapse(false) // Collapse to end
+            range.collapse(false)
             selection.removeAllRanges()
             selection.addRange(range)
           }
         }
 
-        // Proceed with text insertion if we have a valid selection
-        if (selection && selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0)
-          range.deleteContents()
+        // Use execCommand to insert text - this preserves browser undo history
+        // Unlike manual DOM manipulation (insertNode), execCommand operations
+        // are recorded in the browser's native undo stack
+        document.execCommand('insertText', false, pastedText)
 
-          // Insert plain text node
-          const textNode = document.createTextNode(pastedText)
-          range.insertNode(textNode)
-
-          // Move cursor to end of inserted text
-          range.setStartAfter(textNode)
-          range.setEndAfter(textNode)
-          selection.removeAllRanges()
-          selection.addRange(range)
-        }
-
-        // Update message state - use getTextWithNewlines to preserve newlines
+        // Update message state
         // Set skip flag to preserve browser undo history
         skipSyncRef.current = true
         const newText = getTextWithNewlines(editableRef.current)
