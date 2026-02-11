@@ -28,6 +28,7 @@ class SQLValidator:
     """
 
     # Forbidden SQL keywords (data modification and schema changes)
+    # Includes DuckDB-specific dangerous commands
     FORBIDDEN_KEYWORDS = [
         "DROP",
         "DELETE",
@@ -46,6 +47,13 @@ class SQLValidator:
         "COPY",
         "ATTACH",
         "DETACH",
+        # DuckDB-specific dangerous commands
+        "PRAGMA",
+        "INSTALL",
+        "EXPORT",
+        "IMPORT",
+        "CALL",
+        "SET",
     ]
 
     # Patterns that might indicate SQL injection

@@ -225,7 +225,8 @@ class StructuredQueryEngine:
                 "column_count": schema["column_count"],
             }
             doc.source_config = source_config
-            db.commit()
+            # Use flush() instead of commit() to allow caller to manage transaction
+            db.flush()
 
             logger.info(
                 f"[StructuredQuery] Ingested document {doc.id}: "

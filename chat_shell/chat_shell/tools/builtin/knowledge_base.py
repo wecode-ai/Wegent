@@ -10,7 +10,7 @@ between direct injection and RAG retrieval based on context window capacity.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -1594,7 +1594,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         )
 
     # Patterns indicating structured query intent
-    STRUCTURED_QUERY_PATTERNS = [
+    STRUCTURED_QUERY_PATTERNS: ClassVar[List[str]] = [
         # Aggregations
         r"\b(sum|total|合计|总计|累计)\b",
         r"\b(count|数量|个数|有多少)\b",
@@ -1755,8 +1755,8 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         Returns:
             JSON string with formatted result
         """
-        # Check for errors in response
-        if "error" in data:
+        # Check for errors in response (explicit None check to handle empty string errors)
+        if data.get("error") is not None:
             return json.dumps(
                 {
                     "query": query,

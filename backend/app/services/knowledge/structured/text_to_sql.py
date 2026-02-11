@@ -9,6 +9,7 @@ This module converts natural language queries to SQL using LLM,
 with schema context and safety validation.
 """
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, Optional
@@ -107,7 +108,10 @@ This query calculates the total amount for each category and returns the top 10.
         schema: Dict[str, Any],
         table_name: str,
     ) -> str:
-        """Build the prompt for SQL generation.
+        """Build the user prompt for SQL generation.
+
+        Note: This returns only the user content. The system prompt
+        is passed separately to the LLM API.
 
         Args:
             query: Natural language query
@@ -115,7 +119,7 @@ This query calculates the total amount for each category and returns the top 10.
             table_name: Table name
 
         Returns:
-            Formatted prompt string
+            Formatted user prompt string
         """
         # Format columns
         columns_str = self._format_columns(schema.get("columns", []))
@@ -126,9 +130,7 @@ This query calculates the total amount for each category and returns the top 10.
         # Format sample values
         samples_str = self._format_samples(schema.get("columns", []))
 
-        return f"""{self.SYSTEM_PROMPT}
-
-## TABLE SCHEMA
+        return f"""## TABLE SCHEMA
 Table: {table_name}
 
 ### Columns
@@ -200,9 +202,15 @@ Generate a SQL query to answer this question. Remember to:
     ) -> str:
         """Call LLM to generate SQL.
 
+        Uses asyncio.to_thread to avoid blocking the event loop
+        when calling the synchronous Anthropic client.
+
         Args:
-            prompt: Full prompt
-            model_config: Optional model configuration
+            prompt: User prompt (system prompt is passed separately)
+            model_config: Optional model configuration with keys:
+                - model: Model name override
+                - max_tokens: Maximum tokens for response
+                - temperature: Sampling temperature
 
         Returns:
             LLM response string
@@ -213,20 +221,28 @@ Generate a SQL query to answer this question. Remember to:
 
             from app.core.config import settings
 
-            # Get model name
-            model_name = self.model_name or settings.STRUCTURED_DATA_MODEL
+            # Get configuration from model_config or defaults
+            config = model_config or {}
+            model_name = config.get("model") or self.model_name or settings.STRUCTURED_DATA_MODEL
+            max_tokens = config.get("max_tokens", 1024)
+            temperature = config.get("temperature", 0.0)
 
             # Create client
             client = Anthropic()
 
-            # Call API
-            response = client.messages.create(
-                model=model_name,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            # Define synchronous API call
+            def _sync_call() -> str:
+                response = client.messages.create(
+                    model=model_name,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=self.SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return response.content[0].text
 
-            return response.content[0].text
+            # Run in thread to avoid blocking event loop
+            return await asyncio.to_thread(_sync_call)
 
         except ImportError:
             logger.warning("[TextToSQL] Anthropic not available, using fallback")

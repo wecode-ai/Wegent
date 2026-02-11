@@ -11,12 +11,16 @@ Each knowledge base gets its own isolated in-memory DuckDB instance.
 
 import io
 import logging
-from typing import Any, Dict, List, Optional
+from collections import OrderedDict
+from typing import Any, ClassVar, Dict, List, Optional
 
 import duckdb
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of tables to cache in memory (LRU eviction)
+MAX_CACHE_SIZE = 100
 
 
 class DuckDBManager:
@@ -24,6 +28,7 @@ class DuckDBManager:
 
     Each knowledge base has its own isolated in-memory DuckDB instance.
     Data is loaded from source files and cached in memory for fast querying.
+    Uses LRU eviction to limit memory usage.
 
     Thread Safety:
         DuckDB connections are not thread-safe. Each thread should use its own
@@ -32,12 +37,37 @@ class DuckDBManager:
 
     # Class-level storage for DuckDB data (table_name -> DataFrame)
     # We store DataFrames instead of connections for thread safety
-    _data_store: Dict[str, pd.DataFrame] = {}
+    # Using OrderedDict for LRU eviction
+    _data_store: ClassVar[Dict[str, pd.DataFrame]] = OrderedDict()
 
     @classmethod
     def get_table_name(cls, kb_id: int, doc_id: int) -> str:
         """Generate a unique table name for a document."""
         return f"kb_{kb_id}_doc_{doc_id}"
+
+    @classmethod
+    def _evict_if_needed(cls) -> None:
+        """Evict oldest entries if cache exceeds max size."""
+        while len(cls._data_store) > MAX_CACHE_SIZE:
+            evicted_key, _ = cls._data_store.popitem(last=False)
+            logger.info(f"[DuckDBManager] Evicted table from cache: {evicted_key}")
+
+    @classmethod
+    def get_cache_stats(cls) -> Dict[str, Any]:
+        """Get current cache statistics.
+
+        Returns:
+            Dict with cache_size, table_names, and estimated_memory_mb
+        """
+        total_memory = sum(
+            df.memory_usage(deep=True).sum() for df in cls._data_store.values()
+        )
+        return {
+            "cache_size": len(cls._data_store),
+            "max_cache_size": MAX_CACHE_SIZE,
+            "table_names": list(cls._data_store.keys()),
+            "estimated_memory_mb": round(total_memory / (1024 * 1024), 2),
+        }
 
     @classmethod
     def ingest_csv(
@@ -75,15 +105,22 @@ class DuckDBManager:
             if df is None:
                 raise ValueError("Could not decode CSV file with any supported encoding")
 
-            # Store DataFrame
+            # Store DataFrame with LRU management
+            # Move to end if exists, evict oldest if over limit
+            if table_name in cls._data_store:
+                cls._data_store.move_to_end(table_name)
             cls._data_store[table_name] = df
+            cls._evict_if_needed()
 
             # Extract schema
             schema = cls._extract_schema_from_df(df, table_name)
 
+            cache_stats = cls.get_cache_stats()
             logger.info(
                 f"[DuckDB] Ingested CSV: table={table_name}, "
-                f"rows={len(df)}, columns={len(df.columns)}"
+                f"rows={len(df)}, columns={len(df.columns)}, "
+                f"cache_size={cache_stats['cache_size']}, "
+                f"memory_mb={cache_stats['estimated_memory_mb']}"
             )
 
             return schema
@@ -121,15 +158,21 @@ class DuckDBManager:
                 engine="openpyxl",
             )
 
-            # Store DataFrame
+            # Store DataFrame with LRU management
+            if table_name in cls._data_store:
+                cls._data_store.move_to_end(table_name)
             cls._data_store[table_name] = df
+            cls._evict_if_needed()
 
             # Extract schema
             schema = cls._extract_schema_from_df(df, table_name)
 
+            cache_stats = cls.get_cache_stats()
             logger.info(
                 f"[DuckDB] Ingested Excel: table={table_name}, "
-                f"rows={len(df)}, columns={len(df.columns)}"
+                f"rows={len(df)}, columns={len(df.columns)}, "
+                f"cache_size={cache_stats['cache_size']}, "
+                f"memory_mb={cache_stats['estimated_memory_mb']}"
             )
 
             return schema
@@ -155,9 +198,15 @@ class DuckDBManager:
         Returns:
             Query result dict with columns, rows, row_count, truncated
         """
+        import re
+
         if table_name not in cls._data_store:
             raise ValueError(f"Table not found: {table_name}")
 
+        # Move to end for LRU tracking
+        cls._data_store.move_to_end(table_name)
+
+        conn = None
         try:
             # Create a new DuckDB connection for this query (thread safety)
             conn = duckdb.connect(":memory:")
@@ -166,16 +215,14 @@ class DuckDBManager:
             df = cls._data_store[table_name]
             conn.register(table_name, df)
 
-            # Add LIMIT if not present
-            sql_upper = sql.upper()
-            if "LIMIT" not in sql_upper:
-                sql = f"{sql} LIMIT {max_rows}"
+            # Safely add LIMIT if not present
+            # Use case-insensitive word boundary check
+            sql_stripped = sql.rstrip().rstrip(";")
+            if not re.search(r"\bLIMIT\b", sql_stripped, re.IGNORECASE):
+                sql_stripped = f"{sql_stripped} LIMIT {max_rows}"
 
             # Execute query
-            result_df = conn.execute(sql).fetchdf()
-
-            # Close connection
-            conn.close()
+            result_df = conn.execute(sql_stripped).fetchdf()
 
             # Check if truncated
             truncated = len(result_df) >= max_rows
@@ -195,6 +242,13 @@ class DuckDBManager:
         except Exception as e:
             logger.error(f"[DuckDB] Query failed: {e}")
             raise
+        finally:
+            # Always close connection to prevent leaks
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass  # Ignore close errors
 
     @classmethod
     def get_schema(cls, table_name: str) -> Optional[Dict[str, Any]]:

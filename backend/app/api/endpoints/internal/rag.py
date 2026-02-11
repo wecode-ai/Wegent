@@ -964,6 +964,7 @@ class StructuredQueryResponse(BaseModel):
 
 
 @router.post("/structured-query", response_model=StructuredQueryResponse)
+@trace_async("internal_rag.structured_query", "internal_rag")
 async def structured_query(
     request: StructuredQueryRequest,
     db: Session = Depends(get_db),
@@ -1036,5 +1037,5 @@ async def structured_query(
         )
         return StructuredQueryResponse(
             query=request.query,
-            error=str(e),
+            error="Internal server error executing structured query. Please try again later.",
         )

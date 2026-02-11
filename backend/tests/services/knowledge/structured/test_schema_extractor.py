@@ -173,15 +173,24 @@ class TestSchemaExtractor:
         assert flag_col["type"] in ["BOOLEAN", "BOOL", "VARCHAR", "OBJECT"]
 
     def test_extract_with_different_delimiters(self):
-        """Test extraction with semicolon delimiter."""
+        """Test extraction with semicolon delimiter.
+
+        Note: DuckDB's CSV reader auto-detects delimiters, so semicolon-
+        separated files should be parsed correctly with 3 columns.
+        """
         # Some CSVs use semicolon as delimiter
         csv_content = b"name;age;city\nAlice;30;Beijing"
 
         # The extractor should handle or detect different delimiters
-        # Behavior depends on implementation
-        try:
-            schema = self.extractor.extract_from_csv(csv_content)
-            # If it handles semicolons, should have 3 columns
-            # If not, might have 1 column with semicolons in name
-        except Exception:
-            pass  # May not support different delimiters
+        # DuckDB typically auto-detects semicolons
+        schema = self.extractor.extract_from_csv(csv_content)
+
+        # If DuckDB auto-detected semicolons, should have 3 columns
+        # If not, should have 1 column with semicolons in name
+        assert "columns" in schema
+        assert len(schema["columns"]) >= 1
+
+        # Verify structure is valid
+        for col in schema["columns"]:
+            assert "name" in col
+            assert "type" in col
