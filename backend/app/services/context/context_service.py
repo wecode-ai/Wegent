@@ -15,7 +15,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.models.subtask_context import (
+    ContextStatus,
+    ContextType,
+    InjectionMode,
+    SubtaskContext,
+)
 from app.schemas.subtask_context import (
     KnowledgeBaseContextCreate,
     SubtaskContextBrief,
@@ -28,6 +33,7 @@ from app.services.attachment.parser import (
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
+from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
 logger = logging.getLogger(__name__)
@@ -93,6 +99,33 @@ class ContextService:
             Relative URL path for downloading the attachment
         """
         return f"/api/attachments/{attachment_id}/download"
+
+    @staticmethod
+    def build_sandbox_path(
+        task_id: Optional[int],
+        subtask_id: Optional[int],
+        filename: str,
+    ) -> Optional[str]:
+        """
+        Build the sandbox file path for an attachment.
+
+        This path corresponds to where the Executor downloads attachments
+        in the sandbox environment.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            filename: Original filename
+
+        Returns:
+            Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
+            Returns None if task_id or subtask_id is not provided.
+        """
+        if task_id is None or subtask_id is None:
+            return None
+        # Guard against None filename and strip control characters
+        safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
+        return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
 
     # ==================== Attachment Operations ====================
 
@@ -568,14 +601,18 @@ class ContextService:
     def build_document_text_prefix(
         self,
         context: SubtaskContext,
+        task_id: Optional[int] = None,
+        subtask_id: Optional[int] = None,
     ) -> Optional[str]:
         """
         Build a text prefix containing document content for prepending to messages.
 
-        Includes attachment metadata (id, filename, mime_type, file_size, url).
+        Includes attachment metadata (id, filename, mime_type, file_size, url, sandbox_path).
 
         Args:
             context: SubtaskContext record with extracted_text
+            task_id: Optional task ID for building sandbox path
+            subtask_id: Optional subtask ID for building sandbox path
 
         Returns:
             Formatted text prefix without XML tags, or None if no extracted text
@@ -595,11 +632,21 @@ class ContextService:
         formatted_size = self.format_file_size(file_size)
         url = self.build_attachment_url(attachment_id)
 
+        # Build sandbox path if task_id and subtask_id are provided
+        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
+
         # Build the prefix with metadata and optional truncation notice
-        prefix = (
-            f"[Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-        )
+        if sandbox_path:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+                f"File Path(already in sandbox): {sandbox_path}]\n"
+            )
+        else:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+            )
 
         if is_truncated:
             prefix += (
@@ -693,21 +740,35 @@ class ContextService:
 
         return context
 
+    @trace_sync(
+        span_name="update_knowledge_base_retrieval_result",
+        tracer_name="context_service",
+    )
     def update_knowledge_base_retrieval_result(
         self,
         db: Session,
         context_id: int,
         extracted_text: str,
         sources: List[Dict[str, Any]],
+        injection_mode: str,
+        query: str,
+        chunks_count: int,
     ) -> Optional[SubtaskContext]:
         """
         Update knowledge base context with RAG retrieval results.
 
+        For direct_injection mode, extracted_text is not stored (empty string)
+        since the full content is injected into context and doesn't need to be
+        persisted for observability.
+
         Args:
             db: Database session
             context_id: Context ID to update
-            extracted_text: Concatenated retrieval text from RAG
+            extracted_text: Concatenated retrieval text from RAG (ignored for direct injection)
             sources: List of source info dicts with document_name, chunk_id, score
+            injection_mode: "direct_injection" or "rag_retrieval"
+            query: Original search query
+            chunks_count: Number of chunks retrieved/injected
 
         Returns:
             Updated SubtaskContext or None if not found
@@ -723,15 +784,42 @@ class ContextService:
             )
             return None
 
-        # Update extracted_text and text_length
-        context.extracted_text = extracted_text
-        context.text_length = len(extracted_text) if extracted_text else 0
+        # For direct_injection mode, don't store extracted_text (save storage space)
+        # For rag_retrieval mode, store the extracted text normally
+        if injection_mode == InjectionMode.DIRECT_INJECTION.value:
+            context.extracted_text = ""
+            context.text_length = 0
+        else:
+            context.extracted_text = extracted_text
+            context.text_length = len(extracted_text) if extracted_text else 0
 
-        # Update type_data with sources info
+        # Set status based on chunks_count
+        if chunks_count > 0:
+            context.status = ContextStatus.READY.value
+        else:
+            context.status = ContextStatus.EMPTY.value
+
+        # Update type_data with rag_result sub-object for better structure
         current_type_data = context.type_data or {}
+        existing_rag_result = current_type_data.get("rag_result", {})
+
+        # Increment retrieval_count to track multiple tool calls
+        retrieval_count = existing_rag_result.get("retrieval_count", 0) + 1
+
+        # Build rag_result sub-object
+        rag_result = {
+            "sources": sources,
+            "injection_mode": injection_mode,
+            "query": query,
+            "chunks_count": chunks_count,
+            "retrieval_count": retrieval_count,
+        }
+
+        # Preserve existing fields (like kb_head_result) and update rag_result
+        # Note: Flat fields removed to avoid duplication - use rag_result sub-object
         context.type_data = {
             **current_type_data,
-            "sources": sources,
+            "rag_result": rag_result,
         }
 
         db.commit()
@@ -739,7 +827,9 @@ class ContextService:
 
         logger.info(
             f"Knowledge base context {context_id} updated with RAG results: "
-            f"text_length={context.text_length}, sources_count={len(sources)}"
+            f"injection_mode={injection_mode}, chunks_count={chunks_count}, "
+            f"status={context.status}, sources_count={len(sources)}, "
+            f"retrieval_count={retrieval_count}"
         )
 
         return context
@@ -777,6 +867,198 @@ class ContextService:
 
         return context
 
+    @trace_sync(
+        span_name="update_knowledge_base_kb_head_result",
+        tracer_name="context_service",
+    )
+    def update_knowledge_base_kb_head_result(
+        self,
+        db: Session,
+        context_id: int,
+        document_ids: List[int],
+        offset: int = 0,
+        limit: int = 50000,
+    ) -> Optional[SubtaskContext]:
+        """
+        Update knowledge base context with kb_head usage tracking.
+
+        This method tracks kb_head tool usage for cross-turn persistence.
+        It stores the KbHeadInput parameters (document_ids, offset, limit)
+        so the content can be re-fetched when loading history.
+
+        IMPORTANT: This method uses APPEND mode - it preserves existing data
+        (like RAG retrieval results) and only updates kb_head-specific fields.
+
+        Args:
+            db: Database session
+            context_id: Context ID to update
+            document_ids: List of document IDs that were read
+            offset: Start position in characters (from KbHeadInput)
+            limit: Max characters to return (from KbHeadInput)
+
+        Returns:
+            Updated SubtaskContext or None if not found
+        """
+        context = self.get_context_optional(db, context_id)
+        if context is None:
+            logger.warning(f"Context {context_id} not found for kb_head update")
+            return None
+
+        if context.context_type != ContextType.KNOWLEDGE_BASE.value:
+            logger.warning(
+                f"Context {context_id} is not a knowledge_base type, skipping kb_head update"
+            )
+            return None
+
+        # APPEND mode: preserve existing type_data and only update kb_head fields
+        current_type_data = context.type_data or {}
+        existing_kb_head_result = current_type_data.get("kb_head_result", {})
+
+        # Increment usage_count
+        usage_count = existing_kb_head_result.get("usage_count", 0) + 1
+
+        # Merge document_ids (deduplicate with existing)
+        existing_doc_ids = set(existing_kb_head_result.get("document_ids", []))
+        existing_doc_ids.update(document_ids)
+
+        # Build kb_head_result sub-object with KbHeadInput params
+        kb_head_result = {
+            "usage_count": usage_count,
+            "document_ids": list(existing_doc_ids),
+            "offset": offset,
+            "limit": limit,
+        }
+
+        # Update type_data (preserve all existing fields like rag_result)
+        context.type_data = {
+            **current_type_data,
+            "kb_head_result": kb_head_result,
+        }
+
+        # Update status to READY if it's PENDING or EMPTY
+        # EMPTY can occur when RAG retrieval returned 0 chunks
+        if context.status in (ContextStatus.PENDING.value, ContextStatus.EMPTY.value):
+            context.status = ContextStatus.READY.value
+
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Knowledge base context {context_id} updated with kb_head results: "
+            f"usage_count={usage_count}, document_ids={list(existing_doc_ids)}"
+        )
+
+        return context
+
+    @trace_sync(
+        span_name="create_knowledge_base_context_with_result",
+        tracer_name="context_service",
+    )
+    def create_knowledge_base_context_with_result(
+        self,
+        db: Session,
+        subtask_id: int,
+        knowledge_id: int,
+        user_id: int,
+        tool_type: str,
+        result_data: Dict[str, Any],
+        kb_name: Optional[str] = None,
+    ) -> SubtaskContext:
+        """
+        Create new KB context with result data in one operation.
+
+        This is used when a task-level KB is used in a subtask that
+        didn't explicitly select it. Creates context and writes result
+        in a single transaction, avoiding the need for separate create
+        and update calls.
+
+        Args:
+            db: Database session
+            subtask_id: Current user subtask ID
+            knowledge_id: Knowledge base ID
+            user_id: User ID for ownership
+            tool_type: "rag" or "kb_head"
+            result_data: Tool-specific result data:
+                - For RAG: {"extracted_text", "sources", "injection_mode", "query", "chunks_count"}
+                - For kb_head: {"document_ids", "offset", "limit"}
+            kb_name: Optional KB name (will be fetched from Kind table if not provided)
+
+        Returns:
+            Newly created SubtaskContext record with result data
+
+        Raises:
+            ValueError: If tool_type is not "rag" or "kb_head"
+        """
+        # If kb_name not provided, fetch from Kind table
+        if not kb_name:
+            from app.models.kind import Kind
+
+            kind = db.query(Kind).filter(Kind.id == knowledge_id).first()
+            kb_name = kind.name if kind else f"Knowledge Base {knowledge_id}"
+
+        # Build type_data based on tool_type
+        type_data: Dict[str, Any] = {
+            "knowledge_id": knowledge_id,
+            "auto_created": True,  # Mark as auto-created for observability
+        }
+
+        # Determine status and extracted_text based on tool_type and result
+        if tool_type == "rag":
+            # RAG result structure
+            rag_result = {
+                "sources": result_data.get("sources", []),
+                "injection_mode": result_data.get("injection_mode", "rag_retrieval"),
+                "query": result_data.get("query", ""),
+                "chunks_count": result_data.get("chunks_count", 0),
+                "retrieval_count": 1,
+            }
+            type_data["rag_result"] = rag_result
+            # Note: Flat fields removed to avoid duplication - use rag_result sub-object
+            extracted_text = result_data.get("extracted_text", "")
+            status = (
+                ContextStatus.READY.value
+                if rag_result["chunks_count"] > 0
+                else ContextStatus.EMPTY.value
+            )
+
+        elif tool_type == "kb_head":
+            # kb_head result structure
+            kb_head_result = {
+                "usage_count": 1,
+                "document_ids": result_data.get("document_ids", []),
+                "offset": result_data.get("offset", 0),
+                "limit": result_data.get("limit", 50000),
+            }
+            type_data["kb_head_result"] = kb_head_result
+            extracted_text = ""
+            status = ContextStatus.READY.value
+        else:
+            raise ValueError(f"Unknown tool_type: {tool_type}")
+
+        # Create new context record
+        new_context = SubtaskContext(
+            subtask_id=subtask_id,
+            user_id=user_id,
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            name=kb_name,
+            status=status,
+            type_data=type_data,
+            extracted_text=extracted_text,
+            text_length=len(extracted_text) if extracted_text else 0,
+        )
+
+        db.add(new_context)
+        db.commit()
+        db.refresh(new_context)
+
+        logger.info(
+            f"[context_service] Created KB context with {tool_type} result: "
+            f"id={new_context.id}, subtask_id={subtask_id}, kb_id={knowledge_id}, "
+            f"auto_created=True, status={status}"
+        )
+
+        return new_context
+
     def build_knowledge_base_text_prefix(
         self,
         context: SubtaskContext,
@@ -801,9 +1083,8 @@ class ContextService:
 
         # Get knowledge base name and sources info
         kb_name = context.name or "Knowledge Base"
-        sources = []
-        if context.type_data and isinstance(context.type_data, dict):
-            sources = context.type_data.get("sources", [])
+        # Use property which handles rag_result sub-object with legacy fallback
+        sources = context.sources
 
         # Build source names list (up to 5 for brevity)
         source_names = [s.get("document_name", "Unknown") for s in sources[:5]]
@@ -1134,6 +1415,45 @@ class ContextService:
             )
             .order_by(SubtaskContext.created_at)
             .first()
+        )
+
+    def get_attachments_by_task(
+        self,
+        db: Session,
+        task_id: int,
+    ) -> List[SubtaskContext]:
+        """
+        Get all attachment contexts for a task (across all subtasks).
+
+        This method is used by the executor to pre-download all attachments
+        for a task at sandbox startup.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            List of attachment SubtaskContext records for all subtasks of the task
+        """
+        from app.models.subtask import Subtask
+
+        # Get all subtask IDs for this task
+        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
+        subtask_ids = [s[0] for s in subtask_ids]
+
+        if not subtask_ids:
+            return []
+
+        # Get all attachments for these subtasks
+        return (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.subtask_id.in_(subtask_ids),
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                SubtaskContext.status == ContextStatus.READY.value,
+            )
+            .order_by(SubtaskContext.created_at)
+            .all()
         )
 
     def delete_context(

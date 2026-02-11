@@ -487,6 +487,68 @@ def _test_llm_connection(
             "message": f"Successfully connected to {model_id}",
         }
 
+    elif provider_type == "gemini-deep-research":
+        # Test Gemini Interaction API (Deep Research) by calling /v1beta/interactions
+        import httpx
+
+        # Determine the base URL for Gemini Interaction API
+        # Default to Google's API if not provided
+        interaction_base_url = (
+            base_url.rstrip("/")
+            if base_url
+            else "https://generativelanguage.googleapis.com"
+        )
+        interaction_url = f"{interaction_base_url}/v1beta/interactions"
+
+        # Build headers with API key
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        }
+        # Merge custom headers if provided
+        if custom_headers:
+            headers.update(custom_headers)
+
+        # Build test payload following the Gemini Interaction API format
+        payload = {
+            "background": True,
+            "agent": model_id,  # e.g., "deep-research-pro-preview-12-2025"
+            "input": "hello",
+        }
+
+        try:
+            # Make a test request to create an interaction
+            # This should return 200 OK with an interaction ID if successful
+            response = httpx.post(
+                interaction_url,
+                json=payload,
+                headers=headers,
+                timeout=30.0,
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                interaction_id = result.get("id", "unknown")
+                return {
+                    "success": True,
+                    "message": f"Successfully connected to Gemini Deep Research API. Interaction ID: {interaction_id}",
+                }
+            else:
+                error_msg = (
+                    response.text[:200]
+                    if response.text
+                    else f"HTTP {response.status_code}"
+                )
+                return {
+                    "success": False,
+                    "message": f"Gemini Deep Research API error: {error_msg}",
+                }
+        except httpx.RequestError as e:
+            return {
+                "success": False,
+                "message": f"Failed to connect to Gemini Deep Research API: {str(e)}",
+            }
+
     else:
         return {
             "success": False,

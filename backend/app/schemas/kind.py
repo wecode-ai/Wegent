@@ -422,6 +422,11 @@ class TeamTaskRef(BaseModel):
 
     name: str
     namespace: str = "default"
+    user_id: Optional[int] = Field(
+        None,
+        description="Team owner's user ID. Used for skill lookup in shared team scenarios. "
+        "When set, allows downloading skills owned by the team owner without additional DB queries.",
+    )
 
 
 class WorkspaceTaskRef(BaseModel):
@@ -639,7 +644,7 @@ class SkillList(BaseModel):
 class EmbeddingModelRef(BaseModel):
     """Reference to an Embedding Model"""
 
-    model_name: str = Field(..., description="Embedding model name")
+    model_name: Optional[str] = Field(None, description="Embedding model name")
     model_namespace: str = Field("default", description="Embedding model namespace")
 
 
@@ -668,12 +673,16 @@ class HybridWeights(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """Retrieval configuration for knowledge base"""
+    """Retrieval configuration for knowledge base
 
-    retriever_name: str = Field(..., description="Retriever name")
+    Note: retriever_name and embedding_config are optional to support knowledge bases
+    that don't use RAG (using kb_ls/kb_head tools instead for document exploration).
+    """
+
+    retriever_name: Optional[str] = Field(None, description="Retriever name")
     retriever_namespace: str = Field("default", description="Retriever namespace")
-    embedding_config: EmbeddingModelRef = Field(
-        ..., description="Embedding model configuration"
+    embedding_config: Optional[EmbeddingModelRef] = Field(
+        None, description="Embedding model configuration"
     )
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"

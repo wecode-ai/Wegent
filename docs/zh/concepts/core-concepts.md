@@ -1,6 +1,10 @@
-# 🧠 核心概念
+---
+sidebar_position: 1
+---
 
-本文档详细介绍 Wegent 平台的核心概念，帮助您理解各个组件及其关系。
+# 核心概念
+
+本文档介绍 Wegent 平台的核心概念，帮助您理解各个组件及其关系。
 
 ---
 
@@ -16,8 +20,8 @@ Wegent 是一个开源的 AI 原生操作系统，提供五大核心功能模块
 - **对话历史**：支持新建对话和多轮对话，支持对话历史的保存和分享
 - **多人对话**：支持 AI 群聊，AI 可以根据群聊历史进行回复
 - **附件解析**：可在单聊、群聊中给 AI 发送 txt、pdf、ppt、doc、图片格式的附件
-- **追问模式**：模型通过启发式问题帮你澄清思路
-- **纠错模式**：自动调用多个模型矫正回答
+- **智能追问模式**：模型通过启发式问题帮你澄清思路
+- **AI 交叉验证**：自动调用多个模型矫正回答
 - **长期记忆**：支持集成 mem0 实现对话的长期记忆
 - **运行沙箱**：支持通过沙箱执行命令或修改文件，兼容 E2B 协议
 - **自定义配置**：可通过配置的方式自定义提示词、MCP 和 Skill（自带绘制图表技能）
@@ -62,289 +66,30 @@ Wegent 是一个开源的 AI 原生操作系统，提供五大核心功能模块
 
 ---
 
-## 🔗 功能与 CRD 映射
+## 🤖 理解智能体和机器人
 
-| 功能 | 相关 CRD | 说明 |
-|------|----------|------|
-| **对话** | Chat Shell + Team | 通过 Chat Shell 直接与 LLM 对话 |
-| **编码** | ClaudeCode Shell + Team + Workspace | 云端编码执行，支持 Git 集成 |
-| **关注** | Subscription + Team | 定时/事件触发的 AI 任务 |
-| **知识** | KnowledgeBase + Retriever | 文档存储和 RAG 检索 |
-| **定制化** | Ghost + Bot + Team | 配置提示词、工具和协作模式 |
+### 什么是智能体？
 
----
+**智能体**是您直接交互的 AI 助手。当您创建任务或开始对话时，您就是在与智能体协作。可以把它想象成您的个人 AI 团队，能够帮助您完成各种任务。
 
-## ⚠️ 术语说明：Team vs Bot
+### 什么是机器人？
 
-> **重要提示：** 为避免混淆，请注意代码层面的术语与用户界面显示名称的区别。
+**机器人**是组成智能体的基础组件。每个机器人都配置了：
+- **人设**：定义机器人的个性、专业领域和可用工具
+- **执行器**：机器人执行任务的引擎（对话、编码等）
+- **模型**：驱动机器人的 AI 模型（GPT、Claude 等）
 
-| 代码/CRD 层面 | 用户界面 (中文) | 说明 |
-|--------------|----------------|------|
-| **Team** | **智能体** | 用户直接使用的 AI 智能体，执行任务的主体 |
-| **Bot** | **机器人** | 组成智能体的基础组件，是智能体的"工人单元" |
+### 它们如何协作
 
-**简单理解：**
-- **机器人 (Bot)** = 一个配置好的 AI 工人（包含提示词、运行环境、模型）
-- **智能体 (Team)** = 由一个或多个机器人组成的"工作团队"，用户通过智能体来执行任务
-
----
-
-## 📋 CRD 架构概览
-
-Wegent 基于 Kubernetes 风格的声明式 API 和 CRD (Custom Resource Definition) 设计模式，提供了一套标准化的框架来创建和管理 AI 智能体生态系统。
-
-### 核心资源类型
-
-| 图标 | 代码名称 | 说明 | 类比 |
-|------|----------|------|------|
-| 👻 | **Ghost** | 智能体的"灵魂" | 定义个性和能力 |
-| 🧠 | **Model** | AI 模型配置 | 大脑的配置参数 |
-| 🐚 | **Shell** | 运行时环境 | 可执行程序容器 |
-| 🤖 | **Bot** | 完整智能体实例 | Ghost + Shell + Model |
-| 👥 | **Team** | 协作团队 | 多个 Bot 的协作组合 |
-| 🤝 | **Collaboration** | 协作模式 | Bot 之间的交互模式 |
-| 💼 | **Workspace** | 工作环境 | 隔离的代码工作空间 |
-| 🎯 | **Task** | 任务 | 分配给 Team 的工作单元 |
-
----
-
-## 👻 Ghost - 智能体的灵魂
-
-Ghost 代表智能体的"灵魂"，定义了智能体的个性、能力和行为模式。
-
-### YAML 配置示例
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Ghost
-metadata:
-  name: developer-ghost
-  namespace: default
-spec:
-  systemPrompt: "You are a professional software developer, skilled in using TypeScript and React to develop frontend applications."
-  mcpServers:
-    github:
-      env:
-        GITHUB_PERSONAL_ACCESS_TOKEN: ghp_xxxxx
-      command: docker
-      args:
-        - run
-        - -i
-        - --rm
-        - -e
-        - GITHUB_PERSONAL_ACCESS_TOKEN
-        - ghcr.io/github/github-mcp-server
-status:
-  state: "Available"
+```
+机器人 = 人设 + 执行器 + 模型
+智能体 = 一个或多个机器人协同工作
+任务 = 智能体 + 您的请求
 ```
 
----
-
-## 🧠 Model - AI 模型配置
-
-Model 定义了 AI 模型的配置，包括环境变量、模型参数等。
-
-### YAML 配置示例
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Model
-metadata:
-  name: claude-model
-  namespace: default
-spec:
-  modelConfig:
-    env:
-      ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
-      ANTHROPIC_AUTH_TOKEN: "sk-xxxxxx"
-      ANTHROPIC_BASE_URL: "http://xxxxx"
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "openrouter,anthropic/claude-haiku-4.5"
-status:
-  state: "Available"
-```
-
----
-
-## 🐚 Shell - 运行时环境
-
-Shell 是智能体运行的容器，指定了运行时环境和支持的模型类型。
-
-### Shell 类型
-
-| 类型 | 说明 | 使用场景 |
-|------|------|----------|
-| **Chat** | 直接 LLM API（无 Docker） | 轻量级对话 |
-| **ClaudeCode** | Docker 中的 Claude Code SDK | 云端编码任务 |
-| **Agno** | Docker 中的 Agno 框架 | 多智能体协作 |
-| **Dify** | 外部 Dify API 代理 | Dify 工作流集成 |
-
-### YAML 配置示例
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Shell
-metadata:
-  name: claude-shell
-  namespace: default
-spec:
-  runtime: "ClaudeCode"
-  supportModel:
-    - "openai"
-    - "anthropic"
-status:
-  state: "Available"
-```
-
----
-
-## 🤖 Bot - 机器人（智能体的基础组件）
-
-> **术语说明：** Bot 在用户界面中显示为"**机器人**"，是组成智能体(Team)的基础组件。
-
-Bot 是一个完整的智能体实例，结合了 Ghost (灵魂)、Shell (容器) 和 Model (配置)。
-
-### YAML 配置示例
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Bot
-metadata:
-  name: developer-bot
-  namespace: default
-spec:
-  ghostRef:
-    name: developer-ghost
-    namespace: default
-  shellRef:
-    name: claude-shell
-    namespace: default
-  modelRef:
-    name: claude-model
-    namespace: default
-status:
-  state: "Available"
-```
-
----
-
-## 👥 Team - 智能体（用户直接使用的 AI 助手）
-
-> **术语说明：** Team 在用户界面中显示为"**智能体**"，是用户直接交互和使用的 AI 助手实体。用户创建任务时选择的就是 Team（智能体）。
-
-Team 定义了多个 Bot（机器人）的协作组合，指定了成员角色和协作模式。
-
-### YAML 配置示例
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Team
-metadata:
-  name: dev-team
-  namespace: default
-spec:
-  members:
-    - name: "developer"
-      botRef:
-        name: developer-bot
-        namespace: default
-      prompt: "You are the developer in the team, responsible for implementing features..."
-      role: "leader"
-    - name: "reviewer"
-      botRef:
-        name: reviewer-bot
-        namespace: default
-      prompt: "You are the code reviewer in the team, responsible for reviewing code quality..."
-      role: "member"
-  collaborationModel: "pipeline"
-status:
-  state: "Available"
-```
-
----
-
-## 🤝 Collaboration - 协作模式
-
-Collaboration 定义了 Team 中 Bot 之间的交互模式，类似于工作流。
-
-### 四种协作模式
-
-#### 1. **Pipeline (流水线)**
-顺序执行，前一个 Bot 的输出作为下一个 Bot 的输入。
-```
-Developer Bot → Reviewer Bot → Tester Bot → Deployer Bot
-```
-
-#### 2. **Route (路由)**
-由 Leader 根据任务内容分配给合适的 Bot。
-```
-User Query → Leader Bot → {Frontend Bot | Backend Bot | DB Bot}
-```
-
-#### 3. **Coordinate (协调)**
-Leader 协调多个 Bot 并行工作，汇总结果。
-```
-Leader Bot → [Analyst Bot, Data Bot, Report Bot] → Leader Bot (汇总)
-```
-
-#### 4. **Collaborate (协作)**
-所有 Bot 共享上下文，自由讨论和协作。
-```
-[Bot A ↔ Bot B ↔ Bot C] (共享上下文)
-```
-
----
-
-## 💼 Workspace - 工作环境
-
-Workspace 定义了团队的工作环境，包括代码仓库、分支等信息。
-
-### YAML 配置示例
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Workspace
-metadata:
-  name: project-workspace
-  namespace: default
-spec:
-  repository:
-    gitUrl: "https://github.com/user/repo.git"
-    gitRepo: "user/repo"
-    gitRepoId: 12345
-    branchName: "main"
-    gitDomain: "github.com"
-status:
-  state: "Available"
-```
-
----
-
-## 🎯 Task - 任务
-
-Task 是分配给 Team 的可执行工作单元，关联了 Team 和 Workspace。
-
-### YAML 配置示例
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Task
-metadata:
-  name: implement-feature
-  namespace: default
-spec:
-  title: "Implement new feature"
-  prompt: "Please implement a user authentication feature with JWT tokens"
-  teamRef:
-    name: dev-team
-    namespace: default
-  workspaceRef:
-    name: project-workspace
-    namespace: default
-status:
-  state: "Available"
-  status: "PENDING"
-  progress: 0
-```
+**示例：**
+- 一个简单的聊天智能体可能只有一个机器人
+- 一个开发智能体可能有多个机器人：一个负责编码，一个负责代码审查，一个负责测试
 
 ---
 
@@ -352,45 +97,165 @@ status:
 
 ```mermaid
 graph LR
-    Ghost["👻 Ghost"] --> Bot["🤖 Bot"]
-    Model["🧠 Model"] --> Bot
-    Shell["🐚 Shell"] --> Bot
-    Bot --> Team["👥 Team"]
-    Collaboration["🤝 Collaboration"] --> Team
-    Team --> TeamInstance["👥 Team Instance"]
-    Workspace["💼 Workspace"] --> TeamInstance
-    User["👤 User"] --> Task["🎯 Task"]
-    Task --> TeamInstance
-    TeamInstance --> Task
+    subgraph Main["任务执行流程"]
+        direction TB
+        User["👤 您"]
+        Web["🌐 网页"]
+        API["🔌 接口"]
+        IM["💬 IM"]
+        Task["🎯 任务"]
+        Wegent["🌐 Wegent 系统"]
+        
+        User --> Web
+        User --> API
+        User --> IM
+        Web --> Task
+        API --> Task
+        IM --> Task
+        Task --> Wegent
+        
+        subgraph Workspace["💼 工作空间"]
+            subgraph Cloud["☁️ 云主机"]
+                ClaudeCode1["🐚 Claude Code"]
+                WegentChat1["💬 Wegent Chat"]
+            end
+            
+            subgraph PC["💻 个人电脑"]
+                ClaudeCode2["🐚 Claude Code"]
+                WegentChat2["💬 Wegent Chat"]
+            end
+        end
+        
+        Wegent --> Cloud
+        Wegent --> PC
+    end
+    
+    subgraph AgentDetail["📋 智能体结构"]
+        direction TB
+        AgentNote["🤖 智能体"]
+        Bot1["🔧 机器人 1"]
+        Bot2["🔧 机器人 2"]
+        Ghost1["👻 人设"]
+        Model1["🧠 模型"]
+        Ghost2["👻 人设"]
+        Model2["🧠 模型"]
+        Prompt1["📝 提示词"]
+        Skill1["🎯 技能 1"]
+        Skill2["🎯 技能 2"]
+        
+        AgentNote --> Bot1
+        AgentNote --> Bot2
+        Bot1 --> Ghost1
+        Bot1 --> Model1
+        Bot2 --> Ghost2
+        Bot2 --> Model2
+        Ghost1 --> Prompt1
+        Ghost1 -.-> Skill1
+        Ghost1 -.-> Skill2
+        Ghost2 -.-> Skill1
+    end
 ```
+
+> **说明：**
+> - 用户可以通过网页、接口或 IM 提交任务。
+> - 任务提交给 Wegent 系统，Wegent 可将任务派发到工作空间（云主机或个人电脑）执行。
+> - 工作空间上运行 Claude Code 或 Wegent Chat 执行器。
+> - 智能体由多个机器人组成，每个机器人包含人设和模型。技能（虚线）按需加载。
 
 ---
 
-## 💡 最佳实践
+## 🎯 关键组件详解
 
-### 1. Ghost 设计
-- ✅ 明确定义智能体的专业领域
-- ✅ 提供清晰的行为指南
-- ✅ 配置必要的 MCP 工具
+### 👻 人设 (Ghost)
 
-### 2. Bot 组合
-- ✅ 为不同任务创建专门的 Bot
-- ✅ 复用 Ghost 和 Model 配置
-- ✅ 合理选择 Shell 类型
+**人设**定义了您的 AI 助手的"灵魂"——它知道什么、如何行为以及能使用哪些工具。它包括：
+- 系统提示词（例如："你是一个有帮助的编码助手"）
+- 可用的 MCP 服务器和工具
+- 可加载的技能列表
+- 行为准则
 
-### 3. Team 构建
-- ✅ 选择合适的协作模式
-- ✅ 明确成员角色和职责
-- ✅ 为每个成员提供清晰的任务提示
+### 🐚 执行器 (Shell)
+
+**执行器**决定了您的 AI 在哪里以及如何执行任务。它包括：
+
+| 执行器 | 最适合 |
+|--------|--------|
+| **对话 (Chat)** | 快速对话、问答 |
+| **编码 (ClaudeCode)** | 编程任务、代码生成 |
+| **Agno** | 多智能体协作 |
+| **Dify** | 工作流自动化 |
+
+### 🧠 模型
+
+**模型**是驱动您助手的 AI 大脑：
+- 配置 API 密钥和端点
+- 从各种提供商中选择（OpenAI、Anthropic 等）
+- 调整模型参数
+
+### 💼 工作空间
+
+对于编码任务，**工作空间**将您的智能体连接到代码仓库：
+- 从 GitHub/GitLab/Gitea/Gerrit 克隆
+- 进行更改并创建拉取请求
+- 在特定分支上工作
+
+### 🎯 技能 (Skill)
+
+**技能**是可以按需添加到 AI 助手的特殊能力。与一次性加载所有指令不同，技能只在需要时才会加载。
+
+**为什么使用技能？**
+- **高效**：只在需要时加载详细指令
+- **模块化**：将相关能力打包在一起
+- **可扩展**：无需更改核心智能体即可添加新能力
+
+**技能示例：**
+- **图表绘制**：使用 Mermaid.js 生成图表和图形
+- **代码分析**：专业的代码审查能力
+- **数据处理**：处理特定数据格式
+
+**技能如何工作：**
+1. 您配置智能体可用的技能
+2. 在对话过程中，AI 决定何时需要某个技能
+3. 技能按需加载，提供专业的指令和工具
+
+> 📖 有关技能的详细信息，请参阅 [技能系统](./skill-system.md)
+
+---
+
+## 🤝 协作模式
+
+当一个智能体有多个机器人时，它们可以以不同的方式协作：
+
+### 流水线模式
+机器人按顺序工作，每个将结果传递给下一个。
+```
+开发者 → 审查者 → 测试者
+```
+
+### 路由模式
+领导机器人将任务分配给最合适的机器人。
+```
+领导者 → {前端机器人 | 后端机器人 | 数据库机器人}
+```
+
+### 协调模式
+领导机器人协调并行工作并汇总结果。
+```
+领导者 → [分析师, 数据, 报告] → 领导者 (汇总)
+```
+
+### 协作模式
+所有机器人共享上下文并自由讨论。
+```
+[机器人 A ↔ 机器人 B ↔ 机器人 C]
+```
 
 ---
 
 ## 🔗 相关资源
 
-- [YAML 配置详解](../reference/yaml-specification.md) - 完整的 YAML 配置格式说明
 - [协作模式详解](./collaboration-models.md) - 四种协作模式的详细说明
-- [创建 Bot 指南](../guides/user/creating-bots.md) - 如何创建和配置 Bot
-- [创建 Team 指南](../guides/user/creating-teams.md) - 如何构建协作团队
+- [快速开始](../getting-started/quick-start.md) - 开始使用 Wegent
 
 ---
 

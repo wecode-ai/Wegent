@@ -26,6 +26,7 @@ import base64
 import csv
 import io
 import logging
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -238,6 +239,8 @@ class DocumentParser:
         ".gif": "image/gif",
         ".bmp": "image/bmp",
         ".webp": "image/webp",
+        # Archive formats (binary, no text extraction)
+        ".zip": "application/zip",
     }
 
     # Special format extensions that have dedicated parsers
@@ -256,6 +259,8 @@ class DocumentParser:
         ".gif",
         ".bmp",
         ".webp",
+        # Archive formats (binary, no text extraction)
+        ".zip",
     }
 
     # Known text format extensions (no MIME detection needed)
@@ -474,6 +479,8 @@ class DocumentParser:
                 text, truncation_info = self._parse_csv_smart(binary_data, max_length)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                 text, image_base64 = self._parse_image(binary_data, extension)
+            elif extension == ".zip":
+                text = self._parse_archive(binary_data, extension)
             else:
                 raise DocumentParseError(
                     f"Unsupported file type: {extension}",
@@ -493,6 +500,8 @@ class DocumentParser:
                 text = self._parse_csv(binary_data)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                 text, image_base64 = self._parse_image(binary_data, extension)
+            elif extension == ".zip":
+                text = self._parse_archive(binary_data, extension)
             else:
                 raise DocumentParseError(
                     f"Unsupported file type: {extension}",
@@ -814,14 +823,89 @@ class DocumentParser:
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
+    def _decode_binary_data(self, binary_data: bytes) -> str:
+        """
+        Decode binary data to string with robust encoding detection.
+
+        Tries multiple encodings in order of preference, with chardet detection
+        as the first attempt. Supports GB2312, GBK, GB18030 and other Chinese
+        encodings that may contain problematic byte sequences (e.g., 0x95).
+
+        Args:
+            binary_data: Raw binary data to decode
+
+        Returns:
+            Decoded string
+
+        Raises:
+            DocumentParseError: If all decoding attempts fail
+        """
+        # Order matters: GB18030 is a superset of GBK which is a superset of GB2312
+        # Try GB18030 first as it handles more characters
+        encodings_to_try = [
+            "utf-8",
+            "utf-8-sig",
+            "gb18030",  # Superset of GBK/GB2312, handles more edge cases
+            "gbk",
+            "gb2312",
+            "big5",  # Traditional Chinese
+            "latin-1",  # Fallback that accepts any byte
+        ]
+
+        # First, try to detect encoding using chardet
+        detected_encoding = None
+        try:
+            detected = chardet.detect(binary_data)
+            detected_encoding = detected.get("encoding")
+            confidence = detected.get("confidence", 0)
+
+            if detected_encoding:
+                # Normalize encoding name for comparison
+                normalized = detected_encoding.lower().replace("-", "").replace("_", "")
+
+                # Skip unreliable detection results
+                if normalized not in ["ascii", "charmap"] and confidence > 0.5:
+                    # Insert detected encoding at the beginning if not already present
+                    if detected_encoding.lower() not in [
+                        e.lower() for e in encodings_to_try
+                    ]:
+                        encodings_to_try.insert(0, detected_encoding)
+                    else:
+                        # Move the detected encoding to front
+                        for i, enc in enumerate(encodings_to_try):
+                            if enc.lower() == detected_encoding.lower():
+                                encodings_to_try.insert(0, encodings_to_try.pop(i))
+                                break
+
+                logger.debug(
+                    f"Chardet detected encoding: {detected_encoding} "
+                    f"(confidence: {confidence:.2f})"
+                )
+        except Exception as e:
+            logger.debug(f"Chardet detection failed: {e}")
+
+        # Try each encoding in order
+        last_error = None
+        for encoding in encodings_to_try:
+            try:
+                return binary_data.decode(encoding)
+            except (UnicodeDecodeError, LookupError) as e:
+                last_error = e
+                logger.debug(f"Failed to decode with {encoding}: {e}")
+                continue
+
+        # If all encodings fail, use error replacement as last resort
+        logger.warning(
+            f"All encoding attempts failed, using UTF-8 with error replacement. "
+            f"Last error: {last_error}"
+        )
+        return binary_data.decode("utf-8", errors="replace")
+
     def _parse_csv(self, binary_data: bytes) -> str:
         """Parse CSV file and extract text."""
         try:
-            # Detect encoding
-            detected = chardet.detect(binary_data)
-            encoding = detected.get("encoding", "utf-8") or "utf-8"
-
-            text = binary_data.decode(encoding)
+            # Use robust encoding detection
+            text = self._decode_binary_data(binary_data)
             csv_file = io.StringIO(text)
 
             reader = csv.reader(csv_file)
@@ -832,6 +916,8 @@ class DocumentParser:
 
             return "\n".join(rows)
 
+        except DocumentParseError:
+            raise
         except Exception as e:
             logger.error(f"Error parsing CSV: {e}", exc_info=True)
             raise DocumentParseError(
@@ -841,38 +927,12 @@ class DocumentParser:
 
     def _parse_text(self, binary_data: bytes) -> str:
         """Parse plain text or markdown file."""
-        # Try common encodings in order of preference
-        encodings_to_try = ["utf-8", "utf-8-sig", "gbk", "gb2312", "gb18030", "latin-1"]
-
-        # First, try to detect encoding using chardet
         try:
-            detected = chardet.detect(binary_data)
-            detected_encoding = detected.get("encoding")
-            if detected_encoding and detected_encoding.lower() not in [
-                "ascii",
-                "charmap",
-            ]:
-                # Insert detected encoding at the beginning if it's valid
-                encodings_to_try.insert(0, detected_encoding)
-        except Exception:
-            pass  # Ignore chardet errors
-
-        # Try each encoding
-        last_error = None
-        for encoding in encodings_to_try:
-            try:
-                return binary_data.decode(encoding)
-            except (UnicodeDecodeError, LookupError) as e:
-                last_error = e
-                continue
-
-        # If all encodings fail, try with error handling
-        try:
-            return binary_data.decode("utf-8", errors="replace")
+            return self._decode_binary_data(binary_data)
         except Exception as e:
             logger.error(f"Error parsing text file: {e}", exc_info=True)
             raise DocumentParseError(
-                f"Failed to parse text file: {str(last_error or e)}",
+                f"Failed to parse text file: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
@@ -918,6 +978,54 @@ class DocumentParser:
             logger.error(f"Error parsing image: {e}", exc_info=True)
             raise DocumentParseError(
                 f"Failed to parse image: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_archive(self, binary_data: bytes, extension: str) -> str:
+        """
+        Parse archive file (ZIP) and return metadata information.
+
+        Archive files are stored as binary attachments without text extraction.
+        Only metadata (file size, file count) is returned as text.
+
+        Args:
+            binary_data: Archive file binary data
+            extension: File extension (e.g., '.zip')
+
+        Returns:
+            Metadata text describing the archive
+        """
+        try:
+            archive_file = io.BytesIO(binary_data)
+
+            # Build description
+            text = f"[压缩文件]\n"
+            text += f"格式: {extension[1:].upper()}\n"
+            text += f"文件大小: {len(binary_data)} 字节"
+
+            # Try to list contents for ZIP files
+            if extension == ".zip":
+                try:
+                    with zipfile.ZipFile(archive_file, "r") as zf:
+                        file_list = zf.namelist()
+                        text += f"\n包含文件数: {len(file_list)}"
+                        if file_list:
+                            # Show first few files
+                            preview_count = min(10, len(file_list))
+                            text += f"\n\n文件列表 (前 {preview_count} 个):"
+                            for name in file_list[:preview_count]:
+                                text += f"\n  - {name}"
+                            if len(file_list) > preview_count:
+                                text += f"\n  ... 还有 {len(file_list) - preview_count} 个文件"
+                except zipfile.BadZipFile:
+                    text += "\n(无法读取压缩包内容)"
+
+            return text
+
+        except Exception as e:
+            logger.error(f"Error parsing archive: {e}", exc_info=True)
+            raise DocumentParseError(
+                f"Failed to parse archive: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
@@ -1260,11 +1368,8 @@ class DocumentParser:
         Keeps header row + sample rows + tail rows, omits middle.
         """
         try:
-            # Detect encoding
-            detected = chardet.detect(binary_data)
-            encoding = detected.get("encoding", "utf-8") or "utf-8"
-
-            text = binary_data.decode(encoding)
+            # Use robust encoding detection
+            text = self._decode_binary_data(binary_data)
             csv_file = io.StringIO(text)
 
             reader = csv.reader(csv_file)

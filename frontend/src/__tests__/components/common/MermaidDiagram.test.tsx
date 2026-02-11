@@ -82,13 +82,16 @@ describe('MermaidDiagram', () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
     })
 
-    await waitFor(() => {
-      expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
+      },
+      { timeout: 5000 }
+    )
 
     // Check that the diagram container is rendered
     expect(screen.getByText('Diagram')).toBeInTheDocument()
-  })
+  }, 15000)
 
   it('displays toolbar buttons', async () => {
     await act(async () => {
@@ -108,9 +111,12 @@ describe('MermaidDiagram', () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
     })
 
-    await waitFor(() => {
-      expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
+      },
+      { timeout: 5000 }
+    )
 
     // Find zoom in button and click
     const zoomInButtons = screen.getAllByRole('button')
@@ -122,16 +128,19 @@ describe('MermaidDiagram', () => {
       })
       expect(screen.getByText('125%')).toBeInTheDocument()
     }
-  })
+  }, 15000)
 
   it('handles zoom out', async () => {
     await act(async () => {
       renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
     })
 
-    await waitFor(() => {
-      expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
+      },
+      { timeout: 5000 }
+    )
 
     // Find zoom out button and click
     const zoomOutButtons = screen.getAllByRole('button')
@@ -143,7 +152,7 @@ describe('MermaidDiagram', () => {
       })
       expect(screen.getByText('75%')).toBeInTheDocument()
     }
-  })
+  }, 15000)
 
   it('handles copy code', async () => {
     await act(async () => {

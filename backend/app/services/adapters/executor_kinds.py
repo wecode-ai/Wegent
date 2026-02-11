@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
 import logging
 import threading
 from datetime import datetime
@@ -16,6 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.subscription import BackgroundExecution
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -1126,7 +1128,7 @@ class ExecutorKindsService(
                         "agent_config": agent_config_data,
                         "system_prompt": bot_prompt,
                         "mcp_servers": mcp_servers,
-                        "skills": skills,
+                        "skills": skills,  # Will be merged with user_selected_skills later
                         "role": team_member_info.role if team_member_info else "",
                         "base_image": shell_base_image,  # Custom base image for executor
                     }
@@ -1140,6 +1142,55 @@ class ExecutorKindsService(
 
             # Check if this is a subscription task for silent exit support
             is_subscription = type == "subscription"
+
+            # Extract user-selected skills from task labels
+            # These are skills explicitly selected by the user for this task
+            user_selected_skills = []
+            if task_crd.metadata.labels:
+                additional_skills_json = task_crd.metadata.labels.get(
+                    "additionalSkills"
+                )
+                if additional_skills_json:
+                    try:
+                        parsed_skills = json.loads(additional_skills_json)
+                        # Validate that parsed result is a list of strings
+                        if isinstance(parsed_skills, list):
+                            # Filter to only include string elements
+                            user_selected_skills = [
+                                s for s in parsed_skills if isinstance(s, str) and s
+                            ]
+                            if len(user_selected_skills) != len(parsed_skills):
+                                logger.warning(
+                                    f"[EXECUTOR_DISPATCH] Filtered out {len(parsed_skills) - len(user_selected_skills)} "
+                                    f"non-string entries from additionalSkills for task {subtask.task_id}"
+                                )
+                        else:
+                            logger.warning(
+                                f"[EXECUTOR_DISPATCH] additionalSkills is not a list for task {subtask.task_id}, "
+                                f"got {type(parsed_skills).__name__}"
+                            )
+                        logger.info(
+                            f"[EXECUTOR_DISPATCH] task_id={subtask.task_id} user_selected_skills={user_selected_skills}"
+                        )
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"[EXECUTOR_DISPATCH] Failed to parse additionalSkills JSON for task {subtask.task_id}: {e}"
+                        )
+
+            # Merge user_selected_skills into each bot's skills list
+            # This ensures user-selected skills are downloaded by executor
+            if user_selected_skills:
+                for bot_config in bots:
+                    existing_skills = bot_config.get("skills", [])
+                    # Add user-selected skills that are not already in the bot's skills
+                    for skill_name in user_selected_skills:
+                        if skill_name not in existing_skills:
+                            existing_skills.append(skill_name)
+                    bot_config["skills"] = existing_skills
+                logger.info(
+                    f"[EXECUTOR_DISPATCH] Merged user_selected_skills {user_selected_skills} into {len(bots)} bot(s) for task {subtask.task_id}"
+                )
+
             logger.info(
                 f"[EXECUTOR_DISPATCH] task_id={subtask.task_id}, subtask_id={subtask.id}, "
                 f"type={type}, is_subscription={is_subscription}, "
@@ -1149,6 +1200,7 @@ class ExecutorKindsService(
             # Generate auth token for skills download
             # Use user's JWT token or generate a temporary one
             auth_token = None
+            task_token = None
             if user:
                 # Generate a JWT token for the user to access backend API
                 from app.core.config import settings
@@ -1167,6 +1219,38 @@ class ExecutorKindsService(
                     logger.warning(
                         f"Failed to generate auth token for user {user.id}: {e}"
                     )
+
+                # Generate task token for MCP Server authentication
+                try:
+                    from app.mcp_server.auth import create_task_token
+
+                    task_token = create_task_token(
+                        task_id=subtask.task_id,
+                        subtask_id=subtask.id,
+                        user_id=user.id,
+                        user_name=user.user_name,
+                        expires_delta_minutes=1440,  # 24 hours
+                    )
+                    logger.info(
+                        f"Successfully generated task token for task={subtask.task_id}, subtask={subtask.id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate task token: {e}")
+
+            # Generate system MCP configuration for subscription tasks
+            system_mcp_config = None
+            if is_subscription and task_token:
+                try:
+                    from app.mcp_server.server import get_mcp_system_config
+
+                    # Get backend URL from settings
+                    backend_url = settings.BACKEND_INTERNAL_URL
+                    system_mcp_config = get_mcp_system_config(backend_url, task_token)
+                    logger.info(
+                        f"Generated system MCP config for subscription task {subtask.task_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate system MCP config: {e}")
 
             # Query attachments for this subtask using context service
             attachments_data = []
@@ -1234,8 +1318,11 @@ class ExecutorKindsService(
                     "git_repo_id": git_repo_id,
                     "branch_name": branch_name,
                     "git_url": git_url,
+                    "backend_url": settings.BACKEND_INTERNAL_URL.rstrip("/"),
                     "prompt": aggregated_prompt,
                     "auth_token": auth_token,
+                    "task_token": task_token,  # For MCP Server authentication
+                    "system_mcp_config": system_mcp_config,  # System MCP for subscription tasks
                     "attachments": attachments_data,
                     "status": subtask.status,
                     "progress": subtask.progress,
@@ -1248,6 +1335,9 @@ class ExecutorKindsService(
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
+                    # User-selected skills for skill emphasis in executor
+                    # These are skills explicitly selected by the user for this task
+                    "user_selected_skills": user_selected_skills,
                 }
             )
 
@@ -1525,6 +1615,22 @@ class ExecutorKindsService(
         if not task:
             return
 
+        # Force refresh to get latest data from database
+        db.refresh(task)
+
+        # Debug: Check labels in raw task.json
+        try:
+            raw_json = task.json or {}
+            metadata = raw_json.get("metadata", {})
+            labels = metadata.get("labels", {})
+            logger.info(
+                f"[_update_task_status_based_on_subtasks] Task {task_id} raw labels from DB: {labels}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[_update_task_status_based_on_subtasks] Error reading labels: {e}"
+            )
+
         subtasks = (
             db.query(Subtask)
             .filter(Subtask.task_id == task_id, Subtask.role == SubtaskRole.ASSISTANT)
@@ -1668,6 +1774,23 @@ class ExecutorKindsService(
         # Update timestamps
         if task_crd.status:
             task_crd.status.updatedAt = datetime.now()
+
+        # CRITICAL: Merge with latest task.json from database to preserve labels
+        # set by other processes (e.g., subscription tasks set backgroundExecutionId)
+        db.refresh(task)
+        latest_task_crd = Task.model_validate(task.json)
+        # Preserve metadata.labels from the latest database version
+        if latest_task_crd.metadata.labels:
+            if task_crd.metadata.labels is None:
+                task_crd.metadata.labels = {}
+            # Merge: keep existing labels in task_crd, but add any new ones from DB
+            for key, value in latest_task_crd.metadata.labels.items():
+                if key not in task_crd.metadata.labels:
+                    task_crd.metadata.labels[key] = value
+                    logger.info(
+                        f"[_sync_task_status] Merged label '{key}' from DB for task {task_id}"
+                    )
+
         task.json = task_crd.model_dump(mode="json")
         task.updated_at = datetime.now()
         flag_modified(task, "json")
@@ -2014,35 +2137,41 @@ class ExecutorKindsService(
         This method schedules the WebSocket event emission asynchronously to avoid
         blocking the database transaction.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             user_id: User ID who owns the task
             task_id: Task ID
             status: New task status
             progress: Optional progress percentage
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            logger.debug(
+                f"[WS] ws_emitter not available (likely Celery worker), skipping task:status event for task={task_id}"
+            )
+            return
+
         logger.info(
             f"[WS] _emit_task_status_ws_event called for task={task_id} status={status} progress={progress} user_id={user_id}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
-
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    await ws_emitter.emit_task_status(
-                        user_id=user_id,
-                        task_id=task_id,
-                        status=status,
-                        progress=progress,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted task:status event for task={task_id} status={status} progress={progress}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit task:status event for task={task_id}"
-                    )
+                await ws_emitter.emit_task_status(
+                    user_id=user_id,
+                    task_id=task_id,
+                    status=status,
+                    progress=progress,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted task:status event for task={task_id} status={status} progress={progress}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit task:status WebSocket event: {e}",
@@ -2050,47 +2179,25 @@ class ExecutorKindsService(
                 )
 
         # Schedule async execution
-        # First try to get the running event loop from the current context
-        try:
-            # Try to get the running event loop
-            loop = asyncio.get_running_loop()
-            # We're in an async context, use create_task directly
-            loop.create_task(emit_async())
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            # Schedule the coroutine to run in the main event loop
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
             logger.info(
-                f"[WS] Scheduled task:status event via loop.create_task for task={task_id}"
+                f"[WS] Scheduled task:status event via run_coroutine_threadsafe for task={task_id}"
             )
-        except RuntimeError:
-            # No running event loop in current thread
-            # Try to use the main event loop reference from ws_emitter
-            logger.info(
-                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
-            )
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    # Schedule the coroutine to run in the main event loop
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                    logger.info(
-                        f"[WS] Scheduled task:status event via run_coroutine_threadsafe (main loop) for task={task_id}"
-                    )
-                else:
-                    # Fallback: try asyncio.get_event_loop()
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
-                        logger.info(
-                            f"[WS] Scheduled task:status event via run_coroutine_threadsafe (fallback) for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[WS] No running event loop available, cannot emit task:status event for task={task_id}"
-                        )
-            except RuntimeError as e:
-                # No event loop available at all
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
+                logger.info(
+                    f"[WS] Scheduled task:status event via loop.create_task for task={task_id}"
+                )
+            except RuntimeError:
                 logger.warning(
-                    f"[WS] Could not emit task:status event - no event loop available: {e}"
+                    f"[WS] No running event loop available, cannot emit task:status event for task={task_id}"
                 )
 
     def _emit_chat_start_ws_event(
@@ -2106,75 +2213,66 @@ class ExecutorKindsService(
         This method is called when an executor task starts running. It allows the frontend
         to establish the subtask-to-task mapping and prepare for receiving chat:done event.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
             bot_name: Optional bot name
             shell_type: Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            logger.debug(
+                f"[WS] ws_emitter not available (likely Celery worker), skipping chat:start event for task={task_id}"
+            )
+            return
+
         logger.info(
             f"[WS] _emit_chat_start_ws_event called for task={task_id} subtask={subtask_id} shell_type={shell_type}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
-
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    await ws_emitter.emit_chat_start(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        bot_name=bot_name,
-                        shell_type=shell_type,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted chat:start event for task={task_id} subtask={subtask_id} shell_type={shell_type}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit chat:start event for task={task_id}"
-                    )
+                await ws_emitter.emit_chat_start(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    bot_name=bot_name,
+                    shell_type=shell_type,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted chat:start event for task={task_id} subtask={subtask_id} shell_type={shell_type}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit chat:start WebSocket event: {e}",
                     exc_info=True,
                 )
 
-        # Schedule async execution using the same pattern as _emit_task_status_ws_event
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(emit_async())
+        # Schedule async execution
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
             logger.info(
-                f"[WS] Scheduled chat:start event via loop.create_task for task={task_id}"
+                f"[WS] Scheduled chat:start event via run_coroutine_threadsafe for task={task_id}"
             )
-        except RuntimeError:
-            logger.info(
-                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
-            )
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                    logger.info(
-                        f"[WS] Scheduled chat:start event via run_coroutine_threadsafe (main loop) for task={task_id}"
-                    )
-                else:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
-                        logger.info(
-                            f"[WS] Scheduled chat:start event via run_coroutine_threadsafe (fallback) for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[WS] No running event loop available, cannot emit chat:start event for task={task_id}"
-                        )
-            except RuntimeError as e:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
+                logger.info(
+                    f"[WS] Scheduled chat:start event via loop.create_task for task={task_id}"
+                )
+            except RuntimeError:
                 logger.warning(
-                    f"[WS] Could not emit chat:start event - no event loop available: {e}"
+                    f"[WS] No running event loop available, cannot emit chat:start event for task={task_id}"
                 )
 
     def _emit_chat_done_ws_event(
@@ -2190,83 +2288,74 @@ class ExecutorKindsService(
         This method sends the message content to the frontend via WebSocket so that
         the frontend can display the AI response in real-time without polling.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
             result: Result data containing the message content
             message_id: Message ID for ordering (primary sort key)
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            logger.debug(
+                f"[WS] ws_emitter not available (likely Celery worker), skipping chat:done event for task={task_id}"
+            )
+            return
+
         logger.info(
             f"[WS] _emit_chat_done_ws_event called for task={task_id} subtask={subtask_id} message_id={message_id}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
+                # Calculate offset from result content length
+                offset = 0
+                if result and isinstance(result, dict):
+                    value = result.get("value", "")
+                    if isinstance(value, str):
+                        offset = len(value)
 
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    # Calculate offset from result content length
-                    offset = 0
-                    if result and isinstance(result, dict):
-                        value = result.get("value", "")
-                        if isinstance(value, str):
-                            offset = len(value)
-
-                    await ws_emitter.emit_chat_done(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        offset=offset,
-                        result=result,
-                        message_id=message_id,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted chat:done event for task={task_id} subtask={subtask_id} message_id={message_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit chat:done event for task={task_id}"
-                    )
+                await ws_emitter.emit_chat_done(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    offset=offset,
+                    result=result,
+                    message_id=message_id,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted chat:done event for task={task_id} subtask={subtask_id} message_id={message_id}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit chat:done WebSocket event: {e}",
                     exc_info=True,
                 )
 
-        # Schedule async execution using the same pattern as _emit_task_status_ws_event
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(emit_async())
+        # Schedule async execution
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
             logger.info(
-                f"[WS] Scheduled chat:done event via loop.create_task for task={task_id}"
+                f"[WS] Scheduled chat:done event via run_coroutine_threadsafe for task={task_id}"
             )
-        except RuntimeError:
-            logger.info(
-                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
-            )
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                    logger.info(
-                        f"[WS] Scheduled chat:done event via run_coroutine_threadsafe (main loop) for task={task_id}"
-                    )
-                else:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
-                        logger.info(
-                            f"[WS] Scheduled chat:done event via run_coroutine_threadsafe (fallback) for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[WS] No running event loop available, cannot emit chat:done event for task={task_id}"
-                        )
-            except RuntimeError as e:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
+                logger.info(
+                    f"[WS] Scheduled chat:done event via loop.create_task for task={task_id}"
+                )
+            except RuntimeError:
                 logger.warning(
-                    f"[WS] Could not emit chat:done event - no event loop available: {e}"
+                    f"[WS] No running event loop available, cannot emit chat:done event for task={task_id}"
                 )
 
     def _emit_chat_chunk_ws_event(
@@ -2283,6 +2372,9 @@ class ExecutorKindsService(
         This method sends incremental content updates to the frontend via WebSocket
         for real-time streaming display.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
@@ -2290,30 +2382,30 @@ class ExecutorKindsService(
             offset: Current offset in the full response
             result: Optional full result data (for executor tasks with thinking/workbench)
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            return  # Silently skip for chunk events
+
         logger.info(
             f"[WS] _emit_chat_chunk_ws_event called for task={task_id} subtask={subtask_id} offset={offset}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
-
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    await ws_emitter.emit_chat_chunk(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        content=content,
-                        offset=offset,
-                        result=result,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted chat:chunk event for task={task_id} subtask={subtask_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit chat:chunk event for task={task_id}"
-                    )
+                await ws_emitter.emit_chat_chunk(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=content,
+                    offset=offset,
+                    result=result,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted chat:chunk event for task={task_id} subtask={subtask_id}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit chat:chunk WebSocket event: {e}",
@@ -2321,20 +2413,15 @@ class ExecutorKindsService(
                 )
 
         # Schedule async execution
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(emit_async())
-        except RuntimeError:
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                else:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
             except RuntimeError:
                 pass  # Silently ignore if no event loop available for chunk events
 
@@ -2397,6 +2484,26 @@ class ExecutorKindsService(
         # Only send notification when task status is COMPLETED or FAILED
         if not task_crd.status or task_crd.status.status not in ["COMPLETED", "FAILED"]:
             return
+
+        # Skip webhook notification for subscription-type tasks
+        # Check BackgroundExecution table to reliably identify subscription tasks
+        # This avoids issues with MySQL transaction isolation (REPEATABLE READ)
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(BackgroundExecution.task_id == task_id)
+            .first()
+        )
+        if execution:
+            logger.info(
+                f"[_send_task_completion_notification] Task {task_id} is a subscription task "
+                f"(BackgroundExecution id={execution.id}), skipping webhook notification"
+            )
+            return
+
+        logger.info(
+            f"[_send_task_completion_notification] Task {task_id} is not a subscription task, "
+            f"proceeding with webhook notification"
+        )
 
         try:
             user_message = task_crd.spec.title
@@ -2493,7 +2600,7 @@ class ExecutorKindsService(
         """
         Update BackgroundExecution status when a Subscription-triggered task completes.
 
-        This method checks if the task was triggered by a Subscription (via backgroundExecutionId label),
+        This method checks if the task was triggered by a Subscription (via background_executions table),
         and if so, updates the corresponding BackgroundExecution record in the database.
 
         Args:
@@ -2510,25 +2617,20 @@ class ExecutorKindsService(
             return
 
         # Check if this task was triggered by a Subscription
-        background_execution_id = None
-        if task_crd.metadata and task_crd.metadata.labels:
-            background_execution_id = task_crd.metadata.labels.get(
-                "backgroundExecutionId"
-            )
+        # Query background_executions table by task_id (same as _send_task_completion_notification)
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(BackgroundExecution.task_id == task_id)
+            .first()
+        )
 
-        if not background_execution_id:
-            # Not a Subscription-triggered task
+        if not execution:
+            # Not a Subscription-triggered task, skip
             return
 
+        execution_id = execution.id
+
         try:
-            # Convert to int if it's a string
-            try:
-                execution_id = int(background_execution_id)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"Invalid backgroundExecutionId '{background_execution_id}' for task {task_id}"
-                )
-                return
 
             # Use BackgroundExecutionManager directly for status update
             # This avoids circular dependency with subscription_service
@@ -2576,12 +2678,14 @@ class ExecutorKindsService(
                 error_message = "Task was cancelled"
 
             # Use BackgroundExecutionManager to update status (this will also emit WebSocket event)
+            # Skip notifications here because we will handle them separately with detail_url
             success = background_execution_manager.update_execution_status(
                 db=db,
                 execution_id=execution_id,
                 status=new_status,
                 result_summary=result_summary,
                 error_message=error_message,
+                skip_notifications=True,
             )
 
             if success:
@@ -2589,6 +2693,52 @@ class ExecutorKindsService(
                     f"Updated BackgroundExecution {execution_id} status to {new_status.value} "
                     f"for task {task_id} via background_execution_manager"
                 )
+
+                # Trigger IM notification (DingTalk, etc.) if user has configured notify level
+                try:
+                    # We already have execution object from earlier query
+                    if execution:
+                        # Get Subscription CRD
+                        subscription_kind = (
+                            db.query(Kind)
+                            .filter(
+                                Kind.id == execution.subscription_id,
+                                Kind.kind == "Subscription",
+                            )
+                            .first()
+                        )
+
+                        if subscription_kind:
+                            from app.schemas.subscription import Subscription
+                            from app.services.subscription.notification_service import (
+                                subscription_notification_service,
+                            )
+
+                            subscription = Subscription.model_validate(
+                                subscription_kind.json
+                            )
+
+                            # Call notify_execution_completed to trigger IM notifications
+                            # Use run_coroutine_threadsafe since this is a sync method
+                            asyncio.run_coroutine_threadsafe(
+                                subscription_notification_service.notify_execution_completed(
+                                    db=db,
+                                    user_id=execution.user_id,
+                                    subscription=subscription,
+                                    execution=execution,
+                                ),
+                                asyncio.get_event_loop(),
+                            )
+                            logger.info(
+                                f"[DingTalk Notification] Scheduled notification for "
+                                f"execution {execution_id}, user {execution.user_id}"
+                            )
+                except Exception as notify_error:
+                    # Log error but don't fail the task status update
+                    logger.error(
+                        f"[DingTalk Notification] Failed to schedule notification for "
+                        f"execution {execution_id}: {str(notify_error)}"
+                    )
             else:
                 logger.warning(
                     f"Failed to update BackgroundExecution {execution_id} status for task {task_id}"

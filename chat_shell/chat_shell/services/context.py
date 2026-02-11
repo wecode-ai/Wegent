@@ -287,6 +287,11 @@ class ChatContext:
             "preparing_kb_tools",
             {"kb_ids_count": len(self._request.knowledge_base_ids)},
         )
+        model_id = (
+            self._request.model_config.get("model_id")
+            if self._request.model_config
+            else None
+        )
         context_window = (
             self._request.model_config.get("context_window")
             if self._request.model_config
@@ -314,8 +319,10 @@ class ChatContext:
             user_subtask_id=self._request.user_subtask_id,  # Use user_subtask_id for RAG persistence
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
+            model_id=model_id,
             context_window=context_window,
             skip_prompt_enhancement=skip_prompt_enhancement,
+            user_name=self._request.user_name,
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result[0])})
         return result
@@ -389,6 +396,7 @@ class ChatContext:
             skill_configs=self._request.skill_configs,
             load_skill_tool=load_skill_tool,
             preload_skills=self._request.preload_skills,
+            user_selected_skills=self._request.user_selected_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
             task_data=self._request.task_data,
@@ -487,8 +495,15 @@ class ChatContext:
         """
         from chat_shell.tools.mcp import MCPClient
 
+        logger.info(
+            "[CHAT_CONTEXT] _connect_mcp_servers called: task_id=%d, mcp_servers=%s",
+            self._request.task_id,
+            self._request.mcp_servers,
+        )
+
         if not self._request.mcp_servers:
             add_span_event("no_mcp_servers_skipped")
+            logger.info("[CHAT_CONTEXT] No MCP servers to connect, returning empty")
             return [], []
 
         add_span_event(
@@ -704,21 +719,15 @@ class ChatContext:
             backend_url,
         )
 
-        # Add SilentExitTool for subscription tasks
+        # Note: SilentExitTool has been removed.
+        # silent_exit functionality is now provided by Backend MCP Server.
+        # For subscription tasks, the system MCP server is loaded via MCP tools.
         logger.info(
             "[CHAT_CONTEXT] is_subscription=%s for task_id=%d, subtask_id=%d",
             self._request.is_subscription,
             self._request.task_id,
             self._request.subtask_id,
         )
-        if self._request.is_subscription:
-            from chat_shell.tools.builtin import SilentExitTool
-
-            extra_tools.append(SilentExitTool())
-            logger.info(
-                "[CHAT_CONTEXT] Added SilentExitTool for subscription task (task_id=%d)",
-                self._request.task_id,
-            )
 
         # === External Tools ===
 

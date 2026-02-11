@@ -538,12 +538,26 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
-            from app.services.chat.config import should_use_direct_chat
+            from app.services.chat.config import (
+                is_deep_research_protocol,
+                should_use_direct_chat,
+            )
             from app.services.chat.storage import (
                 TaskCreationParams,
                 create_chat_task,
             )
             from app.services.chat.trigger import should_trigger_ai_response
+
+            # Check if this is a follow-up to a deep research task
+            # Deep research (gemini-deep-research protocol) does not support follow-up questions
+            if payload.task_id and is_deep_research_protocol(db, team):
+                logger.warning(
+                    f"[WS] chat:send error: Deep research does not support follow-up questions, "
+                    f"task_id={payload.task_id}, team_id={payload.team_id}"
+                )
+                return {
+                    "error": "Deep Research does not support follow-up questions. Please start a new conversation."
+                }
 
             # Check if team supports direct chat
             supports_direct_chat = should_use_direct_chat(db, team, user_id)
@@ -624,6 +638,14 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             # Build TaskCreationParams from request
+            # Convert additional_skills to list of dicts if present
+            additional_skills_dicts = None
+            if payload.additional_skills:
+                additional_skills_dicts = [
+                    {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
+                    for s in payload.additional_skills
+                ]
+
             params = TaskCreationParams(
                 message=payload.message,
                 title=payload.title,
@@ -638,6 +660,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 branch_name=payload.branch_name,
                 task_type=payload.task_type,
                 knowledge_base_id=payload.knowledge_base_id,
+                additional_skills=additional_skills_dicts,
             )
 
             result = await create_chat_task(
@@ -1016,16 +1039,29 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # For Executor tasks, call executor_manager API
                 await call_executor_cancel(subtask.task_id)
 
+            # Refresh subtask to get latest state from database
+            # This is critical because during the await above, executor callbacks
+            # may have already updated the subtask in another database connection
+            db.refresh(subtask)
+
             # Update subtask
-            subtask.status = SubtaskStatus.COMPLETED
+            subtask.status = SubtaskStatus.CANCELLED
             subtask.progress = 100
             subtask.completed_at = datetime.now()
             subtask.updated_at = datetime.now()
 
-            if payload.partial_content:
-                subtask.result = {"value": payload.partial_content}
-            else:
-                subtask.result = {"value": ""}
+            # Preserve existing thinking and workbench data from database
+            # During streaming, these are saved by _update_subtask_progress
+            existing_result = subtask.result or {}
+            thinking = existing_result.get("thinking")
+            workbench = existing_result.get("workbench")
+
+            # Update result with partial content while preserving thinking/workbench
+            subtask.result = {
+                "value": payload.partial_content or "",
+                **({"thinking": thinking} if thinking is not None else {}),
+                **({"workbench": workbench} if workbench is not None else {}),
+            }
 
             # Update task status
             task = (
@@ -1043,7 +1079,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 task_crd = Task.model_validate(task.json)
                 if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
+                    task_crd.status.status = "CANCELLED"
                     task_crd.status.errorMessage = ""
                     task_crd.status.updatedAt = datetime.now()
                     task_crd.status.completedAt = datetime.now()
@@ -1077,6 +1113,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                     ),
                     result=subtask.result or {},
                     message_id=subtask.message_id,
+                )
+
+                # Emit task:status to notify frontend of task cancellation
+                # This ensures the task status in the frontend is updated from PENDING to CANCELLED
+                await ws_emitter.emit_task_status(
+                    user_id=user_id,
+                    task_id=subtask.task_id,
+                    status="CANCELLED",
+                    progress=100,
                 )
             else:
                 logger.warning(
@@ -1155,26 +1200,24 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 return {"error": "Task not found"}
 
-            # Get the latest subtask to find executor_name
+            # Get the latest subtask with device executor
+            # Note: A task may have mixed subtasks - some from device mode (executor_name starts with "device-")
+            # and some from chat mode (no executor_name). We need to find the device subtask specifically.
             subtask = (
                 db.query(Subtask)
-                .filter(Subtask.task_id == task_id)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.executor_name.like("device-%"),
+                )
                 .order_by(Subtask.id.desc())
                 .first()
             )
 
-            if not subtask or not subtask.executor_name:
+            if not subtask:
                 logger.error(
-                    f"[WS] task:close-session error: No executor found for task_id={task_id}"
+                    f"[WS] task:close-session error: No device executor found for task_id={task_id}"
                 )
-                return {"error": "No executor found for this task"}
-
-            # Check if this is a device task
-            if not subtask.executor_name.startswith("device-"):
-                logger.error(
-                    f"[WS] task:close-session error: Not a device task, executor_name={subtask.executor_name}"
-                )
-                return {"error": "Not a device task"}
+                return {"error": "No device executor found for this task"}
 
             # Extract device_id from executor_name (format: "device-{device_id}")
             device_id = subtask.executor_name[7:]  # Remove "device-" prefix

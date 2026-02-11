@@ -111,8 +111,49 @@ class DatabaseHandler:
                 subtask.updated_at = datetime.now()
 
                 if result is not None:
+                    # Preserve silent_exit fields if they were set by MCP tool
+                    # MCP silent_exit tool directly updates subtask.result before this
+                    if subtask.result and isinstance(subtask.result, dict):
+                        existing_silent_exit = subtask.result.get("silent_exit")
+                        existing_silent_exit_reason = subtask.result.get(
+                            "silent_exit_reason"
+                        )
+                        if existing_silent_exit:
+                            result["silent_exit"] = existing_silent_exit
+                            if existing_silent_exit_reason:
+                                result["silent_exit_reason"] = (
+                                    existing_silent_exit_reason
+                                )
+                            logger.info(
+                                "[DB] Preserved silent_exit flag from MCP tool for subtask %s",
+                                subtask_id,
+                            )
+
+                    # Log loaded_skills before sanitization for debugging
+                    loaded_skills = result.get("loaded_skills", [])
+                    if loaded_skills:
+                        logger.info(
+                            "[DB_HANDLER] Saving loaded_skills to database: "
+                            "subtask_id=%d, status=%s, loaded_skills=%s",
+                            subtask_id,
+                            status,
+                            loaded_skills,
+                        )
+
                     # Sanitize thinking data before storing to database
                     sanitized_result = sanitize_result_for_storage(result)
+
+                    # Log loaded_skills after sanitization to verify it's preserved
+                    sanitized_loaded_skills = sanitized_result.get("loaded_skills", [])
+                    if loaded_skills:
+                        logger.info(
+                            "[DB_HANDLER] After sanitization: subtask_id=%d, "
+                            "loaded_skills_preserved=%s, sanitized_loaded_skills=%s",
+                            subtask_id,
+                            sanitized_loaded_skills == loaded_skills,
+                            sanitized_loaded_skills,
+                        )
+
                     subtask.result = sanitized_result
                 if error is not None:
                     subtask.error_message = error
@@ -216,20 +257,10 @@ class DatabaseHandler:
                         f"[WS] Scheduled task:status via main loop for task={task_id}"
                     )
                 else:
-                    # Fallback: try asyncio.get_event_loop()
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(
-                            emit_task_status_update(user_id, task_id, status, progress),
-                            loop,
-                        )
-                        logger.debug(
-                            f"[WS] Scheduled task:status via fallback loop for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not emit task:status event - no running event loop available for task={task_id}"
-                        )
+                    # No running event loop available - skip emit
+                    logger.warning(
+                        f"Could not emit task:status event - no running event loop available for task={task_id}"
+                    )
             except RuntimeError:
                 logger.warning(
                     f"Could not emit task:status event - no event loop available for task={task_id}"

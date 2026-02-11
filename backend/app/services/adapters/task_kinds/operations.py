@@ -256,12 +256,24 @@ class TaskOperationsMixin:
         db.add(workspace)
 
         # Create Task JSON
+        # Build additional_skills label if provided
+        # Store as JSON string for skill names that user explicitly selected
+        additional_skills_label = None
+        if obj_in.additional_skills:
+            # Extract skill names from SkillRef objects
+            skill_names = [s.name for s in obj_in.additional_skills]
+            additional_skills_label = json_lib.dumps(skill_names)
+
         task_json = {
             "kind": "Task",
             "spec": {
                 "title": title,
                 "prompt": obj_in.prompt,
-                "teamRef": {"name": team.name, "namespace": team.namespace},
+                "teamRef": {
+                    "name": team.name,
+                    "namespace": team.namespace,
+                    "user_id": team.user_id,
+                },
                 "workspaceRef": {"name": workspace_name, "namespace": "default"},
             },
             "status": {
@@ -299,6 +311,11 @@ class TaskOperationsMixin:
                     **(
                         {"api_key_name": obj_in.api_key_name}
                         if obj_in.api_key_name
+                        else {}
+                    ),
+                    **(
+                        {"additionalSkills": additional_skills_label}
+                        if additional_skills_label
                         else {}
                     ),
                 },
@@ -509,13 +526,20 @@ class TaskOperationsMixin:
         # Get all subtasks for the task
         task_subtasks = db.query(Subtask).filter(Subtask.task_id == task_id).all()
 
-        # Collect unique executor keys
+        # Collect unique executor keys and device IDs
         unique_executor_keys = set()
+        device_ids = set()
         for subtask in task_subtasks:
             if subtask.executor_name and not subtask.executor_deleted_at:
-                unique_executor_keys.add(
-                    (subtask.executor_namespace, subtask.executor_name)
-                )
+                # Check if this is a device task
+                if subtask.executor_name.startswith("device-"):
+                    # Extract device_id from executor_name (format: "device-{device_id}")
+                    device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+                    device_ids.add(device_id)
+                else:
+                    unique_executor_keys.add(
+                        (subtask.executor_namespace, subtask.executor_name)
+                    )
 
         # Stop running subtasks on executor
         for executor_namespace, executor_name in unique_executor_keys:
@@ -529,6 +553,20 @@ class TaskOperationsMixin:
             except Exception as e:
                 logger.warning(
                     f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}"
+                )
+
+        # Close device sessions for device tasks
+        for device_id in device_ids:
+            try:
+                logger.info(
+                    f"deleting task - sending close-session to device: device_id={device_id}, task_id={task_id}"
+                )
+                # Send close-session event to device via WebSocket
+                # Use the same pattern as memory cleanup to handle async operation
+                self._schedule_close_session_to_device(user_id, device_id, task_id)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to send close-session to device {device_id}: {str(e)}"
                 )
 
         # Update all subtasks to DELETE status
@@ -559,8 +597,9 @@ class TaskOperationsMixin:
     def _handle_member_leave(
         self, db: Session, task_id: int, user_id: int
     ) -> Optional[TaskResource]:
-        """Handle a member leaving a group chat."""
-        from app.models.task_member import MemberStatus, TaskMember
+        """Handle a member leaving a group chat using ResourceMember."""
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         task = (
             db.query(TaskResource)
@@ -576,11 +615,12 @@ class TaskOperationsMixin:
             raise HTTPException(status_code=404, detail="Task not found")
 
         task_member = (
-            db.query(TaskMember)
+            db.query(ResourceMember)
             .filter(
-                TaskMember.task_id == task_id,
-                TaskMember.user_id == user_id,
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == task_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
         )
@@ -590,8 +630,8 @@ class TaskOperationsMixin:
 
         # User is a member, not owner - handle as "leave group chat"
         logger.info(f"User {user_id} leaving group chat task {task_id}")
-        task_member.status = MemberStatus.REMOVED
-        task_member.removed_at = datetime.now()
+        task_member.status = MemberStatus.REJECTED
+        task_member.reviewed_at = datetime.now()
         db.commit()
         return None
 
@@ -1088,3 +1128,117 @@ class TaskOperationsMixin:
                     )
             except Exception as e:
                 logger.warning("[delete_task] Failed to schedule memory cleanup: %s", e)
+
+    async def _send_close_session_to_device_async(
+        self, user_id: int, device_id: str, task_id: int
+    ) -> None:
+        """
+        Send close-session event to a device via WebSocket (async implementation).
+
+        This is called when deleting a task to ensure the device session
+        is properly closed and the device slot is freed.
+
+        Args:
+            user_id: User ID who owns the task
+            device_id: Device ID to send the event to
+            task_id: Task ID being deleted
+        """
+        try:
+            device_room = f"device:{user_id}:{device_id}"
+
+            logger.info(
+                f"[delete_task] Sending task:close-session to device: "
+                f"device_id={device_id}, room={device_room}, task_id={task_id}"
+            )
+
+            from app.core.socketio import get_sio
+
+            sio = get_sio()
+            await sio.emit(
+                "task:close-session",
+                {"task_id": task_id},
+                room=device_room,
+                namespace="/local-executor",
+            )
+
+            logger.info(
+                f"[delete_task] Successfully sent task:close-session to device for task_id={task_id}"
+            )
+
+        except Exception as e:
+            logger.error(
+                f"[delete_task] Failed to send close-session to device {device_id}: {str(e)}",
+                exc_info=True,
+            )
+
+    def _schedule_close_session_to_device(
+        self, user_id: int, device_id: str, task_id: int
+    ) -> None:
+        """
+        Schedule sending close-session event to a device.
+
+        This is a fire-and-forget operation that runs in background
+        and doesn't block task deletion.
+
+        Args:
+            user_id: User ID who owns the task
+            device_id: Device ID to send the event to
+            task_id: Task ID being deleted
+        """
+        import asyncio
+
+        def _log_close_session_exception(task_or_future):
+            """Log any exceptions from close-session task."""
+            try:
+                if hasattr(task_or_future, "exception"):
+                    exc = task_or_future.exception()
+                    if exc:
+                        logger.error(
+                            "[delete_task] Close-session failed for device %s, task %d: %s",
+                            device_id,
+                            task_id,
+                            exc,
+                            exc_info=exc,
+                        )
+            except Exception:
+                logger.exception(
+                    "[delete_task] Error checking close-session task status"
+                )
+
+        # Try to get the running event loop
+        try:
+            loop = asyncio.get_running_loop()
+            close_session_task = loop.create_task(
+                self._send_close_session_to_device_async(user_id, device_id, task_id)
+            )
+            close_session_task.add_done_callback(_log_close_session_exception)
+            logger.info(
+                "[delete_task] Started background task to close device session for task %d, device %s",
+                task_id,
+                device_id,
+            )
+        except RuntimeError:
+            # No event loop running - try to schedule on main loop
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                if main_loop and main_loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._send_close_session_to_device_async(
+                            user_id, device_id, task_id
+                        ),
+                        main_loop,
+                    )
+                    future.add_done_callback(_log_close_session_exception)
+                    logger.info(
+                        "[delete_task] Scheduled close-session on main loop for task %d, device %s",
+                        task_id,
+                        device_id,
+                    )
+                else:
+                    logger.warning(
+                        "[delete_task] Cannot send close-session: no running event loop"
+                    )
+            except Exception as e:
+                logger.warning("[delete_task] Failed to schedule close-session: %s", e)

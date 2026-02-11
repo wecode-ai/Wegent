@@ -30,6 +30,7 @@ import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
+import { useSkillSelector } from '../../hooks/useSkillSelector'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -99,6 +100,12 @@ function ChatAreaContent({
     taskType,
     selectedTeamForNewTask,
     initialKnowledgeBase,
+  })
+
+  // Skill selector state - fetches available skills and manages selection
+  const skillSelector = useSkillSelector({
+    team: chatState.selectedTeam,
+    enabled: true,
   })
 
   // Compute subtask info for scroll management
@@ -329,6 +336,9 @@ function ChatAreaContent({
     resetContexts: chatState.resetContexts,
     onTaskCreated,
     selectedDocumentIds,
+    // Skill selection - pass user-selected skills to backend
+    // Uses full skill info (name, namespace, is_public) for backend to determine preload vs download
+    additionalSkills: skillSelector.selectedSkills,
   })
 
   // Scheme URL action bridge - handles wegent://action/send-message and wegent://action/prefill-message
@@ -635,6 +645,12 @@ function ChatAreaContent({
     knowledgeBaseId,
     // Reason why input is disabled (shown as placeholder)
     disabledReason,
+    // Skill selector props
+    availableSkills: skillSelector.availableSkills,
+    teamSkillNames: skillSelector.teamSkillNames,
+    preloadedSkillNames: skillSelector.preloadedSkillNames,
+    selectedSkillNames: skillSelector.selectedSkillNames,
+    onToggleSkill: skillSelector.toggleSkill,
   }
 
   return (
@@ -750,7 +766,7 @@ function ChatAreaContent({
           >
             {/* Bottom gradient fade effect - text fades as it approaches the input */}
             <div
-              className="absolute top-0 left-0 right-0 h-12 -translate-y-full pointer-events-none"
+              className="absolute top-0 left-0 right-0 h-6 -translate-y-full pointer-events-none"
               style={{
                 background:
                   'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.8) 40%, rgb(var(--color-bg-base) / 0) 100%)',

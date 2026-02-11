@@ -2,6 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+Team service class using kinds table.
+
+Uses the unified ResourceMember model for team sharing.
+"""
+
 import copy
 import json
 import logging
@@ -17,14 +23,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.shared_team import SharedTeam
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
-from app.services.readers.shared_teams import sharedTeamReader
 from app.services.readers.users import userReader
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
@@ -279,7 +285,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
                 # Add shared teams for personal and all scopes
                 if scope in ("personal", "all"):
-                    # Query for shared teams
+                    # Query for shared teams using ResourceMember
                     shared_teams_query = (
                         db.query(
                             Kind.id.label("team_id"),
@@ -292,12 +298,18 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             literal_column("2").label(
                                 "share_status"
                             ),  # 2 for shared teams
-                            SharedTeam.original_user_id.label("context_user_id"),
+                            Kind.user_id.label(
+                                "context_user_id"
+                            ),  # Use team owner, not inviter
                         )
-                        .join(SharedTeam, SharedTeam.team_id == Kind.id)
+                        .join(
+                            ResourceMember,
+                            (ResourceMember.resource_id == Kind.id)
+                            & (ResourceMember.resource_type == ResourceType.TEAM),
+                        )
                         .filter(
-                            SharedTeam.user_id == user_id,
-                            SharedTeam.is_active == True,
+                            ResourceMember.user_id == user_id,
+                            ResourceMember.status == MemberStatus.APPROVED,
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )
@@ -713,22 +725,30 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Check if user is the owner or has shared access
         is_author = team.user_id == user_id
-        shared_team = None
 
         if not is_author:
-            # Check if user has shared access
-            shared_team = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
-            if not shared_team:
+            # Check if user has shared access via ResourceMember
+            shared_member = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_id == team_id,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED,
+                )
+                .first()
+            )
+            if not shared_member:
                 raise HTTPException(
                     status_code=403, detail="Access denied to this team"
                 )
 
-        # Get team dict using the original user's context
-        original_user_id = team.user_id if is_author else shared_team.original_user_id
-        team_dict = self._convert_to_team_dict(team, db, original_user_id)
+        # Get team dict using the team owner's context (for loading related resources)
+        team_owner_id = team.user_id
+        team_dict = self._convert_to_team_dict(team, db, team_owner_id)
 
         # Get related user (original author)
-        user = userReader.get_by_id(db, original_user_id)
+        user = userReader.get_by_id(db, team_owner_id)
 
         # Get detailed bot information
         detailed_bots = []
@@ -1034,16 +1054,21 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # delete join shared team entry if any
         if team.user_id != user_id:
-            # Check if this is a shared team deletion
-            shared_entry = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
+            # Check if this is a shared team deletion via ResourceMember
+            shared_member = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_id == team_id,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED,
+                )
+                .first()
+            )
 
-            if shared_entry:
-                # User is deleting their shared team access
-                db.query(SharedTeam).filter(
-                    SharedTeam.team_id == team_id,
-                    SharedTeam.user_id == user_id,
-                    SharedTeam.is_active == True,
-                ).delete()
+            if shared_member:
+                # User is deleting their shared team access - mark as rejected
+                shared_member.status = MemberStatus.REJECTED
                 db.commit()
                 return
 
@@ -1075,9 +1100,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     detail=f"Team '{team_name}' has {len(running_tasks)} running task(s). Use force=true to delete anyway.",
                 )
 
-        # delete share team
-        db.query(SharedTeam).filter(
-            SharedTeam.team_id == team_id, SharedTeam.is_active == True
+        # delete share team - use ResourceMember
+        db.query(ResourceMember).filter(
+            ResourceMember.resource_type == ResourceType.TEAM,
+            ResourceMember.resource_id == team_id,
         ).delete()
 
         db.delete(team)
@@ -1136,14 +1162,18 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 total_count += own_teams_count
 
-                # Count shared teams (for personal and all scopes)
+                # Count shared teams (for personal and all scopes) using ResourceMember
                 if scope in ("personal", "all"):
                     shared_teams_count = (
-                        db.query(SharedTeam)
-                        .join(Kind, SharedTeam.team_id == Kind.id)
+                        db.query(ResourceMember)
+                        .join(
+                            Kind,
+                            (ResourceMember.resource_id == Kind.id)
+                            & (ResourceMember.resource_type == ResourceType.TEAM),
+                        )
                         .filter(
-                            SharedTeam.user_id == user_id,
-                            SharedTeam.is_active == True,
+                            ResourceMember.user_id == user_id,
+                            ResourceMember.status == MemberStatus.APPROVED,
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )
@@ -1911,18 +1941,27 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Check if user has access to this team
         is_author = team.user_id == user_id
-        shared_team = None
 
         if not is_author:
-            shared_team = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
-            if not shared_team:
+            # Check if user has shared access via ResourceMember
+            shared_member = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_id == team_id,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED,
+                )
+                .first()
+            )
+            if not shared_member:
                 raise HTTPException(
                     status_code=403, detail="Access denied to this team"
                 )
 
-        # Get original user context
-        original_user_id = team.user_id if is_author else shared_team.original_user_id
-        team_dict = self._convert_to_team_dict(team, db, original_user_id)
+        # Get team owner's context for loading related resources
+        team_owner_id = team.user_id
+        team_dict = self._convert_to_team_dict(team, db, team_owner_id)
 
         # Check if team has any external API bots (like Dify)
         has_external_api_bot = False
@@ -1940,13 +1979,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
                 # Get shell using kindReader (handles public fallback)
                 shell = kindReader.get_by_name_and_namespace(
-                    db, original_user_id, KindType.SHELL, shell_namespace, shell_name
+                    db, team_owner_id, KindType.SHELL, shell_namespace, shell_name
                 )
 
                 if shell:
                     # Use utility function to get shell type
                     shell_type = get_shell_type(
-                        db, shell_name, shell_namespace, original_user_id
+                        db, shell_name, shell_namespace, team_owner_id
                     )
 
                     if shell_type == "external_api":
@@ -1965,7 +2004,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get model using kindReader (handles public fallback)
         model = kindReader.get_by_name_and_namespace(
-            db, original_user_id, KindType.MODEL, model_ref.namespace, model_ref.name
+            db, team_owner_id, KindType.MODEL, model_ref.namespace, model_ref.name
         )
 
         if not model:
@@ -2057,6 +2096,104 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
             # has_parameters is true as long as external API bot exists, even if API call fails
             return {"has_parameters": True, "parameters": []}
+
+    def get_team_skills(
+        self, db: Session, *, team_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """Get all skills associated with a team.
+
+        Follows the chain: team → bots → ghosts → skills
+
+        Args:
+            db: Database session
+            team_id: Team ID
+            user_id: User ID (for authorization)
+
+        Returns:
+            Dictionary with:
+            - team_id: The team ID
+            - team_namespace: The team namespace
+            - skills: List of skill names (deduplicated)
+            - preload_skills: List of skills to preload
+
+        Raises:
+            HTTPException: If team not found or access denied
+        """
+        # Get team
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        # Check if user has access to this team
+        # Access is granted if:
+        # 1. User is the owner (team.user_id == user_id)
+        # 2. Team is public (team.user_id == 0)
+        # 3. User has shared access via ResourceMember
+        is_public_team = team.user_id == 0
+        is_author = team.user_id == user_id
+        if not is_author and not is_public_team:
+            shared_member = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_id == team_id,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED,
+                )
+                .first()
+            )
+            if not shared_member:
+                raise HTTPException(
+                    status_code=403, detail="Access denied to this team"
+                )
+
+        team_crd = Team.model_validate(team.json)
+        all_skills = set()
+        all_preload_skills = set()
+
+        # Use team owner's user_id for querying related resources
+        team_owner_id = team.user_id
+
+        # Iterate through team members to get bot → ghost → skills
+        for member in team_crd.spec.members or []:
+            bot = kindReader.get_by_name_and_namespace(
+                db,
+                team_owner_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
+            )
+            if not bot:
+                continue
+
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get ghost (stores skills)
+            ghost = kindReader.get_by_name_and_namespace(
+                db,
+                team_owner_id,
+                KindType.GHOST,
+                bot_crd.spec.ghostRef.namespace,
+                bot_crd.spec.ghostRef.name,
+            )
+            if ghost and ghost.json:
+                ghost_crd = Ghost.model_validate(ghost.json)
+                if ghost_crd.spec.skills:
+                    all_skills.update(ghost_crd.spec.skills)
+                if ghost_crd.spec.preload_skills:
+                    all_preload_skills.update(ghost_crd.spec.preload_skills)
+
+        logger.info(
+            f"[get_team_skills] team_id={team_id}, "
+            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}"
+        )
+
+        return {
+            "team_id": team_id,
+            "team_namespace": team.namespace or "default",
+            "skills": sorted(all_skills),
+            "preload_skills": sorted(all_preload_skills),
+        }
 
 
 team_kinds_service = TeamKindsService(Kind)

@@ -4,7 +4,7 @@
 
 'use client'
 
-import React from 'react'
+import React, { useRef } from 'react'
 import { Upload, Sparkles } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
@@ -15,6 +15,7 @@ import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
   // Input message
@@ -149,8 +150,22 @@ export function ChatInputCard({
   isSubtaskStreaming,
   onStopStream,
   onSendMessage,
+  // Skill selector props
+  availableSkills,
+  teamSkillNames,
+  preloadedSkillNames,
+  selectedSkillNames,
+  onToggleSkill,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
+
+  // Ref for skill button to enable fly animation from autocomplete
+  const skillSelectorRef = useRef<SkillSelectorPopoverRef>(null)
+
+  // Get skill button element for fly animation
+  const getSkillButtonElement = () => {
+    return skillSelectorRef.current?.getButtonElement() ?? null
+  }
 
   return (
     <div className="w-full">
@@ -234,6 +249,20 @@ export function ChatInputCard({
               onPasteFile={onPasteFile}
               hasNoTeams={hasNoTeams}
               disabledReason={disabledReason}
+              // Skill selector props for slash command
+              showSkillSelector={availableSkills && availableSkills.length > 0}
+              availableSkills={availableSkills}
+              teamSkillNames={teamSkillNames}
+              preloadedSkillNames={preloadedSkillNames}
+              selectedSkillNames={selectedSkillNames}
+              onSkillSelect={onToggleSkill}
+              isChatShell={selectedTeam?.agent_type === 'chat'}
+              // Skill selection is read-only after task creation (hasMessages)
+              skillSelectorReadOnly={hasMessages}
+              // Pass skill button ref for fly animation
+              skillButtonRef={
+                { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>
+              }
             />
           </div>
         )}
@@ -296,6 +325,12 @@ export function ChatInputCard({
             onSendMessage={onSendMessage}
             hasNoTeams={hasNoTeams}
             knowledgeBaseId={knowledgeBaseId}
+            availableSkills={availableSkills}
+            teamSkillNames={teamSkillNames}
+            preloadedSkillNames={preloadedSkillNames}
+            selectedSkillNames={selectedSkillNames}
+            onToggleSkill={onToggleSkill}
+            skillSelectorRef={skillSelectorRef}
           />
         </div>
       </div>

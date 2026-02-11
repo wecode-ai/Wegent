@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Wegent Executor Installation Script
-# This script downloads and installs the wegent-executor binary for macOS.
+# This script downloads and installs the wegent-executor binary for macOS and Linux.
 #
 # Usage:
 #   curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
@@ -23,7 +23,8 @@ NC='\033[0m' # No Color
 
 # Configuration
 GITHUB_REPO="wecode-ai/Wegent"
-INSTALL_DIR="${HOME}/.wegent-executor/bin"
+EXECUTOR_HOME_DIR="${HOME}/.wegent-executor"
+INSTALL_DIR="${EXECUTOR_HOME_DIR}/bin"
 BINARY_NAME="wegent-executor"
 VERSION=""
 
@@ -31,6 +32,10 @@ VERSION=""
 # Based on Docker image version: @anthropic-ai/claude-code@2.1.27
 MIN_CLAUDE_CODE_VERSION="2.1.0"
 MIN_NODE_VERSION="18"
+
+# Browser plugin configuration
+BROWSER_PLUGIN_PACKAGE="@wegent/cdp-relay-server"
+BROWSER_PLUGIN_CHROME_EXT_PATH="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/chrome-extension"
 
 # Print colored message
 print_info() {
@@ -92,7 +97,11 @@ check_nodejs() {
         echo ""
         print_info "Please install Node.js first:"
         echo "  - Visit: https://nodejs.org/"
-        echo "  - Or use Homebrew: brew install node"
+        if [[ "$OS" == "macos" ]]; then
+            echo "  - Or use Homebrew: brew install node"
+        elif [[ "$OS" == "linux" ]]; then
+            echo "  - Or use your package manager: apt install nodejs / dnf install nodejs"
+        fi
         echo "  - Or use nvm: nvm install ${MIN_NODE_VERSION}"
         echo ""
         exit 1
@@ -110,7 +119,11 @@ check_nodejs() {
         echo ""
         print_info "Please upgrade Node.js:"
         echo "  - Visit: https://nodejs.org/"
-        echo "  - Or use Homebrew: brew upgrade node"
+        if [[ "$OS" == "macos" ]]; then
+            echo "  - Or use Homebrew: brew upgrade node"
+        elif [[ "$OS" == "linux" ]]; then
+            echo "  - Or use your package manager to upgrade nodejs"
+        fi
         echo "  - Or use nvm: nvm install ${MIN_NODE_VERSION}"
         echo ""
         exit 1
@@ -239,6 +252,128 @@ install_claude_code() {
     fi
 }
 
+# Print Chrome extension installation instructions
+print_chrome_extension_instructions() {
+    local ext_path="${BROWSER_PLUGIN_CHROME_EXT_PATH/${HOME}/\~}"
+    echo ""
+    echo -e "${BLUE}📋 Manual step required - Install Chrome extension:${NC}"
+    echo ""
+    echo "   1. Open Chrome and navigate to: chrome://extensions"
+    echo "   2. Enable \"Developer mode\" (toggle in top-right corner)"
+    echo "   3. Click \"Load unpacked\""
+    echo "   4. Select folder: ${ext_path}"
+    echo "   5. Open any webpage and wait for the extension icon to show \"ON\""
+    echo ""
+}
+
+# Install browser plugin
+install_browser_plugin() {
+    print_info "Installing browser plugin (${BROWSER_PLUGIN_PACKAGE})..."
+    echo ""
+
+    # Step 1: Ensure directories exist
+    print_info "Creating directories..."
+    mkdir -p "${EXECUTOR_HOME_DIR}"
+    mkdir -p "${INSTALL_DIR}"
+
+    # Step 2: Install package using npm (use official registry)
+    print_info "Installing npm package..."
+    if ! npm install "${BROWSER_PLUGIN_PACKAGE}" --prefix "${EXECUTOR_HOME_DIR}" --registry https://registry.npmjs.org; then
+        print_error "Failed to install ${BROWSER_PLUGIN_PACKAGE}"
+        return 1
+    fi
+
+    # Step 3: Create symbolic links
+    print_info "Creating symbolic links..."
+    local node_modules_base="../node_modules/@wegent/cdp-relay-server/dist"
+
+    # Remove existing links if they exist
+    rm -f "${INSTALL_DIR}/browser-tool" 2>/dev/null || true
+    rm -f "${INSTALL_DIR}/cdp-relay-server" 2>/dev/null || true
+
+    # Create new symlinks
+    ln -s "${node_modules_base}/tool-cli.js" "${INSTALL_DIR}/browser-tool"
+    print_info "   Created: browser-tool -> tool-cli.js"
+
+    ln -s "${node_modules_base}/cli.js" "${INSTALL_DIR}/cdp-relay-server"
+    print_info "   Created: cdp-relay-server -> cli.js"
+
+    # Step 4: Make files executable
+    local tool_cli_path="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/dist/tool-cli.js"
+    local cli_path="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/dist/cli.js"
+
+    if [[ -f "$tool_cli_path" ]]; then
+        chmod +x "$tool_cli_path"
+    fi
+    if [[ -f "$cli_path" ]]; then
+        chmod +x "$cli_path"
+    fi
+
+    # Step 5: Start/restart cdp-relay-server
+    print_info "Starting cdp-relay-server..."
+    local cdp_relay_server_path="${INSTALL_DIR}/cdp-relay-server"
+
+    if ! node "${cdp_relay_server_path}" --restart 2>/dev/null; then
+        print_warning "cdp-relay-server may not have started correctly."
+        print_warning "You can manually run: cdp-relay-server --restart"
+    fi
+
+    print_success "Browser plugin installed successfully!"
+    print_chrome_extension_instructions
+
+    # Step 6: Try to open Chrome extensions page using browser-tool
+    print_info "Opening Chrome extensions page..."
+    local browser_tool_path="${INSTALL_DIR}/browser-tool"
+
+    # Use browser-tool to navigate to chrome://extensions
+    if [[ -f "${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/dist/tool-cli.js" ]]; then
+        node "${browser_tool_path}" '{"action":"navigate","url":"chrome://extensions"}' 2>/dev/null &
+        sleep 1
+    else
+        print_warning "browser-tool not found, please manually open chrome://extensions"
+    fi
+
+    echo ""
+    print_warning "重要提醒: 请务必在弹出的浏览器窗口中安装插件!"
+    print_warning "Important: Please install the extension in the browser window!"
+    echo ""
+}
+
+# Ask user if they want to install browser plugin
+prompt_browser_plugin_install() {
+    echo ""
+    echo "======================================"
+    echo -e "${BLUE}Browser Plugin Installation${NC}"
+    echo "======================================"
+    echo ""
+    echo "The browser plugin enables AI agents to interact with web browsers."
+    echo "It includes a Chrome extension and a CDP relay server for browser automation."
+    echo ""
+
+    # Check if running in non-interactive mode
+    if [[ ! -t 0 ]]; then
+        print_info "Non-interactive mode detected. Skipping browser plugin installation."
+        print_info "To install the browser plugin later, run:"
+        echo ""
+        echo "  npm install ${BROWSER_PLUGIN_PACKAGE} --prefix ${EXECUTOR_HOME_DIR} --registry https://registry.npmjs.org"
+        echo ""
+        return
+    fi
+
+    read -p "Would you like to install the browser plugin? [y/N] " -n 1 -r
+    echo ""
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        install_browser_plugin
+    else
+        print_info "Skipping browser plugin installation."
+        print_info "To install it later, run:"
+        echo ""
+        echo "  npm install ${BROWSER_PLUGIN_PACKAGE} --prefix ${EXECUTOR_HOME_DIR} --registry https://registry.npmjs.org"
+        echo ""
+    fi
+}
+
 # Detect OS and architecture
 detect_platform() {
     local os
@@ -252,7 +387,17 @@ detect_platform() {
             OS="macos"
             ;;
         Linux)
-            print_error "Linux is not yet supported. Please use Docker deployment."
+            OS="linux"
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            print_error "This script does not support Windows directly."
+            print_info "Please use PowerShell to install on Windows:"
+            echo ""
+            echo "  irm https://github.com/${GITHUB_REPO}/releases/latest/download/local_executor_install.ps1 | iex"
+            echo ""
+            print_info "Or with a specific version:"
+            echo '  $env:WEGENT_VERSION="v1.0.0"; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex'
+            echo ""
             exit 1
             ;;
         *)
@@ -390,9 +535,12 @@ print_usage_instructions() {
     echo ""
     echo "Add this line to your ~/.zshrc or ~/.bashrc to make it permanent."
     echo ""
-    print_warning "First run may require allowing the binary in:"
-    print_warning "System Settings > Privacy & Security"
-    echo ""
+    # Platform-specific notes
+    if [[ "$OS" == "macos" ]]; then
+        print_warning "First run may require allowing the binary in:"
+        print_warning "System Settings > Privacy & Security"
+        echo ""
+    fi
 }
 
 # Main function
@@ -411,6 +559,7 @@ main() {
     create_install_dir
     download_binary
     verify_installation
+    prompt_browser_plugin_install
     print_usage_instructions
 }
 

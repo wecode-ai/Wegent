@@ -220,20 +220,14 @@ async def _load_history_from_remote(
         )
 
         # Convert Message objects to dict format expected by the agent
+        # Pass through all fields from the API response to preserve extra data
+        # like loaded_skills for skill state restoration
         history: list[dict[str, Any]] = []
         for msg in messages:
             # RemoteHistoryStore returns Message objects
+            # Use to_dict() to get all fields and pass through directly
             msg_dict = msg.to_dict()
-
-            # The Backend API now handles username prefix for group chat
-            # So we just use the content as-is
-
-            history.append(
-                {
-                    "role": msg_dict.get("role", "user"),
-                    "content": msg_dict.get("content", ""),
-                }
-            )
+            history.append(msg_dict)
 
         logger.debug(
             "[history] _load_history_from_remote: SUCCESS loaded %d messages "
@@ -395,19 +389,27 @@ def _build_history_message(
         image_metadata_headers: list[str] = []
         total_attachment_text_length = 0
 
+        # Get task_id and subtask_id for building sandbox paths
+        task_id = subtask.task_id
+        subtask_id = subtask.id
+
         for attachment in attachments:
             vision_block = _build_vision_content_block(attachment)
             if vision_block:
                 vision_parts.append(vision_block)
                 # Add image metadata header for reference in text content
-                image_header = _build_image_metadata_header(attachment)
+                image_header = _build_image_metadata_header(
+                    attachment, task_id=task_id, subtask_id=subtask_id
+                )
                 image_metadata_headers.append(image_header)
                 logger.info(
                     f"[history] Loaded image attachment: id={attachment.id}, "
                     f"name={attachment.name}, mime_type={attachment.mime_type}"
                 )
             else:
-                doc_prefix = _build_document_text_prefix(attachment)
+                doc_prefix = _build_document_text_prefix(
+                    attachment, task_id=task_id, subtask_id=subtask_id
+                )
                 if doc_prefix:
                     attachment_text_parts.append(doc_prefix)
                     total_attachment_text_length += len(doc_prefix)
@@ -492,7 +494,17 @@ def _build_history_message(
         if not subtask.result or not isinstance(subtask.result, dict):
             return None
         content = subtask.result.get("value", "")
-        return {"role": "assistant", "content": content} if content else None
+        if not content:
+            return None
+
+        msg = {"role": "assistant", "content": content}
+
+        # Include loaded_skills for skill state restoration across conversation turns
+        loaded_skills = subtask.result.get("loaded_skills")
+        if loaded_skills:
+            msg["loaded_skills"] = loaded_skills
+
+        return msg
 
     return None
 
@@ -531,7 +543,37 @@ def _build_attachment_url(attachment_id: int) -> str:
     return f"/api/attachments/{attachment_id}/download"
 
 
-def _build_image_metadata_header(context) -> str:
+def _build_sandbox_path(
+    task_id: int | None,
+    subtask_id: int | None,
+    filename: str,
+) -> str | None:
+    """Build the sandbox file path for an attachment.
+
+    This path corresponds to where the Executor downloads attachments
+    in the sandbox environment.
+
+    Args:
+        task_id: Task ID
+        subtask_id: Subtask ID
+        filename: Original filename
+
+    Returns:
+        Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
+        Returns None if task_id or subtask_id is not provided.
+    """
+    if task_id is None or subtask_id is None:
+        return None
+    # Guard against None filename and strip control characters
+    safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
+    return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+
+
+def _build_image_metadata_header(
+    context,
+    task_id: int | None = None,
+    subtask_id: int | None = None,
+) -> str:
     """Build image attachment metadata header string."""
     attachment_id = context.id
     filename = context.name or "image"
@@ -540,19 +582,32 @@ def _build_image_metadata_header(context) -> str:
     formatted_size = _format_file_size(file_size)
     url = _build_attachment_url(attachment_id)
 
+    # Build sandbox path if task_id and subtask_id are provided
+    sandbox_path = _build_sandbox_path(task_id, subtask_id, filename)
+
+    if sandbox_path:
+        return (
+            f"[Image Attachment: {filename} | ID: {attachment_id} | "
+            f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+            f"File Path in Sandbox: {sandbox_path}]"
+        )
     return (
         f"[Image Attachment: {filename} | ID: {attachment_id} | "
         f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
     )
 
 
-def _build_document_text_prefix(context) -> str:
+def _build_document_text_prefix(
+    context,
+    task_id: int | None = None,
+    subtask_id: int | None = None,
+) -> str:
     """Build a text prefix for a document context (without XML tags).
 
     Note: This returns raw content. The caller is responsible for wrapping
     multiple attachments in a single <attachment> XML tag.
 
-    Includes attachment metadata (id, filename, mime_type, file_size, url).
+    Includes attachment metadata (id, filename, mime_type, file_size, url, sandbox_path).
     """
     if not context.extracted_text:
         return ""
@@ -565,6 +620,16 @@ def _build_document_text_prefix(context) -> str:
     formatted_size = _format_file_size(file_size)
     url = _build_attachment_url(attachment_id)
 
+    # Build sandbox path if task_id and subtask_id are provided
+    sandbox_path = _build_sandbox_path(task_id, subtask_id, filename)
+
+    if sandbox_path:
+        return (
+            f"[Attachment: {filename} | ID: {attachment_id} | "
+            f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+            f"File Path(already in sandbox): {sandbox_path}]\n"
+            f"{context.extracted_text}\n\n"
+        )
     return (
         f"[Attachment: {filename} | ID: {attachment_id} | "
         f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
@@ -724,11 +789,16 @@ def get_knowledge_base_meta_for_task(
     Returns:
         List of dicts with kb_name, kb_id, and kb_kind (Kind object)
     """
-    from app.models.subtask import Subtask
-    from app.models.subtask_context import ContextType, SubtaskContext
-    from app.services.knowledge.task_knowledge_base_service import (
-        task_knowledge_base_service,
-    )
+    try:
+        from app.models.subtask import Subtask
+        from app.models.subtask_context import ContextType, SubtaskContext
+        from app.services.knowledge.task_knowledge_base_service import (
+            task_knowledge_base_service,
+        )
+    except (ImportError, ModuleNotFoundError):
+        # Backend ORM is not available when chat_shell runs as an independent service.
+        # This helper is only meaningful in package mode; return empty meta in other modes.
+        return []
 
     try:
         # Get all subtask IDs for this task

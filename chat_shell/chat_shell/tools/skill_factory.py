@@ -138,6 +138,7 @@ async def prepare_skill_tools(
     ws_emitter: Any = None,
     load_skill_tool: Optional[Any] = None,
     preload_skills: Optional[list[str]] = None,
+    user_selected_skills: Optional[list[str]] = None,
     user_name: str = "",
     auth_token: str = "",
     task_data: dict[str, Any] | None = None,
@@ -154,7 +155,9 @@ async def prepare_skill_tools(
     after the skill is loaded via load_skill tool.
 
     Additionally, if a skill has mcpServers configured, the MCP servers will be
-    connected and their tools will be included in the returned tools list.
+    connected upfront and their tools will be registered to LoadSkillTool under
+    that skill name. These MCP tools are only exposed to the model after the
+    corresponding skill is loaded (or preloaded).
 
     Skill binaries are downloaded from backend API using REMOTE_STORAGE_URL.
 
@@ -173,13 +176,16 @@ async def prepare_skill_tools(
         load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
         preload_skills: Optional list of skill names to preload into system prompt.
                        Skills in this list will have their prompts injected automatically.
+        user_selected_skills: Optional list of skill names that were explicitly selected
+                             by the user for this message. These skills will be highlighted
+                             in the system prompt to encourage the model to prioritize them.
         user_name: Username for identifying the user
         auth_token: JWT token for API authentication (e.g., attachment upload/download)
         task_data: Optional task data for MCP variable substitution
 
     Returns:
         Tuple of (tools, mcp_clients) where:
-        - tools: List of tool instances created from skill configurations and MCP servers
+        - tools: List of tool instances created from skill configurations
                  (only preloaded skills' tools are in this list for immediate use)
         - mcp_clients: List of MCPClient instances that need to be cleaned up
     """
@@ -200,8 +206,16 @@ async def prepare_skill_tools(
     # Get base URL for skill binary downloads
     remote_url = getattr(settings, "REMOTE_STORAGE_URL", "").rstrip("/")
 
-    # Collect all skill MCP server configs for batch loading (only for preloaded skills)
+    # Collect all skill MCP server configs for batch loading.
+    #
+    # NOTE:
+    # - LangGraph's ToolNode builds a static tool map at agent creation time.
+    # - To make skill MCP tools available after a user calls load_skill, we must
+    #   connect and materialize these tools BEFORE the agent graph is built.
+    # - We still keep skill gating: MCP tools are registered under their owning
+    #   skill name and are only exposed to the model after that skill is loaded.
     skill_mcp_configs: dict[str, dict[str, Any]] = {}
+    skill_mcp_server_owner: dict[str, str] = {}  # prefixed_server_name -> skill_name
 
     # Process each skill configuration
     for skill_config in skill_configs:
@@ -215,22 +229,27 @@ async def prepare_skill_tools(
         # Check if this skill should be preloaded
         should_preload = preload_skills is not None and skill_name in preload_skills
 
-        # Collect MCP servers from skill config - only for preloaded skills
-        if mcp_servers and should_preload:
+        # Collect MCP servers from skill config.
+        # We only load MCP tools if we can register them under LoadSkillTool
+        # (for skill-gated exposure) or the skill is explicitly preloaded.
+        if mcp_servers and (load_skill_tool is not None or should_preload):
             logger.info(
-                "[skill_factory] Skill '%s' has %d MCP server(s) configured (preloaded)",
+                "[skill_factory] Skill '%s' has %d MCP server(s) configured (preload=%s)",
                 skill_name,
                 len(mcp_servers),
+                should_preload,
             )
-            # Prefix MCP server names with skill name to avoid conflicts
+            # Prefix MCP server names with skill name to avoid conflicts across skills.
             for server_name, server_config in mcp_servers.items():
                 prefixed_name = f"{skill_name}_{server_name}"
                 skill_mcp_configs[prefixed_name] = server_config
-        elif mcp_servers and not should_preload:
+                skill_mcp_server_owner[prefixed_name] = skill_name
+        elif mcp_servers:
             logger.debug(
-                "[skill_factory] Skipping MCP servers for skill '%s' (not preloaded, "
-                "will be loaded when skill is loaded via load_skill tool)",
+                "[skill_factory] Skipping MCP servers for skill '%s': load_skill_tool=%s, preload=%s",
                 skill_name,
+                load_skill_tool is not None,
+                should_preload,
             )
 
         if not tool_declarations:
@@ -240,10 +259,19 @@ async def prepare_skill_tools(
             if should_preload and load_skill_tool is not None:
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
-                    load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                    # Check if this skill was explicitly selected by the user
+                    is_user_selected = (
+                        user_selected_skills is not None
+                        and skill_name in user_selected_skills
+                    )
+                    load_skill_tool.preload_skill_prompt(
+                        skill_name, skill_config, is_user_selected=is_user_selected
+                    )
                     logger.info(
-                        "[skill_factory] Preloaded skill prompt for '%s' (no tools, in preload_skills list)",
+                        "[skill_factory] Preloaded skill prompt for '%s' "
+                        "(no tools, in preload_skills list, user_selected=%s)",
                         skill_name,
+                        is_user_selected,
                     )
             continue
 
@@ -342,10 +370,19 @@ async def prepare_skill_tools(
                 if load_skill_tool is not None:
                     skill_prompt = skill_config.get("prompt", "")
                     if skill_prompt:
-                        load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                        # Check if this skill was explicitly selected by the user
+                        is_user_selected = (
+                            user_selected_skills is not None
+                            and skill_name in user_selected_skills
+                        )
+                        load_skill_tool.preload_skill_prompt(
+                            skill_name, skill_config, is_user_selected=is_user_selected
+                        )
                         logger.info(
-                            "[skill_factory] Preloaded skill prompt for '%s' (in preload_skills list)",
+                            "[skill_factory] Preloaded skill prompt for '%s' "
+                            "(in preload_skills list, user_selected=%s)",
                             skill_name,
+                            is_user_selected,
                         )
             else:
                 logger.debug(
@@ -359,8 +396,75 @@ async def prepare_skill_tools(
         mcp_tools, skill_mcp_clients = await _load_skill_mcp_tools(
             skill_mcp_configs, task_id, task_data
         )
-        tools.extend(mcp_tools)
         mcp_clients.extend(skill_mcp_clients)
+
+        # Register MCP tools under their owning skills so they are only exposed
+        # after the corresponding skill is loaded.
+        if load_skill_tool is not None and mcp_tools:
+            prefixed_server_names = sorted(
+                skill_mcp_server_owner.keys(), key=len, reverse=True
+            )
+
+            def _dedupe_by_tool_name(items: list[Any]) -> list[Any]:
+                merged: list[Any] = []
+                seen: set[str] = set()
+                for item in items:
+                    name = getattr(item, "name", None)
+                    if isinstance(name, str) and name:
+                        if name in seen:
+                            continue
+                        seen.add(name)
+                    merged.append(item)
+                return merged
+
+            unassigned: list[Any] = []
+            tools_by_skill: dict[str, list[Any]] = {}
+
+            for tool in mcp_tools:
+                owner_skill: str | None = None
+
+                server_name = getattr(tool, "server_name", None)
+                if (
+                    isinstance(server_name, str)
+                    and server_name in skill_mcp_server_owner
+                ):
+                    owner_skill = skill_mcp_server_owner[server_name]
+                else:
+                    tool_name = getattr(tool, "name", "")
+                    if isinstance(tool_name, str) and tool_name:
+                        for prefixed in prefixed_server_names:
+                            if tool_name.startswith(f"{prefixed}_"):
+                                owner_skill = skill_mcp_server_owner[prefixed]
+                                break
+
+                if owner_skill:
+                    tools_by_skill.setdefault(owner_skill, []).append(tool)
+                else:
+                    unassigned.append(tool)
+
+            for skill_name, skill_tools in tools_by_skill.items():
+                existing = load_skill_tool.get_skill_tools(skill_name)
+                merged_tools = _dedupe_by_tool_name(list(existing) + skill_tools)
+                load_skill_tool.register_skill_tools(skill_name, merged_tools)
+                logger.info(
+                    "[skill_factory] Registered %d MCP tool(s) for skill '%s'",
+                    len(skill_tools),
+                    skill_name,
+                )
+
+            if unassigned:
+                logger.warning(
+                    "[skill_factory] %d MCP tool(s) could not be assigned to a skill; "
+                    "they will not be skill-gated. tool_names=%s",
+                    len(unassigned),
+                    [getattr(t, "name", "unknown") for t in unassigned],
+                )
+                # Fallback: expose unassigned tools directly so functionality isn't lost.
+                tools.extend(unassigned)
+        elif load_skill_tool is None and mcp_tools:
+            # Without LoadSkillTool we can't apply skill gating; keep previous behavior
+            # and expose MCP tools directly.
+            tools.extend(mcp_tools)
 
     # Log summary of all skills loaded
     if tools:

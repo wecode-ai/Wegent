@@ -8,6 +8,11 @@ This module provides a simple async event bus for publishing and subscribing
 to internal application events. It enables loose coupling between modules
 by allowing them to communicate through events rather than direct calls.
 
+The event bus handles cross-loop execution gracefully:
+- Handlers are executed in the main event loop to ensure proper async context
+- If called from a different loop, events are scheduled in the main loop
+- Errors in handlers are isolated and don't affect other handlers
+
 Usage:
     # Define an event
     @dataclass
@@ -23,9 +28,10 @@ Usage:
 """
 
 import asyncio
+import concurrent.futures
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Type, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +73,7 @@ class EventBus:
     - Multiple handlers per event type
     - Async handlers with fire-and-forget execution
     - Error isolation (one handler failure doesn't affect others)
+    - Cross-loop execution (handlers run in main loop)
 
     Note: This is an in-process event bus. For cross-process events,
     use Redis Pub/Sub or a message queue.
@@ -75,7 +82,7 @@ class EventBus:
     def __init__(self) -> None:
         """Initialize the event bus."""
         self._handlers: Dict[Type[Any], List[Callable]] = {}
-        self._lock = asyncio.Lock()
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def subscribe(
         self, event_type: Type[T], handler: Callable[[T], Any]
@@ -100,8 +107,8 @@ class EventBus:
             self._handlers[event_type] = []
 
         self._handlers[event_type].append(handler)
-        logger.debug(
-            "Subscribed handler %s to event %s",
+        logger.info(
+            "[EVENT_BUS] Subscribed handler %s to event %s",
             handler.__name__,
             event_type.__name__,
         )
@@ -109,8 +116,8 @@ class EventBus:
         def unsubscribe() -> None:
             if event_type in self._handlers and handler in self._handlers[event_type]:
                 self._handlers[event_type].remove(handler)
-                logger.debug(
-                    "Unsubscribed handler %s from event %s",
+                logger.info(
+                    "[EVENT_BUS] Unsubscribed handler %s from event %s",
                     handler.__name__,
                     event_type.__name__,
                 )
@@ -123,12 +130,37 @@ class EventBus:
         Handlers are executed concurrently in fire-and-forget mode.
         Errors in handlers are logged but don't propagate to the publisher.
 
+        IMPORTANT: This method must be called from an active event loop context.
+        It is an async method and requires `await`. If called without a running
+        event loop, a RuntimeError will be raised.
+
+        Note: In Celery worker context, events are skipped because WebSocket
+        operations cannot work across process boundaries.
+
+        Cross-loop handling:
+        - If called from main loop, handlers execute directly
+        - If called from different loop, handlers are scheduled in main loop
+
         Args:
             event: The event instance to publish
+
+        Raises:
+            RuntimeError: If called without a running event loop
 
         Example:
             await event_bus.publish(ChatCompletedEvent(user_id=123))
         """
+        # Skip event publishing in Celery worker context
+        # WebSocket operations don't work across process boundaries
+        from app.services.chat.ws_emitter import get_ws_emitter
+
+        if get_ws_emitter() is None:
+            logger.info(
+                "[EVENT_BUS] Skipping event %s - not in FastAPI context (likely Celery worker)",
+                type(event).__name__,
+            )
+            return
+
         event_type = type(event)
         handlers = self._handlers.get(event_type, [])
 
@@ -150,6 +182,82 @@ class EventBus:
             [h.__name__ for h in handlers],
         )
 
+        # Get current event loop - publish() is async so there must be a running loop
+        # If not, this is a programming error and should fail explicitly
+        current_loop = asyncio.get_running_loop()
+
+        # If we have a main loop reference and we're in a different loop,
+        # schedule handlers in main loop to ensure proper async context
+        if (
+            self._main_loop is not None
+            and current_loop is not self._main_loop
+            and self._main_loop.is_running()
+        ):
+            logger.info(
+                "[EVENT_BUS] Publishing from different loop, scheduling in main loop"
+            )
+            await self._schedule_in_main_loop(handlers, event)
+            return
+
+        # Execute handlers in current loop
+        await self._execute_handlers(handlers, event)
+
+    async def _schedule_in_main_loop(self, handlers: List[Callable], event: T) -> None:
+        """Schedule handler execution in the main event loop and wait for completion.
+
+        This method schedules handlers in the main loop and attaches a callback
+        to log any exceptions from the Future. Since we're in a different loop,
+        we cannot directly await the result, but we ensure exceptions are logged.
+
+        Args:
+            handlers: List of handlers to execute
+            event: Event to pass to handlers
+        """
+        if self._main_loop is None or not self._main_loop.is_running():
+            logger.warning(
+                "[EVENT_BUS] Main loop not available, skipping handlers for event %s "
+                "(executing in wrong loop would cause errors)",
+                type(event).__name__,
+            )
+            return
+
+        async def run_handlers() -> None:
+            await self._execute_handlers(handlers, event)
+
+        def done_callback(future: "concurrent.futures.Future[None]") -> None:
+            """Log any exceptions from the scheduled handlers."""
+            try:
+                future.result()
+            except Exception:
+                logger.exception(
+                    "[EVENT_BUS] Exception in cross-loop handlers for event %s",
+                    type(event).__name__,
+                )
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(run_handlers(), self._main_loop)
+            # Attach callback to log exceptions - we can't await across loops
+            future.add_done_callback(done_callback)
+            logger.info(
+                "[EVENT_BUS] Scheduled %d handlers in main loop for event %s",
+                len(handlers),
+                type(event).__name__,
+            )
+        except Exception:
+            # Failed to schedule - log and skip (don't execute in wrong loop)
+            logger.exception(
+                "[EVENT_BUS] Failed to schedule handlers in main loop for event %s, "
+                "handlers will not be executed",
+                type(event).__name__,
+            )
+
+    async def _execute_handlers(self, handlers: List[Callable], event: T) -> None:
+        """Execute all handlers concurrently.
+
+        Args:
+            handlers: List of handlers to execute
+            event: Event to pass to handlers
+        """
         # Execute all handlers concurrently
         tasks = []
         for handler in handlers:
@@ -161,7 +269,7 @@ class EventBus:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
             logger.info(
-                "[EVENT_BUS] All handlers completed for event %s", event_type.__name__
+                "[EVENT_BUS] All handlers completed for event %s", type(event).__name__
             )
 
     async def _execute_handler(self, handler: Callable, event: Any) -> None:
@@ -178,7 +286,7 @@ class EventBus:
                 await result
         except Exception as e:
             logger.error(
-                "Error in event handler %s for event %s: %s",
+                "[EVENT_BUS] Error in event handler %s for event %s: %s",
                 handler.__name__,
                 type(event).__name__,
                 e,
@@ -188,7 +296,7 @@ class EventBus:
     def clear(self) -> None:
         """Clear all subscriptions. Useful for testing."""
         self._handlers.clear()
-        logger.debug("Cleared all event subscriptions")
+        logger.info("[EVENT_BUS] Cleared all event subscriptions")
 
 
 # Global event bus instance
@@ -210,12 +318,32 @@ def get_event_bus() -> EventBus:
 def init_event_bus() -> EventBus:
     """Initialize the global event bus.
 
-    This should be called during application startup.
+    This should be called during application startup from within an async context.
+    Captures the main event loop reference for cross-loop scheduling.
 
     Returns:
         EventBus: The initialized event bus instance
     """
     global _event_bus
     _event_bus = EventBus()
-    logger.info("Event bus initialized")
+
+    # Capture main event loop reference - only use get_running_loop()
+    # as get_event_loop() is deprecated in Python 3.10+
+    try:
+        _event_bus._main_loop = asyncio.get_running_loop()
+        logger.info("[EVENT_BUS] Event bus initialized with main event loop reference")
+    except RuntimeError:
+        # No running loop during initialization - this is expected if called
+        # before the async context starts. The loop will be set later.
+        logger.warning(
+            "[EVENT_BUS] Event bus initialized without event loop reference "
+            "(will be set when async context starts)"
+        )
+
+    # Also set the main loop in async_utils for consistency
+    if _event_bus._main_loop is not None:
+        from app.core.async_utils import set_main_event_loop
+
+        set_main_event_loop(_event_bus._main_loop)
+
     return _event_bus

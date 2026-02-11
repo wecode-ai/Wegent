@@ -17,11 +17,29 @@ from typing import Any, Dict, List
 
 import requests
 
+from executor.platform_compat import get_safe_path_name
+
 logger = logging.getLogger(__name__)
 
 
 # Re-export get_api_base_url for backward compatibility
 from executor.services.api_client import get_api_base_url  # noqa: E402
+
+
+def get_attachments_subdir_name(task_id: str) -> str:
+    """Get the attachments subdirectory name for a task.
+
+    On Windows, colons are not allowed in directory names,
+    so we use underscore as separator instead.
+
+    Args:
+        task_id: The task ID
+
+    Returns:
+        Directory name like '{task_id}_executor_attachments' (Windows)
+        or '{task_id}:executor:attachments' (Unix)
+    """
+    return get_safe_path_name(f"{task_id}:executor:attachments")
 
 
 @dataclass
@@ -67,11 +85,12 @@ class AttachmentDownloader:
         Get attachments directory path.
 
         Returns:
-            Path in format: {workspace}/{task_id}:executor:attachments/{subtask_id}/
+            Path in format: {workspace}/{task_id}_executor_attachments/{subtask_id}/ (Windows)
+            or {workspace}/{task_id}:executor:attachments/{subtask_id}/ (Unix)
         """
         return os.path.join(
             self.workspace,
-            f"{self.task_id}:executor:attachments",
+            get_attachments_subdir_name(self.task_id),
             str(self.subtask_id),
         )
 
@@ -85,7 +104,28 @@ class AttachmentDownloader:
         Returns:
             Full path to the attachment file
         """
-        return os.path.join(self.get_attachments_dir(), filename)
+        # Sanitize filename to prevent path traversal attacks
+        safe_filename = self._sanitize_filename(filename)
+        return os.path.join(self.get_attachments_dir(), safe_filename)
+
+    @staticmethod
+    def _sanitize_filename(filename: str) -> str:
+        """
+        Sanitize filename to prevent path traversal and metadata corruption.
+
+        Args:
+            filename: Original filename
+
+        Returns:
+            Sanitized filename safe for filesystem operations
+        """
+        # Use basename to strip any directory components
+        safe_name = os.path.basename(filename)
+        # Strip control characters (newline, carriage return)
+        safe_name = safe_name.replace("\n", "").replace("\r", "")
+        # Remove any remaining path separators
+        safe_name = safe_name.replace("/", "_").replace("\\", "_")
+        return safe_name or "document"
 
     def download_all(
         self, attachments: List[Dict[str, Any]]

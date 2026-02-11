@@ -168,13 +168,13 @@ export interface BackgroundExecutionMonitorStats {
   total_executions: number
   completed_count: number
   failed_count: number
-  timeout_count: number
+  retrying_count: number
   cancelled_count: number
   running_count: number
   pending_count: number
   success_rate: number
   failure_rate: number
-  timeout_rate: number
+  retrying_rate: number
   active_subscriptions_count: number
   total_subscriptions_count: number
 }
@@ -361,7 +361,7 @@ export interface AdminPublicShellUpdate {
 }
 
 // IM Channel Types
-export type IMChannelType = 'dingtalk' | 'feishu' | 'wechat'
+export type IMChannelType = 'dingtalk' | 'feishu' | 'wechat' | 'telegram'
 
 export interface IMChannel {
   id: number

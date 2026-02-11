@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 # Add the project root to sys.path if not already there
 project_root = os.path.dirname(
@@ -208,6 +208,14 @@ class SubtaskInDB(SubtaskBase):
     sender_user_id: Optional[int] = None  # User ID when sender_type=USER
     sender_user_name: Optional[str] = None  # User name for display
     reply_to_subtask_id: Optional[int] = None  # Quoted message ID
+
+    @field_validator("sender_type", mode="before")
+    @classmethod
+    def validate_sender_type(cls, v):
+        """Convert empty string to None for backward compatibility."""
+        if v == "":
+            return None
+        return v
 
     @field_serializer("contexts")
     def serialize_contexts(self, value: List) -> List[dict[str, Any]]:

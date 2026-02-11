@@ -110,18 +110,8 @@ export function CreateKnowledgeBaseDialog({
       return
     }
 
-    // Validate retrieval config - retriever and embedding model are required
-    if (!retrievalConfig.retriever_name) {
-      setError(t('knowledge:document.retrieval.noRetriever'))
-      setAccordionValue('advanced')
-      return
-    }
-
-    if (!retrievalConfig.embedding_config?.model_name) {
-      setError(t('knowledge:document.retrieval.noEmbeddingModel'))
-      setAccordionValue('advanced')
-      return
-    }
+    // Note: retrieval_config is now optional - users can create KB without RAG
+    // AI will use kb_ls/kb_head tools to explore documents instead of RAG search
 
     try {
       await onSubmit({

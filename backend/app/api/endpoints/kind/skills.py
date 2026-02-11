@@ -29,7 +29,7 @@ from app.schemas.kind import (
 )
 from app.services.adapters.public_skill import public_skill_service
 from app.services.adapters.skill_kinds import skill_kinds_service
-from app.services.git_skill_service import git_skill_service
+from app.services.git_skill import git_skill_service
 
 router = APIRouter()
 
@@ -165,9 +165,14 @@ def list_skills(
     exact_match: bool = Query(
         False,
         description="If true, only search in the specified namespace (for upload check). "
-        "If false, search with fallback: personal -> group -> public (for usage).",
+        "If false, search with fallback: personal -> group -> task_owner -> public (for usage).",
     ),
-    current_user: User = Depends(security.get_current_user),
+    task_id: int = Query(
+        None,
+        description="Task ID for task-based authorization. "
+        "If provided, also searches skills owned by the task owner.",
+    ),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ):
     """
@@ -180,7 +185,14 @@ def list_skills(
     - exact_match=false (default): Search with fallback order (used for skill usage):
       1. User's skill in default namespace (personal)
       2. Group-level skill in specified namespace (any user in that group, if namespace != 'default')
-      3. Public skill (user_id=0)
+      3. Task owner's skill (if task_id provided and user is task member)
+      4. Public skill (user_id=0)
+
+    Task-based authorization:
+    When task_id is provided, the API will also search for skills owned by the
+    task owner. This enables shared team scenarios where user B executes a task
+    using user A's team, and needs to find user A's private skills.
+    Authorization is verified by checking if current_user is a member of the task.
     """
     if name:
         if exact_match:
@@ -203,7 +215,42 @@ def list_skills(
                 db=db, name=name, namespace=namespace
             )
 
-        # 3. Public skill (user_id=0)
+        # 3. Team owner's skill (if task_id provided)
+        # This enables shared team scenarios where executor queries skills
+        # owned by the original team owner
+        if not skill and task_id:
+            from app.models.task import TaskResource
+            from app.schemas.kind import Task
+            from app.services.task_member_service import task_member_service
+
+            # Verify current user is a member of the task (owner or group member)
+            if task_member_service.is_member(db, task_id, current_user.id):
+                # Get task to find the team owner
+                task = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
+                    )
+                    .first()
+                )
+                if task:
+                    # Get team owner user_id from task's teamRef
+                    task_crd = Task.model_validate(task.json)
+                    team_owner_user_id = task_crd.spec.teamRef.user_id
+
+                    # If teamRef.user_id is set and different from current user,
+                    # search skill owned by team owner
+                    if team_owner_user_id and team_owner_user_id != current_user.id:
+                        skill = skill_kinds_service.get_skill_by_name(
+                            db=db,
+                            name=name,
+                            namespace="default",
+                            user_id=team_owner_user_id,
+                        )
+
+        # 4. Public skill (user_id=0)
         if not skill:
             skill = skill_kinds_service.get_skill_by_name(
                 db=db, name=name, namespace="default", user_id=0
@@ -234,11 +281,14 @@ def scan_git_repository(
     Scan a Git repository for skills.
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
-    Returns a list of skills found in the repository (directories containing SKILL.md).
+    Returns a list of skills found in the repository (directories containing SKILL.md)
+    along with repository authentication information.
     """
-    skills = git_skill_service.scan_repository(repo_url)
+    skills = git_skill_service.scan_repository(repo_url, user_id=current_user.id, db=db)
 
     return GitScanResponse(
         repo_url=repo_url,
@@ -268,7 +318,9 @@ def import_from_git_repository(
     Import selected skills from a Git repository.
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
     Skills are imported to the user's personal namespace by default.
     If a skill with the same name already exists:
@@ -332,6 +384,10 @@ def batch_update_skills_from_git(
 
     This is more efficient than calling update-from-git for each skill individually,
     especially when multiple skills come from the same repository.
+
+    Supports both public and private repositories via:
+    - URL embedded credentials in the original repo_url
+    - Platform integration tokens configured in Settings
 
     Only skills that were imported from Git (source.type === 'git') can be updated.
     Skills that don't exist, are not from Git, or have incomplete source info will be skipped.
@@ -579,7 +635,7 @@ async def update_public_skill_with_upload(
 @router.get("/public/{skill_id}/download")
 def download_public_skill(
     skill_id: int,
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ):
     """
@@ -705,11 +761,14 @@ def scan_git_repository_for_public(
     Scan a Git repository for skills (admin only, for public skill import).
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
-    Returns a list of skills found in the repository (directories containing SKILL.md).
+    Returns a list of skills found in the repository (directories containing SKILL.md)
+    along with repository authentication information.
     """
-    skills = git_skill_service.scan_repository(repo_url)
+    skills = git_skill_service.scan_repository(repo_url, user_id=current_user.id, db=db)
 
     return GitScanResponse(
         repo_url=repo_url,
@@ -739,7 +798,9 @@ def import_from_git_repository_for_public(
     Import selected skills from a Git repository as public skills (admin only).
 
     Supports GitHub, GitLab, Gitee, and Gitea platforms.
-    Only public repositories are supported.
+    Supports both public and private repositories via:
+    - URL embedded credentials (e.g., https://token@github.com/owner/repo)
+    - Platform integration tokens configured in Settings
 
     Skills are imported as public skills (user_id=0).
     If a skill with the same name already exists:
@@ -996,7 +1057,12 @@ def get_skill(
 def download_skill(
     skill_id: int,
     namespace: str = Query("default", description="Namespace for group skill lookup"),
-    current_user: User = Depends(security.get_current_user),
+    task_id: int = Query(
+        None,
+        description="Task ID for task-based authorization. "
+        "If provided, allows downloading skills owned by the task owner.",
+    ),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ):
     """
@@ -1006,7 +1072,14 @@ def download_skill(
     Search order:
     1. User's personal skill (user_id=current_user)
     2. Group skill in namespace (if namespace != 'default')
-    3. Public skill (user_id=0)
+    3. Task owner's skill (if task_id provided and user is task member)
+    4. Public skill (user_id=0)
+
+    Task-based authorization:
+    When task_id is provided, the API will also search for skills owned by the
+    task owner. This enables shared team scenarios where user B executes a task
+    using user A's team, and needs to download user A's private skills.
+    Authorization is verified by checking if current_user is a member of the task.
     """
     # 1. Search user's personal skill first
     skill = skill_kinds_service.get_skill_by_id(
@@ -1029,7 +1102,43 @@ def download_skill(
                 db=db, skill_id=skill_id, namespace=namespace
             )
 
-    # 3. If still not found, search public skill (user_id=0)
+    # 3. If not found and task_id provided, search team owner's skill
+    # This enables shared team scenarios where executor downloads skills
+    # owned by the original team owner
+    if not skill and task_id:
+        from app.models.task import TaskResource
+        from app.schemas.kind import Task
+        from app.services.task_member_service import task_member_service
+
+        # Verify current user is a member of the task (owner or group member)
+        if task_member_service.is_member(db, task_id, current_user.id):
+            # Get task to find the team owner
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
+                )
+                .first()
+            )
+            if task:
+                # Get team owner user_id from task's teamRef
+                task_crd = Task.model_validate(task.json)
+                team_owner_user_id = task_crd.spec.teamRef.user_id
+
+                # If teamRef.user_id is set and different from current user,
+                # search skill owned by team owner
+                if team_owner_user_id and team_owner_user_id != current_user.id:
+                    skill = skill_kinds_service.get_skill_by_id(
+                        db=db, skill_id=skill_id, user_id=team_owner_user_id
+                    )
+                    if skill:
+                        binary_data = skill_kinds_service.get_skill_binary(
+                            db=db, skill_id=skill_id, user_id=team_owner_user_id
+                        )
+
+    # 4. If still not found, search public skill (user_id=0)
     if not skill:
         skill = skill_kinds_service.get_skill_by_id(db=db, skill_id=skill_id, user_id=0)
         if skill:

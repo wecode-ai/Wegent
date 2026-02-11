@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
@@ -51,6 +52,11 @@ class Settings(BaseSettings):
 
     # Environment configuration
     ENVIRONMENT: str = "development"  # development or production
+
+    # MCP transport security (DNS rebinding protection)
+    MCP_ENABLE_DNS_REBINDING_PROTECTION: bool = False
+    MCP_ALLOWED_HOSTS: list[str] = []
+    MCP_ALLOWED_ORIGINS: list[str] = []
 
     # Database configuration
     DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
@@ -171,6 +177,34 @@ class Settings(BaseSettings):
             return None
         return v
 
+    @field_validator(
+        "MCP_ALLOWED_HOSTS",
+        "MCP_ALLOWED_ORIGINS",
+        mode="before",
+    )
+    @classmethod
+    def parse_mcp_list(cls, v: Any) -> list[str]:
+        """Parse MCP allowlist values from JSON or comma-separated strings."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(item).strip() for item in v if str(item).strip()]
+        if isinstance(v, str):
+            raw = v.strip()
+            if not raw:
+                return []
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return [
+                            str(item).strip() for item in parsed if str(item).strip()
+                        ]
+                except json.JSONDecodeError:
+                    pass
+            return [item.strip() for item in raw.split(",") if item.strip()]
+        return v
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
@@ -224,6 +258,9 @@ class Settings(BaseSettings):
     WEBHOOK_AUTH_TOKEN: str = ""
     WEBHOOK_HEADERS: str = ""
     WEBHOOK_TIMEOUT: int = 30
+    # Allow PII (Personally Identifiable Information) in webhook notifications
+    # When False, email addresses are masked in notification descriptions
+    ALLOW_PII_IN_WEBHOOKS: bool = False
 
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"
@@ -327,6 +364,16 @@ class Settings(BaseSettings):
     # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
     STREAMING_MODE: str = "legacy"
 
+    # IM Channel configuration
+    # Default Claude model name for device mode (auto-switch when user's model is not Claude)
+    # Format: model name as shown in /models list (e.g., "claude-3-5-sonnet")
+    # If empty, user must manually select a Claude model
+    IM_CHANNEL_DEVICE_DEFAULT_MODEL: str = ""
+    # Conversation timeout in minutes for IM channels
+    # If the last message was sent more than this many minutes ago, start a new conversation
+    # Set to 0 to disable auto-new conversation (default: 720 minutes = 12 hours)
+    IM_CHANNEL_CONVERSATION_TIMEOUT_MINUTES: int = 720
+
     # Default team configuration for each mode
     # Format: "name#namespace" (namespace is optional, defaults to "default")
     DEFAULT_TEAM_CHAT: str = "wegent-chat#default"  # Default team for chat mode
@@ -390,6 +437,9 @@ class Settings(BaseSettings):
     MEMORY_API_KEY: str = ""
     # Search timeout in seconds (to avoid blocking chat flow)
     MEMORY_TIMEOUT_SECONDS: float = 2.0
+    # Write timeout in seconds (for async background operations like add_memory)
+    # Can be longer since write operations don't block the main chat flow
+    MEMORY_WRITE_TIMEOUT_SECONDS: float = 10.0
     # Maximum number of memories to inject into system prompt
     MEMORY_MAX_RESULTS: int = 5
     # Number of recent messages to include as context when saving memory (default: 3 total)

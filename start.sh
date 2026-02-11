@@ -779,7 +779,8 @@ load_config
 # Compute derived URLs based on configured ports (if not already set from config)
 LOCAL_IP=$(get_local_ip)
 [ -z "$WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="http://$LOCAL_IP:$BACKEND_PORT"
-[ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="http://$LOCAL_IP:$BACKEND_PORT"
+# TASK_API_DOMAIN should be the same as WEGENT_SOCKET_URL (both point to backend)
+[ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="$WEGENT_SOCKET_URL"
 [ -z "$EXECUTOR_MANAGER_URL" ] && EXECUTOR_MANAGER_URL="http://localhost:$EXECUTOR_MANAGER_PORT"
 [ -z "$BACKEND_API_URL" ] && BACKEND_API_URL="http://$LOCAL_IP:$BACKEND_PORT"
 
@@ -1084,7 +1085,7 @@ start_services() {
     # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
     # CHAT_SHELL_URL: URL for backend to call chat_shell service
     start_service "backend" "backend" \
-        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
+        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
 
     # 2. Start Chat Shell
     # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)

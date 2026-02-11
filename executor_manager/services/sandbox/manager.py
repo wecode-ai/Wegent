@@ -184,6 +184,15 @@ class SandboxManager(metaclass=SingletonMeta):
         # Build task data for executor
         task_data = self._build_sandbox_task(sandbox)
 
+        # Log task data for debugging auth_token transmission
+        logger.info(
+            f"[SandboxManager] Creating sandbox container with task_data: "
+            f"task_id={task_data.get('task_id')}, "
+            f"type={task_data.get('type')}, "
+            f"auth_token={'present' if task_data.get('auth_token') else 'missing'}, "
+            f"metadata_keys={list(sandbox.metadata.keys())}"
+        )
+
         # Get executor and create container
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
 
@@ -433,7 +442,7 @@ class SandboxManager(metaclass=SingletonMeta):
             if result.get("status") == "not_found":
                 logger.info(
                     f"[SandboxManager] Pod not found by name '{sandbox.container_name}', "
-                    f"trying to delete by task_id label: {sandbox_id}"
+                    f"trying to delete by task_id: {sandbox_id}"
                 )
                 result = executor.delete_executor_by_task_id(sandbox_id)
 
@@ -831,6 +840,9 @@ class SandboxManager(metaclass=SingletonMeta):
 
         If a sandbox has not received a heartbeat within timeout,
         mark it as failed and update execution status.
+
+        IMPORTANT: This method uses async Redis operations to avoid blocking
+        the event loop, which is critical for maintaining HTTP responsiveness.
         """
         task_ids = self._repository.get_active_sandbox_ids()
         if not task_ids:
@@ -846,10 +858,10 @@ class SandboxManager(metaclass=SingletonMeta):
                 if sandbox is None or sandbox.status != SandboxStatus.RUNNING:
                     continue
 
-                # Check heartbeat - returns False if key missing or expired
-                if not heartbeat_mgr.check_heartbeat(task_id_str):
+                # Check heartbeat using async method to avoid blocking event loop
+                if not await heartbeat_mgr.check_heartbeat(task_id_str):
                     # Get last heartbeat time (may be None if key expired)
-                    last_heartbeat = heartbeat_mgr.get_last_heartbeat(task_id_str)
+                    last_heartbeat = await heartbeat_mgr.get_last_heartbeat(task_id_str)
 
                     # Check if sandbox has been running long enough to expect heartbeat
                     # Grace period: sandbox needs some time to start sending heartbeats
@@ -906,7 +918,7 @@ class SandboxManager(metaclass=SingletonMeta):
             logger.error(f"[SandboxManager] Error marking executions as failed: {e}")
 
         # Clean up heartbeat key
-        heartbeat_mgr.delete_heartbeat(sandbox_id)
+        await heartbeat_mgr.delete_heartbeat(sandbox_id)
 
         # Mark sandbox as failed but don't delete data yet
         # This allows clients to poll for execution status
@@ -926,7 +938,8 @@ class SandboxManager(metaclass=SingletonMeta):
             try:
                 executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
                 result = executor.delete_executor(sandbox.container_name)
-                if result.get("status") != "success":
+
+                if result.get("status") not in ("success", "not_found"):
                     logger.warning(
                         f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
                     )

@@ -13,6 +13,17 @@ from app.schemas.team import TeamInDB
 from app.schemas.user import UserInDB
 
 
+class SkillRef(BaseModel):
+    """Skill reference with full identification info.
+
+    Backend needs name + namespace + is_public to uniquely identify a skill.
+    """
+
+    name: str
+    namespace: str
+    is_public: bool
+
+
 class TaskApp(BaseModel):
     """App preview information (set by expose_service tool when service starts)"""
 
@@ -76,6 +87,10 @@ class TaskCreate(BaseModel):
     )
     # API key name field
     api_key_name: Optional[str] = None  # API key name used for this request
+
+    # Skill selection (user-selected skills for this message)
+    # Backend determines preload vs download based on executor type
+    additional_skills: Optional[List[SkillRef]] = None
 
 
 class TaskUpdate(BaseModel):

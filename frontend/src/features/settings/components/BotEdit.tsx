@@ -12,7 +12,7 @@ import React, {
 } from 'react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
+import { Loader2, XIcon, SettingsIcon, Edit, Wand2, Download, ExternalLink } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -168,7 +168,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [agentConfigError, setAgentConfigError] = useState(false)
-  const [mcpConfigError, setMcpConfigError] = useState(false)
+
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false)
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
@@ -194,28 +194,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           title: t('common:bot.errors.agent_config_json'),
         })
         setAgentConfigError(true)
-        return prev
-      }
-    })
-  }, [toast, t])
-
-  const prettifyMcpConfig = useCallback(() => {
-    setMcpConfig(prev => {
-      const trimmed = prev.trim()
-      if (!trimmed) {
-        setMcpConfigError(false)
-        return ''
-      }
-      try {
-        const parsed = JSON.parse(trimmed)
-        setMcpConfigError(false)
-        return JSON.stringify(parsed, null, 2)
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.mcp_config_json'),
-        })
-        setMcpConfigError(true)
         return prev
       }
     })
@@ -526,13 +504,28 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
     setPrompt(baseBot?.system_prompt || '')
-    setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '')
+
+    // Apply type normalization when loading MCP config
+    if (baseBot?.mcp_servers) {
+      const shellName = baseBot.shell_name || baseBot.shell_type || ''
+      const shell = shells.find(s => s.name === shellName)
+      const agentType = shell?.shellType
+
+      if (agentType && isValidAgentType(agentType)) {
+        const adaptedConfig = adaptMcpConfigForAgent(baseBot.mcp_servers, agentType)
+        setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
+      } else {
+        setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
+      }
+    } else {
+      setMcpConfig('')
+    }
+
     setSelectedSkills(baseBot?.skills || [])
     setPreloadSkills(baseBot?.preload_skills || [])
     // Capture initial bot skills - this list remains constant for preload selection
     setInitialBotSkills(baseBot?.skills || [])
     setAgentConfigError(false)
-    setMcpConfigError(false)
 
     if (baseBot?.agent_config) {
       // Remove protocol from display - it's managed separately via dropdown
@@ -540,7 +533,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } else {
       setAgentConfig('')
     }
-  }, [editingBotId, baseBot])
+  }, [editingBotId, baseBot, shells])
 
   // Initialize model-related data after agents and models are loaded
   useEffect(() => {
@@ -691,7 +684,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     botName,
     prompt,
     selectedSkills,
-    preloadSkills,
+
+    selectedModelNamespace,
   ])
 
   // Save bot and return the bot id
@@ -884,17 +878,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             console.warn(`Unknown agent type "${agentName}", skipping MCP config adaptation`)
           }
         }
-        setMcpConfigError(false)
       } catch {
-        setMcpConfigError(true)
         toast({
           variant: 'destructive',
           title: t('common:bot.errors.mcp_config_json'),
         })
         return
       }
-    } else {
-      setMcpConfigError(false)
     }
 
     setBotSaving(true)
@@ -1017,7 +1007,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 onChange={e => setBotName(e.target.value)}
                 placeholder={t('common:bot.name_placeholder')}
                 disabled={readOnly}
-                className={`w-full px-4 py-1 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                className={`w-full h-10 px-4 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
               />
             </div>
 
@@ -1551,45 +1541,38 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       {t('common:bot.mcp_config')}
                     </label>
                   </div>
-                  <Button size="sm" onClick={() => handleImportMcpConfig()} className="text-xs">
-                    {t('common:bot.import_mcp_button')}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {process.env.NEXT_PUBLIC_MCP_MARKET_URL && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          window.open(process.env.NEXT_PUBLIC_MCP_MARKET_URL, '_blank')
+                        }
+                        className="text-xs gap-1.5"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        {t('common:bot.mcp_market')}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={() => handleImportMcpConfig()}
+                      className="text-xs gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      {t('common:bot.import_mcp_button')}
+                    </Button>
+                  </div>
                 </div>
                 <textarea
                   value={mcpConfig}
-                  onChange={e => {
-                    if (readOnly) return
-                    const value = e.target.value
-                    setMcpConfig(value)
-                    if (!value.trim()) {
-                      setMcpConfigError(false)
-                    }
-                  }}
-                  onBlur={prettifyMcpConfig}
-                  disabled={readOnly}
-                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
-                  placeholder={`{
-  "github": {
-    "command": "docker",
-    "args": [
-      "run",
-      "-i",
-      "--rm",
-      "-e",
-      "GITHUB_PERSONAL_ACCESS_TOKEN",
-      "-e",
-      "GITHUB_TOOLSETS",
-      "-e",
-      "GITHUB_READ_ONLY",
-      "ghcr.io/github/github-mcp-server"
-    ],
-    "env": {
-      "GITHUB_PERSONAL_ACCESS_TOKEN": "xxxxxxxxxx",
-      "GITHUB_TOOLSETS": "",
-      "GITHUB_READ_ONLY": ""
-    }
-  }
-}`}
+                  readOnly={true}
+                  className={`w-full px-4 py-2 bg-base-secondary rounded-md text-text-primary focus:outline-none font-mono text-base flex-grow resize-y custom-scrollbar border border-border cursor-text min-h-[120px]`}
+                  placeholder={t(
+                    'common:bot.mcp_config_readonly_placeholder',
+                    'MCP configuration is read-only. Please use the Import button to modify.'
+                  )}
                 />
               </div>
             </>
@@ -1631,7 +1614,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               }}
               disabled={readOnly}
               placeholder={t('common:bot.prompt_placeholder')}
-              className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-y custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
         )}

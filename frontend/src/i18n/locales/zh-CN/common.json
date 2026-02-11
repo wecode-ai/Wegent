@@ -41,7 +41,8 @@
     "view": "查看",
     "copy": "复制",
     "copied": "已复制",
-    "loadMore": "加载更多"
+    "loadMore": "加载更多",
+    "configure": "配置"
   },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"
@@ -91,7 +92,8 @@
   "chat": {
     "placeholder_chat": "使用智能体进行探索和发现",
     "placeholder_code": "让开发智能体构建功能、修复错误、探索代码仓库",
-    "sourceReferences": "资料来源"
+    "sourceReferences": "资料来源",
+    "sources": "参考来源"
   },
   "bots": {
     "title": "机器人",
@@ -131,12 +133,14 @@
     "no_available_models": "没有可用模型",
     "import_mcp": "导入",
     "import_mcp_button": "导入或追加其他平台的MCP",
+    "mcp_market": "MCP市场",
     "import_mcp_title": "导入MCP配置",
     "import_mcp_desc": "请粘贴标准化的MCP配置JSON，系统将自动添加type: \"sse\"（如果缺失）或将transport字段转换为type字段",
     "import_mode_replace": "替换现有配置",
     "import_mode_append": "追加到现有配置",
     "import_success": "MCP配置导入成功",
     "append_success": "MCP配置追加成功",
+    "mcp_config_readonly_placeholder": "MCP配置为只读。请使用导入按钮进行修改。",
     "quick_templates": "使用预设模板快速配置",
     "template": "模板",
     "template_hint": "点击模板按钮将自动填充配置,您只需修改 API Key 即可",
@@ -243,16 +247,16 @@
     "shared_by": "{{author}}共享",
     "share_failed": "分享失败，请重试",
     "share_success_title": "分享成功",
-    "share_success_message": "分享智能体\"{{teamName}}\"",
-    "share_success_message_prefix": "分享智能体",
-    "share_success_message_suffix": "给你的朋友！",
+    "share_success_message": "分享智能体「{{teamName}}」",
+    "share_success_message_prefix": "分享智能体「",
+    "share_success_message_suffix": "」给你的朋友！",
     "share_link": "分享链接",
     "copy_link": "复制链接",
-    "copy_success": "复制成功",
+    "copy_success": "链接已复制",
     "group_required_title": "请先选择群组",
     "group_required_message": "在群组模式下创建智能体时必须先选择一个群组",
-    "share_instructions_content1": "复制链接发送给其他人，他们可以通过链接使用你分享的智能体来直接完成任务。 ",
-    "share_instructions_content2": "智能体共享后，你仍然可以管理和编辑这个智能体，其他人可以应用最新的智能体配置但不能编辑智能体设置。",
+    "share_instructions_content1": "复制链接发送给其他人，他们可以通过链接使用你分享的智能体来直接完成任务。",
+    "share_instructions_content2": "分享后，您仍然可以管理和编辑这个智能体，其他人可以应用最新的智能体配置但不能编辑智能体设置。",
     "filter_all": "全部",
     "filter_chat": "聊天",
     "filter_code": "编码",
@@ -263,23 +267,23 @@
     "selectIcon": "选择图标",
     "share": {
       "title": "智能体分享",
-      "confirm_message": "确定要使用 {{userName}} 的 {{teamName}} 执行任务吗？",
-      "join_description": "确定加入后，{{teamName}} 将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。",
+      "confirm_message": "确定要使用 {{userName}} 分享的智能体「{{teamName}}」执行任务吗？",
+      "join_description": "确定加入后，「{{teamName}}」将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。",
       "joining": "加入中...",
-      "confirm_join": "确认",
-      "self_share_message": "{{teamName}} 是您的智能体，无须加入。",
-      "already_joined_message": "{{teamName}} 已经在您的智能体列表中，无须重复加入。",
-      "fetch_info_failed": "获取共享智能体信息失败",
-      "join_failed": "加入智能体失败",
-      "join_success": "智能体{{teamName}}加入成功",
+      "confirm_join": "确认加入",
+      "self_share_message": "「{{teamName}}」是您的智能体，无须加入。",
+      "already_joined_message": "「{{teamName}}」已在您的智能体列表中，无须重复加入。",
+      "fetch_info_failed": "获取分享智能体信息失败",
+      "join_failed": "加入智能体失败，请重试",
+      "join_success": "成功加入智能体「{{teamName}}」",
       "loading": "正在加载智能体信息...",
       "self_share_suffix": " 是您的智能体，无须加入。",
-      "already_joined_suffix": " 已经在您的智能体列表中，无须重复加入。",
-      "confirm_prefix": "使用用户",
-      "confirm_middle": "分享的智能体",
-      "confirm_suffix": "执行任务吗？",
-      "join_description_prefix": "确定加入后，",
-      "join_description_suffix": " 将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。"
+      "already_joined_suffix": " 已在您的智能体列表中，无须重复加入。",
+      "confirm_prefix": "确定要使用",
+      "confirm_middle": "分享的智能体「",
+      "confirm_suffix": "」执行任务吗？",
+      "join_description_prefix": "确定加入后，「",
+      "join_description_suffix": "」将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。"
     }
   },
   "team": {
@@ -1194,5 +1198,24 @@
       "hint_description": "使用 hjkl 导航，i 进入插入模式，Esc 返回普通模式。:w 保存，:q 关闭。",
       "commands_hint": ":w 保存 | :q 关闭 | :wq 保存并关闭"
     }
+  },
+  "skillSelector": {
+    "slash_command_hint": "输入 / 选择技能",
+    "select_skills": "选择技能",
+    "team_skills_section": "智能体技能",
+    "personal_skills_section": "个人技能",
+    "group_skills_section": "组技能",
+    "public_skills_section": "公共技能",
+    "no_available_skills": "无可选技能",
+    "skills_selected": "已选 {{count}} 个技能",
+    "remove_skill": "移除技能",
+    "skill_autocomplete_title": "选择要使用的技能",
+    "preload_hint": "选中的技能将被自动加载",
+    "download_hint": "选中的技能将在任务执行时下载使用",
+    "search_skills": "搜索技能...",
+    "no_matching_skills": "没有匹配的技能",
+    "already_selected": "已选择",
+    "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "manage_skills": "管理技能"
   }
 }

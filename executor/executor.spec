@@ -58,6 +58,31 @@ hiddenimports += collect_submodules('opentelemetry.instrumentation.system_metric
 if os.path.exists(shared_path):
     hiddenimports += collect_submodules('shared')
 
+# Add jaraco namespace packages for pkg_resources compatibility
+hiddenimports += [
+    'jaraco',
+    'jaraco.classes',
+    'jaraco.context',
+    'jaraco.functools',
+    'jaraco.text',
+    'platformdirs',
+]
+
+# Collect Rich Unicode data modules (fix for Unicode character handling)
+hiddenimports += collect_submodules('rich._unicode_data')
+
+# Collect executor.wecode submodules (WeCode-specific extensions)
+hiddenimports += collect_submodules('executor.wecode')
+
+# Explicitly add executor.wecode modules for PyInstaller
+hiddenimports += [
+    'executor.wecode',
+    'executor.wecode.api',
+    'executor.wecode.api.claude_hooks',
+    'executor.wecode.config',
+    'executor.wecode.config.config',
+]
+
 # Additional hidden imports
 hiddenimports += [
     'uvicorn.logging',
@@ -74,7 +99,7 @@ hiddenimports += [
 
 # Collect package data
 for package in ['fastapi', 'uvicorn', 'pydantic', 'anthropic', 'claude_agent_sdk',
-                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette']:
+                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette', 'rich']:
     try:
         tmp_datas, tmp_binaries, tmp_hiddenimports = collect_all(package)
         datas += tmp_datas

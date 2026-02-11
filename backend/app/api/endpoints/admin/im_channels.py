@@ -45,6 +45,7 @@ SENSITIVE_CONFIG_KEYS: Set[str] = {
     "app_secret",
     "encrypt_key",
     "encoding_aes_key",
+    "bot_token",
 }
 
 
@@ -230,7 +231,7 @@ async def create_im_channel(
     Create a new IM channel.
     """
     # Validate channel type
-    valid_types = ["dingtalk", "feishu", "wechat"]
+    valid_types = ["dingtalk", "feishu", "wechat", "telegram"]
     if channel_data.channel_type not in valid_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -369,6 +370,8 @@ async def update_im_channel(
     channel.json = current_json
     channel.updated_at = datetime.now()
     # Mark JSON field as modified for SQLAlchemy to detect the change
+    from sqlalchemy.orm.attributes import flag_modified
+
     flag_modified(channel, "json")
 
     db.commit()

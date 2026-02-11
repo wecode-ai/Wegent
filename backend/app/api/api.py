@@ -6,6 +6,7 @@ from app.api.endpoints import (
     admin,
     api_keys,
     auth,
+    deep_research,
     devices,
     groups,
     health,
@@ -17,6 +18,7 @@ from app.api.endpoints import (
     quota,
     rag,
     repository,
+    share,
     subtasks,
     tables,
     users,
@@ -113,6 +115,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
 )
@@ -129,6 +132,8 @@ api_router.include_router(
     prefix="/knowledge-bases",
     tags=["knowledge-summary"],
 )
+# Unified share endpoints (Team, Task, KnowledgeBase)
+api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

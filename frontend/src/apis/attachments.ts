@@ -331,10 +331,15 @@ export function isHtmlExtension(extension: string): boolean {
  * Get image preview URL for an attachment
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access
  * @returns Preview URL
  */
-export function getAttachmentPreviewUrl(attachmentId: number): string {
-  return `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+export function getAttachmentPreviewUrl(attachmentId: number, shareToken?: string): string {
+  const baseUrl = `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+  if (shareToken) {
+    return `${baseUrl}?share_token=${encodeURIComponent(shareToken)}`
+  }
+  return baseUrl
 }
 
 /**
@@ -416,16 +421,28 @@ export async function uploadAttachment(
  * Get attachment details by ID
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access (no login required)
  * @returns Attachment details
  */
-export async function getAttachment(attachmentId: number): Promise<AttachmentDetailResponse> {
+export async function getAttachment(
+  attachmentId: number,
+  shareToken?: string
+): Promise<AttachmentDetailResponse> {
   const token = getToken()
+  let url = `${API_BASE_URL}/api/attachments/${attachmentId}`
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}`, {
+  // Add share_token as query parameter if provided
+  if (shareToken) {
+    url += `?share_token=${encodeURIComponent(shareToken)}`
+  }
+
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
     },
   })
 
@@ -441,18 +458,28 @@ export async function getAttachment(attachmentId: number): Promise<AttachmentDet
  * Get attachment preview by ID
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access (no login required)
  * @returns Attachment preview details
  */
 export async function getAttachmentPreview(
-  attachmentId: number
+  attachmentId: number,
+  shareToken?: string
 ): Promise<AttachmentPreviewResponse> {
   const token = getToken()
+  let url = `${API_BASE_URL}/api/attachments/${attachmentId}/preview`
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/preview`, {
+  // Add share_token as query parameter if provided
+  if (shareToken) {
+    url += `?share_token=${encodeURIComponent(shareToken)}`
+  }
+
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
     },
   })
 
@@ -468,10 +495,15 @@ export async function getAttachmentPreview(
  * Get attachment download URL
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access
  * @returns Download URL
  */
-export function getAttachmentDownloadUrl(attachmentId: number): string {
-  return `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: string): string {
+  const baseUrl = `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+  if (shareToken) {
+    return `${baseUrl}?share_token=${encodeURIComponent(shareToken)}`
+  }
+  return baseUrl
 }
 
 /**
@@ -479,14 +511,22 @@ export function getAttachmentDownloadUrl(attachmentId: number): string {
  *
  * @param attachmentId - Attachment ID
  * @param filename - Optional filename for download. If not provided, will be extracted from Content-Disposition header
+ * @param shareToken - Optional share token for public access (no login required)
  */
-export async function downloadAttachment(attachmentId: number, filename?: string): Promise<void> {
+export async function downloadAttachment(
+  attachmentId: number,
+  filename?: string,
+  shareToken?: string
+): Promise<void> {
   const token = getToken()
+  const downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download`, {
+  const response = await fetch(downloadUrl, {
     method: 'GET',
     headers: {
-      ...(token && { Authorization: `Bearer ${token}` }),
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
     },
   })
 

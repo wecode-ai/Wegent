@@ -14,14 +14,14 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 # Channel type literals
-ChannelType = Literal["dingtalk", "feishu", "wechat"]
+ChannelType = Literal["dingtalk", "feishu", "wechat", "telegram"]
 
 
 class MessagerSpec(BaseModel):
     """Spec for Messager CRD."""
 
     channelType: ChannelType = Field(
-        ..., description="Channel type: dingtalk, feishu, wechat"
+        ..., description="Channel type: dingtalk, feishu, wechat, telegram"
     )
     isEnabled: bool = Field(default=True, description="Whether channel is enabled")
     config: Dict[str, Any] = Field(
@@ -41,7 +41,7 @@ class IMChannelCreate(BaseModel):
     )
     namespace: str = Field(default="default", description="Namespace")
     channel_type: ChannelType = Field(
-        ..., description="Channel type: dingtalk, feishu, wechat"
+        ..., description="Channel type: dingtalk, feishu, wechat, telegram"
     )
     config: Dict[str, Any] = Field(
         ..., description="Channel configuration (varies by type)"
@@ -126,6 +126,10 @@ class IMChannelStatus(BaseModel):
     )
 
 
+# User mapping mode literals
+UserMappingMode = Literal["staff_id", "email", "select_user"]
+
+
 # Channel-specific config schemas for documentation and validation
 class DingTalkChannelConfig(BaseModel):
     """Configuration schema for DingTalk channel."""
@@ -134,6 +138,20 @@ class DingTalkChannelConfig(BaseModel):
     client_secret: str = Field(..., description="DingTalk application Client secret")
     use_ai_card: bool = Field(
         default=True, description="Use AI Card for streaming responses"
+    )
+    # User mapping mode: how to map DingTalk users to Wegent users
+    # - "staff_id": Use DingTalk staff_id as username (default)
+    # - "email": Match user by email address
+    # - "select_user": Map all DingTalk users to a specific Wegent user
+    user_mapping_mode: UserMappingMode = Field(
+        default="select_user",
+        description="User mapping mode: staff_id, email, or select_user",
+    )
+    # User mapping config: additional configuration based on mode
+    # For "select_user" mode: {"target_user_id": 123}
+    user_mapping_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="User mapping configuration. For select_user mode: {target_user_id: int}",
     )
 
 
@@ -156,3 +174,28 @@ class WeChatChannelConfig(BaseModel):
     agent_id: int = Field(..., description="WeChat Work Agent ID")
     token: Optional[str] = Field(None, description="Callback token")
     encoding_aes_key: Optional[str] = Field(None, description="Callback EncodingAESKey")
+
+
+class TelegramChannelConfig(BaseModel):
+    """Configuration schema for Telegram channel."""
+
+    bot_token: str = Field(..., description="Telegram Bot Token from @BotFather")
+    # User mapping mode: how to map Telegram users to Wegent users
+    # - "select_user": Map all Telegram users to a specific Wegent user (default)
+    # - "username": Match Telegram username with Wegent username
+    # - "chat_id": Use Telegram chat_id for user binding (requires manual setup)
+    user_mapping_mode: UserMappingMode = Field(
+        default="select_user",
+        description="User mapping mode: select_user, staff_id (for chat_id), or email (for username)",
+    )
+    # User mapping config: additional configuration based on mode
+    # For "select_user" mode: {"target_user_id": 123}
+    user_mapping_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="User mapping configuration. For select_user mode: {target_user_id: int}",
+    )
+    # Enable inline keyboard for interactive commands
+    use_inline_keyboard: bool = Field(
+        default=True,
+        description="Use inline keyboard buttons for interactive commands",
+    )

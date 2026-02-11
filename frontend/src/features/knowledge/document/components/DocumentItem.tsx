@@ -13,6 +13,7 @@ import {
   MoreVertical,
   Globe,
   CloudDownload,
+  RotateCcw,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -22,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -30,6 +32,7 @@ interface DocumentItemProps {
   onEdit?: (doc: KnowledgeDocument) => void
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
+  onReindex?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   showBorder?: boolean
@@ -39,6 +42,10 @@ interface DocumentItemProps {
   compact?: boolean
   /** Whether the document is currently being refreshed */
   isRefreshing?: boolean
+  /** Whether the document is currently being reindexed */
+  isReindexing?: boolean
+  /** Whether the knowledge base has RAG configured (retriever + embedding model) */
+  ragConfigured?: boolean
 }
 
 export function DocumentItem({
@@ -46,6 +53,7 @@ export function DocumentItem({
   onEdit,
   onDelete,
   onRefresh,
+  onReindex,
   onViewDetail,
   canManage = true,
   showBorder = true,
@@ -53,6 +61,8 @@ export function DocumentItem({
   onSelect,
   compact = false,
   isRefreshing = false,
+  isReindexing = false,
+  ragConfigured = true,
 }: DocumentItemProps) {
   const { t } = useTranslation()
 
@@ -95,6 +105,11 @@ export function DocumentItem({
   const handleRefresh = (e: React.MouseEvent) => {
     e.stopPropagation()
     onRefresh?.(document)
+  }
+
+  const handleReindex = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onReindex?.(document)
   }
 
   const handleOpenLink = (e: React.MouseEvent) => {
@@ -185,14 +200,38 @@ export function DocumentItem({
               </span>
             )}
             {/* Status indicator */}
-            <span
-              className={`w-1 h-1 rounded-full flex-shrink-0 ${document.is_active ? 'bg-green-500' : 'bg-yellow-500'}`}
-              title={
-                document.is_active
-                  ? t('knowledge:document.document.indexStatus.available')
-                  : t('knowledge:document.document.indexStatus.unavailable')
-              }
-            />
+            {document.is_active ? (
+              <span
+                className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
+                title={t('knowledge:document.document.indexStatus.available')}
+              />
+            ) : !ragConfigured ? (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {t('knowledge:document.document.indexStatus.unavailableHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {t('knowledge:document.document.indexStatus.indexingHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
         </div>
 
@@ -237,6 +276,16 @@ export function DocumentItem({
                         : t('knowledge:document.upload.web.refetch')}
                     </DropdownMenuItem>
                   )}
+                  {ragConfigured && !document.is_active && !isTable && onReindex && (
+                    <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
+                      <RotateCcw
+                        className={`w-3.5 h-3.5 mr-2 ${isReindexing ? 'animate-spin' : ''}`}
+                      />
+                      {isReindexing
+                        ? t('knowledge:document.document.reindexing')
+                        : t('knowledge:document.document.reindex')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem danger onClick={handleDelete}>
                     <Trash2 className="w-3.5 h-3.5 mr-2" />
                     {t('common:actions.delete')}
@@ -253,7 +302,7 @@ export function DocumentItem({
   // Normal mode: Table row layout
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[800px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
@@ -340,15 +389,45 @@ export function DocumentItem({
 
       {/* Index status (is_active) */}
       <div className="w-24 flex-shrink-0 text-center">
-        <Badge
-          variant={document.is_active ? 'success' : 'warning'}
-          size="sm"
-          className="whitespace-nowrap"
-        >
-          {document.is_active
-            ? t('knowledge:document.document.indexStatus.available')
-            : t('knowledge:document.document.indexStatus.unavailable')}
-        </Badge>
+        {document.is_active ? (
+          <Badge variant="success" size="sm" className="whitespace-nowrap">
+            {t('knowledge:document.document.indexStatus.available')}
+          </Badge>
+        ) : !ragConfigured ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
+                    {t('knowledge:document.document.indexStatus.unavailable')}
+                  </Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">
+                  {t('knowledge:document.document.indexStatus.unavailableHint')}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
+                    {t('knowledge:document.document.indexStatus.unavailable')}
+                  </Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">
+                  {t('knowledge:document.document.indexStatus.indexingHint')}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
 
       {/* Action buttons */}
@@ -371,6 +450,25 @@ export function DocumentItem({
               }
             >
               <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
+            </button>
+          )}
+          {/* Reindex button - only when RAG configured and document not indexed */}
+          {ragConfigured && !document.is_active && !isTable && onReindex && (
+            <button
+              className={`p-1.5 rounded-md transition-colors ${
+                isReindexing
+                  ? 'text-primary cursor-not-allowed'
+                  : 'text-text-muted hover:text-primary hover:bg-primary/10'
+              }`}
+              onClick={handleReindex}
+              disabled={isReindexing}
+              title={
+                isReindexing
+                  ? t('knowledge:document.document.reindexing')
+                  : t('knowledge:document.document.reindex')
+              }
+            >
+              <RotateCcw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
             </button>
           )}
           {/* Delete button */}

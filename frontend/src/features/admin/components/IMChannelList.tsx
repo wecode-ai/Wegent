@@ -57,8 +57,12 @@ import {
   AdminPublicTeam,
   AdminPublicModel,
   AdminPublicBot,
+  AdminUser,
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+
+// User mapping mode type
+type UserMappingMode = 'staff_id' | 'email' | 'select_user'
 
 const IMChannelList: React.FC = () => {
   const { t } = useTranslation()
@@ -67,6 +71,7 @@ const IMChannelList: React.FC = () => {
   const [teams, setTeams] = useState<AdminPublicTeam[]>([])
   const [models, setModels] = useState<AdminPublicModel[]>([])
   const [bots, setBots] = useState<AdminPublicBot[]>([])
+  const [users, setUsers] = useState<AdminUser[]>([])
   const [_total, setTotal] = useState(0)
   const [page, _setPage] = useState(1)
   const [loading, setLoading] = useState(true)
@@ -89,6 +94,9 @@ const IMChannelList: React.FC = () => {
     default_model_name: string
     client_id: string
     client_secret: string
+    bot_token: string
+    user_mapping_mode: UserMappingMode
+    target_user_id: number
   }>({
     name: '',
     channel_type: 'dingtalk',
@@ -97,6 +105,9 @@ const IMChannelList: React.FC = () => {
     default_model_name: '',
     client_id: '',
     client_secret: '',
+    bot_token: '',
+    user_mapping_mode: 'select_user',
+    target_user_id: 0,
   })
   const [saving, setSaving] = useState(false)
 
@@ -175,6 +186,15 @@ const IMChannelList: React.FC = () => {
     }
   }, [])
 
+  const fetchUsers = useCallback(async () => {
+    try {
+      const response = await adminApis.getUsers(1, 100, false)
+      setUsers(response.items.filter(user => user.is_active))
+    } catch {
+      // Silently fail, users are optional
+    }
+  }, [])
+
   // Check if a team has any bot with model configured
   const teamHasModel = useCallback(
     (teamId: number): boolean => {
@@ -212,7 +232,8 @@ const IMChannelList: React.FC = () => {
     fetchTeams()
     fetchModels()
     fetchBots()
-  }, [fetchChannels, fetchTeams, fetchModels, fetchBots])
+    fetchUsers()
+  }, [fetchChannels, fetchTeams, fetchModels, fetchBots, fetchUsers])
 
   const handleCreateChannel = async () => {
     if (!formData.name.trim()) {
@@ -223,12 +244,24 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    if (!formData.client_id.trim() || !formData.client_secret.trim()) {
-      toast({
-        variant: 'destructive',
-        title: t('admin:im_channels.errors.config_required'),
-      })
-      return
+    // Validate config based on channel type
+    if (formData.channel_type === 'telegram') {
+      if (!formData.bot_token.trim()) {
+        toast({
+          variant: 'destructive',
+          title: t('admin:im_channels.errors.bot_token_required'),
+        })
+        return
+      }
+    } else {
+      // DingTalk and other channels use client_id/client_secret
+      if (!formData.client_id.trim() || !formData.client_secret.trim()) {
+        toast({
+          variant: 'destructive',
+          title: t('admin:im_channels.errors.config_required'),
+        })
+        return
+      }
     }
 
     // Validate: default team is required
@@ -249,18 +282,43 @@ const IMChannelList: React.FC = () => {
       return
     }
 
+    // Validate: if select_user mode, must select a target user
+    if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
+      toast({
+        variant: 'destructive',
+        title: t('admin:im_channels.errors.target_user_required'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
+      // Build config based on channel type
+      const config: Record<string, unknown> = {
+        user_mapping_mode: formData.user_mapping_mode,
+      }
+
+      if (formData.channel_type === 'telegram') {
+        config.bot_token = formData.bot_token.trim()
+      } else {
+        config.client_id = formData.client_id.trim()
+        config.client_secret = formData.client_secret.trim()
+      }
+
+      // Add user_mapping_config if select_user mode
+      if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
+        config.user_mapping_config = {
+          target_user_id: formData.target_user_id,
+        }
+      }
+
       const createData: IMChannelCreate = {
         name: formData.name.trim(),
         channel_type: formData.channel_type,
         is_enabled: formData.is_enabled,
         default_team_id: formData.default_team_id,
         default_model_name: formData.default_model_name || undefined,
-        config: {
-          client_id: formData.client_id.trim(),
-          client_secret: formData.client_secret.trim(),
-        },
+        config,
       }
       await adminApis.createIMChannel(createData)
       toast({ title: t('admin:im_channels.success.created') })
@@ -299,6 +357,15 @@ const IMChannelList: React.FC = () => {
       return
     }
 
+    // Validate: if select_user mode, must select a target user
+    if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
+      toast({
+        variant: 'destructive',
+        title: t('admin:im_channels.errors.target_user_required'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
       const updateData: IMChannelUpdate = {}
@@ -315,18 +382,32 @@ const IMChannelList: React.FC = () => {
         updateData.default_model_name = formData.default_model_name
       }
 
-      // Update config if any field changed
-      const newConfig: Record<string, unknown> = {}
-      if (formData.client_id.trim()) {
-        newConfig.client_id = formData.client_id.trim()
-      }
-      if (formData.client_secret.trim()) {
-        newConfig.client_secret = formData.client_secret.trim()
+      // Build config based on channel type
+      const newConfig: Record<string, unknown> = {
+        user_mapping_mode: formData.user_mapping_mode,
       }
 
-      if (Object.keys(newConfig).length > 0) {
-        updateData.config = newConfig
+      if (selectedChannel.channel_type === 'telegram') {
+        if (formData.bot_token.trim()) {
+          newConfig.bot_token = formData.bot_token.trim()
+        }
+      } else {
+        if (formData.client_id.trim()) {
+          newConfig.client_id = formData.client_id.trim()
+        }
+        if (formData.client_secret.trim()) {
+          newConfig.client_secret = formData.client_secret.trim()
+        }
       }
+
+      // Add user_mapping_config if select_user mode
+      if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
+        newConfig.user_mapping_config = {
+          target_user_id: formData.target_user_id,
+        }
+      }
+
+      updateData.config = newConfig
 
       await adminApis.updateIMChannel(selectedChannel.id, updateData)
       toast({ title: t('admin:im_channels.success.updated') })
@@ -406,12 +487,22 @@ const IMChannelList: React.FC = () => {
       default_model_name: '',
       client_id: '',
       client_secret: '',
+      bot_token: '',
+      user_mapping_mode: 'select_user',
+      target_user_id: 0,
     })
     setSelectedChannel(null)
   }
 
   const openEditDialog = (channel: IMChannel) => {
     setSelectedChannel(channel)
+    // Extract user mapping config from channel config
+    const userMappingMode = (channel.config?.user_mapping_mode as UserMappingMode) || 'select_user'
+    const userMappingConfig = channel.config?.user_mapping_config as
+      | { target_user_id?: number }
+      | undefined
+    const targetUserId = userMappingConfig?.target_user_id || 0
+
     setFormData({
       name: channel.name,
       channel_type: channel.channel_type,
@@ -420,8 +511,17 @@ const IMChannelList: React.FC = () => {
       default_model_name: channel.default_model_name || '',
       client_id: (channel.config?.client_id as string) || '',
       client_secret: '', // Don't show existing secret
+      bot_token: '', // Don't show existing bot_token
+      user_mapping_mode: userMappingMode,
+      target_user_id: targetUserId,
     })
     setIsEditDialogOpen(true)
+  }
+
+  const _getUserName = (userId: number): string => {
+    if (!userId) return t('admin:im_channels.form.select_user_placeholder')
+    const user = users.find(u => u.id === userId)
+    return user?.user_name || `User #${userId}`
   }
 
   const getChannelTypeLabel = (type: IMChannelType): string => {
@@ -432,6 +532,8 @@ const IMChannelList: React.FC = () => {
         return t('admin:im_channels.types.feishu')
       case 'wechat':
         return t('admin:im_channels.types.wechat')
+      case 'telegram':
+        return t('admin:im_channels.types.telegram')
       default:
         return type
     }
@@ -616,6 +718,7 @@ const IMChannelList: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="dingtalk">{t('admin:im_channels.types.dingtalk')}</SelectItem>
+                  <SelectItem value="telegram">{t('admin:im_channels.types.telegram')}</SelectItem>
                   <SelectItem value="feishu" disabled>
                     {t('admin:im_channels.types.feishu')} (
                     {t('admin:im_channels.types.not_supported')})
@@ -623,25 +726,43 @@ const IMChannelList: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="client_id">{t('admin:im_channels.form.client_id')} *</Label>
-              <Input
-                id="client_id"
-                value={formData.client_id}
-                onChange={e => setFormData({ ...formData, client_id: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_id_placeholder')}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="client_secret">{t('admin:im_channels.form.client_secret')} *</Label>
-              <Input
-                id="client_secret"
-                type="password"
-                value={formData.client_secret}
-                onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_secret_placeholder')}
-              />
-            </div>
+            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
+            {formData.channel_type === 'telegram' ? (
+              <div className="space-y-2">
+                <Label htmlFor="bot_token">{t('admin:im_channels.form.bot_token')} *</Label>
+                <Input
+                  id="bot_token"
+                  type="password"
+                  value={formData.bot_token}
+                  onChange={e => setFormData({ ...formData, bot_token: e.target.value })}
+                  placeholder={t('admin:im_channels.form.bot_token_placeholder')}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="client_id">{t('admin:im_channels.form.client_id')} *</Label>
+                  <Input
+                    id="client_id"
+                    value={formData.client_id}
+                    onChange={e => setFormData({ ...formData, client_id: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_id_placeholder')}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="client_secret">
+                    {t('admin:im_channels.form.client_secret')} *
+                  </Label>
+                  <Input
+                    id="client_secret"
+                    type="password"
+                    value={formData.client_secret}
+                    onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_secret_placeholder')}
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label htmlFor="default_team">{t('admin:im_channels.form.default_team')} *</Label>
               <Select
@@ -700,6 +821,64 @@ const IMChannelList: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
+            {/* User Mapping Mode */}
+            <div className="space-y-2">
+              <Label htmlFor="user_mapping_mode">
+                {t('admin:im_channels.form.user_mapping_mode')} *
+              </Label>
+              <Select
+                value={formData.user_mapping_mode}
+                onValueChange={value =>
+                  setFormData({ ...formData, user_mapping_mode: value as UserMappingMode })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="select_user">
+                    {t('admin:im_channels.form.user_mapping_modes.select_user')}
+                  </SelectItem>
+                  <SelectItem value="staff_id">
+                    {t('admin:im_channels.form.user_mapping_modes.staff_id')}
+                  </SelectItem>
+                  <SelectItem value="email">
+                    {t('admin:im_channels.form.user_mapping_modes.email')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-text-muted">
+                {t('admin:im_channels.form.user_mapping_mode_description')}
+              </p>
+            </div>
+            {/* Target User (only for select_user mode) */}
+            {formData.user_mapping_mode === 'select_user' && (
+              <div className="space-y-2">
+                <Label htmlFor="target_user">{t('admin:im_channels.form.target_user')} *</Label>
+                <Select
+                  value={formData.target_user_id ? formData.target_user_id.toString() : ''}
+                  onValueChange={value =>
+                    setFormData({ ...formData, target_user_id: parseInt(value) })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={t('admin:im_channels.form.select_user_placeholder')}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map(user => (
+                      <SelectItem key={user.id} value={user.id.toString()}>
+                        {user.user_name} ({user.email || user.id})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-text-muted">
+                  {t('admin:im_channels.form.target_user_description')}
+                </p>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <Label htmlFor="is_enabled">{t('admin:im_channels.form.is_enabled')}</Label>
               <Switch
@@ -745,30 +924,51 @@ const IMChannelList: React.FC = () => {
                 className="bg-muted"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-client_id">{t('admin:im_channels.form.client_id')}</Label>
-              <Input
-                id="edit-client_id"
-                value={formData.client_id}
-                onChange={e => setFormData({ ...formData, client_id: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_id_placeholder')}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-client_secret">
-                {t('admin:im_channels.form.client_secret')}
-                <span className="text-xs text-text-muted ml-2">
-                  ({t('admin:im_channels.form.leave_empty_to_keep')})
-                </span>
-              </Label>
-              <Input
-                id="edit-client_secret"
-                type="password"
-                value={formData.client_secret}
-                onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
-                placeholder={t('admin:im_channels.form.client_secret_edit_placeholder')}
-              />
-            </div>
+            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
+            {formData.channel_type === 'telegram' ? (
+              <div className="space-y-2">
+                <Label htmlFor="edit-bot_token">
+                  {t('admin:im_channels.form.bot_token')}
+                  <span className="text-xs text-text-muted ml-2">
+                    ({t('admin:im_channels.form.leave_empty_to_keep')})
+                  </span>
+                </Label>
+                <Input
+                  id="edit-bot_token"
+                  type="password"
+                  value={formData.bot_token}
+                  onChange={e => setFormData({ ...formData, bot_token: e.target.value })}
+                  placeholder={t('admin:im_channels.form.bot_token_edit_placeholder')}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-client_id">{t('admin:im_channels.form.client_id')}</Label>
+                  <Input
+                    id="edit-client_id"
+                    value={formData.client_id}
+                    onChange={e => setFormData({ ...formData, client_id: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_id_placeholder')}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-client_secret">
+                    {t('admin:im_channels.form.client_secret')}
+                    <span className="text-xs text-text-muted ml-2">
+                      ({t('admin:im_channels.form.leave_empty_to_keep')})
+                    </span>
+                  </Label>
+                  <Input
+                    id="edit-client_secret"
+                    type="password"
+                    value={formData.client_secret}
+                    onChange={e => setFormData({ ...formData, client_secret: e.target.value })}
+                    placeholder={t('admin:im_channels.form.client_secret_edit_placeholder')}
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label htmlFor="edit-default_team">
                 {t('admin:im_channels.form.default_team')} *
@@ -829,6 +1029,66 @@ const IMChannelList: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
+            {/* User Mapping Mode */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-user_mapping_mode">
+                {t('admin:im_channels.form.user_mapping_mode')} *
+              </Label>
+              <Select
+                value={formData.user_mapping_mode}
+                onValueChange={value =>
+                  setFormData({ ...formData, user_mapping_mode: value as UserMappingMode })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="select_user">
+                    {t('admin:im_channels.form.user_mapping_modes.select_user')}
+                  </SelectItem>
+                  <SelectItem value="staff_id">
+                    {t('admin:im_channels.form.user_mapping_modes.staff_id')}
+                  </SelectItem>
+                  <SelectItem value="email">
+                    {t('admin:im_channels.form.user_mapping_modes.email')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-text-muted">
+                {t('admin:im_channels.form.user_mapping_mode_description')}
+              </p>
+            </div>
+            {/* Target User (only for select_user mode) */}
+            {formData.user_mapping_mode === 'select_user' && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-target_user">
+                  {t('admin:im_channels.form.target_user')} *
+                </Label>
+                <Select
+                  value={formData.target_user_id ? formData.target_user_id.toString() : ''}
+                  onValueChange={value =>
+                    setFormData({ ...formData, target_user_id: parseInt(value) })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={t('admin:im_channels.form.select_user_placeholder')}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map(user => (
+                      <SelectItem key={user.id} value={user.id.toString()}>
+                        {user.user_name} ({user.email || user.id})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-text-muted">
+                  {t('admin:im_channels.form.target_user_description')}
+                </p>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <Label htmlFor="edit-is_enabled">{t('admin:im_channels.form.is_enabled')}</Label>
               <div className="flex items-center gap-2">

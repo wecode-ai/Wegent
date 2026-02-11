@@ -448,6 +448,19 @@ class PipelineStageService:
         flag_modified(task, "json")
         db.commit()
 
+        # Push mode: dispatch the next stage subtask to executor_manager
+        # This ensures pipeline stage confirmation works correctly in push mode
+        try:
+            from app.services.task_dispatcher import task_dispatcher
+
+            if task_dispatcher.enabled:
+                task_dispatcher.schedule_dispatch(task.id)
+                logger.info(
+                    f"Pipeline confirm_stage: scheduled dispatch for task {task.id} in push mode"
+                )
+        except Exception as e:
+            logger.warning(f"Pipeline confirm_stage: push mode dispatch failed: {e}")
+
         # Get next stage name
         next_stage_name = None
         if next_stage < len(team_crd.spec.members):
@@ -600,7 +613,7 @@ class PipelineStageService:
 
         Supports:
         1. Teams owned by task owner
-        2. Teams shared via SharedTeam table
+        2. Teams shared via ResourceMember table
         3. Public teams (user_id=0)
         4. Group teams (namespace != 'default') - can be created by any group member
 
@@ -619,7 +632,7 @@ class PipelineStageService:
 
         # Use kindReader which handles all team types:
         # - Personal teams (owned by user)
-        # - Shared teams (via SharedTeam table)
+        # - Shared teams (via ResourceMember table)
         # - Public teams (user_id=0)
         # - Group teams (namespace != 'default')
         return kindReader.get_by_name_and_namespace(

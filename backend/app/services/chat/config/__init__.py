@@ -21,6 +21,7 @@ from .shell_checker import (
     DIRECT_CHAT_SHELL_TYPES,
     get_shell_type,
     get_team_first_bot_shell_type,
+    is_deep_research_protocol,
     is_direct_chat_shell,
     should_use_direct_chat,
 )
@@ -41,4 +42,5 @@ __all__ = [
     "get_shell_type",
     "should_use_direct_chat",
     "get_team_first_bot_shell_type",
+    "is_deep_research_protocol",
 ]

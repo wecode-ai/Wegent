@@ -11,6 +11,8 @@ This module handles executor heartbeat management:
 Supports two types of heartbeat keys:
 - sandbox:heartbeat:{id} - For sandbox (long-lived) tasks
 - task:heartbeat:{id} - For regular (online/offline) tasks
+
+All methods are async to avoid blocking the event loop.
 """
 
 import os
@@ -19,7 +21,7 @@ import time
 from enum import Enum
 from typing import Optional
 
-import redis
+import redis.asyncio as aioredis
 
 from executor_manager.common.redis_factory import RedisClientFactory
 from shared.logger import setup_logger
@@ -67,13 +69,15 @@ def _get_heartbeat_key(heartbeat_id: str, heartbeat_type: HeartbeatType) -> str:
 class HeartbeatManager:
     """Manager for executor heartbeat operations.
 
-    This class provides methods for:
+    This class provides async methods for:
     - Updating heartbeat timestamps
     - Checking heartbeat timeout
     - Getting last heartbeat time
     - Deleting heartbeat keys
 
     Supports both sandbox and regular task heartbeats with different key prefixes.
+
+    All methods are async to avoid blocking the event loop.
     """
 
     _instance: Optional["HeartbeatManager"] = None
@@ -81,8 +85,7 @@ class HeartbeatManager:
 
     def __init__(self):
         """Initialize the HeartbeatManager."""
-        self._sync_client: Optional[redis.Redis] = None
-        self._init_sync_redis()
+        self._async_client: Optional[aioredis.Redis] = None
 
     @classmethod
     def get_instance(cls) -> "HeartbeatManager":
@@ -97,17 +100,25 @@ class HeartbeatManager:
                     cls._instance = cls()
         return cls._instance
 
-    def _init_sync_redis(self) -> None:
-        """Initialize synchronous Redis connection."""
-        self._sync_client = RedisClientFactory.get_sync_client()
-        if self._sync_client is not None:
-            logger.info(
-                "[HeartbeatManager] Sync Redis connection established via factory"
-            )
-        else:
-            logger.error("[HeartbeatManager] Failed to connect to Redis via factory")
+    async def _get_async_client(self) -> Optional[aioredis.Redis]:
+        """Get or initialize async Redis client lazily.
 
-    def update_heartbeat(
+        Returns:
+            Async Redis client if available, None otherwise
+        """
+        if self._async_client is None:
+            self._async_client = await RedisClientFactory.get_async_client()
+            if self._async_client is not None:
+                logger.info(
+                    "[HeartbeatManager] Async Redis connection established via factory"
+                )
+            else:
+                logger.error(
+                    "[HeartbeatManager] Failed to connect async Redis via factory"
+                )
+        return self._async_client
+
+    async def update_heartbeat(
         self,
         heartbeat_id: str,
         heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
@@ -121,7 +132,8 @@ class HeartbeatManager:
         Returns:
             True if updated successfully
         """
-        if self._sync_client is None:
+        client = await self._get_async_client()
+        if client is None:
             return False
 
         try:
@@ -129,7 +141,7 @@ class HeartbeatManager:
             timestamp = time.time()
 
             # Set heartbeat timestamp with TTL
-            self._sync_client.setex(key, HEARTBEAT_KEY_TTL, str(timestamp))
+            await client.setex(key, HEARTBEAT_KEY_TTL, str(timestamp))
 
             logger.debug(
                 f"[HeartbeatManager] Heartbeat updated: type={heartbeat_type.value}, id={heartbeat_id}"
@@ -139,12 +151,15 @@ class HeartbeatManager:
             logger.error(f"[HeartbeatManager] Failed to update heartbeat: {e}")
             return False
 
-    def check_heartbeat(
+    async def check_heartbeat(
         self,
         heartbeat_id: str,
         heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
     ) -> bool:
-        """Check if executor heartbeat is within timeout threshold.
+        """Check if executor heartbeat is within timeout threshold (async version).
+
+        Use this method in async contexts (like APScheduler jobs) to avoid
+        blocking the event loop.
 
         Args:
             heartbeat_id: ID for heartbeat (sandbox_id or task_id)
@@ -153,12 +168,13 @@ class HeartbeatManager:
         Returns:
             True if heartbeat is recent (executor alive), False otherwise
         """
-        if self._sync_client is None:
+        client = await self._get_async_client()
+        if client is None:
             return False
 
         try:
             key = _get_heartbeat_key(heartbeat_id, heartbeat_type)
-            timestamp_str = self._sync_client.get(key)
+            timestamp_str = await client.get(key)
 
             if timestamp_str is None:
                 # No heartbeat recorded - executor might be new or dead
@@ -176,10 +192,10 @@ class HeartbeatManager:
 
             return is_alive
         except Exception as e:
-            logger.error(f"[HeartbeatManager] Failed to check heartbeat: {e}")
+            logger.error(f"[HeartbeatManager] Failed to check heartbeat async: {e}")
             return False
 
-    def get_last_heartbeat(
+    async def get_last_heartbeat(
         self,
         heartbeat_id: str,
         heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
@@ -193,12 +209,13 @@ class HeartbeatManager:
         Returns:
             Last heartbeat timestamp, or None if not found
         """
-        if self._sync_client is None:
+        client = await self._get_async_client()
+        if client is None:
             return None
 
         try:
             key = _get_heartbeat_key(heartbeat_id, heartbeat_type)
-            timestamp_str = self._sync_client.get(key)
+            timestamp_str = await client.get(key)
 
             if timestamp_str is None:
                 return None
@@ -208,7 +225,7 @@ class HeartbeatManager:
             logger.error(f"[HeartbeatManager] Failed to get last heartbeat: {e}")
             return None
 
-    def delete_heartbeat(
+    async def delete_heartbeat(
         self,
         heartbeat_id: str,
         heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
@@ -222,12 +239,13 @@ class HeartbeatManager:
         Returns:
             True if deleted successfully
         """
-        if self._sync_client is None:
+        client = await self._get_async_client()
+        if client is None:
             return False
 
         try:
             key = _get_heartbeat_key(heartbeat_id, heartbeat_type)
-            self._sync_client.delete(key)
+            await client.delete(key)
             return True
         except Exception as e:
             logger.error(f"[HeartbeatManager] Failed to delete heartbeat: {e}")

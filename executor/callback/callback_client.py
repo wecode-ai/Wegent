@@ -166,7 +166,13 @@ class CallbackClient:
         """
         # Mask sensitive data in callback payload for logging
         masked_data = mask_sensitive_data(data)
-        logger.info("Sending callback to %s, body: %s", self.callback_url, masked_data)
+        logger.info(
+            "Sending callback to %s, task_id=%s, status=%s",
+            self.callback_url,
+            data.get("task_id"),
+            data.get("status"),
+        )
+        logger.debug("Callback body: %s", masked_data)
 
         # Prepare headers with trace context for distributed tracing
         headers = {"Content-Type": "application/json"}

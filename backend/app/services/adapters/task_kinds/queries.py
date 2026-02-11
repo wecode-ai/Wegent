@@ -46,13 +46,13 @@ class TaskQueryMixin:
         DELETE status tasks are filtered in application layer.
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Use raw SQL to get task IDs where user is owner OR member
+        # Use raw SQL to get task IDs where user is owner OR member (using resource_members)
         # Exclude system namespace tasks (background tasks)
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
             FROM tasks k
-            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -66,7 +66,7 @@ class TaskQueryMixin:
             """
             SELECT DISTINCT k.id, k.created_at
             FROM tasks k
-            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -124,12 +124,12 @@ class TaskQueryMixin:
         Only returns essential fields without JOIN queries for better performance.
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Get task IDs where user is owner OR member
+        # Get task IDs where user is owner OR member (using resource_members)
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
             FROM tasks k
-            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -143,7 +143,7 @@ class TaskQueryMixin:
             """
             SELECT DISTINCT k.id, k.created_at
             FROM tasks k
-            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -176,19 +176,24 @@ class TaskQueryMixin:
 
         total = total_result if total_result else 0
 
-        # Get task member counts in batch for is_group_chat detection
-        from app.models.task_member import MemberStatus, TaskMember
+        # Get task member counts in batch for is_group_chat detection using ResourceMember
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         task_ids_for_members = [t.id for t in filtered_tasks]
         member_counts = {}
         if task_ids_for_members:
             member_count_results = (
-                db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
-                .filter(
-                    TaskMember.task_id.in_(task_ids_for_members),
-                    TaskMember.status == MemberStatus.ACTIVE,
+                db.query(
+                    ResourceMember.resource_id,
+                    func.count(ResourceMember.id).label("count"),
                 )
-                .group_by(TaskMember.task_id)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.TASK,
+                    ResourceMember.resource_id.in_(task_ids_for_members),
+                    ResourceMember.status == MemberStatus.APPROVED,
+                )
+                .group_by(ResourceMember.resource_id)
                 .all()
             )
             member_counts = {row[0]: row[1] for row in member_count_results}
@@ -206,15 +211,16 @@ class TaskQueryMixin:
 
         Returns only group chat tasks sorted by updated_at descending.
         """
-        from app.models.task_member import MemberStatus, TaskMember
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
-        # Get task IDs that are group chats (have members)
+        # Get task IDs that are group chats (have members) using resource_members
         member_task_ids_sql = text(
             """
-            SELECT DISTINCT tm.task_id
-            FROM task_members tm
-            INNER JOIN tasks k ON k.id = tm.task_id
-            WHERE tm.status = 'ACTIVE'
+            SELECT DISTINCT tm.resource_id
+            FROM resource_members tm
+            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
+            WHERE tm.status = 'approved'
             AND k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -231,7 +237,7 @@ class TaskQueryMixin:
             """
             SELECT DISTINCT k.id
             FROM tasks k
-            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -293,15 +299,16 @@ class TaskQueryMixin:
         if types is None:
             types = ["online", "offline"]
 
-        from app.models.task_member import MemberStatus, TaskMember
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
-        # Get all task IDs that are group chats (have members)
+        # Get all task IDs that are group chats (have members) using resource_members
         member_task_ids_sql = text(
             """
-            SELECT DISTINCT tm.task_id
-            FROM task_members tm
-            INNER JOIN tasks k ON k.id = tm.task_id
-            WHERE tm.status = 'ACTIVE'
+            SELECT DISTINCT tm.resource_id
+            FROM resource_members tm
+            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
+            WHERE tm.status = 'approved'
             AND k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -440,12 +447,12 @@ class TaskQueryMixin:
 
         Returns tasks with ID greater than since_id, ordered by ID descending.
         """
-        # Get task IDs where user is owner OR member, with ID > since_id
+        # Get task IDs where user is owner OR member, with ID > since_id (using resource_members)
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.created_at
             FROM tasks k
-            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
@@ -472,19 +479,24 @@ class TaskQueryMixin:
         # Restore the original order
         filtered_tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
 
-        # Get task member counts
-        from app.models.task_member import MemberStatus, TaskMember
+        # Get task member counts using ResourceMember
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         task_ids_for_members = [t.id for t in filtered_tasks]
         member_counts = {}
         if task_ids_for_members:
             member_count_results = (
-                db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
-                .filter(
-                    TaskMember.task_id.in_(task_ids_for_members),
-                    TaskMember.status == MemberStatus.ACTIVE,
+                db.query(
+                    ResourceMember.resource_id,
+                    func.count(ResourceMember.id).label("count"),
                 )
-                .group_by(TaskMember.task_id)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.TASK,
+                    ResourceMember.resource_id.in_(task_ids_for_members),
+                    ResourceMember.status == MemberStatus.APPROVED,
+                )
+                .group_by(ResourceMember.resource_id)
                 .all()
             )
             member_counts = {row[0]: row[1] for row in member_count_results}
@@ -820,14 +832,16 @@ class TaskQueryMixin:
     def _add_group_chat_info_to_task(
         self, db: Session, task_id: int, task_dict: Dict[str, Any], user_id: int
     ) -> None:
-        """Add group chat information to task dict."""
-        from app.models.task_member import MemberStatus, TaskMember
+        """Add group chat information to task dict using ResourceMember."""
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
 
         members = (
-            db.query(TaskMember)
+            db.query(ResourceMember)
             .filter(
-                TaskMember.task_id == task_id,
-                TaskMember.status == MemberStatus.ACTIVE,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == task_id,
+                ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()
         )
@@ -902,9 +916,11 @@ class TaskQueryMixin:
                     text(
                         """
                         SELECT k.id FROM kinds k
-                        INNER JOIN shared_teams st ON k.user_id = st.original_user_id
-                        WHERE st.user_id = :user_id
-                        AND st.is_active = true
+                        INNER JOIN resource_members rm
+                            ON rm.resource_id = k.id
+                            AND rm.resource_type = 'Team'
+                        WHERE rm.user_id = :user_id
+                        AND rm.status = 'approved'
                         AND k.kind = 'Team'
                         AND k.name = :name
                         AND k.namespace = :namespace
@@ -988,6 +1004,7 @@ class TaskQueryMixin:
         """Get all skills associated with a task.
 
         Follows the chain: task → team → bots → ghosts → skills
+        Also includes user-selected skills from task labels (additionalSkills).
 
         Args:
             db: Database session
@@ -999,12 +1016,14 @@ class TaskQueryMixin:
             - task_id: The task ID
             - team_id: The team ID (if found)
             - team_namespace: The team namespace
-            - skills: List of skill names (deduplicated)
+            - skills: List of skill names (deduplicated, includes user-selected skills)
             - preload_skills: List of skills to preload
 
         Raises:
             HTTPException: If task not found
         """
+        import json as json_lib
+
         from app.models.task import TaskResource
         from app.services.readers.kinds import KindType, kindReader
         from app.services.task_member_service import task_member_service
@@ -1035,6 +1054,27 @@ class TaskQueryMixin:
         # Use task owner's user_id for querying related resources
         task_owner_id = task.user_id
 
+        # Extract user-selected skills from task labels (additionalSkills)
+        # These are skills explicitly selected by the user for this task
+        user_selected_skills = []
+        if task_crd.metadata.labels:
+            additional_skills_json = task_crd.metadata.labels.get("additionalSkills")
+            if additional_skills_json:
+                try:
+                    parsed_skills = json_lib.loads(additional_skills_json)
+                    if isinstance(parsed_skills, list):
+                        user_selected_skills = [
+                            s for s in parsed_skills if isinstance(s, str) and s
+                        ]
+                        logger.info(
+                            f"[get_task_skills] Found {len(user_selected_skills)} user-selected skills "
+                            f"from task labels: {user_selected_skills}"
+                        )
+                except json_lib.JSONDecodeError as e:
+                    logger.warning(
+                        f"[get_task_skills] Failed to parse additionalSkills JSON for task {task_id}: {e}"
+                    )
+
         # Get team
         team = kindReader.get_by_name_and_namespace(
             db, task_owner_id, KindType.TEAM, team_namespace, team_name
@@ -1045,11 +1085,12 @@ class TaskQueryMixin:
                 f"[get_task_skills] Team not found for task {task_id}: "
                 f"namespace={team_namespace}, name={team_name}"
             )
+            # Even if team not found, return user-selected skills
             return {
                 "task_id": task_id,
                 "team_id": None,
                 "team_namespace": team_namespace,
-                "skills": [],
+                "skills": user_selected_skills,
                 "preload_skills": [],
             }
 
@@ -1086,9 +1127,15 @@ class TaskQueryMixin:
                 if ghost_crd.spec.preload_skills:
                     all_preload_skills.update(ghost_crd.spec.preload_skills)
 
+        # Add user-selected skills to the skills set
+        # This ensures user-selected skills are downloaded by sandbox/executor
+        if user_selected_skills:
+            all_skills.update(user_selected_skills)
+
         logger.info(
             f"[get_task_skills] task_id={task_id}, team_id={team.id}, "
-            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}"
+            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}, "
+            f"user_selected_skills={user_selected_skills}"
         )
 
         return {
