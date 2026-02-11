@@ -739,6 +739,9 @@ async def _process_result_message(
         subtask_id = (
             state_manager.task_data.get("subtask_id", -1) if state_manager else -1
         )
+        message_id = (
+            state_manager.task_data.get("message_id") if state_manager else None
+        )
 
         # Ensure result is string type
         result_str = str(msg.result) if msg.result is not None else "No result"
@@ -781,6 +784,7 @@ async def _process_result_message(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     result=result_dict,
+                    message_id=message_id,
                     usage=msg.usage,
                     silent_exit=silent_exit_detected if silent_exit_detected else None,
                     silent_exit_reason=(
@@ -817,6 +821,7 @@ async def _process_result_message(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 result={"value": result_str},
+                message_id=message_id,
                 usage=msg.usage,
             )
             logger.info(f"Sent done event for task {task_id}")

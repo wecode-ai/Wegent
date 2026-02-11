@@ -41,6 +41,12 @@ SANDBOX_REDIS_TTL = int(os.getenv("SANDBOX_REDIS_TTL", "86400"))
 # Maximum concurrent Sandbox tasks per user
 SANDBOX_MAX_CONCURRENT = int(os.getenv("SANDBOX_MAX_CONCURRENT", "5"))
 
+# Offline task queue time window configuration
+# Evening hours: 21-23 means hours 21, 22, 23 (9 PM - 11:59 PM)
+OFFLINE_TASK_EVENING_HOURS = os.getenv("OFFLINE_TASK_EVENING_HOURS", "21-23")
+# Morning hours: 0-8 means hours 0, 1, 2, 3, 4, 5, 6, 7, 8 (12 AM - 8:59 AM)
+OFFLINE_TASK_MORNING_HOURS = os.getenv("OFFLINE_TASK_MORNING_HOURS", "0-8")
+
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py
 # Use: from shared.telemetry.config import get_otel_config
 # All OTEL_* environment variables are read from there
