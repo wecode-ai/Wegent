@@ -9,7 +9,8 @@
 """
 Task processing module, handles tasks fetched from API.
 
-Uses unified ExecutionRequest from shared.models.execution.
+Supports both OpenAI Responses API format and legacy ExecutionRequest dict format.
+Uses get_metadata_field() helper for transparent field access across both formats.
 """
 
 from typing import Any, Dict, List, Union
@@ -20,6 +21,7 @@ from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.github.github_app import get_github_app
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
+from shared.models.openai_converter import get_metadata_field
 from shared.telemetry.decorators import set_span_attribute, trace_sync
 
 logger = setup_logger(__name__)
@@ -38,13 +40,13 @@ def _extract_task_attributes(self, task: Union[Dict[str, Any], ExecutionRequest]
         task_dict = task
 
     attrs = {
-        "task.id": str(task_dict.get("task_id", -1)),
-        "task.subtask_id": str(task_dict.get("subtask_id", -1)),
-        "task.title": task_dict.get("task_title", ""),
-        "task.type": task_dict.get("type", "online"),
+        "task.id": str(get_metadata_field(task_dict, "task_id", -1)),
+        "task.subtask_id": str(get_metadata_field(task_dict, "subtask_id", -1)),
+        "task.title": get_metadata_field(task_dict, "task_title", ""),
+        "task.type": get_metadata_field(task_dict, "type", "online"),
     }
     # Extract user info if available
-    user_data = task_dict.get("user", {})
+    user_data = get_metadata_field(task_dict, "user", {})
     if user_data:
         if user_data.get("id"):
             attrs["user.id"] = str(user_data.get("id"))
@@ -56,7 +58,7 @@ def _extract_task_attributes(self, task: Union[Dict[str, Any], ExecutionRequest]
 class TaskProcessor:
     """Task processor class, handles different types of tasks.
 
-    Uses unified ExecutionRequest from shared.models.execution.
+    Supports both OpenAI Responses API format and legacy ExecutionRequest dict format.
     """
 
     def __init__(self):
@@ -88,10 +90,8 @@ class TaskProcessor:
         """
         Process fetched tasks with distributed tracing support.
 
-        Uses unified ExecutionRequest from shared.models.execution.
-
         Args:
-            tasks: List of tasks as dicts or ExecutionRequest objects
+            tasks: List of tasks as dicts (OpenAI or legacy format) or ExecutionRequest objects
 
         Returns:
             dict: Task processing results keyed by task_id
@@ -111,7 +111,7 @@ class TaskProcessor:
             else:
                 task_dict = task
 
-            task_id = task_dict.get("task_id", -1)
+            task_id = get_metadata_field(task_dict, "task_id", -1)
             result, success = self._process_single_task(task_dict)
             task_result[task_id] = result
             if success:
@@ -133,10 +133,8 @@ class TaskProcessor:
         """
         Process a single task with tracing support.
 
-        Uses unified ExecutionRequest from shared.models.execution.
-
         Args:
-            task: Task data as dict or ExecutionRequest
+            task: Task data as dict (OpenAI or legacy format) or ExecutionRequest
 
         Returns:
             tuple: (result dict, success bool)
@@ -147,9 +145,9 @@ class TaskProcessor:
         else:
             task_dict = task
 
-        task_id = task_dict.get("task_id", -1)
-        subtask_id = task_dict.get("subtask_id", -1)
-        bot_config = task_dict.get("bot") or []
+        task_id = get_metadata_field(task_dict, "task_id", -1)
+        subtask_id = get_metadata_field(task_dict, "subtask_id", -1)
+        bot_config = get_metadata_field(task_dict, "bot", [])
 
         # Set request context for log correlation
         from shared.telemetry.context import init_request_context
@@ -157,8 +155,9 @@ class TaskProcessor:
         init_request_context()
 
         try:
-            executor_type = task_dict.get(
-                "executor_type", config.EXECUTOR_DISPATCHER_MODE
+            executor_type = (
+                get_metadata_field(task_dict, "executor_type")
+                or config.EXECUTOR_DISPATCHER_MODE
             )
             logger.info(f"Processing task: ID={task_id}, executor_type={executor_type}")
 
@@ -180,8 +179,9 @@ class TaskProcessor:
                     if "env" not in mcp_servers["github"]:
                         mcp_servers["github"]["env"] = {}
 
+                    git_repo = get_metadata_field(task_dict, "git_repo")
                     github_app_access_token = self.github_app.get_repository_token(
-                        task_dict.get("git_repo")
+                        git_repo
                     )
                     if github_app_access_token.get("token"):
                         mcp_servers["github"]["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"] = (

@@ -38,7 +38,7 @@ class TestDockerConstants:
 
     def test_default_api_endpoint(self):
         """Test DEFAULT_API_ENDPOINT constant"""
-        assert DEFAULT_API_ENDPOINT == "/api/tasks/execute"
+        assert DEFAULT_API_ENDPOINT == "/v1/responses"
         assert isinstance(DEFAULT_API_ENDPOINT, str)
         assert DEFAULT_API_ENDPOINT.startswith("/")
 

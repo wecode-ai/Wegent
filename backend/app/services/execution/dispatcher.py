@@ -92,12 +92,25 @@ class ResponsesAPIEventParser:
             # response.completed -> DONE
             response_data = data.get("response", {})
             usage = response_data.get("usage")
+
+            # Extract text content from response output
+            value = ""
+            output_items = response_data.get("output", [])
+            for item in output_items:
+                if isinstance(item, dict):
+                    for content_block in item.get("content", []):
+                        if isinstance(content_block, dict) and content_block.get(
+                            "text"
+                        ):
+                            value += content_block["text"]
+
             return ExecutionEvent(
                 type=EventType.DONE,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 content="",
                 result={
+                    "value": value,
                     "usage": usage,
                     "sources": response_data.get("sources"),
                     "blocks": response_data.get("blocks"),
@@ -594,8 +607,7 @@ class ExecutionDispatcher:
             emitter: Result emitter for event emission
         """
         # Use OpenAI Responses API endpoint
-        base_url = f"{target.url}/v1"
-        url = f"{base_url}/responses"
+        url = f"{target.url}/v1/responses"
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): url={url}"
         )
@@ -615,30 +627,19 @@ class ExecutionDispatcher:
             f"subtask_id={request.subtask_id}"
         )
 
-        # Send request using OpenAI client
-        client = AsyncOpenAI(
-            base_url=base_url,
-            api_key="dummy",  # Not used by executor_manager but required by client
-            timeout=300.0,
-        )
-
-        # Use responses.create with background mode
-        response = await client.responses.create(
-            model=openai_request.get("model", ""),
-            input=openai_request.get("input", ""),
-            instructions=openai_request.get("instructions"),
-            stream=False,
-            extra_body={
-                "background": True,
-                "metadata": openai_request.get("metadata", {}),
-                "model_config": openai_request.get("model_config", {}),
-            },
-        )
+        # Send request via httpx (executor-manager returns a simple queued response)
+        async with traced_async_client(timeout=30.0) as client:
+            response = await client.post(url, json=openai_request)
+            if response.status_code != 200:
+                raise Exception(
+                    f"Failed to dispatch task to executor-manager: "
+                    f"{response.status_code} {response.text}"
+                )
+            result = response.json()
 
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): "
-            f"response_id={getattr(response, 'id', 'N/A')}, "
-            f"status={getattr(response, 'status', 'N/A')}"
+            f"response={result}"
         )
 
         # In HTTP+Callback mode, subsequent events are handled via /callback API
