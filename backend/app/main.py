@@ -235,9 +235,18 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing event bus and registering handlers...")
     from app.core.events import init_event_bus
     from app.services.pet.event_handlers import register_pet_event_handlers
+    from app.services.subscription.task_completion_handler import (
+        TaskCompletedEvent,
+        handle_task_completed,
+    )
 
-    init_event_bus()
+    event_bus = init_event_bus()
     register_pet_event_handlers()
+
+    # Register subscription task completion handler
+    event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
+    logger.info("✓ Subscription task completion handler registered")
+
     logger.info("✓ Event bus initialized and handlers registered")
 
     # Initialize PendingRequestRegistry for skill frontend interactions

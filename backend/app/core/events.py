@@ -65,6 +65,30 @@ class MemoryCreatedEvent:
     memory_texts: List[str]
 
 
+@dataclass
+class TaskCompletedEvent:
+    """Event emitted when a task (subtask) is completed.
+
+    This is the unified event for all execution modes (SSE, HTTP+Callback, WebSocket)
+    to notify that a task has reached a terminal state.
+
+    Attributes:
+        task_id: Task ID
+        subtask_id: Subtask ID
+        user_id: User ID who owns the task
+        status: Terminal status ("COMPLETED", "FAILED", "CANCELLED")
+        result: Optional result dict containing output value
+        error: Optional error message for FAILED status
+    """
+
+    task_id: int
+    subtask_id: int
+    user_id: int
+    status: str  # "COMPLETED" | "FAILED" | "CANCELLED"
+    result: Optional[dict] = None
+    error: Optional[str] = None
+
+
 class EventBus:
     """Simple async event bus for internal application events.
 

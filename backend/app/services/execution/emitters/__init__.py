@@ -16,7 +16,6 @@ from .factory import EmitterType, ResultEmitterFactory
 from .protocol import ResultEmitter, StreamableEmitter
 from .sse import DirectSSEEmitter, SSEResultEmitter
 from .status_updating import StatusUpdatingEmitter
-from .subscription import SubscriptionResultEmitter
 from .websocket import WebSocketResultEmitter
 
 __all__ = [
@@ -33,7 +32,6 @@ __all__ = [
     "CallbackResultEmitter",
     "BatchCallbackEmitter",
     "CompositeResultEmitter",
-    "SubscriptionResultEmitter",
     "StatusUpdatingEmitter",
     # Factory
     "EmitterType",
