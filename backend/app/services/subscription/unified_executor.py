@@ -246,22 +246,53 @@ async def _execute_http_callback(
     Dispatches the task and returns immediately.
     Task completion is handled by /internal/callback API publishing TaskCompletedEvent.
 
+    Note: This function runs in a background thread (APScheduler), so we use
+    SSEResultEmitter instead of the default WebSocket emitter chain to avoid
+    event loop conflicts with the main thread's Socket.IO/Redis connections.
+
     Args:
         request: ExecutionRequest
         execution_data: Subscription execution data
     """
+    import asyncio
+
     from app.services.execution import execution_dispatcher
+    from app.services.execution.emitters import SSEResultEmitter
 
     logger.info(
         f"[_execute_http_callback] Starting HTTP+Callback execution: "
         f"execution_id={execution_data.execution_id}"
     )
 
+    # Use SSEResultEmitter to avoid WebSocket/Socket.IO cross-thread issues
+    # SSEResultEmitter is thread-safe and doesn't depend on the main event loop
+    emitter = SSEResultEmitter(
+        task_id=execution_data.task_id,
+        subtask_id=execution_data.subtask_id,
+    )
+
     try:
-        # Dispatch task - this returns immediately
+        # Dispatch task with our thread-safe emitter
         # The executor_manager will call /internal/callback when done
         # which will publish TaskCompletedEvent
-        await execution_dispatcher.dispatch(request, device_id=None, emitter=None)
+        dispatch_task = asyncio.create_task(
+            execution_dispatcher.dispatch(request, device_id=None, emitter=emitter)
+        )
+
+        # Wait for completion and collect results
+        accumulated_content, final_event = await emitter.collect()
+
+        # Wait for dispatch task to complete
+        try:
+            await dispatch_task
+        except Exception:
+            pass  # Error already handled via emitter
+
+        logger.info(
+            f"[_execute_http_callback] HTTP+Callback completed: "
+            f"execution_id={execution_data.execution_id}, "
+            f"content_length={len(accumulated_content)}"
+        )
 
         logger.info(
             f"[_execute_http_callback] Task dispatched: "

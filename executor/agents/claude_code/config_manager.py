@@ -285,9 +285,21 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
                     "url": wegent_mcp_url,
                 }
             }
-            if "mcp_servers" not in bot_config:
+            if "mcp_servers" not in bot_config or bot_config["mcp_servers"] is None:
                 bot_config["mcp_servers"] = {}
-            bot_config["mcp_servers"].update(wegent_mcp)
+            # Handle both dict and list formats for mcp_servers
+            mcp_servers = bot_config["mcp_servers"]
+            if isinstance(mcp_servers, dict):
+                mcp_servers.update(wegent_mcp)
+            elif isinstance(mcp_servers, list):
+                # Convert list to dict format
+                mcp_dict = {
+                    item["name"]: item
+                    for item in mcp_servers
+                    if isinstance(item, dict) and "name" in item
+                }
+                mcp_dict.update(wegent_mcp)
+                bot_config["mcp_servers"] = mcp_dict
             logger.info(
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
             )
