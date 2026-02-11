@@ -39,6 +39,7 @@ import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
 import { useUser } from '@/features/common/UserContext'
+import { getOrganizationNamespace } from '@/apis/knowledge'
 import type { Group } from '@/types/group'
 import type { KnowledgeBase, KnowledgeBaseType, SummaryModelRef } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
@@ -107,6 +108,8 @@ export function KnowledgeDocumentPage() {
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
   const [sharingKb, setSharingKb] = useState<KnowledgeBase | null>(null)
 
+  // Organization namespace (fetched from API)
+  const [orgNamespace, setOrgNamespace] = useState<string | null>(null)
   // Refresh key for group knowledge bases
   const [groupRefreshKey, setGroupRefreshKey] = useState(0)
 
@@ -185,6 +188,19 @@ export function KnowledgeDocumentPage() {
     loadGroups()
   }, [])
 
+  // Load organization namespace on mount
+  useEffect(() => {
+    const loadOrgNamespace = async () => {
+      try {
+        const response = await getOrganizationNamespace()
+        setOrgNamespace(response.namespace)
+      } catch (error) {
+        console.error('Failed to load organization namespace:', error)
+      }
+    }
+    loadOrgNamespace()
+  }, [])
+
   const handleCreateKb = (
     groupName: string | null,
     kbType: KnowledgeBaseType,
@@ -204,16 +220,19 @@ export function KnowledgeDocumentPage() {
     summary_model_ref?: Parameters<typeof personalKb.create>[0]['summary_model_ref'] | null
   }) => {
     const kbService = createForOrganization ? organizationKb : personalKb
+    // Use fetched organization namespace or fallback to 'organization'
+    const namespace = createForOrganization
+      ? (orgNamespace ?? 'organization')
+      : createForGroup || 'default'
     await kbService.create({
       name: data.name,
       description: data.description,
-      namespace: createForOrganization ? 'organization' : createForGroup || 'default',
+      namespace,
       retrieval_config: data.retrieval_config,
       summary_enabled: data.summary_enabled,
       summary_model_ref: data.summary_model_ref,
       kb_type: createKbType,
     })
-
     // Save summary model to knowledge team's preference for notebook type
     // This allows the model selector in notebook chat page to pre-select the configured model
     if (createKbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
@@ -237,7 +256,10 @@ export function KnowledgeDocumentPage() {
   const handleUpdate = async (data: Parameters<typeof personalKb.update>[1]) => {
     if (!editingKb) return
     // Use organizationKb service if editing organization knowledge base
-    const kbService = editingKb.namespace === 'organization' ? organizationKb : personalKb
+    const isOrgKb = orgNamespace
+      ? editingKb.namespace === orgNamespace
+      : editingKb.namespace === 'organization'
+    const kbService = isOrgKb ? organizationKb : personalKb
     await kbService.update(editingKb.id, data)
 
     // Save summary model to knowledge team's preference for notebook type
@@ -247,7 +269,7 @@ export function KnowledgeDocumentPage() {
     }
 
     // Refresh the appropriate list based on whether it's a group, organization, or personal knowledge base
-    if (editingKb.namespace === 'organization') {
+    if (isOrgKb) {
       organizationKb.refresh()
     } else if (editingKb.namespace !== 'default') {
       // Group knowledge base - trigger refresh via refreshKey
@@ -259,10 +281,13 @@ export function KnowledgeDocumentPage() {
   const handleDelete = async () => {
     if (!deletingKb) return
     // Use organizationKb service if deleting organization knowledge base
-    const kbService = deletingKb.namespace === 'organization' ? organizationKb : personalKb
+    const isOrgKb = orgNamespace
+      ? deletingKb.namespace === orgNamespace
+      : deletingKb.namespace === 'organization'
+    const kbService = isOrgKb ? organizationKb : personalKb
     await kbService.remove(deletingKb.id)
     // Refresh the appropriate list based on whether it's a group, organization, or personal knowledge base
-    if (deletingKb.namespace === 'organization') {
+    if (isOrgKb) {
       organizationKb.refresh()
     } else if (deletingKb.namespace !== 'default') {
       // Group knowledge base - trigger refresh via refreshKey
@@ -643,11 +668,13 @@ function GroupKnowledgeContent({
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Filter groups based on search query
+  // Filter out organization-level groups, then filter based on search query
   const filteredGroups = useMemo(() => {
-    if (!searchQuery.trim()) return groups
+    // First, exclude organization-level groups
+    const nonOrgGroups = groups.filter(group => group.level !== 'organization')
+    if (!searchQuery.trim()) return nonOrgGroups
     const query = searchQuery.toLowerCase()
-    return groups.filter(
+    return nonOrgGroups.filter(
       group =>
         group.name.toLowerCase().includes(query) ||
         group.display_name?.toLowerCase().includes(query)
@@ -1073,7 +1100,9 @@ function OrganizationKnowledgeContent({
           <div className="flex flex-col items-center justify-center text-text-secondary">
             <Building2 className="w-12 h-12 mb-4 opacity-50" />
             <p className="text-sm mb-2">{t('knowledge:document.noOrgKnowledgeBase')}</p>
-            <p className="text-xs text-text-muted">{t('knowledge:document.noOrgKnowledgeBaseHint')}</p>
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.noOrgKnowledgeBaseHint')}
+            </p>
           </div>
         )}
       </div>

@@ -276,9 +276,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
             <Label htmlFor="level">{t('groups:groups.level')}</Label>
             <Select
               value={formData.level}
-              onValueChange={(value: GroupLevel) =>
-                setFormData({ ...formData, level: value })
-              }
+              onValueChange={(value: GroupLevel) => setFormData({ ...formData, level: value })}
               disabled={isSubmitting}
             >
               <SelectTrigger id="level" data-testid="level-select">
@@ -287,12 +285,12 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
               <SelectContent>
                 <SelectItem value="group">
                   <div className="flex flex-col">
-                    <span>{t('groups:levels.group')}</span>
+                    <span>{t('groups:groups.levels.group')}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="organization">
                   <div className="flex flex-col">
-                    <span>{t('groups:levels.organization')}</span>
+                    <span>{t('groups:groups.levels.organization')}</span>
                   </div>
                 </SelectItem>
               </SelectContent>

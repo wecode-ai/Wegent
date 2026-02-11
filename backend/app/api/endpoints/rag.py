@@ -34,6 +34,7 @@ from app.schemas.rag import (
 )
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.group_permission import get_effective_role_in_group
+from app.services.knowledge.knowledge_service import _is_organization_namespace
 from app.services.rag.document_service import DocumentService
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.storage.factory import create_storage_backend
@@ -124,7 +125,7 @@ def get_index_owner_user_id(
                 detail="Access denied to this knowledge base",
             )
         return current_user_id
-    elif kb.namespace == "organization":
+    elif _is_organization_namespace(db, kb.namespace):
         # Organization knowledge base - accessible to all authenticated users
         # Return the knowledge base creator's user_id for index naming
         # This ensures all users access the same index

@@ -149,6 +149,7 @@ async def create_web_document(
     from app.models.subtask_context import SubtaskContext
     from app.schemas.knowledge import DocumentSourceType, KnowledgeDocumentCreate
     from app.services.knowledge import KnowledgeService
+    from app.services.knowledge.knowledge_service import _is_organization_namespace
 
     logger.info(
         f"User {current_user.id} creating web document from URL: {request.url} "
@@ -261,7 +262,7 @@ async def create_web_document(
                     summary_enabled = spec.get("summaryEnabled", False)
                     if knowledge_base.namespace == "default":
                         index_owner_user_id = current_user.id
-                    elif knowledge_base.namespace == "organization":
+                    elif _is_organization_namespace(db, knowledge_base.namespace):
                         # Organization KB - use current user's ID for index naming
                         # All users can access organization KBs, so we use the current user's ID
                         index_owner_user_id = current_user.id
@@ -339,6 +340,7 @@ async def refresh_web_document(
     from app.models.knowledge import DocumentSourceType, KnowledgeDocument
     from app.models.subtask_context import SubtaskContext
     from app.services.knowledge import KnowledgeService
+    from app.services.knowledge.knowledge_service import _is_organization_namespace
 
     logger.info(f"User {current_user.id} refreshing web document {request.document_id}")
 
@@ -482,7 +484,7 @@ async def refresh_web_document(
                     summary_enabled = spec.get("summaryEnabled", False)
                     if knowledge_base.namespace == "default":
                         index_owner_user_id = current_user.id
-                    elif knowledge_base.namespace == "organization":
+                    elif _is_organization_namespace(db, knowledge_base.namespace):
                         # Organization KB - use current user's ID for index naming
                         # All users can access organization KBs, so we use the current user's ID
                         index_owner_user_id = current_user.id

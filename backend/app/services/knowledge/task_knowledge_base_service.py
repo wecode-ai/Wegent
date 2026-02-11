@@ -19,7 +19,10 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import KnowledgeBaseTaskRef
 from app.services.group_permission import get_effective_role_in_group
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import (
+    KnowledgeService,
+    _is_organization_namespace,
+)
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
@@ -117,7 +120,7 @@ class TaskKnowledgeBaseService:
             return kb.user_id == user_id
 
         # For organization knowledge base, all authenticated users have access
-        if kb.namespace == "organization":
+        if _is_organization_namespace(db, kb.namespace):
             return True
 
         # For team knowledge base, check group membership

@@ -52,6 +52,7 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.knowledge_service import _is_organization_namespace
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
 from shared.telemetry.decorators import (
@@ -152,6 +153,38 @@ def get_knowledge_config():
     """
     return {
         "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+    }
+
+
+@router.get("/organization-namespace")
+@trace_sync("get_organization_namespace", "knowledge.api")
+def get_organization_namespace(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the organization-level namespace name.
+
+    Returns the namespace name that has level='organization'.
+    This is used by frontend when creating organization knowledge bases.
+
+    Returns:
+        {"namespace": str} - The organization namespace name, or null if not configured
+    """
+    from app.models.namespace import Namespace
+    from app.schemas.namespace import GroupLevel
+
+    org_namespace = (
+        db.query(Namespace)
+        .filter(
+            Namespace.level == GroupLevel.organization.value,
+            Namespace.is_active == True,
+        )
+        .first()
+    )
+
+    return {
+        "namespace": org_namespace.name if org_namespace else None,
     }
 
 
@@ -426,7 +459,7 @@ async def create_document(
         # Skip RAG indexing for TABLE source type as table data should be queried in real-time
         if knowledge_base and data.source_type != DocumentSourceType.TABLE:
             rag_params = _extract_rag_config_from_knowledge_base(
-                knowledge_base, current_user.id
+                knowledge_base, current_user.id, db
             )
 
             if rag_params:
@@ -494,7 +527,7 @@ class RAGIndexingParams:
 
 @trace_sync("extract_rag_config", "knowledge.api")
 def _extract_rag_config_from_knowledge_base(
-    knowledge_base: Kind, current_user_id: int
+    knowledge_base: Kind, current_user_id: int, db: Session
 ) -> Optional[RAGIndexingParams]:
     """
     Extract RAG indexing configuration from a knowledge base.
@@ -553,7 +586,7 @@ def _extract_rag_config_from_knowledge_base(
     summary_enabled = spec.get("summaryEnabled", False)
     if knowledge_base.namespace == "default":
         index_owner_user_id = current_user_id
-    elif knowledge_base.namespace == "organization":
+    elif _is_organization_namespace(db, knowledge_base.namespace):
         # Organization KB - use current user's ID for index naming
         # All users can access organization KBs, so we use the current user's ID
         index_owner_user_id = current_user_id
@@ -691,7 +724,7 @@ def _get_kb_index_info_sync(
     if kb.namespace == "default":
         # Personal knowledge base - use current user's ID
         index_owner_user_id = current_user_id
-    elif kb.namespace == "organization":
+    elif _is_organization_namespace(db, kb.namespace):
         # Organization knowledge base - use current user's ID for index naming
         # All users can access organization KBs, so we use the current user's ID
         index_owner_user_id = current_user_id
@@ -1186,7 +1219,7 @@ async def reindex_document(
 
     # Extract RAG config using shared helper
     rag_params = _extract_rag_config_from_knowledge_base(
-        knowledge_base, current_user.id
+        knowledge_base, current_user.id, db
     )
 
     if not rag_params:
@@ -1348,7 +1381,7 @@ async def update_document_content(
                     summary_enabled = spec.get("summaryEnabled", False)
                     if knowledge_base.namespace == "default":
                         index_owner_user_id = current_user.id
-                    elif knowledge_base.namespace == "organization":
+                    elif _is_organization_namespace(db, knowledge_base.namespace):
                         # Organization KB - use current user's ID for index naming
                         # All users can access organization KBs, so we use the current user's ID
                         index_owner_user_id = current_user.id

@@ -197,12 +197,12 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
               <SelectContent>
                 <SelectItem value="group">
                   <div className="flex flex-col">
-                    <span>{t('groups:levels.group')}</span>
+                    <span>{t('groups:groups.levels.group')}</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="organization">
                   <div className="flex flex-col">
-                    <span>{t('groups:levels.organization')}</span>
+                    <span>{t('groups:groups.levels.organization')}</span>
                   </div>
                 </SelectItem>
               </SelectContent>

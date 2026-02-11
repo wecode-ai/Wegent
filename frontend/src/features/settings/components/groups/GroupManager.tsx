@@ -151,13 +151,9 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {group.level === 'organization' ? (
-                        <Badge variant="default">
-                          {t('groups:levels.organization')}
-                        </Badge>
+                        <Badge variant="default">{t('groups:groups.levels.organization')}</Badge>
                       ) : (
-                        <Badge variant="outline">
-                          {t('groups:levels.group')}
-                        </Badge>
+                        <Badge variant="secondary">{t('groups:groups.levels.group')}</Badge>
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm">

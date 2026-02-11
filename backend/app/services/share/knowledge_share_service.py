@@ -26,6 +26,7 @@ from app.schemas.share import (
 )
 from app.schemas.share import PermissionLevel as SchemaPermissionLevel
 from app.services.group_permission import get_effective_role_in_group
+from app.services.knowledge.knowledge_service import _is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
@@ -111,7 +112,7 @@ class KnowledgeShareService(UnifiedShareService):
         logger.warning(f"[_get_resource] User has NO explicit shared access")
 
         # For organization knowledge bases, all authenticated users have access
-        if kb.namespace == "organization":
+        if _is_organization_namespace(db, kb.namespace):
             logger.info(
                 f"[_get_resource] Organization KB - granting access to user_id={user_id}"
             )
@@ -247,7 +248,7 @@ class KnowledgeShareService(UnifiedShareService):
             return True, explicit_perm.permission_level, False
 
         # For organization knowledge bases, all authenticated users have VIEW access
-        if kb.namespace == "organization":
+        if _is_organization_namespace(db, kb.namespace):
             return True, PermissionLevel.VIEW.value, False
 
         # For team knowledge bases, check group permission
@@ -356,7 +357,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         # Check group permission for team KB or organization KB
         group_level = None
-        if kb.namespace == "organization":
+        if _is_organization_namespace(db, kb.namespace):
             # Organization KB - all authenticated users have VIEW access
             group_level = SchemaPermissionLevel.VIEW
         elif kb.namespace != "default":
