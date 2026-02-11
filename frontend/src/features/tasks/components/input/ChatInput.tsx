@@ -114,6 +114,11 @@ export default function ChatInput({
   const badgeRef = useRef<HTMLSpanElement>(null)
   const [badgeWidth, setBadgeWidth] = useState(0)
 
+  // Track the last message value set by user editing
+  // This helps distinguish between user edits and external programmatic changes
+  // to prevent useEffect from overwriting DOM and destroying browser undo history
+  const lastUserEditMessageRef = useRef<string | null>(null)
+
   // Track if we should show placeholder
   const [showPlaceholder, setShowPlaceholder] = useState(!message)
 
@@ -211,8 +216,18 @@ export default function ChatInput({
   }, [])
 
   // Sync contenteditable content with message prop
+  // IMPORTANT: This sync is skipped when user is actively editing to preserve
+  // the browser's native undo/redo history. The innerHTML assignment destroys
+  // the undo stack, so we only sync when message changes from external sources
+  // (e.g., clearing input after send, programmatic updates from parent component)
   useEffect(() => {
     if (editableRef.current) {
+      // Skip sync if this message change came from user editing
+      // This preserves the browser's native undo/redo history
+      if (lastUserEditMessageRef.current === message) {
+        return
+      }
+
       // Get current content with newlines preserved
       const currentContent = getTextWithNewlines(editableRef.current)
       if (currentContent !== message) {
@@ -317,6 +332,11 @@ export default function ChatInput({
     (e: React.FormEvent<HTMLDivElement>) => {
       if (isInputDisabled) return
       const text = getTextWithNewlines(e.currentTarget)
+
+      // Track that this message change is from user editing
+      // This prevents useEffect from overwriting DOM and destroying undo history
+      lastUserEditMessageRef.current = text
+
       setMessage(text)
       setShowPlaceholder(!text)
 
@@ -423,6 +443,8 @@ export default function ChatInput({
           const textAfterWord = textAfterAt.substring(currentWord.length)
           // Build new text: text before @ + mention + space + remaining text
           const newText = textBefore + mention + ' ' + textAfterWord.trimStart()
+          // Track this as user edit to prevent useEffect sync
+          lastUserEditMessageRef.current = newText
           setMessage(newText)
           setContentWithNewlines(editableRef.current, newText)
         }
@@ -465,6 +487,8 @@ export default function ChatInput({
           const textAfterWord = textAfterSlash.substring(currentWord.length)
           // Build new text: text before / + remaining text (remove the /query)
           const newText = textBefore + textAfterWord.trimStart()
+          // Track this as user edit to prevent useEffect sync
+          lastUserEditMessageRef.current = newText
           setMessage(newText)
           setContentWithNewlines(editableRef.current, newText)
         }
@@ -551,58 +575,59 @@ export default function ChatInput({
 
       // Handle different paste scenarios:
       // 1. Files only (e.g., pure screenshot or copied files) -> upload files
-      // 2. Text only (e.g., plain text copy) -> insert text
+      // 2. Text only (e.g., plain text copy) -> let browser handle natively for proper undo
       // 3. Rich text with HTML (e.g., from Word/PPT/web) -> insert text only (ignore preview images)
       // 4. Real files with text (rare case) -> handled by the hasHtml check above
-
-      // Prevent default behavior to handle paste manually
-      e.preventDefault()
 
       // Handle file upload if there are files (and not just preview images from rich text)
       if (hasFiles && onPasteFile) {
         onPasteFile(pastedFiles)
       }
 
-      // Handle text insertion if there is text content
+      // Check if we need to clean the pasted text (has special characters to remove)
+      const originalText = clipboardData.getData('text/plain')
+      const needsCleaning = originalText !== pastedText
+
+      // If text doesn't need cleaning, let browser handle paste natively
+      // This preserves the browser's native undo/redo history
+      if (hasText && !needsCleaning && !hasFiles) {
+        // Don't prevent default - let browser handle the paste
+        // The handleInput will be triggered automatically and sync state
+        return
+      }
+
+      // Need to handle paste manually (cleaning or combined with files)
       if (hasText && editableRef.current) {
-        // Get current selection
-        let selection = window.getSelection()
+        e.preventDefault()
 
-        // Fallback: if no selection exists (edge case), focus the input and create a selection at the end
-        if (!selection || selection.rangeCount === 0) {
+        // Ensure input is focused for execCommand to work
+        if (document.activeElement !== editableRef.current) {
           editableRef.current.focus()
-          selection = window.getSelection()
-
-          // If still no selection after focus, create one at the end of the input
-          if (selection) {
+          // If no selection exists, create one at the end
+          const selection = window.getSelection()
+          if (selection && selection.rangeCount === 0) {
             const range = document.createRange()
             range.selectNodeContents(editableRef.current)
-            range.collapse(false) // Collapse to end
+            range.collapse(false)
             selection.removeAllRanges()
             selection.addRange(range)
           }
         }
 
-        // Proceed with text insertion if we have a valid selection
-        if (selection && selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0)
-          range.deleteContents()
+        // Use execCommand to insert text - this preserves browser undo history
+        // Unlike manual DOM manipulation (insertNode), execCommand operations
+        // are recorded in the browser's native undo stack
+        document.execCommand('insertText', false, pastedText)
 
-          // Insert plain text node
-          const textNode = document.createTextNode(pastedText)
-          range.insertNode(textNode)
-
-          // Move cursor to end of inserted text
-          range.setStartAfter(textNode)
-          range.setEndAfter(textNode)
-          selection.removeAllRanges()
-          selection.addRange(range)
-        }
-
-        // Update message state - use getTextWithNewlines to preserve newlines
+        // Update message state
+        // Track this as user edit to prevent useEffect sync
         const newText = getTextWithNewlines(editableRef.current)
+        lastUserEditMessageRef.current = newText
         setMessage(newText)
         setShowPlaceholder(!newText)
+      } else if (!hasText && hasFiles) {
+        // Only files, no text - just prevent default to avoid pasting file names
+        e.preventDefault()
       }
     },
     [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile]
