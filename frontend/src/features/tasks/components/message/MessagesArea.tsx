@@ -913,7 +913,6 @@ export default function MessagesArea({
                     try {
                       if (selectedTaskDetail.preserve_executor) {
                         await taskApis.cancelPreserveExecutor(selectedTaskDetail.id)
-                        selectedTaskDetail.preserve_executor = false
                         toast({
                           title:
                             t('tasks:preserve_executor.disabled_title') ||
@@ -924,7 +923,6 @@ export default function MessagesArea({
                         })
                       } else {
                         await taskApis.setPreserveExecutor(selectedTaskDetail.id)
-                        selectedTaskDetail.preserve_executor = true
                         toast({
                           title: t('tasks:preserve_executor.enabled_title') || 'Executor Preserved',
                           description:
@@ -932,6 +930,8 @@ export default function MessagesArea({
                             'Executor will not be cleaned up.',
                         })
                       }
+                      // Refresh task detail to get updated state from backend
+                      refreshSelectedTaskDetail(false)
                     } catch (error) {
                       toast({
                         variant: 'destructive',
@@ -1005,11 +1005,9 @@ export default function MessagesArea({
             <PreserveExecutorToggle
               taskId={selectedTaskDetail.id}
               preserveExecutor={selectedTaskDetail.preserve_executor || false}
-              onToggle={preserve => {
-                // Update local state to reflect the change
-                if (selectedTaskDetail) {
-                  selectedTaskDetail.preserve_executor = preserve
-                }
+              onToggle={() => {
+                // Refresh task detail to get updated preserve_executor state from backend
+                refreshSelectedTaskDetail(false)
               }}
             />
           )}
@@ -1062,6 +1060,8 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     selectedTaskDetail?.is_group_chat,
     selectedTaskDetail?.team?.agent_type,
+    selectedTaskDetail?.status,
+    selectedTaskDetail?.preserve_executor,
     messages.length,
     isSharing,
     isMobile,
@@ -1070,6 +1070,7 @@ export default function MessagesArea({
     handleExportDocx,
     t,
     hideGroupChatOptions,
+    refreshSelectedTaskDetail,
   ])
 
   // Pass share button to parent for rendering in TopNavigation

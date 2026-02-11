@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Shield, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -33,7 +33,7 @@ export function PreserveExecutorToggle({
   const [localPreserveState, setLocalPreserveState] = useState(preserveExecutor)
 
   // Sync local state with prop when it changes
-  React.useEffect(() => {
+  useEffect(() => {
     setLocalPreserveState(preserveExecutor)
   }, [preserveExecutor])
 
