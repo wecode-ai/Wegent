@@ -1676,7 +1676,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             TaskCreationParams,
             create_task_and_subtasks,
         )
-        from app.services.task_dispatcher import task_dispatcher
+        from app.services.execution import schedule_dispatch
 
         message = message_context.content
         conversation_id = message_context.conversation_id
@@ -1735,7 +1735,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"⏰ 距离上次对话已超过 {timeout_minutes} 分钟，已自动开始新对话",
             )
 
-        task_dispatcher.schedule_dispatch(result.task.id)
+        schedule_dispatch(result.task.id)
 
         # Send acknowledgment
         # Send acknowledgment
@@ -1753,7 +1753,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     "⏳ 任务已提交到云端执行队列\n\n"
                     f"任务 ID: {result.task.id}\n"
                     "状态: 等待执行\n\n"
-                    "任务完成后将收到通知。"
+                    "任务完成后��收到通知。"
                 ),
                 offset=0,
             )

@@ -1109,20 +1109,12 @@ class ExecutorKindsService(
         # Push mode: dispatch the new pipeline subtask to executor_manager
         # This ensures pipeline tasks work correctly in push mode
         try:
-            from app.services.task_dispatcher import task_dispatcher
+            from app.services.execution import schedule_dispatch
 
-            if task_dispatcher.enabled:
-                # Dispatch the pending subtask for this specific task
-                import asyncio
-
-                asyncio.create_task(
-                    task_dispatcher.dispatch_pending_tasks(
-                        db, task_ids=[task.id], limit=1
-                    )
-                )
-                logger.info(
-                    f"Pipeline task {task.id}: dispatching next stage subtask {new_subtask.id} in push mode"
-                )
+            schedule_dispatch(task.id)
+            logger.info(
+                f"Pipeline task {task.id}: dispatching next stage subtask {new_subtask.id} in push mode"
+            )
         except Exception as e:
             logger.warning(f"Pipeline push mode dispatch failed: {e}")
 

@@ -17,8 +17,10 @@ For SSE mode (Chat shell), uses OpenAI AsyncClient to consume the
 OpenAI Responses API compatible endpoint.
 """
 
+import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Optional
 
 from openai import AsyncOpenAI
