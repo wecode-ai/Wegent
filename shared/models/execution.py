@@ -139,7 +139,6 @@ class ExecutionRequest:
 
     # === Authentication ===
     auth_token: str = ""
-    task_token: str = ""
     backend_url: str = ""
 
     # === Attachments ===

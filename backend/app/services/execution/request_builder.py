@@ -224,8 +224,7 @@ class TaskRequestBuilder:
             history_limit=history_limit,
             new_session=new_session,
             collaboration_model=collaboration_model,
-            auth_token=self._get_auth_token(user),
-            task_token=self._get_task_token(task),
+            auth_token=self._generate_auth_token(task, subtask, user),
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,
@@ -1046,21 +1045,73 @@ class TaskRequestBuilder:
     def _build_workspace(self, task: TaskResource) -> dict:
         """Build workspace configuration.
 
+        Queries the Workspace resource to get actual repository information.
+
         Args:
             task: Task resource model instance
 
         Returns:
-            Workspace configuration dictionary
+            Workspace configuration dictionary with repository info
         """
-        task_json = task.json or {}
-        task_spec = task_json.get("spec", {})
-        workspace_ref = task_spec.get("workspaceRef", {})
+        from app.schemas.kind import Task as TaskCRD
+        from app.schemas.kind import Workspace
 
-        return {
-            "repository": workspace_ref.get("repository", {}),
-            "branch": workspace_ref.get("branch"),
-            "path": workspace_ref.get("path"),
+        task_json = task.json or {}
+
+        # Default empty workspace
+        workspace_data = {
+            "repository": {},
+            "branch": None,
+            "path": None,
         }
+
+        try:
+            task_crd = TaskCRD.model_validate(task_json)
+
+            if not task_crd.spec.workspaceRef:
+                return workspace_data
+
+            workspace_ref = task_crd.spec.workspaceRef
+
+            # Query the actual Workspace resource to get repository info
+            workspace = (
+                self.db.query(TaskResource)
+                .filter(
+                    TaskResource.user_id == task.user_id,
+                    TaskResource.kind == "Workspace",
+                    TaskResource.name == workspace_ref.name,
+                    TaskResource.namespace == workspace_ref.namespace,
+                    TaskResource.is_active.is_(True),
+                )
+                .first()
+            )
+
+            if workspace and workspace.json:
+                workspace_crd = Workspace.model_validate(workspace.json)
+                repo = workspace_crd.spec.repository
+
+                workspace_data = {
+                    "repository": {
+                        "gitUrl": repo.gitUrl,
+                        "gitRepo": repo.gitRepo,
+                        "gitRepoId": repo.gitRepoId,
+                        "gitDomain": repo.gitDomain,
+                        "branchName": repo.branchName,
+                    },
+                    "branch": repo.branchName,
+                    "path": None,
+                }
+
+                logger.debug(
+                    "[TaskRequestBuilder] Built workspace: git_repo=%s, branch=%s",
+                    repo.gitRepo,
+                    repo.branchName,
+                )
+
+        except Exception as e:
+            logger.warning("[TaskRequestBuilder] Failed to build workspace: %s", str(e))
+
+        return workspace_data
 
     def _is_group_chat(self, task: TaskResource) -> bool:
         """Determine if task is a group chat.
@@ -1077,25 +1128,28 @@ class TaskRequestBuilder:
             "is_group_chat", False
         )
 
-    def _get_auth_token(self, user: User) -> str:
-        """Get authentication token for user.
+    def _generate_auth_token(
+        self, task: TaskResource, subtask: Subtask, user: User
+    ) -> str:
+        """Generate authentication token for task execution.
 
-        Args:
-            user: User model instance
-
-        Returns:
-            Authentication token string
-        """
-        # TODO: Generate or retrieve auth token
-        return ""
-
-    def _get_task_token(self, task: TaskResource) -> str:
-        """Get task token.
+        Creates a JWT token containing task_id, subtask_id, user_id, and user_name.
+        This token is used by executor to authenticate requests to backend APIs
+        (e.g., skill downloads, attachment uploads).
 
         Args:
             task: Task resource model instance
+            subtask: Subtask model instance
+            user: User model instance
 
         Returns:
-            Task token string
+            JWT authentication token string
         """
-        return getattr(task, "token", "") or ""
+        from app.services.auth import create_task_token
+
+        return create_task_token(
+            task_id=task.id,
+            subtask_id=subtask.id,
+            user_id=user.id,
+            user_name=user.user_name,
+        )

@@ -303,6 +303,7 @@ def _handle_user_message(
     Returns:
         Tuple of (silent_exit_detected, silent_exit_reason)
     """
+    from executor.callback.callback_handler import send_tool_result_event
     from executor.tools.silent_exit import detect_silent_exit
 
     # Track silent exit detection
@@ -399,6 +400,31 @@ def _handle_user_message(
                 logger.info(
                     f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}"
                 )
+
+                # Send tool_result callback event (response.output_item.done)
+                try:
+                    task_id = (
+                        state_manager.task_data.get("task_id", -1)
+                        if state_manager
+                        else -1
+                    )
+                    subtask_id = (
+                        state_manager.task_data.get("subtask_id", -1)
+                        if state_manager
+                        else -1
+                    )
+                    send_tool_result_event(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        tool_use_id=block.tool_use_id,
+                        tool_output=block.content,
+                        error=str(block.content) if block.is_error else None,
+                    )
+                    logger.info(
+                        f"Sent tool_result event for tool_use_id {block.tool_use_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send tool_result event: {e}")
 
                 # Check for silent_exit marker in tool result content
                 # The content can be a string or a list of content blocks

@@ -2,16 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Task token authentication for MCP Server.
+"""Authentication services."""
 
-This module re-exports task token functions from the centralized auth service.
-For new code, prefer importing directly from app.services.auth.
-
-Example:
-    from app.services.auth import create_task_token, verify_task_token
-"""
-
-# Re-export from centralized auth service for backward compatibility
 from app.services.auth.task_token import (
     TaskTokenData,
     TaskTokenInfo,
