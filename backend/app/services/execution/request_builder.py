@@ -130,8 +130,26 @@ class TaskRequestBuilder:
         if not bot:
             raise ValueError(f"No bot found for team {team.name}")
 
-        # Build user info
-        user_info = self._build_user_info(user)
+        # Build workspace configuration first to get git_domain for user info matching
+        workspace = self._build_workspace(task)
+
+        # Extract git fields from workspace for executor compatibility
+        # Executor's download_code() expects top-level git_url, branch_name, etc.
+        git_url = None
+        git_domain = None
+        git_repo = None
+        git_repo_id = None
+        branch_name = None
+        if workspace and workspace.get("repository"):
+            repo = workspace["repository"]
+            git_url = repo.get("gitUrl")
+            git_domain = repo.get("gitDomain")
+            git_repo = repo.get("gitRepo")
+            git_repo_id = repo.get("gitRepoId")
+            branch_name = repo.get("branchName") or workspace.get("branch")
+
+        # Build user info with git_domain to match correct git account
+        user_info = self._build_user_info(user, git_domain)
 
         # Get model config with full resolution (decryption, placeholder replacement)
         model_config = self._get_model_config(
@@ -182,11 +200,8 @@ class TaskRequestBuilder:
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
 
-        # Build workspace configuration
-        workspace = self._build_workspace(task)
-
         # Get collaboration model
-        collaboration_model = team_crd.spec.collaborationModel or "single"
+        collaboration_model = team_crd.spec.collaborationModel or "solo"
 
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
@@ -218,6 +233,12 @@ class TaskRequestBuilder:
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
+            # Git fields extracted from workspace for executor compatibility
+            git_url=git_url,
+            git_domain=git_domain,
+            git_repo=git_repo,
+            git_repo_id=git_repo_id,
+            branch_name=branch_name,
             message_id=subtask.message_id,
             user_message_id=None,
             is_group_chat=is_group_chat,
@@ -1021,24 +1042,56 @@ class TaskRequestBuilder:
     # Helper Methods
     # =========================================================================
 
-    def _build_user_info(self, user: User) -> dict:
+    def _build_user_info(self, user: User, git_domain: str | None = None) -> dict:
         """Build user info dictionary.
+
+        Git-related fields are stored in user.git_info JSON field as a list of git accounts.
+        Each account has: type, git_domain, git_token, git_id, git_login, git_email.
 
         Args:
             user: User model instance
+            git_domain: Optional git domain to match (e.g., "github.com")
 
         Returns:
-            User info dictionary
+            User info dictionary with matched git account info
         """
         user_info = {
             "id": user.id,
             "name": user.user_name,
-            "git_domain": getattr(user, "git_domain", None),
-            "git_token": getattr(user, "git_token", None),
-            "git_id": getattr(user, "git_id", None),
-            "git_login": getattr(user, "git_login", None),
-            "git_email": getattr(user, "git_email", None),
+            "git_domain": None,
+            "git_token": None,
+            "git_id": None,
+            "git_login": None,
+            "git_email": None,
         }
+
+        # git_info is a list of git account configurations
+        git_info_list = user.git_info or []
+        if not isinstance(git_info_list, list):
+            # Handle edge case where git_info might be a dict (legacy)
+            git_info_list = [git_info_list] if git_info_list else []
+
+        if not git_info_list:
+            return user_info
+
+        # Find matching git_info entry by domain
+        matched_git_info = None
+        if git_domain:
+            for git_info in git_info_list:
+                if git_info.get("git_domain") == git_domain:
+                    matched_git_info = git_info
+                    break
+
+        # Fallback to first entry if no domain match
+        if not matched_git_info and git_info_list:
+            matched_git_info = git_info_list[0]
+
+        if matched_git_info:
+            user_info["git_domain"] = matched_git_info.get("git_domain")
+            user_info["git_token"] = matched_git_info.get("git_token")
+            user_info["git_id"] = matched_git_info.get("git_id")
+            user_info["git_login"] = matched_git_info.get("git_login")
+            user_info["git_email"] = matched_git_info.get("git_email")
 
         return user_info
 
