@@ -29,6 +29,7 @@ class TaskEvents:
     """
 
     EXECUTE = "task:execute"
+    CANCEL = "task:cancel"
     COMPLETE = "task:complete"
     CLOSE_SESSION = "task:close-session"
 
@@ -39,6 +40,9 @@ class ChatEvents:
     These event names are used as Socket.IO event names and match
     the OpenAI Responses API event types for consistency.
     """
+
+    # Wegent-specific incoming events
+    MESSAGE = "chat:message"
 
     # Lifecycle events
     START = ResponsesAPIStreamEvents.RESPONSE_CREATED.value

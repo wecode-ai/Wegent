@@ -114,6 +114,9 @@ class CallbackClient:
         Returns:
             Dict[str, Any]: Result returned by the callback interface
         """
+        if not self.callback_url:
+            return {"status": "skipped", "error_msg": "No callback URL configured"}
+
         logger.info(
             f"Sending event: type={event_dict.get('event_type')}, "
             f"task_id={event_dict.get('task_id')}, subtask_id={event_dict.get('subtask_id')}"

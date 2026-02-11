@@ -777,7 +777,7 @@ class TaskOperationsMixin:
             if background_task_runner:
                 background_task_runner(self._call_chat_shell_cancel, running_subtask.id)
 
-            running_subtask.status = SubtaskStatus.COMPLETED
+            running_subtask.status = SubtaskStatus.CANCELLED
             running_subtask.progress = 100
             running_subtask.completed_at = datetime.now()
             running_subtask.updated_at = datetime.now()
@@ -788,17 +788,17 @@ class TaskOperationsMixin:
                 self.update_task(
                     db=db,
                     task_id=task_id,
-                    obj_in=TaskUpdate(status="COMPLETED"),
+                    obj_in=TaskUpdate(status="CANCELLED"),
                     user_id=user_id,
                 )
                 logger.info(
-                    f"Chat Shell task {task_id} cancelled and marked as COMPLETED"
+                    f"Chat Shell task {task_id} cancelled and marked as CANCELLED"
                 )
             except Exception as e:
                 logger.error(
                     f"Failed to update Chat Shell task {task_id} status: {str(e)}"
                 )
-            return {"message": "Chat stopped successfully", "status": "COMPLETED"}
+            return {"message": "Chat stopped successfully", "status": "CANCELLED"}
         else:
             try:
                 self.update_task(

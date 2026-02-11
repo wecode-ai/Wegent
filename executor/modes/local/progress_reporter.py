@@ -13,7 +13,7 @@ All events follow OpenAI's official Responses API specification.
 
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from executor.modes.local.events import ChatEvents, TaskEvents
+from executor.modes.local.events import ChatEvents
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter, WebSocketTransport
 
@@ -25,7 +25,7 @@ logger = setup_logger("websocket_progress_reporter")
 # Event type to socket event mapping
 EVENT_MAPPING = {
     "response.created": ChatEvents.START,
-    "response.in_progress": TaskEvents.PROGRESS,
+    "response.in_progress": ChatEvents.IN_PROGRESS,
     "response.output_text.delta": ChatEvents.CHUNK,
     "response.output_text.done": ChatEvents.CHUNK,
     "response.output_item.added": ChatEvents.CHUNK,
@@ -34,7 +34,7 @@ EVENT_MAPPING = {
     "response.function_call_arguments.done": ChatEvents.CHUNK,
     "response.reasoning_summary_part.added": ChatEvents.CHUNK,
     "response.completed": ChatEvents.DONE,
-    "response.incomplete": TaskEvents.CANCEL,
+    "response.incomplete": ChatEvents.INCOMPLETE,
     "error": ChatEvents.ERROR,
 }
 
@@ -210,15 +210,19 @@ class WebSocketProgressReporter:
         message: str = "",
     ) -> None:
         """Report final task result."""
-        is_success = status.upper() in ("COMPLETED", "SUCCESS")
-        if is_success:
+        normalized = status.upper()
+        if normalized in ("COMPLETED", "SUCCESS"):
             await self.send_done_event(
-                content=message or result.get("value", ""),
+                content=result.get("value", "") or "",
                 usage=result.get("usage"),
                 sources=result.get("sources"),
             )
+        elif normalized == "CANCELLED":
+            await self.send_cancelled_event(
+                content=result.get("value", "") or "",
+            )
         else:
             await self.send_error_event(
-                error=message or result.get("error", "Unknown error"),
+                error=result.get("error") or message or "Unknown error",
                 error_code="execution_error",
             )
