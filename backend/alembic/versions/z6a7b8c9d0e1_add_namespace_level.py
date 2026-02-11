@@ -16,7 +16,7 @@ Migration steps:
 2. Create index on 'level' column
 3. Set existing 'organization' namespace to level='organization'
 4. Keep 'default' namespace unchanged (level remains NULL)
-5. Fix collation for all character columns to utf8mb4_0900_ai_ci
+5. Fix collation for all character columns to utf8mb4_unicode_ci
 """
 
 from typing import Sequence, Union
@@ -59,7 +59,7 @@ def index_exists(table_name: str, index_name: str) -> bool:
 
 
 def upgrade() -> None:
-    """Add level column to namespace table and ensure organization namespace exists."""
+    """Add level column to namespace table."""
     conn = op.get_bind()
 
     # Add level column if not exists
@@ -69,7 +69,7 @@ def upgrade() -> None:
             sa.Column(
                 "level",
                 sa.String(20),
-                nullable=True,
+                nullable=False,
                 server_default=sa.text("'group'"),
                 comment="Group level: 'group' (default) or 'organization' (admin only)",
             ),
@@ -84,74 +84,31 @@ def upgrade() -> None:
             unique=False,
         )
 
-    # Check if 'organization' namespace exists
-    result = conn.execute(
-        sa.text("SELECT id, level FROM namespace WHERE name = 'organization'")
-    )
-    row = result.fetchone()
-
-    if row is None:
-        # Create 'organization' namespace if it doesn't exist
-        # First, try to get the first admin user as the owner
-        admin_result = conn.execute(
-            sa.text("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
-        )
-        admin_row = admin_result.fetchone()
-
-        if admin_row is not None:
-            owner_user_id = admin_row[0]
-        else:
-            # If no admin user exists, use the first user
-            user_result = conn.execute(
-                sa.text("SELECT id FROM users ORDER BY id LIMIT 1")
-            )
-            user_row = user_result.fetchone()
-            owner_user_id = (
-                user_row[0] if user_row else 1
-            )  # Default to 1 if no users exist
-
-        conn.execute(
-            sa.text(
-                """
-                INSERT INTO namespace (name, display_name, owner_user_id, level, visibility, description, is_active, created_at, updated_at)
-                VALUES ('organization', 'Organization', :owner_user_id, 'organization', 'private', 'Organization level knowledge base', 1, NOW(), NOW())
-                """
-            ),
-            {"owner_user_id": owner_user_id},
-        )
-    elif row[1] != "organization":
-        # Update level to 'organization' if it's not already set
-        conn.execute(
-            sa.text(
-                "UPDATE namespace SET level = 'organization' WHERE name = 'organization'"
-            )
-        )
-
     # Keep 'default' namespace with NULL level (represents personal namespace)
     # No action needed as new columns default to NULL
 
-    # Fix collation for namespace table to use utf8mb4_0900_ai_ci
+    # Fix collation for namespace table to use utf8mb4_unicode_ci
     conn.execute(
         sa.text(
             """
-            ALTER TABLE namespace 
-            MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
-            MODIFY COLUMN display_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
-            MODIFY COLUMN description TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
-            MODIFY COLUMN visibility VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
-            MODIFY COLUMN level VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
+            ALTER TABLE namespace
+            MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+            MODIFY COLUMN display_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+            MODIFY COLUMN description TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+            MODIFY COLUMN visibility VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+            MODIFY COLUMN level VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """
         )
     )
 
-    # Fix collation for kinds table to use utf8mb4_0900_ai_ci
+    # Fix collation for kinds table to use utf8mb4_unicode_ci
     conn.execute(
         sa.text(
             """
-            ALTER TABLE kinds 
-            MODIFY COLUMN kind VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
-            MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
-            MODIFY COLUMN namespace VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
+            ALTER TABLE kinds
+            MODIFY COLUMN kind VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+            MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+            MODIFY COLUMN namespace VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
             """
         )
     )
