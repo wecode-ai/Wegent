@@ -33,7 +33,6 @@ from app.api.endpoints.adapter import (
     bots,
     chat,
     dify,
-    executors,
     models,
     retrievers,
     shells,
@@ -104,7 +103,6 @@ api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
 )
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
-api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])

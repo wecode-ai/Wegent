@@ -7,7 +7,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Task processing module, handles tasks fetched from API.
+Task processing module, handles tasks from queue.
 
 Supports both OpenAI Responses API format and legacy ExecutionRequest dict format.
 Uses get_metadata_field() helper for transparent field access across both formats.
@@ -15,7 +15,6 @@ Uses get_metadata_field() helper for transparent field access across both format
 
 from typing import Any, Dict, List, Union
 
-from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.config import config
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.github.github_app import get_github_app
@@ -62,27 +61,10 @@ class TaskProcessor:
     """
 
     def __init__(self):
-        """Initialize TaskProcessor with API client"""
-        self.api_client = TaskApiClient()
+        """Initialize TaskProcessor"""
         self.github_app = None
         if config.GITHUB_APP_ID and config.GITHUB_PRIVATE_KEY_PATH:
             self.github_app = get_github_app()
-
-    def update_task_status_callback(self, task_id, subtask_id, progress=0, **kwargs):
-        """
-        Callback function for updating task execution status
-
-        Args:
-            task_id: Task ID
-            subtask_id: Subtask ID
-            executor_name: Kubernetes pod name
-            progress: Processing progress percentage
-        """
-        success, result = self.api_client.update_task_status_by_fields(
-            task_id, subtask_id, progress, **kwargs
-        )
-        if not success:
-            logger.warning(f"Failed to update status for task {task_id}: {result}")
 
     def process_tasks(
         self, tasks: List[Union[Dict[str, Any], ExecutionRequest]]
@@ -146,7 +128,6 @@ class TaskProcessor:
             task_dict = task
 
         task_id = get_metadata_field(task_dict, "task_id", -1)
-        subtask_id = get_metadata_field(task_dict, "subtask_id", -1)
         bot_config = get_metadata_field(task_dict, "bot", [])
 
         # Set request context for log correlation
@@ -190,9 +171,10 @@ class TaskProcessor:
                         logger.info("Set GITHUB_PERSONAL_ACCESS_TOKEN in github mcp")
 
             # Submit task to executor (pass dict for executor compatibility)
+            # Note: callback is not used in push mode, status updates are handled via HTTP callback
             result = executor.submit_executor(
                 task_dict,
-                callback=self.update_task_status_callback,
+                callback=None,
             )
 
             if result and result.get("executor_name"):

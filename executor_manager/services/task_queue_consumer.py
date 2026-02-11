@@ -18,7 +18,6 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.config.config import (
     EXECUTOR_DISPATCHER_MODE,
     OFFLINE_TASK_EVENING_HOURS,
@@ -55,7 +54,6 @@ class TaskQueueConsumer:
         self.queue_type = queue_type
         self.queue_service = TaskQueueService(service_pool, queue_type)
         self.task_processor = TaskProcessor()
-        self.api_client = TaskApiClient()
         self.running = False
         self.max_concurrent_tasks = int(os.getenv("MAX_CONCURRENT_TASKS", "30"))
         self._thread: Optional[threading.Thread] = None
@@ -252,24 +250,37 @@ class TaskQueueConsumer:
             f"{retry_count} retries: {error_msg}"
         )
 
-        # Callback to update task status to FAILED
+        # Callback to update task status to FAILED via callback API
         if task_id and subtask_id:
+            import asyncio
+
+            from executor_manager.clients.callback_client import get_callback_client
+
             try:
-                success, result = self.api_client.update_task_status_by_fields(
-                    task_id=task_id,
-                    subtask_id=subtask_id,
-                    progress=0,
-                    status="FAILED",
-                    error_message=f"Task failed after {retry_count} retries: {error_msg}",
-                )
+                callback_client = get_callback_client()
+                error_message = f"Task failed after {retry_count} retries: {error_msg}"
+
+                # Run async callback in sync context
+                loop = asyncio.new_event_loop()
+                try:
+                    success = loop.run_until_complete(
+                        callback_client.send_error(
+                            task_id=task_id,
+                            subtask_id=subtask_id,
+                            error_message=error_message,
+                            error_code="task_queue_failure",
+                        )
+                    )
+                finally:
+                    loop.close()
+
                 if success:
                     logger.info(
                         f"[TaskQueueConsumer] Task {task_id}/{subtask_id} marked as FAILED"
                     )
                 else:
                     logger.warning(
-                        f"[TaskQueueConsumer] Failed to update task {task_id}/{subtask_id} "
-                        f"status: {result}"
+                        f"[TaskQueueConsumer] Failed to update task {task_id}/{subtask_id} status"
                     )
             except Exception as e:
                 logger.error(
