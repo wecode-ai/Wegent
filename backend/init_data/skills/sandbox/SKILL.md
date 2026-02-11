@@ -1,9 +1,9 @@
 ---
-description: "Provides read_file/write_file/exec/list_files/read_file/write_file for running process and managing filesystems in the sandbox. Ideal for code testing, file management, and command execution. The sub_claude_agent tool is available for advanced use cases. You MUST load this skill BEFORE use sandbox tools."
+description: "Provides sub_claude_agent for running Claude AI tasks, and upload_attachment/download_attachment for file transfers. The read_file/write_file/exec/list_files tools are now builtin and automatically available without loading this skill."
 displayName: "沙箱环境"
-version: "2.1.0"
+version: "3.0.0"
 author: "Wegent Team"
-tags: ["sandbox", "code-execution", "filesystem", "automation"]
+tags: ["sandbox", "code-execution", "claude-ai", "attachment"]
 bindShells: ["Chat"]
 provider:
   module: provider
@@ -23,20 +23,10 @@ config:
           model_id: "xxxxx"
           small_model: "xxxxx"
 tools:
-  - name: exec
-    provider: sandbox
   - name: sub_claude_agent
     provider: sandbox
     config:
       command_timeout: 1800
-  - name: list_files
-    provider: sandbox
-  - name: read_file
-    provider: sandbox
-  - name: write_file
-    provider: sandbox
-    config:
-      max_file_size: 10485760
   - name: upload_attachment
     provider: sandbox
     config:
@@ -47,63 +37,41 @@ tools:
 
 # Sandbox Environment
 
-Execute code, commands, and complex tasks securely in isolated Docker containers running **AlmaLinux 9.4**.
+Execute complex Claude AI tasks and manage file attachments in isolated Docker containers running **AlmaLinux 9.4**.
+
+## Important: Builtin Filesystem Tools
+
+> **Note**: The following tools are now **builtin** in Chat Shell and are automatically available without loading this skill:
+> - `read_file` - Read file contents
+> - `write_file` - Write content to files
+> - `list_files` - List directory contents
+> - `exec` - Execute shell commands
+>
+> These builtin tools support both **local mode** (direct filesystem access) and **remote mode** (E2B sandbox).
+> You only need to load this skill if you need `sub_claude_agent` or attachment operations.
 
 ## Core Capabilities
 
-The sandbox environment provides fully isolated execution spaces with:
+The sandbox skill now focuses on:
 
-1. **Command Execution** - Run shell commands, scripts, and programs
-2. **File Operations** - Read/write files, browse directories, manage filesystems
-3. **Code Execution** - Safely execute and test code
-4. **Claude AI Tasks** - Available for advanced use cases when explicitly requested by users
-5. **Attachment Upload/Download** - Upload generated files to Wegent for user download, or download user attachments for processing
+1. **Claude AI Tasks** - Run Claude AI agent for complex multi-step programming tasks
+2. **Attachment Upload** - Upload generated files to Wegent for user download
+3. **Attachment Download** - Download user attachments for processing in sandbox
 
-## When to Use
+## When to Use This Skill
 
 Use this skill when you need to:
 
-- ✅ Execute shell commands or scripts
-- ✅ Run and test code
-- ✅ Read, write, or manage files
-- ✅ Perform multi-step programming tasks
-- ✅ Git operations (clone, commit, push, etc.)
-- ✅ Require isolated environment for safety
+- ✅ Run Claude AI for complex programming tasks (`sub_claude_agent`)
+- ✅ Upload generated files for user download (`upload_attachment`)
+- ✅ Download user attachments for processing (`download_attachment`)
 
-**Note**: The `sub_claude_agent` tool should only be used when the user explicitly requests Claude AI assistance (e.g., "use Claude to generate...", "ask Claude to create...").
+**Note**: For basic file operations (read/write/list/exec), use the builtin tools directly - no need to load this skill.
 
 ## Available Tools
 
-### Command Execution
+### `sub_claude_agent`
 
-#### `exec`
-Execute shell commands in the sandbox environment.
-
-**Use Cases:**
-- Run single commands or scripts
-- Directory operations (create, delete, move)
-- Install dependencies, run tests
-- View system information
-
-**Parameters:**
-- `command` (required): Shell command to execute
-- `working_dir` (optional): Working directory path
-- `timeout` (optional): Timeout in seconds
-
-**Example:**
-```json
-{
-  "name": "exec",
-  "arguments": {
-    "command": "python script.py --arg value",
-    "working_dir": "/home/user/project"
-  }
-}
-```
-
----
-
-#### `sub_claude_agent`
 Run Claude AI to execute complex tasks in the sandbox.
 
 **⚠️ IMPORTANT**: This tool should **only be used when the user explicitly requests it**. Do not use this tool automatically or as a default option.
@@ -138,94 +106,8 @@ Run Claude AI to execute complex tasks in the sandbox.
 
 ---
 
-### File Operations
+### `upload_attachment`
 
-#### `list_files`
-List files and subdirectories in a directory.
-
-**Parameters:**
-- `path` (required): Directory path
-- `depth` (optional): Recursion depth, default 1
-
-**Returns:**
-- File metadata including name, size, permissions, modification time
-
-**Example:**
-```json
-{
-  "name": "list_files",
-  "arguments": {
-    "path": "/home/user/project",
-    "depth": 2
-  }
-}
-```
-
----
-
-#### `read_file`
-Read file contents.
-
-**Parameters:**
-- `file_path` (required): File path to read
-
-**Limits:**
-- Maximum file size: 1MB (configurable)
-
-**Example:**
-```json
-{
-  "name": "read_file",
-  "arguments": {
-    "file_path": "/home/user/config.json"
-  }
-}
-```
-
----
-
-#### `write_file`
-Write content to a file.
-
-⚠️ **IMPORTANT**: Both `file_path` AND `content` are **REQUIRED** parameters. You must always provide the content to write.
-
-**Parameters:**
-- `file_path` (REQUIRED): File path to write
-- `content` (REQUIRED): Content to write (MUST be provided, cannot be omitted)
-- `format` (optional): Content format - 'text' (default) or 'bytes' (base64-encoded)
-- `create_dirs` (optional): Auto-create parent directories (default: True)
-
-**Features:**
-- Automatically creates parent directories
-- Maximum file size: 10MB (configurable)
-
-**Example - Text file:**
-```json
-{
-  "name": "write_file",
-  "arguments": {
-    "file_path": "/home/user/output.txt",
-    "content": "Hello, Sandbox!"
-  }
-}
-```
-
-**Example - HTML file:**
-```json
-{
-  "name": "write_file",
-  "arguments": {
-    "file_path": "/home/user/index.html",
-    "content": "<!DOCTYPE html><html><head><title>Test</title></head><body><h1>Hello</h1></body></html>"
-  }
-}
-```
-
----
-
-### Attachment Operations
-
-#### `upload_attachment`
 Upload a file from sandbox to Wegent and get a download URL for users.
 
 **Use Cases:**
@@ -271,7 +153,8 @@ Document generation completed!
 
 ---
 
-#### `download_attachment`
+### `download_attachment`
+
 Download a file from Wegent attachment URL to sandbox for processing.
 
 **Use Cases:**
@@ -305,97 +188,15 @@ Download a file from Wegent attachment URL to sandbox for processing.
 
 | Task Type | Recommended Tool | Reason |
 |-----------|-----------------|--------|
-| Execute commands or scripts | `exec` | Fast execution, no overhead |
-| Create/delete directories | `exec` | Use `mkdir -p` or `rm -rf` directly |
-| Read files | `read_file` | Better error handling and size validation |
-| Write files | `write_file` | Auto directory creation, size validation |
-| Browse directories | `list_files` | Structured output with metadata |
+| Execute commands or scripts | `exec` (builtin) | Fast execution, no skill loading needed |
+| Read files | `read_file` (builtin) | Better error handling and size validation |
+| Write files | `write_file` (builtin) | Auto directory creation, size validation |
+| Browse directories | `list_files` (builtin) | Structured output with metadata |
 | Upload files for user download | `upload_attachment` | Get download URL for user-facing files |
 | Download attachments | `download_attachment` | Retrieve Wegent attachments into sandbox |
 | Complex tasks with Claude | `sub_claude_agent` | **Only when user explicitly requests** |
 
-**Important**: Always prefer `exec` for standard operations. Only use `sub_claude_agent` when the user specifically asks for Claude AI assistance.
-
----
-
-## Usage Examples
-
-### Scenario 1: Run Python Script
-
-```json
-{
-  "name": "exec",
-  "arguments": {
-    "command": "cd /home/user && python -m pip install requests && python app.py"
-  }
-}
-```
-
-### Scenario 2: Install System Packages (AlmaLinux)
-
-```json
-{
-  "name": "exec",
-  "arguments": {
-    "command": "dnf install -y gcc make && gcc --version"
-  }
-}
-```
-
-### Scenario 3: File Management
-
-```json
-// 1. List files
-{
-  "name": "list_files",
-  "arguments": {
-    "path": "/home/user"
-  }
-}
-
-// 2. Read file
-{
-  "name": "read_file",
-  "arguments": {
-    "file_path": "/home/user/data.json"
-  }
-}
-
-// 3. Write file
-{
-  "name": "write_file",
-  "arguments": {
-    "file_path": "/home/user/result.txt",
-    "content": "Processing complete: Success"
-  }
-}
-```
-
-### Scenario 4: Git Operations
-
-```json
-{
-  "name": "exec",
-  "arguments": {
-    "command": "git clone https://github.com/user/repo.git && cd repo && git checkout -b feature"
-  }
-}
-```
-
-### Scenario 5: Using Claude (Only When Explicitly Requested)
-
-**Example user request**: "Please use Claude to generate a presentation about AI"
-
-```json
-{
-  "name": "sub_claude_agent",
-  "arguments": {
-    "prompt": "Create a 5-page presentation about the history of artificial intelligence"
-  }
-}
-```
-
-**Note**: This scenario should only be used when the user explicitly asks for Claude assistance.
+**Important**: For basic filesystem operations, use the builtin tools directly. Only load this skill when you need Claude AI tasks or attachment operations.
 
 ---
 
@@ -417,10 +218,7 @@ Download a file from Wegent attachment URL to sandbox for processing.
 - Each sandbox runs in an isolated Docker container
 
 ### Resource Limits
-- **Read file limit**: 1MB (configurable)
-- **Write file limit**: 10MB (configurable)
 - **Upload file limit**: 100MB (configurable)
-- **Command timeout**: 300 seconds (5 minutes)
 - **Claude timeout**: 1800 seconds (30 minutes, minimum: 600 seconds / 10 minutes)
 - **Total task timeout**: 7200 seconds (2 hours)
 
@@ -454,12 +252,12 @@ Control Claude's available tools via the `allowed_tools` parameter:
 
 ## Best Practices
 
-1. **Clear Task Descriptions** - Provide detailed instructions and expected outcomes
-2. **Use Absolute Paths** - Avoid path ambiguity
-3. **Choose the Right Tool** - Refer to the tool selection guide
-4. **Check Return Results** - Verify the `success` field
-5. **Mind Size Limits** - File read/write operations have size constraints
-6. **Prefer exec** - Use for most tasks; only use `sub_claude_agent` when user explicitly requests Claude assistance
+1. **Use Builtin Tools First** - For read/write/exec/list, use builtin tools (no skill loading)
+2. **Load This Skill Only When Needed** - For Claude AI or attachment operations
+3. **Clear Task Descriptions** - Provide detailed instructions and expected outcomes
+4. **Use Absolute Paths** - Avoid path ambiguity
+5. **Check Return Results** - Verify the `success` field
+6. **Only Use sub_claude_agent When Requested** - Don't use it automatically
 
 ---
 
@@ -476,10 +274,6 @@ Control Claude's available tools via the `allowed_tools` parameter:
 ### Command Timeout
 **Cause**: Task execution takes too long
 **Solution**: Increase timeout setting or split into smaller tasks
-
-### File Too Large
-**Cause**: Exceeds size limit (1MB read / 10MB write)
-**Solution**: Process in chunks or adjust configuration
 
 ### Permission Denied
 **Cause**: Insufficient file permissions
