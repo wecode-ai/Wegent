@@ -183,6 +183,7 @@ class KnowledgeBaseInfo(BaseModel):
     exempt_calls_before_check: int  # Calls exempt from token checking
     name: str  # Knowledge base name
     rag_enabled: bool  # Whether RAG retrieval is configured (has retriever)
+    has_structured_data: bool = False  # Whether KB has CSV/XLSX files for structured queries
 
 
 class KnowledgeBaseInfoResponse(BaseModel):
@@ -215,7 +216,11 @@ async def get_knowledge_base_info(
         Complete information for each knowledge base
     """
     from app.models.kind import Kind
+    from app.models.knowledge import KnowledgeDocument
     from app.services.knowledge import KnowledgeService
+
+    # Structured data file extensions
+    STRUCTURED_EXTENSIONS = [".csv", ".xlsx", ".xls"]
 
     items = []
     total_file_size = 0
@@ -230,6 +235,18 @@ async def get_knowledge_base_info(
             # Estimate tokens using extracted text length (better proxy than raw file size)
             # tested with real cases
             estimated_tokens = int(stats.text_length_total * 1.5)
+
+            # Check if KB has structured data files (CSV/XLSX)
+            has_structured_data = (
+                db.query(KnowledgeDocument)
+                .filter(
+                    KnowledgeDocument.kind_id == kb_id,
+                    KnowledgeDocument.is_active == True,
+                    KnowledgeDocument.file_extension.in_(STRUCTURED_EXTENSIONS),
+                )
+                .first()
+                is not None
+            )
 
             # Get KB configuration from Kind spec
             kb_kind = (
@@ -281,6 +298,7 @@ async def get_knowledge_base_info(
                     exempt_calls_before_check=exempt_calls,
                     name=kb_name,
                     rag_enabled=rag_enabled,
+                    has_structured_data=has_structured_data,
                 )
             )
 
@@ -288,7 +306,7 @@ async def get_knowledge_base_info(
             total_estimated_tokens += estimated_tokens
 
             logger.info(
-                "[internal_rag] KB %d info: size=%d bytes, docs=%d, tokens=%d, limits=%d/%d, name=%s, rag_enabled=%s",
+                "[internal_rag] KB %d info: size=%d bytes, docs=%d, tokens=%d, limits=%d/%d, name=%s, rag_enabled=%s, has_structured_data=%s",
                 kb_id,
                 file_size,
                 doc_count,
@@ -297,6 +315,7 @@ async def get_knowledge_base_info(
                 exempt_calls,
                 kb_name,
                 rag_enabled,
+                has_structured_data,
             )
 
         except Exception as e:
@@ -312,6 +331,7 @@ async def get_knowledge_base_info(
                     exempt_calls_before_check=5,  # Default
                     name=f"KB-{kb_id}",  # Default
                     rag_enabled=False,  # Default to False for failed KBs
+                    has_structured_data=False,  # Default to False for failed KBs
                 )
             )
 
@@ -901,3 +921,120 @@ async def read_document(
             exc_info=True,
         )
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ============== Structured Data Query API ==============
+
+
+class StructuredQueryRequest(BaseModel):
+    """Request for structured data query (SQL-based)."""
+
+    query: str = Field(..., description="Natural language query")
+    knowledge_base_id: int = Field(..., description="Knowledge base ID")
+    document_ids: Optional[list[int]] = Field(
+        default=None,
+        description="Optional specific document IDs to query",
+    )
+    max_rows: Optional[int] = Field(
+        default=None,
+        description="Maximum rows to return (default from settings)",
+    )
+
+
+class StructuredQueryResult(BaseModel):
+    """Result from structured SQL query."""
+
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list] = Field(default_factory=list)
+    row_count: int = Field(default=0)
+    truncated: bool = Field(default=False)
+
+
+class StructuredQueryResponse(BaseModel):
+    """Response from structured data query."""
+
+    query: str = Field(..., description="Original query")
+    mode: str = Field(default="structured_query")
+    generated_sql: str = Field(default="", description="Generated SQL query")
+    explanation: str = Field(default="", description="SQL explanation")
+    confidence: float = Field(default=0.0, description="Generation confidence")
+    results: StructuredQueryResult = Field(default_factory=StructuredQueryResult)
+    sources: list[dict] = Field(default_factory=list)
+    error: Optional[str] = Field(default=None)
+
+
+@router.post("/structured-query", response_model=StructuredQueryResponse)
+async def structured_query(
+    request: StructuredQueryRequest,
+    db: Session = Depends(get_db),
+) -> StructuredQueryResponse:
+    """
+    Execute structured SQL query on knowledge base.
+
+    This endpoint converts natural language queries to SQL and executes them
+    on CSV/XLSX documents stored in the knowledge base using DuckDB.
+
+    Requirements:
+    - STRUCTURED_DATA_ENABLED must be True in server settings
+    - Knowledge base must have structured_query_config.enabled = True
+    - At least one CSV/XLSX document must be present
+
+    Args:
+        request: Structured query request
+        db: Database session
+
+    Returns:
+        SQL query results with generated SQL and explanation
+    """
+    from app.core.config import settings
+
+    # Check if structured data is enabled
+    if not settings.STRUCTURED_DATA_ENABLED:
+        return StructuredQueryResponse(
+            query=request.query,
+            error="Structured data queries are not enabled on this server. "
+            "Set STRUCTURED_DATA_ENABLED=True to enable.",
+        )
+
+    try:
+        from app.services.knowledge.structured.engine import structured_query_engine
+
+        # Execute structured query
+        result = await structured_query_engine.execute(
+            query=request.query,
+            knowledge_base_id=request.knowledge_base_id,
+            db=db,
+            document_ids=request.document_ids,
+            max_rows=request.max_rows,
+        )
+
+        # Map result to response
+        query_results = result.get("results", {})
+
+        return StructuredQueryResponse(
+            query=result.get("query", request.query),
+            mode=result.get("mode", "structured_query"),
+            generated_sql=result.get("generated_sql", ""),
+            explanation=result.get("explanation", ""),
+            confidence=result.get("confidence", 0.0),
+            results=StructuredQueryResult(
+                columns=query_results.get("columns", []),
+                rows=query_results.get("rows", []),
+                row_count=query_results.get("row_count", 0),
+                truncated=query_results.get("truncated", False),
+            ),
+            sources=result.get("sources", []),
+            error=result.get("error"),
+        )
+
+    except Exception as e:
+        logger.error(
+            "[internal_rag] Structured query failed for KB %d: %s",
+            request.knowledge_base_id,
+            e,
+            exc_info=True,
+        )
+        return StructuredQueryResponse(
+            query=request.query,
+            error=str(e),
+        )

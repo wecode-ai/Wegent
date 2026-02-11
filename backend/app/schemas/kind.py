@@ -672,6 +672,38 @@ class HybridWeights(BaseModel):
             raise ValueError(f"Weights must sum to 1.0, got {total}")
 
 
+class StructuredQueryConfig(BaseModel):
+    """Configuration for structured data queries (CSV/XLSX).
+
+    This configuration enables SQL-based querying for tabular data files.
+    When enabled, CSV/XLSX files will be ingested into DuckDB for SQL queries
+    instead of being chunked and embedded for vector search.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable structured data queries for this knowledge base",
+    )
+    max_rows_per_query: int = Field(
+        default=10000,
+        ge=1,
+        le=100000,
+        description="Maximum rows returned per SQL query",
+    )
+    sql_model_name: Optional[str] = Field(
+        None,
+        description="Model name for Text-to-SQL generation. If not specified, uses system default.",
+    )
+    sql_model_namespace: str = Field(
+        "default",
+        description="Model namespace for Text-to-SQL generation",
+    )
+    allowed_operations: List[str] = Field(
+        default=["SELECT"],
+        description="Allowed SQL operations. Only SELECT is supported for security.",
+    )
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval configuration for knowledge base
 
@@ -685,7 +717,7 @@ class RetrievalConfig(BaseModel):
         None, description="Embedding model configuration"
     )
     retrieval_mode: str = Field(
-        "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
+        "vector", description="Retrieval mode: 'vector', 'keyword', 'hybrid', or 'structured'"
     )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
@@ -693,6 +725,9 @@ class RetrievalConfig(BaseModel):
     )
     hybrid_weights: Optional[HybridWeights] = Field(
         None, description="Hybrid search weights"
+    )
+    structured_query_config: Optional[StructuredQueryConfig] = Field(
+        None, description="Configuration for structured data queries (CSV/XLSX)"
     )
 
 

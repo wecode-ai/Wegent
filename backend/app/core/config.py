@@ -428,6 +428,17 @@ class Settings(BaseSettings):
     # When enabled, chunk content is also saved to knowledge_documents.chunks column
     CHUNK_STORAGE_ENABLED: bool = False
 
+    # Structured data query configuration
+    # Enable/disable structured data (CSV/XLSX) SQL query support
+    # When enabled, CSV/XLSX files can be queried using natural language → SQL
+    STRUCTURED_DATA_ENABLED: bool = False
+    # Default model for Text-to-SQL generation (uses fast, cost-effective model)
+    STRUCTURED_DATA_MODEL: str = "claude-3-5-haiku-20241022"
+    # Maximum rows returned per structured query (safety limit)
+    STRUCTURED_DATA_MAX_ROWS: int = 10000
+    # Maximum file size (MB) for structured data ingestion
+    STRUCTURED_DATA_MAX_FILE_SIZE_MB: int = 50
+
     # Long-term memory configuration (mem0)
     # Enable/disable long-term memory feature
     MEMORY_ENABLED: bool = False

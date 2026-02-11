@@ -373,6 +373,23 @@ class RetrievalService:
         score_threshold = retrieval_config.get("score_threshold", 0.7)
         retrieval_mode = retrieval_config.get("retrieval_mode", "vector")
 
+        # Check for structured query mode
+        if retrieval_mode == "structured":
+            structured_config = retrieval_config.get("structured_query_config", {})
+            if structured_config.get("enabled", False):
+                return await self._execute_structured_query(
+                    query=query,
+                    kb=kb,
+                    db=db,
+                    structured_config=structured_config,
+                )
+            else:
+                # Fall back to vector mode if structured not enabled
+                logger.info(
+                    f"[RAG] Structured mode requested but not enabled, falling back to vector"
+                )
+                retrieval_mode = "vector"
+
         # Extract hybrid weights if in hybrid mode
         vector_weight = None
         keyword_weight = None
@@ -549,3 +566,147 @@ class RetrievalService:
         )
 
         return chunks
+
+    async def _execute_structured_query(
+        self,
+        query: str,
+        kb,  # Kind instance
+        db: Session,
+        structured_config: Dict[str, Any],
+    ) -> Dict:
+        """
+        Execute structured query on knowledge base using DuckDB.
+
+        Args:
+            query: Natural language query
+            kb: Knowledge base Kind instance
+            db: Database session
+            structured_config: Structured query configuration
+
+        Returns:
+            Dict with structured query results in a format compatible with RAG results
+        """
+        from app.core.config import settings
+
+        # Check if structured data is enabled globally
+        if not settings.STRUCTURED_DATA_ENABLED:
+            logger.warning(
+                "[RAG] Structured query requested but STRUCTURED_DATA_ENABLED=False"
+            )
+            return {
+                "records": [],
+                "error": "Structured data queries are not enabled on this server",
+            }
+
+        try:
+            from app.services.knowledge.structured.engine import structured_query_engine
+
+            # Execute structured query
+            max_rows = structured_config.get(
+                "max_rows_per_query", settings.STRUCTURED_DATA_MAX_ROWS
+            )
+
+            result = await structured_query_engine.execute(
+                query=query,
+                knowledge_base_id=kb.id,
+                db=db,
+                max_rows=max_rows,
+            )
+
+            # Check for errors
+            if "error" in result:
+                logger.warning(f"[RAG] Structured query error: {result['error']}")
+                return {
+                    "records": [],
+                    "structured_result": result,
+                    "error": result["error"],
+                }
+
+            # Convert structured results to RAG-compatible format
+            # The results contain SQL query output, which we format as a single "record"
+            query_results = result.get("results", {})
+            columns = query_results.get("columns", [])
+            rows = query_results.get("rows", [])
+
+            # Format results as a table for the record content
+            content = self._format_structured_results_as_content(columns, rows)
+
+            records = [
+                {
+                    "content": content,
+                    "score": result.get("confidence", 0.8),
+                    "title": f"SQL Query Results",
+                    "metadata": {
+                        "mode": "structured_query",
+                        "generated_sql": result.get("generated_sql", ""),
+                        "row_count": query_results.get("row_count", 0),
+                        "truncated": query_results.get("truncated", False),
+                    },
+                }
+            ]
+
+            logger.info(
+                f"[RAG] Structured query executed: {query_results.get('row_count', 0)} rows"
+            )
+
+            return {
+                "records": records,
+                "structured_result": result,
+            }
+
+        except ImportError as e:
+            logger.error(f"[RAG] Structured query module not available: {e}")
+            return {
+                "records": [],
+                "error": "Structured query module not available",
+            }
+        except Exception as e:
+            logger.error(f"[RAG] Structured query failed: {e}")
+            return {
+                "records": [],
+                "error": str(e),
+            }
+
+    def _format_structured_results_as_content(
+        self,
+        columns: List[str],
+        rows: List[List[Any]],
+        max_rows_display: int = 100,
+    ) -> str:
+        """
+        Format structured query results as readable content.
+
+        Args:
+            columns: Column names
+            rows: Row data
+            max_rows_display: Maximum rows to include in content
+
+        Returns:
+            Formatted string content
+        """
+        if not columns or not rows:
+            return "No results found."
+
+        lines = []
+
+        # Header
+        lines.append("| " + " | ".join(str(c) for c in columns) + " |")
+        lines.append("| " + " | ".join("---" for _ in columns) + " |")
+
+        # Data rows (limited)
+        display_rows = rows[:max_rows_display]
+        for row in display_rows:
+            formatted_values = []
+            for val in row:
+                if val is None:
+                    formatted_values.append("NULL")
+                elif isinstance(val, float):
+                    formatted_values.append(f"{val:.2f}")
+                else:
+                    formatted_values.append(str(val)[:50])
+            lines.append("| " + " | ".join(formatted_values) + " |")
+
+        if len(rows) > max_rows_display:
+            lines.append(f"\n... and {len(rows) - max_rows_display} more rows")
+
+        return "\n".join(lines)
