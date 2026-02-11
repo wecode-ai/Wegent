@@ -19,8 +19,9 @@ Events:
 - device:heartbeat: Device sends heartbeat every 30s
 - device:status: Device reports status (idle/busy)
 - task:execute: Backend pushes task to device
-- task:progress: Device reports execution progress
-- task:complete: Device reports task completion
+- task:progress: Device reports execution progress (legacy)
+- task:complete: Device reports task completion (legacy)
+- response.*: OpenAI Responses API streaming events from executor
 - disconnect: Cleanup on device disconnection
 """
 
@@ -36,8 +37,10 @@ from sqlalchemy.orm import Session
 
 from app.api.ws.decorators import trace_websocket_event
 from app.core.auth_utils import is_api_key, verify_api_key
+from app.core.events import TaskCompletedEvent, get_event_bus
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
+from app.models.task import TaskResource
 from app.schemas.device import (
     DeviceHeartbeatPayload,
     DeviceOfflineEvent,
@@ -50,6 +53,10 @@ from app.schemas.device import (
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.ws_emitter import get_ws_emitter
 from app.services.device_service import device_service
+from app.services.execution.dispatcher import ResponsesAPIEventParser
+from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
 
 logger = logging.getLogger(__name__)
@@ -462,6 +469,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "task:complete": "on_task_complete",
         }
 
+        # Shared event parser for OpenAI Responses API events
+        self._event_parser = ResponsesAPIEventParser()
+
+        # Known OpenAI Responses API event prefixes
+        self._responses_api_prefixes = ("response.", "error")
+
     @trace_websocket_event(
         exclude_events={"connect"},
         extract_event_data=True,
@@ -490,6 +503,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     f"[Device WS] Routing event '{event}' to handler '{handler_name}'"
                 )
                 return await handler(sid, *args)
+
+        # Handle OpenAI Responses API events (e.g., response.output_text.delta)
+        if event.startswith(self._responses_api_prefixes):
+            return await self._handle_responses_api_event(sid, event, *args)
 
         return await super().trigger_event(event, sid, *args)
 
@@ -1028,6 +1045,148 @@ class DeviceNamespace(socketio.AsyncNamespace):
         await self._broadcast_device_slot_update(user_id, device_id)
 
         return {"success": True}
+
+    # ============================================================
+    # OpenAI Responses API Event Handler
+    # ============================================================
+
+    async def _handle_responses_api_event(
+        self, sid: str, event_type: str, *args
+    ) -> dict:
+        """Handle OpenAI Responses API events from local executor.
+
+        Reuses the same processing chain as /api/internal/callback:
+        ResponsesAPIEventParser -> StatusUpdatingEmitter -> WebSocketResultEmitter
+
+        Args:
+            sid: Socket ID
+            event_type: OpenAI Responses API event type (e.g., response.output_text.delta)
+            *args: Event arguments (first arg is the event data dict)
+
+        Returns:
+            {"success": True} or {"error": str}
+        """
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        device_id = session.get("device_id")
+
+        if not user_id or not device_id:
+            return {"error": "Not authenticated or not registered"}
+
+        if not args:
+            return {"error": "Missing event data"}
+
+        data = args[0]
+        if not isinstance(data, dict):
+            return {"error": "Invalid event data format"}
+
+        task_id = data.get("task_id")
+        subtask_id = data.get("subtask_id")
+        event_data = data.get("data", {})
+        message_id = data.get("message_id")
+
+        if not task_id or not subtask_id:
+            return {"error": "Missing task_id or subtask_id"}
+
+        logger.debug(
+            f"[Device WS] Responses API event: type={event_type}, "
+            f"task_id={task_id}, subtask_id={subtask_id}"
+        )
+
+        try:
+            # Parse using shared ResponsesAPIEventParser
+            event = self._event_parser.parse(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                event_type=event_type,
+                data=event_data,
+            )
+
+            if event is None:
+                # Lifecycle events (response.created, etc.) are skipped
+                return {"success": True}
+
+            # Emit via StatusUpdatingEmitter -> WebSocketResultEmitter
+            ws_emitter = WebSocketResultEmitter(
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
+            emitter = StatusUpdatingEmitter(
+                wrapped=ws_emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
+            await emitter.emit(event)
+            await emitter.close()
+
+            # Handle terminal events
+            if event.type in (
+                EventType.DONE.value,
+                EventType.ERROR.value,
+                EventType.CANCELLED.value,
+            ):
+                await self._publish_task_completed_event(
+                    task_id, subtask_id, user_id, device_id, event
+                )
+
+            return {"success": True}
+
+        except Exception as e:
+            logger.exception(
+                f"[Device WS] Error handling Responses API event: "
+                f"type={event_type}, subtask_id={subtask_id}, error={e}"
+            )
+            return {"error": str(e)}
+
+    async def _publish_task_completed_event(
+        self,
+        task_id: int,
+        subtask_id: int,
+        user_id: int,
+        device_id: str,
+        event: Any,
+    ) -> None:
+        """Publish TaskCompletedEvent and broadcast slot update for terminal events."""
+        try:
+            if event.type == EventType.DONE.value:
+                status = "COMPLETED"
+                result = event.result if hasattr(event, "result") else None
+                error = None
+            elif event.type == EventType.ERROR.value:
+                status = "FAILED"
+                result = None
+                error = event.error if hasattr(event, "error") else "Unknown error"
+            else:
+                status = "CANCELLED"
+                result = None
+                error = None
+
+            event_bus = get_event_bus()
+            await event_bus.publish(
+                TaskCompletedEvent(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    user_id=user_id,
+                    status=status,
+                    result=result,
+                    error=error,
+                )
+            )
+
+            logger.info(
+                f"[Device WS] Published TaskCompletedEvent: "
+                f"task_id={task_id}, subtask_id={subtask_id}, status={status}"
+            )
+
+            # Broadcast slot update after task completion
+            await self._broadcast_device_slot_update(user_id, device_id)
+
+        except Exception as e:
+            logger.error(
+                f"[Device WS] Failed to publish TaskCompletedEvent: {e}",
+                exc_info=True,
+            )
 
     # ============================================================
     # Broadcast Helpers

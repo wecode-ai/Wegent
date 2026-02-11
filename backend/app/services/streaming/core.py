@@ -670,8 +670,6 @@ class StreamingCore:
                 len(self.state.full_response),
             )
             await self.emitter.emit_cancelled(self.state.subtask_id)
-            # Use COMPLETED status to ensure Task status is properly updated
-            # The partial response is preserved in the result
             is_chat_mode = self.state.shell_type == "Chat"
             result = self.state.get_current_result(
                 include_value=True,
@@ -681,7 +679,7 @@ class StreamingCore:
             )
             await self._storage.update_subtask_status(
                 self.state.subtask_id,
-                "COMPLETED",
+                "CANCELLED",
                 result=result,
             )
             return False
