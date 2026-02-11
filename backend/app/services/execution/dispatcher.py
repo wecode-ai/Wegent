@@ -606,40 +606,53 @@ class ExecutionDispatcher:
             target: Execution target configuration
             emitter: Result emitter for event emission
         """
-        # Use OpenAI Responses API endpoint
-        url = f"{target.url}/v1/responses"
+        # OpenAI client appends /responses to base_url, so we need to include /v1
+        # e.g., base_url=http://127.0.0.1:8001/v1 -> POST http://127.0.0.1:8001/v1/responses
+        base_url = f"{target.url}/v1"
+
         logger.info(
-            f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): url={url}"
+            f"[ExecutionDispatcher] HTTP+Callback dispatch via OpenAI client: "
+            f"base_url={base_url}"
         )
 
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
 
-        # Set background mode (non-streaming)
-        # background=true: Execute asynchronously, result via callback
-        # stream=false: No streaming, just return queued status
-        openai_request["background"] = True
-        openai_request["stream"] = False
+        # Get tools from openai_request (includes MCP servers converted to tools)
+        tools = openai_request.get("tools", [])
 
         logger.info(
-            f"[ExecutionDispatcher] Sending OpenAI background request: url={url}, "
-            f"model={openai_request.get('model')}, task_id={request.task_id}, "
-            f"subtask_id={request.subtask_id}"
+            f"[ExecutionDispatcher] Sending OpenAI background request: "
+            f"base_url={base_url}, model={openai_request.get('model')}, "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
 
-        # Send request via httpx (executor-manager returns a simple queued response)
-        async with traced_async_client(timeout=30.0) as client:
-            response = await client.post(url, json=openai_request)
-            if response.status_code != 200:
-                raise Exception(
-                    f"Failed to dispatch task to executor-manager: "
-                    f"{response.status_code} {response.text}"
-                )
-            result = response.json()
+        # Create OpenAI client pointing to executor-manager
+        client = AsyncOpenAI(
+            base_url=base_url,
+            api_key="dummy",  # Not used by executor_manager but required by client
+            timeout=300.0,
+        )
+
+        # Send request using OpenAI client with background mode
+        # background=true: Execute asynchronously, result via callback
+        # stream=false: No streaming, just return queued status
+        response = await client.responses.create(
+            model=openai_request.get("model", ""),
+            input=openai_request.get("input", ""),
+            instructions=openai_request.get("instructions"),
+            tools=tools if tools else None,
+            stream=False,
+            extra_body={
+                "background": True,
+                "metadata": openai_request.get("metadata", {}),
+                "model_config": openai_request.get("model_config", {}),
+            },
+        )
 
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): "
-            f"response={result}"
+            f"response_id={getattr(response, 'id', 'N/A')}"
         )
 
         # In HTTP+Callback mode, subsequent events are handled via /callback API

@@ -213,7 +213,7 @@ class OpenAIRequestConverter:
 
         # Extract MCP servers from tools
         mcp_servers = []
-        tools = openai_request.get("tools", [])
+        tools = openai_request.get("tools") or []
         for tool in tools:
             if isinstance(tool, dict) and tool.get("type") == "mcp":
                 server = {
