@@ -63,7 +63,23 @@
     "loading_diff_message": "加载中...",
     "no_changes_between_branches": "分支之间未发现变更",
     "execution_timeline": "执行时间线",
-    "no_repository": "该任务未关联代码仓库"
+    "no_repository": "该任务未关联代码仓库",
+    "workspace_files": {
+      "title": "工作区文件",
+      "loading": "正在加载文件列表...",
+      "no_files": "暂无生成的文件",
+      "download_all": "打包下载",
+      "files_count": "个文件",
+      "truncated": "文件数量过多，仅显示部分",
+      "container_not_found": "未找到执行容器",
+      "container_stopped": "执行环境已关闭",
+      "container_stopped_hint": "任务执行环境已关闭，无法获取文件列表。您可以重新运行任务来查看生成的文件。",
+      "timeout": "请求超时",
+      "connection_error": "网络连接错误",
+      "list_files_failed": "获取文件列表失败",
+      "unknown_error": "发生未知错误",
+      "error_hint": "请检查网络连接后重试。"
+    }
   },
   "thinking": {
     "execution_completed": "执行完成",
