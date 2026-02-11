@@ -16,7 +16,7 @@ import {
   screenshot,
   evaluate,
 } from "./browser-client.js";
-import { getSnapshot, storeRefs } from "./snapshot.js";
+import { getSnapshot, getStoredRefs, parseRef, storeRefs } from "./snapshot.js";
 import { executeAction, type ActRequest } from "./actions.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -294,7 +294,21 @@ Workflow:
         properties: {
           kind: {
             type: "string",
-            enum: ["click", "type", "press", "hover", "drag", "select", "fill", "scroll", "wait", "resize"],
+            enum: [
+              "click",
+              "type",
+              "press",
+              "hover",
+              "scrollIntoView",
+              "drag",
+              "select",
+              "fill",
+              "scroll",
+              "wait",
+              "resize",
+              "close",
+              "evaluate",
+            ],
           },
           ref: { type: "string", description: "Element ref from snapshot (e.g., e1, e2)" },
           text: { type: "string", description: "Text for type action" },
@@ -319,6 +333,11 @@ Workflow:
           amount: { type: "number" },
           timeMs: { type: "number" },
           selector: { type: "string" },
+          url: { type: "string" },
+          loadState: { type: "string", enum: ["load", "domcontentloaded", "networkidle"] },
+          fn: { type: "string" },
+          timeoutMs: { type: "number" },
+          targetId: { type: "string" },
           width: { type: "number" },
           height: { type: "number" },
         },
@@ -326,6 +345,19 @@ Workflow:
       expression: {
         type: "string",
         description: "JavaScript expression for evaluate action",
+      },
+      ref: {
+        type: "string",
+        description: "For screenshot: element ref from snapshot (e.g., e1)",
+      },
+      element: {
+        type: "string",
+        description: "For screenshot: CSS selector to capture element",
+      },
+      type: {
+        type: "string",
+        enum: ["png", "jpeg"],
+        description: "For screenshot: image type",
       },
     },
     required: ["action"],
@@ -339,6 +371,9 @@ export type BrowserToolParams = {
   interactive?: boolean;
   compact?: boolean;
   fullPage?: boolean;
+  ref?: string;
+  element?: string;
+  type?: "png" | "jpeg";
   ensure?: boolean;
   request?: ActRequest;
   expression?: string;
@@ -421,6 +456,110 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
     connected: false,
     error: `Extension not connected. ${extResult.message}`,
   };
+}
+
+async function captureElementScreenshot(
+  client: BrowserClient,
+  opts: {
+    ref?: string;
+    element?: string;
+    type?: "png" | "jpeg";
+  }
+): Promise<Buffer> {
+  if (!opts.ref && !opts.element) {
+    throw new Error("ref or element is required for element screenshot");
+  }
+
+  const clip = await (async () => {
+    if (opts.element) {
+      const result = (await client.send("Runtime.evaluate", {
+        expression: `(() => {
+          const element = document.querySelector(${JSON.stringify(opts.element)});
+          if (!element) return null;
+          element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+          const rect = element.getBoundingClientRect();
+          return {
+            x: Math.max(0, Math.floor(rect.left)),
+            y: Math.max(0, Math.floor(rect.top)),
+            width: Math.max(1, Math.floor(rect.width)),
+            height: Math.max(1, Math.floor(rect.height)),
+            scale: 1
+          };
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      })) as {
+        result?: { value?: { x?: number; y?: number; width?: number; height?: number; scale?: number } | null };
+      };
+      return result?.result?.value;
+    }
+
+    const parsedRef = parseRef(opts.ref ?? "");
+    if (!parsedRef) {
+      throw new Error(`Invalid ref: ${opts.ref ?? ""}`);
+    }
+    const refInfo = getStoredRefs()[parsedRef];
+    if (!refInfo) {
+      throw new Error(`Ref not found: ${parsedRef}. Run snapshot first to get element refs.`);
+    }
+
+    const result = (await client.send("Runtime.evaluate", {
+      expression: `(() => {
+        const role = ${JSON.stringify(refInfo.role)};
+        const name = ${JSON.stringify(refInfo.name)};
+        const nth = ${JSON.stringify(refInfo.nth ?? 0)};
+        const matches = [];
+        const byRole = document.querySelectorAll('[role="' + role + '"]');
+        for (const el of byRole) {
+          const label = el.getAttribute('aria-label') || el.textContent?.trim() || '';
+          if (!name || label.includes(name)) {
+            matches.push(el);
+          }
+        }
+        const target = matches[nth] || matches[0];
+        if (!target) return null;
+        target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+        const rect = target.getBoundingClientRect();
+        return {
+          x: Math.max(0, Math.floor(rect.left)),
+          y: Math.max(0, Math.floor(rect.top)),
+          width: Math.max(1, Math.floor(rect.width)),
+          height: Math.max(1, Math.floor(rect.height)),
+          scale: 1
+        };
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    })) as {
+      result?: { value?: { x?: number; y?: number; width?: number; height?: number; scale?: number } | null };
+    };
+    return result?.result?.value;
+  })();
+
+  if (!clip || !clip.width || !clip.height) {
+    throw new Error("Failed to locate target element for screenshot");
+  }
+
+  const format = opts.type ?? "png";
+  const quality = format === "jpeg" ? 85 : undefined;
+  const captured = (await client.send("Page.captureScreenshot", {
+    format,
+    ...(quality !== undefined ? { quality } : {}),
+    fromSurface: true,
+    captureBeyondViewport: true,
+    clip: {
+      x: clip.x ?? 0,
+      y: clip.y ?? 0,
+      width: Math.max(1, Math.floor(clip.width)),
+      height: Math.max(1, Math.floor(clip.height)),
+      scale: 1,
+    },
+  })) as { data?: string };
+
+  if (!captured?.data) {
+    throw new Error("Screenshot failed: missing data");
+  }
+  return Buffer.from(captured.data, "base64");
 }
 
 /**
@@ -519,21 +658,33 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
       }
 
       case "screenshot": {
+        if (params.fullPage && (params.ref || params.element)) {
+          return { ok: false, error: "fullPage is not supported for element screenshots" };
+        }
+        const imageType = params.type === "jpeg" ? "jpeg" : "png";
         const buffer = await runWithClient(async (client) => {
-          return await screenshot({ fullPage: params.fullPage, client });
+          if (params.ref || params.element) {
+            return await captureElementScreenshot(client, {
+              ref: params.ref,
+              element: params.element,
+              type: imageType,
+            });
+          }
+          return await screenshot({ fullPage: params.fullPage, format: imageType, client });
         });
         // Save to temp file
         const tmpDir = path.join(os.tmpdir(), "browser-skill");
         if (!fs.existsSync(tmpDir)) {
           fs.mkdirSync(tmpDir, { recursive: true });
         }
-        const filePath = path.join(tmpDir, `screenshot-${Date.now()}.png`);
+        const filePath = path.join(tmpDir, `screenshot-${Date.now()}.${imageType}`);
         fs.writeFileSync(filePath, buffer);
         return {
           ok: true,
           data: {
             path: filePath,
             size: buffer.length,
+            type: imageType,
           },
         };
       }
