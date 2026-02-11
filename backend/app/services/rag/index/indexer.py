@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from llama_index.core import Document, SimpleDirectoryReader
+from llama_index.core.schema import TextNode
 
 from app.schemas.rag import SmartSplitterConfig, SplitterConfig
 from app.services.rag.pipeline.factory import create_pipeline, should_use_pipeline
@@ -275,7 +276,7 @@ class DocumentIndexer:
                 chunk_overlap=chunk_overlap,
             )
         except ValueError as e:
-            logger.error(f"Failed to create pipeline for {file_extension}: {e}")
+            logger.exception(f"Failed to create pipeline for {file_extension}: {e}")
             # Fall back to LlamaIndex if pipeline creation fails
             logger.warning("Falling back to LlamaIndex processing")
             return self._index_with_llamaindex(
@@ -304,7 +305,7 @@ class DocumentIndexer:
                 source_file=source_file,
             )
         except Exception as e:
-            logger.error(f"Pipeline processing failed: {e}")
+            logger.exception(f"Pipeline processing failed: {e}")
             # For Office documents, we should not fall back to LlamaIndex
             # as LlamaIndex may not handle them well
             raise
@@ -379,8 +380,6 @@ class DocumentIndexer:
 
         # For pipeline documents, we need to convert them to nodes for the storage backend
         # Create simple text nodes from documents
-        from llama_index.core.schema import TextNode
-
         nodes = []
         for doc in documents:
             node = TextNode(

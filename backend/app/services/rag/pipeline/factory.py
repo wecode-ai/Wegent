@@ -25,7 +25,7 @@ from typing import Optional
 
 from app.core.config import settings
 from app.services.rag.pipeline.base import BaseDocumentPipeline
-from app.services.rag.pipeline.docling import DoclingPipeline, DoclingServiceError
+from app.services.rag.pipeline.docling import DoclingPipeline
 from app.services.rag.pipeline.llamaindex import LlamaIndexPipeline
 from app.services.rag.pipeline.pandoc import (
     PandocNotFoundError,
@@ -231,7 +231,7 @@ def _try_create_docling_pipeline(
         return None
 
     docling_url = settings.DOCLING_URL
-    docling_timeout = getattr(settings, "DOCLING_TIMEOUT", 120)
+    docling_timeout = settings.DOCLING_TIMEOUT
 
     # Check if service is available
     if not DoclingPipeline.is_service_available(docling_url):

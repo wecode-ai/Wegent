@@ -9,7 +9,7 @@ based on file type.
 Supported file types and their strategies:
 - .md: Markdown structure splitting + sentence splitting
 - .txt: Sentence-based splitting
-- .pdf, .doc, .docx: Recursive character splitting (via LangChain)
+- .pdf, .doc, .docx, .ppt, .pptx: Recursive character splitting (via LangChain)
 """
 
 from typing import List
