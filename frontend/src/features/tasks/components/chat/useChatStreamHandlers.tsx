@@ -913,12 +913,16 @@ export function useChatStreamHandlers({
               selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
             const modelType = modelId ? selectedModel?.type : undefined
 
+            // Pass device_id for device tasks to ensure retry routes to correct device
+            const deviceId = selectedTaskDetail.device_id || undefined
+
             const result = await retryMessage(
               selectedTaskDetail.id,
               message.subtaskId!,
               modelId,
               modelType,
-              forceOverride
+              forceOverride,
+              deviceId
             )
 
             if (result.error) {
@@ -944,7 +948,16 @@ export function useChatStreamHandlers({
         }
       )
     },
-    [retryMessage, selectedTaskDetail?.id, selectedModel, forceOverride, t, toast, traceAction]
+    [
+      retryMessage,
+      selectedTaskDetail?.id,
+      selectedTaskDetail?.device_id,
+      selectedModel,
+      forceOverride,
+      t,
+      toast,
+      traceAction,
+    ]
   )
 
   // Handle cancel task

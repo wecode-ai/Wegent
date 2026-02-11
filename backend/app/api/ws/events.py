@@ -203,6 +203,11 @@ class ChatRetryPayload(BaseModel):
         False,
         description="If true, use force_override_bot_model; if false, use bot's default model",
     )
+    # Local device execution (for device tasks)
+    device_id: Optional[str] = Field(
+        None,
+        description="Local device ID for task execution (if None, will try to extract from executor_name)",
+    )
 
 
 class TaskJoinPayload(BaseModel):

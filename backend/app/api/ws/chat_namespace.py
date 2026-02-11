@@ -1406,6 +1406,37 @@ class ChatNamespace(socketio.AsyncNamespace):
             # If model_id exists, use it; otherwise, use None to let the bot use its default model
             from app.api.ws.events import ChatSendPayload
 
+            # Determine if this is a device task (for retry routing)
+            # Priority: 1. payload.device_id (from frontend)
+            #           2. Extract from executor_name (format: "device-{device_id}")
+            device_id = payload.device_id
+            task_type = None
+
+            if not device_id and failed_ai_subtask.executor_name:
+                if failed_ai_subtask.executor_name.startswith("device-"):
+                    device_id = failed_ai_subtask.executor_name[7:]  # Remove "device-" prefix
+                    logger.info(
+                        f"[WS] chat:retry extracted device_id from executor_name: "
+                        f"executor_name={failed_ai_subtask.executor_name}, device_id={device_id}"
+                    )
+
+            # If this is a device task, check if device is online
+            if device_id:
+                from app.services.device_service import DeviceService
+
+                is_online = await DeviceService.is_device_online(user_id, device_id)
+                if not is_online:
+                    logger.error(
+                        f"[WS] chat:retry error: Device offline device_id={device_id}"
+                    )
+                    return {"error": "Device offline"}
+
+                task_type = "task"
+                logger.info(
+                    f"[WS] chat:retry device task detected: device_id={device_id}, "
+                    f"task_type={task_type}"
+                )
+
             # Get context (attachment) from user_subtask if exists
             attachment_id = None
             if user_subtask.contexts:
@@ -1427,6 +1458,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 force_override_bot_model=model_id,
                 force_override_bot_model_type=model_type,
                 is_group_chat=False,
+                device_id=device_id,
+                task_type=task_type,
             )
 
             # Trigger AI response
