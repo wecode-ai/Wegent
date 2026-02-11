@@ -15,6 +15,8 @@ import {
   MessageSquare,
   Users,
   MoreHorizontal,
+  Shield,
+  ShieldCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -28,6 +30,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTypewriter } from '@/hooks/useTypewriter'
 import MessageBubble, { type Message } from './MessageBubble'
+import { PreserveExecutorToggle } from '../PreserveExecutorToggle'
 import TaskShareModal from '../share/TaskShareModal'
 import ExportSelectModal, {
   type SelectableMessage,
@@ -902,6 +905,56 @@ export default function MessagesArea({
               <FileText className="h-4 w-4" />
               <span>{t('chat:export.export_docx') || 'Export DOCX'}</span>
             </DropdownMenuItem>
+            {/* Preserve Executor Toggle - only show for completed/failed/cancelled tasks */}
+            {selectedTaskDetail?.id &&
+              ['COMPLETED', 'FAILED', 'CANCELLED'].includes(selectedTaskDetail?.status || '') && (
+                <DropdownMenuItem
+                  onClick={async () => {
+                    try {
+                      if (selectedTaskDetail.preserve_executor) {
+                        await taskApis.cancelPreserveExecutor(selectedTaskDetail.id)
+                        selectedTaskDetail.preserve_executor = false
+                        toast({
+                          title:
+                            t('tasks:preserve_executor.disabled_title') ||
+                            'Executor Cleanup Enabled',
+                          description:
+                            t('tasks:preserve_executor.disabled_desc') ||
+                            'Executor will be cleaned up normally.',
+                        })
+                      } else {
+                        await taskApis.setPreserveExecutor(selectedTaskDetail.id)
+                        selectedTaskDetail.preserve_executor = true
+                        toast({
+                          title: t('tasks:preserve_executor.enabled_title') || 'Executor Preserved',
+                          description:
+                            t('tasks:preserve_executor.enabled_desc') ||
+                            'Executor will not be cleaned up.',
+                        })
+                      }
+                    } catch (error) {
+                      toast({
+                        variant: 'destructive',
+                        title: t('tasks:preserve_executor.error_title') || 'Failed to Update',
+                        description: (error as Error)?.message || 'Could not update setting.',
+                      })
+                    }
+                  }}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  {selectedTaskDetail.preserve_executor ? (
+                    <>
+                      <ShieldCheck className="h-4 w-4 text-primary" />
+                      <span>{t('tasks:preserve_executor.preserved') || 'Executor Preserved'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="h-4 w-4" />
+                      <span>{t('tasks:preserve_executor.preserve') || 'Preserve Executor'}</span>
+                    </>
+                  )}
+                </DropdownMenuItem>
+              )}
             <DropdownMenuItem
               onClick={() => {
                 const feedbackUrl = getRuntimeConfigSync().feedbackUrl
@@ -945,6 +998,21 @@ export default function MessagesArea({
             {isSharing ? t('shared-task:sharing') : t('shared-task:share_link')}
           </Button>
         )}
+
+        {/* Preserve Executor Toggle - only show for completed/failed/cancelled tasks */}
+        {selectedTaskDetail?.id &&
+          ['COMPLETED', 'FAILED', 'CANCELLED'].includes(selectedTaskDetail?.status || '') && (
+            <PreserveExecutorToggle
+              taskId={selectedTaskDetail.id}
+              preserveExecutor={selectedTaskDetail.preserve_executor || false}
+              onToggle={preserve => {
+                // Update local state to reflect the change
+                if (selectedTaskDetail) {
+                  selectedTaskDetail.preserve_executor = preserve
+                }
+              }}
+            />
+          )}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

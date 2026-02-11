@@ -97,5 +97,17 @@
     "analyzing": "正在深入分析",
     "generating_response": "请稍候，正在生成回复",
     "longer_than_usual": "响应时间较长，请耐心等待"
+  },
+  "preserve_executor": {
+    "preserve": "保留环境",
+    "preserved": "已保留",
+    "enabled_title": "已保留执行环境",
+    "enabled_desc": "此任务的执行环境将在任务完成后保留，不会被清理。",
+    "disabled_title": "已启用环境清理",
+    "disabled_desc": "此任务的执行环境将按正常规则清理。",
+    "error_title": "更新失败",
+    "error_desc": "无法更新执行环境保留设置。",
+    "tooltip_preserved": "执行环境已保留，不会被清理",
+    "tooltip_not_preserved": "点击保留执行环境，防止被清理"
   }
 }

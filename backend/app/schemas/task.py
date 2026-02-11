@@ -131,6 +131,9 @@ class TaskInDB(TaskBase):
     updated_at: datetime
     completed_at: Optional[datetime] = None
     is_group_chat: bool = False  # Whether this is a group chat task
+    preserve_executor: bool = (
+        False  # Whether to preserve executor pod after task completion
+    )
 
     class Config:
         from_attributes = True
@@ -165,6 +168,9 @@ class TaskDetail(BaseModel):
         None  # App preview information (set by expose_service tool)
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
+    preserve_executor: bool = (
+        False  # Whether to preserve executor pod after task completion
+    )
 
     class Config:
         from_attributes = True
