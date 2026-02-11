@@ -575,20 +575,31 @@ export default function ChatInput({
 
       // Handle different paste scenarios:
       // 1. Files only (e.g., pure screenshot or copied files) -> upload files
-      // 2. Text only (e.g., plain text copy) -> insert text
+      // 2. Text only (e.g., plain text copy) -> let browser handle natively for proper undo
       // 3. Rich text with HTML (e.g., from Word/PPT/web) -> insert text only (ignore preview images)
       // 4. Real files with text (rare case) -> handled by the hasHtml check above
-
-      // Prevent default behavior to handle paste manually
-      e.preventDefault()
 
       // Handle file upload if there are files (and not just preview images from rich text)
       if (hasFiles && onPasteFile) {
         onPasteFile(pastedFiles)
       }
 
-      // Handle text insertion if there is text content
+      // Check if we need to clean the pasted text (has special characters to remove)
+      const originalText = clipboardData.getData('text/plain')
+      const needsCleaning = originalText !== pastedText
+
+      // If text doesn't need cleaning, let browser handle paste natively
+      // This preserves the browser's native undo/redo history
+      if (hasText && !needsCleaning && !hasFiles) {
+        // Don't prevent default - let browser handle the paste
+        // The handleInput will be triggered automatically and sync state
+        return
+      }
+
+      // Need to handle paste manually (cleaning or combined with files)
       if (hasText && editableRef.current) {
+        e.preventDefault()
+
         // Ensure input is focused for execCommand to work
         if (document.activeElement !== editableRef.current) {
           editableRef.current.focus()
@@ -614,6 +625,9 @@ export default function ChatInput({
         lastUserEditMessageRef.current = newText
         setMessage(newText)
         setShowPlaceholder(!newText)
+      } else if (!hasText && hasFiles) {
+        // Only files, no text - just prevent default to avoid pasting file names
+        e.preventDefault()
       }
     },
     [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile]
