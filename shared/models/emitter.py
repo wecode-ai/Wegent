@@ -219,6 +219,9 @@ class ResponsesAPIEmitter:
 
         Sends: output_item.added + function_call_arguments.delta
 
+        For GeneratorTransport, this method enables collecting mode so that
+        both events can be retrieved via get_events() after this call.
+
         Args:
             call_id: Function call ID
             name: Function name
@@ -228,6 +231,10 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
+        # Enable collecting mode for GeneratorTransport
+        if hasattr(self.transport, "start_collecting"):
+            self.transport.start_collecting()
+
         # Send function call added
         added_data = self.builder.function_call_added(call_id, name, display_name)
         await self._emit(ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data)
@@ -248,6 +255,9 @@ class ResponsesAPIEmitter:
 
         Sends: function_call_arguments.done + output_item.done
 
+        For GeneratorTransport, this method enables collecting mode so that
+        both events can be retrieved via get_events() after this call.
+
         Args:
             call_id: Function call ID
             name: Function name
@@ -256,6 +266,10 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
+        # Enable collecting mode for GeneratorTransport
+        if hasattr(self.transport, "start_collecting"):
+            self.transport.start_collecting()
+
         # Send arguments done
         done_data = self.builder.function_call_arguments_done(call_id, arguments)
         await self._emit(
@@ -429,8 +443,9 @@ class WebSocketTransport(EventTransport):
 class GeneratorTransport(EventTransport):
     """Generator transport for SSE mode (chat_shell).
 
-    Instead of sending events, this transport collects them
-    for yielding in an async generator.
+    This transport returns event data directly for immediate yielding.
+    For scenarios that need to collect multiple events (like tool_start/tool_done),
+    use the collect() context manager or manually call start_collecting()/stop_collecting().
     """
 
     def __init__(self, callback: Optional[Callable[[str, dict], Any]] = None):
@@ -441,6 +456,7 @@ class GeneratorTransport(EventTransport):
         """
         self.callback = callback
         self.events: list[tuple[str, dict]] = []
+        self._collecting = False
 
     async def send(
         self,
@@ -452,22 +468,36 @@ class GeneratorTransport(EventTransport):
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
     ) -> tuple[str, dict]:
-        """Collect event for generator.
+        """Send event and optionally collect it.
+
+        When collecting mode is enabled (via start_collecting() or emitter methods
+        that emit multiple events), events are added to the internal list.
+        Otherwise, events are just returned for immediate yielding.
 
         Returns:
             Tuple of (event_type, data) for yielding
         """
         if self.callback:
             return self.callback(event_type, data)
-        self.events.append((event_type, data))
+        if self._collecting:
+            self.events.append((event_type, data))
         return (event_type, data)
 
+    def start_collecting(self) -> None:
+        """Start collecting events into the internal list."""
+        self._collecting = True
+
+    def stop_collecting(self) -> None:
+        """Stop collecting events."""
+        self._collecting = False
+
     def get_events(self) -> list[tuple[str, dict]]:
-        """Get and clear collected events.
+        """Get and clear collected events, and stop collecting.
 
         Returns:
             List of (event_type, data) tuples
         """
         events = self.events.copy()
         self.events.clear()
+        self._collecting = False
         return events

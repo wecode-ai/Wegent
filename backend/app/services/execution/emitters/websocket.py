@@ -7,12 +7,15 @@ WebSocket result emitter.
 
 Emits execution events to frontend via WebSocket.
 Supports block events for tool call visualization.
+
+Uses unified block types from shared.models.blocks for consistency.
 """
 
 import logging
 from typing import Any, Optional
 
 from shared.models import EventType, ExecutionEvent
+from shared.models.blocks import BlockStatus, create_tool_block
 
 from .base import BaseResultEmitter
 
@@ -134,22 +137,14 @@ class WebSocketResultEmitter(BaseResultEmitter):
             event: Execution event with tool start information
             ws_emitter: WebSocket emitter instance
         """
-        import time
-
-        # Build block data from event
-        block: dict[str, Any] = {
-            "id": event.tool_use_id or f"tool-{int(time.time() * 1000)}",
-            "type": "tool",
-            "tool_use_id": event.tool_use_id,
-            "tool_name": event.tool_name,
-            "tool_input": event.tool_input,
-            "status": "pending",
-            "timestamp": int(time.time() * 1000),
-        }
-
-        # Include display_name if available in event data
-        if event.data and event.data.get("display_name"):
-            block["display_name"] = event.data["display_name"]
+        # Use unified create_tool_block function
+        display_name = event.data.get("display_name") if event.data else None
+        block = create_tool_block(
+            tool_use_id=event.tool_use_id or "",
+            tool_name=event.tool_name or "",
+            tool_input=event.tool_input or {},
+            display_name=display_name,
+        )
 
         await ws_emitter.emit_block_created(
             task_id=event.task_id,
@@ -168,21 +163,21 @@ class WebSocketResultEmitter(BaseResultEmitter):
             event: Execution event with tool result information
             ws_emitter: WebSocket emitter instance
         """
-        # Determine status based on tool output
-        status = "done"
+        # Determine status using unified BlockStatus enum
+        status = BlockStatus.DONE
         if event.data and event.data.get("status") == "error":
-            status = "error"
+            status = BlockStatus.ERROR
 
         await ws_emitter.emit_block_updated(
             task_id=event.task_id,
             subtask_id=event.subtask_id,
             block_id=event.tool_use_id or "",
             tool_output=event.tool_output,
-            status=status,
+            status=status.value,
         )
         logger.debug(
             f"[WebSocketResultEmitter] chat:block_updated emitted: "
-            f"task_id={event.task_id}, tool_use_id={event.tool_use_id}, status={status}"
+            f"task_id={event.task_id}, tool_use_id={event.tool_use_id}, status={status.value}"
         )
 
     async def _emit_progress(self, event: ExecutionEvent, ws_emitter) -> None:

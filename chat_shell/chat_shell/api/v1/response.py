@@ -265,6 +265,13 @@ async def _stream_response(
 
         # Stream from ChatService
         async for event in chat_service.chat(execution_request):
+            # Log raw event data
+            logger.info(
+                "[RESPONSE] Raw event: type=%s, data=%s",
+                event.type,
+                json.dumps(event.to_dict(), ensure_ascii=False, default=str),
+            )
+
             # Check for cancellation
             if cancel_event.is_set():
                 event_type, data = await emitter.incomplete("cancelled", full_content)
@@ -294,81 +301,70 @@ async def _stream_response(
                         if key not in existing_keys:
                             accumulated_sources.append(source)
 
-                # Process thinking steps for tool events (OpenAI standard format)
-                if result and result.get("thinking"):
-                    # Get blocks for display_name lookup (Wegent extension)
-                    blocks = result.get("blocks", [])
-                    for step in result["thinking"]:
-                        details = step.get("details", {})
-                        status = details.get("status")
-                        tool_name = details.get("tool_name", details.get("name", ""))
-                        tool_use_id = step.get("tool_use_id") or step.get("run_id", "")
-                        tool_input = details.get("input", {})
+                # Process tool_event directly from event.data (new format)
+                tool_event = event.data.get("tool_event") if event.data else None
+                if tool_event:
+                    tool_type = tool_event.get("type")
+                    tool_use_id = tool_event.get("tool_use_id", "")
+                    tool_name = tool_event.get("tool_name", "")
+                    status = tool_event.get("status", "")
 
-                        event_key = f"{tool_use_id}:{status}"
-                        if event_key in emitted_tool_run_ids:
-                            continue
+                    event_key = f"{tool_use_id}:{status}"
+                    if event_key not in emitted_tool_run_ids:
                         emitted_tool_run_ids.add(event_key)
 
-                        if status == "started":
-                            # Find display_name from blocks (Wegent extension)
-                            display_name = None
-                            for block in blocks:
-                                if (
-                                    block.get("id") == tool_use_id
-                                    or block.get("tool_use_id") == tool_use_id
-                                ):
-                                    display_name = block.get("display_name")
-                                    break
+                        if tool_type == "tool_use" and status == "started":
+                            # Get display_name from tool_event (Wegent extension)
+                            display_name = tool_event.get("display_name")
+                            tool_input = tool_event.get("input", {})
 
                             # Send tool start events
-                            event_type, data = await emitter.tool_start(
+                            # tool_start internally emits two events to transport
+                            await emitter.tool_start(
                                 tool_use_id, tool_name, tool_input, display_name
                             )
-                            # tool_start sends two events, get them from transport
+                            # Get all events from transport and yield them
                             for evt_type, evt_data in transport.get_events():
                                 yield _create_sse_event(evt_type, evt_data)
-                            yield _create_sse_event(event_type, data)
 
-                        elif status in ("completed", "failed"):
+                        elif tool_type == "tool_result" and status in (
+                            "completed",
+                            "failed",
+                        ):
+                            tool_input = tool_event.get("input", {})
+
                             # Send tool done events
-                            event_type, data = await emitter.tool_done(
-                                tool_use_id, tool_name, tool_input
-                            )
-                            # tool_done sends two events, get them from transport
+                            # tool_done internally emits two events to transport
+                            await emitter.tool_done(tool_use_id, tool_name, tool_input)
+                            # Get all events from transport and yield them
                             for evt_type, evt_data in transport.get_events():
                                 yield _create_sse_event(evt_type, evt_data)
-                            yield _create_sse_event(event_type, data)
-
-            elif event_type_str == EventType.THINKING.value:
-                thinking_text = event.content or event.data.get("content", "")
-                if thinking_text:
-                    event_type, data = await emitter.reasoning(thinking_text)
-                    yield _create_sse_event(event_type, data)
 
             elif event_type_str == EventType.TOOL_START.value:
                 tool_use_id = event.tool_use_id or event.data.get("tool_call_id", "")
                 tool_name = event.tool_name or event.data.get("tool_name", "")
                 tool_input = event.tool_input or event.data.get("tool_input", {})
+                # Get display_name from event data (Wegent extension)
+                display_name = event.data.get("display_name") if event.data else None
 
                 # Send tool start events
-                event_type, data = await emitter.tool_start(
-                    tool_use_id, tool_name, tool_input
+                # tool_start internally emits two events to transport
+                await emitter.tool_start(
+                    tool_use_id, tool_name, tool_input, display_name
                 )
-                # tool_start sends two events, get them from transport
+                # Get all events from transport and yield them
                 for evt_type, evt_data in transport.get_events():
                     yield _create_sse_event(evt_type, evt_data)
-                yield _create_sse_event(event_type, data)
 
             elif event_type_str == EventType.TOOL_RESULT.value:
                 tool_use_id = event.tool_use_id or event.data.get("tool_call_id", "")
 
                 # Send tool done events
-                event_type, data = await emitter.tool_done(tool_use_id, "", None)
-                # tool_done sends two events, get them from transport
+                # tool_done internally emits two events to transport
+                await emitter.tool_done(tool_use_id, "", None)
+                # Get all events from transport and yield them
                 for evt_type, evt_data in transport.get_events():
                     yield _create_sse_event(evt_type, evt_data)
-                yield _create_sse_event(event_type, data)
 
             elif event_type_str == EventType.DONE.value:
                 result = event.result or event.data.get("result", {})
@@ -379,12 +375,11 @@ async def _stream_response(
                 if result and result.get("silent_exit"):
                     is_silent_exit = True
                     silent_exit_reason = result.get("silent_exit_reason", "")
-                # Collect extra fields
+                # Collect extra fields (exclude blocks as it's no longer used)
                 known_fields = {
                     "usage",
                     "silent_exit",
                     "silent_exit_reason",
-                    "blocks",
                     "sources",
                     "shell_type",
                     "value",

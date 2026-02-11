@@ -518,13 +518,11 @@ class ExecutionDispatcher:
                 event.model_dump() if hasattr(event, "model_dump") else vars(event)
             )
 
-            # Debug log for text delta events
-            if event_type == ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value:
-                logger.debug(
-                    f"[ExecutionDispatcher] OUTPUT_TEXT_DELTA event: "
-                    f"event_data keys={list(event_data.keys())}, "
-                    f"delta={event_data.get('delta', 'N/A')}"
-                )
+            # Log raw event data
+            logger.info(
+                f"[ExecutionDispatcher] Raw SSE event: type={event_type}, "
+                f"data={json.dumps(event_data, ensure_ascii=False, default=str)}"
+            )
 
             # Parse event using shared parser
             parsed_event = self.event_parser.parse(

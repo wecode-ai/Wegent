@@ -10,6 +10,9 @@ when terminal events (DONE, ERROR, CANCELLED) are received.
 
 This ensures unified status update logic across all execution modes
 (SSE, WebSocket, HTTP+Callback).
+
+Also collects blocks (tool calls and text segments) for mixed content rendering
+using a global BlocksCollector to maintain state across HTTP requests.
 """
 
 import logging
@@ -17,6 +20,7 @@ from typing import Any, Dict, Optional
 
 from shared.models import EventType, ExecutionEvent
 
+from ..blocks_collector import get_blocks_collector
 from .protocol import ResultEmitter
 
 logger = logging.getLogger(__name__)
@@ -28,6 +32,10 @@ class StatusUpdatingEmitter(ResultEmitter):
     This wrapper intercepts terminal events (DONE, ERROR, CANCELLED) and
     updates the subtask and task status in the database before forwarding
     the event to the wrapped emitter.
+
+    It also collects blocks (tool calls and text segments) for mixed content
+    rendering using a global BlocksCollector, ensuring the correct order of
+    tool-text-tool-text is preserved across multiple HTTP callback requests.
 
     This ensures consistent status updates regardless of the execution mode
     (SSE, WebSocket, HTTP+Callback) or the type of emitter being used.
@@ -49,8 +57,9 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._wrapped = wrapped
         self._task_id = task_id
         self._subtask_id = subtask_id
-        self._accumulated_content = ""
         self._status_updated = False
+        # Use global blocks collector for cross-request state
+        self._blocks_collector = get_blocks_collector()
 
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit event and update status if terminal.
@@ -58,9 +67,34 @@ class StatusUpdatingEmitter(ResultEmitter):
         Args:
             event: Execution event to emit
         """
-        # Accumulate content from CHUNK events for result
-        if event.type == EventType.CHUNK.value:
-            self._accumulated_content += event.content or ""
+        # Collect blocks for mixed content rendering using global collector
+        if event.type == EventType.TOOL_START.value:
+            # When a tool starts, finalize any current text block and add tool block
+            display_name = event.data.get("display_name") if event.data else None
+            await self._blocks_collector.add_tool_block(
+                subtask_id=self._subtask_id,
+                tool_use_id=event.tool_use_id or "",
+                tool_name=event.tool_name or "",
+                tool_input=event.tool_input,
+                display_name=display_name,
+            )
+        elif event.type == EventType.TOOL_RESULT.value:
+            # Update tool block status when result arrives
+            if event.tool_use_id:
+                await self._blocks_collector.update_tool_block_status(
+                    subtask_id=self._subtask_id,
+                    tool_use_id=event.tool_use_id,
+                    status="done",
+                    tool_output=event.tool_output,
+                )
+        elif event.type == EventType.CHUNK.value:
+            # Accumulate content and track text blocks
+            content = event.content or ""
+            if content:
+                await self._blocks_collector.add_text_content(
+                    subtask_id=self._subtask_id,
+                    content=content,
+                )
 
         # Handle terminal events - update status before forwarding
         if event.type == EventType.DONE.value:
@@ -92,7 +126,11 @@ class StatusUpdatingEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Forward chunk event and accumulate content."""
-        self._accumulated_content += content
+        if content:
+            await self._blocks_collector.add_text_content(
+                subtask_id=subtask_id,
+                content=content,
+            )
         await self._wrapped.emit_chunk(task_id, subtask_id, content, offset, **kwargs)
 
     async def emit_done(
@@ -179,13 +217,32 @@ class StatusUpdatingEmitter(ResultEmitter):
         from app.services.chat.storage.db import db_handler
 
         try:
+            # Get accumulated content and blocks from global collector
+            accumulated_content = await self._blocks_collector.get_accumulated_content(
+                self._subtask_id
+            )
+            blocks = await self._blocks_collector.finalize_and_get_blocks(
+                self._subtask_id
+            )
+
             # Build result dict
             final_result = result
             if final_result is None:
-                final_result = {"value": self._accumulated_content}
+                final_result = {"value": accumulated_content}
             elif isinstance(final_result, dict) and "value" not in final_result:
                 # If result exists but has no value, add accumulated content
-                final_result = {**final_result, "value": self._accumulated_content}
+                final_result = {**final_result, "value": accumulated_content}
+
+            # Add collected blocks to result if we have any and result doesn't have blocks
+            # This ensures mixed content (tool-text-tool-text) is preserved for database reload
+            if blocks and isinstance(final_result, dict):
+                existing_blocks = final_result.get("blocks")
+                if not existing_blocks:
+                    final_result["blocks"] = blocks
+                    logger.info(
+                        f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to result "
+                        f"for subtask {self._subtask_id}"
+                    )
 
             # Update subtask status to COMPLETED
             await db_handler.update_subtask_status(
@@ -199,6 +256,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
                 f"and task {self._task_id} status to COMPLETED"
             )
+
+            # Clean up collector state
+            await self._blocks_collector.cleanup_subtask(self._subtask_id)
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
@@ -226,6 +286,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
                 f"and task {self._task_id} status to FAILED"
             )
+
+            # Clean up collector state
+            await self._blocks_collector.cleanup_subtask(self._subtask_id)
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
@@ -237,12 +300,29 @@ class StatusUpdatingEmitter(ResultEmitter):
         from app.services.chat.storage.db import db_handler
 
         try:
-            # Build result with accumulated content
-            result = (
-                {"value": self._accumulated_content}
-                if self._accumulated_content
-                else None
+            # Get accumulated content and blocks from global collector
+            accumulated_content = await self._blocks_collector.get_accumulated_content(
+                self._subtask_id
             )
+            blocks = await self._blocks_collector.finalize_and_get_blocks(
+                self._subtask_id
+            )
+
+            # Build result with accumulated content
+            result: Optional[Dict[str, Any]] = (
+                {"value": accumulated_content} if accumulated_content else None
+            )
+
+            # Add collected blocks to result if we have any
+            # This ensures mixed content (tool-text-tool-text) is preserved for database reload
+            if blocks:
+                if result is None:
+                    result = {}
+                result["blocks"] = blocks
+                logger.info(
+                    f"[StatusUpdatingEmitter] Added {len(blocks)} blocks to cancelled result "
+                    f"for subtask {self._subtask_id}"
+                )
 
             # Update subtask status to CANCELLED
             # Note: We use COMPLETED status for cancelled tasks to preserve partial response
@@ -258,6 +338,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
                 f"and task {self._task_id} status to COMPLETED (cancelled with partial response)"
             )
+
+            # Clean up collector state
+            await self._blocks_collector.cleanup_subtask(self._subtask_id)
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",

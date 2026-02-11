@@ -18,9 +18,31 @@ OpenAI Responses API - standardized streaming events:
 OpenAI Request Converter - bidirectional conversion:
 - OpenAIRequestConverter: Convert between ExecutionRequest and OpenAI format
 - OpenAIEventConverter: Map between OpenAI and internal event types
+
+Block types for mixed content rendering:
+- BlockType: Block type enumeration (tool, text)
+- BlockStatus: Block status enumeration (pending, streaming, done, error)
+- ToolBlock: Tool block dataclass
+- TextBlock: Text block dataclass
+- create_tool_block: Convenience function to create tool block dict
+- create_text_block: Convenience function to create text block dict
 """
 
 from . import db
+
+# Block types for mixed content rendering
+from .blocks import (
+    BlockStatus,
+    BlockType,
+    MessageBlock,
+    TextBlock,
+    ToolBlock,
+    block_from_dict,
+    blocks_from_list,
+    blocks_to_list,
+    create_text_block,
+    create_tool_block,
+)
 
 # Unified event emitter
 from .emitter import (
@@ -67,4 +89,15 @@ __all__ = [
     # OpenAI Request Converter
     "OpenAIRequestConverter",
     "OpenAIEventConverter",
+    # Block types for mixed content rendering
+    "BlockType",
+    "BlockStatus",
+    "ToolBlock",
+    "TextBlock",
+    "MessageBlock",
+    "block_from_dict",
+    "blocks_from_list",
+    "blocks_to_list",
+    "create_tool_block",
+    "create_text_block",
 ]
