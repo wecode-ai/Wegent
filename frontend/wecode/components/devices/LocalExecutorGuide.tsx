@@ -24,8 +24,6 @@ import {
   ExternalLink,
   AlertTriangle,
   Puzzle,
-  Cloud,
-  Monitor,
   Plus,
   Loader2,
   KeyIcon,
@@ -33,21 +31,18 @@ import {
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys'
-import { AddCloudDeviceButton } from '@wecode/components/cloud-device'
 
 // Install command from environment variable (wecode-specific config)
 const INSTALL_COMMAND_UNIX = process.env.NEXT_PUBLIC_DEVICE_INSTALL_COMMAND || ''
 const INSTALL_SCRIPT_WINDOWS = process.env.NEXT_PUBLIC_DEVICE_INSTALL_SCRIPT_WINDOWS || ''
 const EXECUTOR_DOWNLOAD_TOKEN = process.env.NEXT_PUBLIC_EXECUTOR_DOWNLOAD_TOKEN || ''
 
-type DeviceType = 'local' | 'cloud'
 type OsType = 'macos' | 'linux' | 'windows'
 
 export interface LocalExecutorGuideProps {
   backendUrl: string
   authToken: string
   guideUrl?: string
-  onCloudDeviceCreated?: () => void
 }
 
 // Component for copy button with state
@@ -127,45 +122,6 @@ function CommandStep({
   )
 }
 
-// Device type tab selector
-function DeviceTypeSelector({
-  selected,
-  onSelect,
-}: {
-  selected: DeviceType
-  onSelect: (type: DeviceType) => void
-}) {
-  const { t } = useTranslation('devices')
-
-  const tabs = [
-    { id: 'local' as DeviceType, label: t('device_type_local'), icon: Monitor },
-    { id: 'cloud' as DeviceType, label: t('device_type_cloud'), icon: Cloud },
-  ]
-
-  return (
-    <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">
-      {tabs.map(tab => {
-        const Icon = tab.icon
-        return (
-          <button
-            key={tab.id}
-            onClick={() => onSelect(tab.id)}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all',
-              selected === tab.id
-                ? 'bg-white text-text-primary shadow-sm'
-                : 'text-text-muted hover:text-text-secondary'
-            )}
-          >
-            <Icon className="w-4 h-4" />
-            <span>{tab.label}</span>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 // OS Tab selector component
 function OsTabSelector({
   selectedOs,
@@ -204,13 +160,11 @@ function OsTabSelector({
 }
 
 /**
- * Local Executor Guide - Combined local and cloud device setup
- * Local: Shows 2 steps for all OS (Install + Start with --auth)
- * Cloud: One-click cloud device creation
+ * Local Executor Guide - Shows installation steps for local device setup
+ * Shows 2 steps for all OS (Install + Start with --auth)
  */
-export function LocalExecutorGuide({ guideUrl, onCloudDeviceCreated }: LocalExecutorGuideProps) {
+export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
   const { t } = useTranslation('devices')
-  const [deviceType, setDeviceType] = useState<DeviceType>('local')
   const [selectedOs, setSelectedOs] = useState<OsType>('macos')
 
   const isWindows = selectedOs === 'windows'
@@ -241,10 +195,8 @@ export function LocalExecutorGuide({ guideUrl, onCloudDeviceCreated }: LocalExec
   }, [t])
 
   useEffect(() => {
-    if (deviceType === 'local') {
-      fetchApiKeys()
-    }
-  }, [deviceType, fetchApiKeys])
+    fetchApiKeys()
+  }, [fetchApiKeys])
 
   // Handle creating a new API Key
   const handleCreateKey = async () => {
@@ -310,291 +262,248 @@ export function LocalExecutorGuide({ guideUrl, onCloudDeviceCreated }: LocalExec
           </div>
         </div>
 
-        {/* Device Type Selector */}
-        <DeviceTypeSelector selected={deviceType} onSelect={setDeviceType} />
+        {/* OS Tab Selector */}
+        <OsTabSelector selectedOs={selectedOs} onSelect={setSelectedOs} />
 
-        {/* Local Device Content */}
-        {deviceType === 'local' && (
+        {/* macOS / Linux Steps */}
+        {!isWindows && (
           <>
-            {/* OS Tab Selector */}
-            <OsTabSelector selectedOs={selectedOs} onSelect={setSelectedOs} />
-
-            {/* macOS / Linux Steps */}
-            {!isWindows && (
-              <>
-                {/* API Key Selection */}
-                <div className="mb-6 p-4 bg-muted rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <KeyIcon className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium text-text-primary">
-                        {t('select_apikey')}
-                      </span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCreateDialogOpen(true)}
-                      className="flex items-center gap-1"
-                    >
-                      <Plus className="w-3 h-3" />
-                      {t('create_apikey')}
-                    </Button>
-                  </div>
-
-                  {loadingKeys ? (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
-                    </div>
-                  ) : activeApiKeys.length === 0 ? (
-                    <p className="text-sm text-text-muted text-center py-4">{t('no_apikeys')}</p>
-                  ) : (
-                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                      {activeApiKeys.map(apiKey => (
-                        <div
-                          key={apiKey.id}
-                          className={cn(
-                            'flex items-center gap-3 p-2 rounded-md cursor-pointer transition-colors',
-                            selectedKeyId === apiKey.id
-                              ? 'bg-primary/10 border border-primary'
-                              : 'hover:bg-hover border border-transparent'
-                          )}
-                          onClick={() => {
-                            setSelectedKeyId(apiKey.id)
-                            if (newlyCreatedKey && newlyCreatedKey.id !== apiKey.id) {
-                              setNewlyCreatedKey(null)
-                            }
-                          }}
-                        >
-                          <div
-                            className={cn(
-                              'w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0',
-                              selectedKeyId === apiKey.id
-                                ? 'border-primary bg-primary'
-                                : 'border-border'
-                            )}
-                          >
-                            {selectedKeyId === apiKey.id && (
-                              <Check className="w-2.5 h-2.5 text-white" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-text-primary truncate block">
-                              {apiKey.name}
-                            </span>
-                            <code className="text-xs text-text-muted">{apiKey.key_prefix}</code>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Warning for existing key selection */}
-                  {selectedKeyId && !hasRealApiKey && (
-                    <div className="flex items-start gap-2 p-2 mt-3 bg-amber-50 border border-amber-200 rounded-md">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      <p className="text-xs text-amber-700">{t('apikey_existing_warning')}</p>
-                    </div>
-                  )}
+            {/* API Key Selection */}
+            <div className="mb-6 p-4 bg-muted rounded-lg">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <KeyIcon className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium text-text-primary">
+                    {t('select_apikey')}
+                  </span>
                 </div>
-
-                {/* Step 1: Install wecode-cli */}
-                <CommandStep
-                  stepNumber={1}
-                  title={t('internal_step_install')}
-                  description={t('internal_step_install_desc')}
-                  command={INSTALL_COMMAND_UNIX}
-                />
-
-                {/* Step 2: Start with auth */}
-                <CommandStep
-                  stepNumber={2}
-                  title={t('internal_step_start')}
-                  description={t('internal_step_start_desc')}
-                  command={executorStartCommand}
-                />
-              </>
-            )}
-
-            {/* Windows Steps */}
-            {isWindows && (
-              <>
-                {/* API Key Selection */}
-                <div className="mb-6 p-4 bg-muted rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <KeyIcon className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium text-text-primary">
-                        {t('select_apikey')}
-                      </span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCreateDialogOpen(true)}
-                      className="flex items-center gap-1"
-                    >
-                      <Plus className="w-3 h-3" />
-                      {t('create_apikey')}
-                    </Button>
-                  </div>
-
-                  {loadingKeys ? (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
-                    </div>
-                  ) : activeApiKeys.length === 0 ? (
-                    <p className="text-sm text-text-muted text-center py-4">{t('no_apikeys')}</p>
-                  ) : (
-                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                      {activeApiKeys.map(apiKey => (
-                        <div
-                          key={apiKey.id}
-                          className={cn(
-                            'flex items-center gap-3 p-2 rounded-md cursor-pointer transition-colors',
-                            selectedKeyId === apiKey.id
-                              ? 'bg-primary/10 border border-primary'
-                              : 'hover:bg-hover border border-transparent'
-                          )}
-                          onClick={() => {
-                            setSelectedKeyId(apiKey.id)
-                            if (newlyCreatedKey && newlyCreatedKey.id !== apiKey.id) {
-                              setNewlyCreatedKey(null)
-                            }
-                          }}
-                        >
-                          <div
-                            className={cn(
-                              'w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0',
-                              selectedKeyId === apiKey.id
-                                ? 'border-primary bg-primary'
-                                : 'border-border'
-                            )}
-                          >
-                            {selectedKeyId === apiKey.id && (
-                              <Check className="w-2.5 h-2.5 text-white" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-text-primary truncate block">
-                              {apiKey.name}
-                            </span>
-                            <code className="text-xs text-text-muted">{apiKey.key_prefix}</code>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Warning for existing key selection */}
-                  {selectedKeyId && !hasRealApiKey && (
-                    <div className="flex items-start gap-2 p-2 mt-3 bg-amber-50 border border-amber-200 rounded-md">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      <p className="text-xs text-amber-700">{t('apikey_existing_warning')}</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Step 1: Download script */}
-                <CommandStep
-                  stepNumber={1}
-                  title={t('windows_step_download')}
-                  description={t('windows_step_download_desc')}
-                  command={windowsDownloadCommand}
-                  isWindows={true}
-                />
-
-                {/* Step 2: Execute script */}
-                <CommandStep
-                  stepNumber={2}
-                  title={t('windows_step_execute')}
-                  description={t('windows_step_execute_desc')}
-                  command={windowsExecuteCommand}
-                  isWindows={true}
-                />
-              </>
-            )}
-
-            {/* Plugins section - only show for macOS/Linux */}
-            {!isWindows && (
-              <div className="border-t border-border pt-5 mt-2 mb-6">
-                <div className="flex items-center gap-2 mb-3">
-                  <Puzzle className="w-4 h-4 text-primary" />
-                  <h4 className="font-medium text-text-primary">{t('plugins_title')}</h4>
-                </div>
-                <p className="text-sm text-text-muted mb-4 ml-6">{t('plugins_description')}</p>
-
-                {/* Browser plugin */}
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 ml-6">
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <span className="font-medium text-text-primary">
-                        {t('plugin_browser_name')}
-                      </span>
-                      <p className="text-xs text-text-muted mt-1">
-                        {t('plugin_browser_description')}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="bg-gray-900 rounded-lg px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-gray-500 select-none">$</span>
-                      <code className="flex-1 text-sm font-mono text-green-400">
-                        wecode executor install browser
-                      </code>
-                      <CopyButton text="wecode executor install browser" />
-                    </div>
-                  </div>
-                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreateDialogOpen(true)}
+                  className="flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  {t('create_apikey')}
+                </Button>
               </div>
-            )}
 
-            {/* Security hints */}
-            <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
-              <span className="text-blue-600 shrink-0">💡</span>
-              <p className="text-sm text-blue-700">
-                {isWindows ? t('windows_security_hint') : t('gatekeeper_hint')}
-              </p>
+              {loadingKeys ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
+                </div>
+              ) : activeApiKeys.length === 0 ? (
+                <p className="text-sm text-text-muted text-center py-4">{t('no_apikeys')}</p>
+              ) : (
+                <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                  {activeApiKeys.map(apiKey => (
+                    <div
+                      key={apiKey.id}
+                      className={cn(
+                        'flex items-center gap-3 p-2 rounded-md cursor-pointer transition-colors',
+                        selectedKeyId === apiKey.id
+                          ? 'bg-primary/10 border border-primary'
+                          : 'hover:bg-hover border border-transparent'
+                      )}
+                      onClick={() => {
+                        setSelectedKeyId(apiKey.id)
+                        if (newlyCreatedKey && newlyCreatedKey.id !== apiKey.id) {
+                          setNewlyCreatedKey(null)
+                        }
+                      }}
+                    >
+                      <div
+                        className={cn(
+                          'w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0',
+                          selectedKeyId === apiKey.id
+                            ? 'border-primary bg-primary'
+                            : 'border-border'
+                        )}
+                      >
+                        {selectedKeyId === apiKey.id && (
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-text-primary truncate block">
+                          {apiKey.name}
+                        </span>
+                        <code className="text-xs text-text-muted">{apiKey.key_prefix}</code>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Warning for existing key selection */}
+              {selectedKeyId && !hasRealApiKey && (
+                <div className="flex items-start gap-2 p-2 mt-3 bg-amber-50 border border-amber-200 rounded-md">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700">{t('apikey_existing_warning')}</p>
+                </div>
+              )}
             </div>
 
-            {/* Beta warning */}
-            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-3">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <p className="text-sm text-amber-700">{t('beta_warning')}</p>
-            </div>
+            {/* Step 1: Install wecode-cli */}
+            <CommandStep
+              stepNumber={1}
+              title={t('internal_step_install')}
+              description={t('internal_step_install_desc')}
+              command={INSTALL_COMMAND_UNIX}
+            />
+
+            {/* Step 2: Start with auth */}
+            <CommandStep
+              stepNumber={2}
+              title={t('internal_step_start')}
+              description={t('internal_step_start_desc')}
+              command={executorStartCommand}
+            />
           </>
         )}
 
-        {/* Cloud Device Content */}
-        {deviceType === 'cloud' && (
-          <div className="py-6">
-            {/* Cloud device description */}
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Cloud className="w-8 h-8 text-primary" />
+        {/* Windows Steps */}
+        {isWindows && (
+          <>
+            {/* API Key Selection */}
+            <div className="mb-6 p-4 bg-muted rounded-lg">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <KeyIcon className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium text-text-primary">
+                    {t('select_apikey')}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreateDialogOpen(true)}
+                  className="flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  {t('create_apikey')}
+                </Button>
               </div>
-              <h4 className="text-lg font-medium text-text-primary mb-2">{t('cloud_device')}</h4>
-              <p className="text-sm text-text-muted">{t('cloud_device_description')}</p>
+
+              {loadingKeys ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
+                </div>
+              ) : activeApiKeys.length === 0 ? (
+                <p className="text-sm text-text-muted text-center py-4">{t('no_apikeys')}</p>
+              ) : (
+                <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                  {activeApiKeys.map(apiKey => (
+                    <div
+                      key={apiKey.id}
+                      className={cn(
+                        'flex items-center gap-3 p-2 rounded-md cursor-pointer transition-colors',
+                        selectedKeyId === apiKey.id
+                          ? 'bg-primary/10 border border-primary'
+                          : 'hover:bg-hover border border-transparent'
+                      )}
+                      onClick={() => {
+                        setSelectedKeyId(apiKey.id)
+                        if (newlyCreatedKey && newlyCreatedKey.id !== apiKey.id) {
+                          setNewlyCreatedKey(null)
+                        }
+                      }}
+                    >
+                      <div
+                        className={cn(
+                          'w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0',
+                          selectedKeyId === apiKey.id
+                            ? 'border-primary bg-primary'
+                            : 'border-border'
+                        )}
+                      >
+                        {selectedKeyId === apiKey.id && (
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-text-primary truncate block">
+                          {apiKey.name}
+                        </span>
+                        <code className="text-xs text-text-muted">{apiKey.key_prefix}</code>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Warning for existing key selection */}
+              {selectedKeyId && !hasRealApiKey && (
+                <div className="flex items-start gap-2 p-2 mt-3 bg-amber-50 border border-amber-200 rounded-md">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700">{t('apikey_existing_warning')}</p>
+                </div>
+              )}
             </div>
 
-            {/* Add Cloud Device button */}
-            <div className="flex justify-center mb-6">
-              <AddCloudDeviceButton onSuccess={onCloudDeviceCreated} />
-            </div>
+            {/* Step 1: Download script */}
+            <CommandStep
+              stepNumber={1}
+              title={t('windows_step_download')}
+              description={t('windows_step_download_desc')}
+              command={windowsDownloadCommand}
+              isWindows={true}
+            />
 
-            {/* Cloud device hints */}
-            <div className="space-y-3">
-              <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <span className="text-blue-600 shrink-0">💡</span>
-                <p className="text-sm text-blue-700">{t('cloud_device_auto_config')}</p>
+            {/* Step 2: Execute script */}
+            <CommandStep
+              stepNumber={2}
+              title={t('windows_step_execute')}
+              description={t('windows_step_execute_desc')}
+              command={windowsExecuteCommand}
+              isWindows={true}
+            />
+          </>
+        )}
+
+        {/* Plugins section - only show for macOS/Linux */}
+        {!isWindows && (
+          <div className="border-t border-border pt-5 mt-2 mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Puzzle className="w-4 h-4 text-primary" />
+              <h4 className="font-medium text-text-primary">{t('plugins_title')}</h4>
+            </div>
+            <p className="text-sm text-text-muted mb-4 ml-6">{t('plugins_description')}</p>
+
+            {/* Browser plugin */}
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 ml-6">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <span className="font-medium text-text-primary">{t('plugin_browser_name')}</span>
+                  <p className="text-xs text-text-muted mt-1">{t('plugin_browser_description')}</p>
+                </div>
               </div>
-              <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                <p className="text-sm text-amber-700">{t('cloud_device_limit_warning')}</p>
+              <div className="bg-gray-900 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-500 select-none">$</span>
+                  <code className="flex-1 text-sm font-mono text-green-400">
+                    wecode executor install browser
+                  </code>
+                  <CopyButton text="wecode executor install browser" />
+                </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* Security hints */}
+        <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
+          <span className="text-blue-600 shrink-0">💡</span>
+          <p className="text-sm text-blue-700">
+            {isWindows ? t('windows_security_hint') : t('gatekeeper_hint')}
+          </p>
+        </div>
+
+        {/* Beta warning */}
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-sm text-amber-700">{t('beta_warning')}</p>
+        </div>
 
         {/* Guide link */}
         {guideUrl && (
