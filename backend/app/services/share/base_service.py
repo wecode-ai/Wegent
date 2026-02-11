@@ -259,30 +259,57 @@ class UnifiedShareService(ABC):
         config: ShareLinkConfig,
     ) -> ShareLinkResponse:
         """Create or update a share link for a resource."""
+        logger.info(
+            f"[create_share_link] START: resource_type={self.resource_type.value}, "
+            f"resource_id={resource_id}, user_id={user_id}"
+        )
+
         # Validate resource exists and user is owner
         resource = self._get_resource(db, resource_id, user_id)
         if not resource:
             raise HTTPException(status_code=404, detail="Resource not found")
 
         owner_id = self._get_resource_owner_id(resource)
+        logger.info(
+            f"[create_share_link] Owner check: owner_id={owner_id}, user_id={user_id}"
+        )
+
         if owner_id != user_id:
             raise HTTPException(
                 status_code=403, detail="Only resource owner can create share link"
             )
 
         # Check for existing active share link
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to check both formats to handle legacy data
+        resource_type_variants = [self.resource_type.value]
+
+        # Add underscore variant for KnowledgeBase -> KNOWLEDGE_BASE
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         existing_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
             .first()
         )
 
+        logger.info(
+            f"[create_share_link] Existing link check: "
+            f"found={existing_link is not None}, "
+            f"existing_link_id={existing_link.id if existing_link else None}, "
+            f"existing_token={existing_link.share_token[:50] + '...' if existing_link and existing_link.share_token else None}"
+        )
+
         if existing_link:
             # Update existing link
+            logger.info(
+                f"[create_share_link] UPDATING existing link: id={existing_link.id}"
+            )
             existing_link.require_approval = config.require_approval
             existing_link.default_permission_level = (
                 config.default_permission_level.value
@@ -301,7 +328,27 @@ class UnifiedShareService(ABC):
             return self._share_link_to_response(existing_link)
 
         # Generate new share token
+        logger.info(f"[create_share_link] No existing link found, generating new token")
         share_token = self._generate_share_token(user_id, resource_id)
+        logger.info(f"[create_share_link] Generated share_token: {share_token[:50]}...")
+
+        # ADDITIONAL DIAGNOSTIC: Check if this token already exists in DB
+        duplicate_check = (
+            db.query(ShareLink).filter(ShareLink.share_token == share_token).first()
+        )
+        if duplicate_check:
+            logger.error(
+                f"[create_share_link] CRITICAL: Generated token already exists! "
+                f"duplicate_link_id={duplicate_check.id}, "
+                f"duplicate_resource_type={duplicate_check.resource_type}, "
+                f"duplicate_resource_id={duplicate_check.resource_id}, "
+                f"duplicate_is_active={duplicate_check.is_active}, "
+                f"token={share_token[:50]}..."
+            )
+        else:
+            logger.info(
+                f"[create_share_link] Token uniqueness check passed: no duplicate found"
+            )
 
         # Calculate expiration
         # Use far future instead of None to avoid NOT NULL constraint
@@ -311,6 +358,9 @@ class UnifiedShareService(ABC):
             expires_at = datetime.utcnow() + timedelta(days=365 * 100)
 
         # Create new share link
+        logger.info(
+            f"[create_share_link] Creating new ShareLink record with token: {share_token[:50]}..."
+        )
         share_link = ShareLink(
             resource_type=self.resource_type.value,
             resource_id=resource_id,
@@ -323,9 +373,30 @@ class UnifiedShareService(ABC):
         )
 
         db.add(share_link)
-        db.commit()
+
+        try:
+            db.commit()
+            logger.info(
+                f"[create_share_link] Successfully committed new share_link: id={share_link.id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[create_share_link] FAILED to commit share_link: {type(e).__name__}: {str(e)}"
+            )
+            logger.error(
+                f"[create_share_link] Share link details that failed: "
+                f"resource_type={self.resource_type.value}, "
+                f"resource_id={resource_id}, "
+                f"share_token={share_token[:50]}..., "
+                f"created_by_user_id={user_id}"
+            )
+            raise
+
         db.refresh(share_link)
 
+        logger.info(
+            f"[create_share_link] END: Successfully created share_link id={share_link.id}"
+        )
         return self._share_link_to_response(share_link)
 
     def get_share_link(
@@ -337,10 +408,15 @@ class UnifiedShareService(ABC):
         if not resource:
             raise HTTPException(status_code=404, detail="Resource not found")
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -365,10 +441,15 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="Only resource owner can delete share link"
             )
 
+        # Note: Database may store resource_type in different formats
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -419,10 +500,15 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=400, detail="Invalid resource type")
 
         # Find share link by resource_id (not by token, since token encoding may vary)
+        # Note: Database may store resource_type in different formats
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -490,10 +576,15 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=400, detail="Cannot join your own resource")
 
         # Find share link by resource_id (not by token, since token encoding may vary)
+        # Note: Database may store resource_type in different formats
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         share_link = (
             db.query(ShareLink)
             .filter(
-                ShareLink.resource_type == self.resource_type.value,
+                ShareLink.resource_type.in_(resource_type_variants),
                 ShareLink.resource_id == resource_id,
                 ShareLink.is_active == True,
             )
@@ -514,10 +605,12 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         # Check for existing member record
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to check both formats to handle legacy data and prevent duplicate records
         existing_member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
             )
@@ -525,11 +618,12 @@ class UnifiedShareService(ABC):
         )
 
         if existing_member:
-            if existing_member.status == MemberStatus.APPROVED.value:
+            # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+            if existing_member.status.lower() == MemberStatus.APPROVED.value.lower():
                 raise HTTPException(
                     status_code=400, detail="Already have access to this resource"
                 )
-            elif existing_member.status == MemberStatus.PENDING.value:
+            elif existing_member.status.lower() == MemberStatus.PENDING.value.lower():
                 raise HTTPException(
                     status_code=400, detail="Request already pending approval"
                 )
@@ -627,15 +721,53 @@ class UnifiedShareService(ABC):
         if not resource:
             raise HTTPException(status_code=404, detail="Resource not found")
 
-        members = (
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to query both formats to handle legacy data
+        resource_type_variants = [self.resource_type.value]
+
+        # Add underscore variant for KnowledgeBase -> KNOWLEDGE_BASE
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+        approved_status_variants = [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
+
+        all_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(approved_status_variants),
             )
             .all()
         )
+
+        # Deduplicate members by user_id (keep the first one found for each user)
+        # This handles legacy data where the same user may have multiple records
+        # with different resource_type formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        seen_user_ids = set()
+        members = []
+        for member in all_members:
+            if member.user_id not in seen_user_ids:
+                seen_user_ids.add(member.user_id)
+                members.append(member)
+
+        # LOGGING: Log query parameters and results to verify resource_type matching
+        logger.info(
+            f"[get_members] Query params: resource_type_variants={resource_type_variants}, "
+            f"resource_id={resource_id}, status={MemberStatus.APPROVED.value}"
+        )
+        logger.info(
+            f"[get_members] Found {len(all_members)} raw members, {len(members)} after deduplication"
+        )
+        for member in members:
+            logger.info(
+                f"[get_members] Member detail: id={member.id}, resource_type={member.resource_type}, "
+                f"resource_id={member.resource_id}, user_id={member.user_id}"
+            )
 
         # Populate user names
         user_ids = set()
@@ -647,7 +779,7 @@ class UnifiedShareService(ABC):
                 user_ids.add(m.reviewed_by_user_id)
 
         users = db.query(User).filter(User.id.in_(user_ids)).all()
-        user_map = {u.id: u.user_name for u in users}
+        user_map = {u.id: u for u in users}
 
         member_responses = [self._member_to_response(m, user_map) for m in members]
 
@@ -688,11 +820,23 @@ class UnifiedShareService(ABC):
         if not target_user:
             raise HTTPException(status_code=404, detail="Target user not found")
 
+        # LOGGING: Log user information to verify email is available in User model
+        logger.info(
+            f"[add_member] Target user found: user_id={target_user_id}, "
+            f"user_name={target_user.user_name}, email={target_user.email}"
+        )
+
         # Check for existing member
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to check both formats to handle legacy data and prevent duplicate records
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         existing = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == target_user_id,
             )
@@ -700,15 +844,21 @@ class UnifiedShareService(ABC):
         )
 
         if existing:
-            if existing.status == MemberStatus.APPROVED.value:
+            # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+            if existing.status.lower() == MemberStatus.APPROVED.value.lower():
                 raise HTTPException(status_code=400, detail="User already has access")
 
             # Ensure share_link_id is set (required by database)
             if not existing.share_link_id:
+                # Note: Database may store resource_type in different formats
+                resource_type_variants = [self.resource_type.value]
+                if self.resource_type.value == "KnowledgeBase":
+                    resource_type_variants.append("KNOWLEDGE_BASE")
+
                 share_link = (
                     db.query(ShareLink)
                     .filter(
-                        ShareLink.resource_type == self.resource_type.value,
+                        ShareLink.resource_type.in_(resource_type_variants),
                         ShareLink.resource_id == resource_id,
                         ShareLink.is_active == True,
                     )
@@ -743,10 +893,15 @@ class UnifiedShareService(ABC):
         else:
             # Get or create a share link for direct member addition
             # This is needed because share_link_id may be required in the database
+            # Note: Database may store resource_type in different formats
+            resource_type_variants = [self.resource_type.value]
+            if self.resource_type.value == "KnowledgeBase":
+                resource_type_variants.append("KNOWLEDGE_BASE")
+
             share_link = (
                 db.query(ShareLink)
                 .filter(
-                    ShareLink.resource_type == self.resource_type.value,
+                    ShareLink.resource_type.in_(resource_type_variants),
                     ShareLink.resource_id == resource_id,
                     ShareLink.is_active == True,
                 )
@@ -796,7 +951,9 @@ class UnifiedShareService(ABC):
         users = (
             db.query(User).filter(User.id.in_([target_user_id, current_user_id])).all()
         )
-        user_map = {u.id: u.user_name for u in users}
+        # LOGGING: Verify user_map contains email field
+        user_map = {u.id: u for u in users}
+        logger.info(f"[add_member] User map created with {len(user_map)} users")
 
         return self._member_to_response(member, user_map)
 
@@ -824,12 +981,17 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to update members"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         # Find member
         member = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.id == member_id,
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
             )
             .first()
@@ -852,7 +1014,7 @@ class UnifiedShareService(ABC):
             user_ids.add(member.reviewed_by_user_id)
 
         users = db.query(User).filter(User.id.in_(user_ids)).all()
-        user_map = {u.id: u.user_name for u in users}
+        user_map = {u.id: u for u in users}
 
         return self._member_to_response(member, user_map)
 
@@ -879,12 +1041,17 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to remove members"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
         # Find member
         member = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.id == member_id,
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
             )
             .first()
@@ -900,25 +1067,39 @@ class UnifiedShareService(ABC):
         return True
 
     def _member_to_response(
-        self, member: ResourceMember, user_map: Dict[int, str]
+        self, member: ResourceMember, user_map: Dict[int, User]
     ) -> ResourceMemberResponse:
         """Convert ResourceMember model to response schema."""
+        # Get user name and email from map
+        user = user_map.get(member.user_id)
+        user_name = user.user_name if user else None
+        user_email = user.email if user else None
+
+        # Get invited by user name
+        invited_by_user = user_map.get(member.invited_by_user_id)
+        invited_by_user_name = invited_by_user.user_name if invited_by_user else None
+
+        # Get reviewed by user name
+        reviewed_by_user_name = None
+        if member.reviewed_by_user_id:
+            reviewed_by_user = user_map.get(member.reviewed_by_user_id)
+            reviewed_by_user_name = (
+                reviewed_by_user.user_name if reviewed_by_user else None
+            )
+
         return ResourceMemberResponse(
             id=member.id,
             resource_type=member.resource_type,
             resource_id=member.resource_id,
             user_id=member.user_id,
-            user_name=user_map.get(member.user_id),
+            user_name=user_name,
+            user_email=user_email,
             permission_level=member.permission_level,
             status=member.status,
             invited_by_user_id=member.invited_by_user_id,
-            invited_by_user_name=user_map.get(member.invited_by_user_id),
+            invited_by_user_name=invited_by_user_name,
             reviewed_by_user_id=member.reviewed_by_user_id,
-            reviewed_by_user_name=(
-                user_map.get(member.reviewed_by_user_id)
-                if member.reviewed_by_user_id
-                else None
-            ),
+            reviewed_by_user_name=reviewed_by_user_name,
             reviewed_at=member.reviewed_at,
             copied_resource_id=member.copied_resource_id,
             requested_at=member.requested_at,
@@ -949,13 +1130,25 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to view pending requests"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        # We need to query both formats to handle legacy data
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "PENDING" vs "pending")
+        pending_status_variants = [
+            MemberStatus.PENDING.value,
+            MemberStatus.PENDING.value.upper(),
+        ]
+
         # Get pending members
         pending_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.status == MemberStatus.PENDING.value,
+                ResourceMember.status.in_(pending_status_variants),
             )
             .all()
         )
@@ -963,13 +1156,20 @@ class UnifiedShareService(ABC):
         # Get user names
         user_ids = {m.user_id for m in pending_members}
         users = db.query(User).filter(User.id.in_(user_ids)).all()
-        user_map = {u.id: u.user_name for u in users}
+        user_map = {u.id: u for u in users}
 
         requests = [
             PendingRequestResponse(
                 id=m.id,
                 user_id=m.user_id,
-                user_name=user_map.get(m.user_id),
+                user_name=(
+                    user_map.get(m.user_id).user_name
+                    if user_map.get(m.user_id)
+                    else None
+                ),
+                user_email=(
+                    user_map.get(m.user_id).email if user_map.get(m.user_id) else None
+                ),
                 requested_permission_level=m.permission_level,
                 requested_at=m.requested_at,
             )
@@ -1003,14 +1203,25 @@ class UnifiedShareService(ABC):
                 status_code=403, detail="No permission to review requests"
             )
 
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "PENDING" vs "pending")
+        pending_status_variants = [
+            MemberStatus.PENDING.value,
+            MemberStatus.PENDING.value.upper(),
+        ]
+
         # Find pending member
         member = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.id == request_id,
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.status == MemberStatus.PENDING.value,
+                ResourceMember.status.in_(pending_status_variants),
             )
             .first()
         )
@@ -1063,13 +1274,24 @@ class UnifiedShareService(ABC):
 
         Permission hierarchy: manage > edit > view
         """
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+        approved_status_variants = [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
+
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(approved_status_variants),
             )
             .first()
         )
@@ -1086,13 +1308,24 @@ class UnifiedShareService(ABC):
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[str]:
         """Get user's permission level for a resource."""
+        # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
+        resource_type_variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            resource_type_variants.append("KNOWLEDGE_BASE")
+
+        # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
+        approved_status_variants = [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
+
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == self.resource_type.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(approved_status_variants),
             )
             .first()
         )

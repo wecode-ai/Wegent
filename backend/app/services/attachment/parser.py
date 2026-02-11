@@ -26,6 +26,7 @@ import base64
 import csv
 import io
 import logging
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -238,6 +239,8 @@ class DocumentParser:
         ".gif": "image/gif",
         ".bmp": "image/bmp",
         ".webp": "image/webp",
+        # Archive formats (binary, no text extraction)
+        ".zip": "application/zip",
     }
 
     # Special format extensions that have dedicated parsers
@@ -256,6 +259,8 @@ class DocumentParser:
         ".gif",
         ".bmp",
         ".webp",
+        # Archive formats (binary, no text extraction)
+        ".zip",
     }
 
     # Known text format extensions (no MIME detection needed)
@@ -474,6 +479,8 @@ class DocumentParser:
                 text, truncation_info = self._parse_csv_smart(binary_data, max_length)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                 text, image_base64 = self._parse_image(binary_data, extension)
+            elif extension == ".zip":
+                text = self._parse_archive(binary_data, extension)
             else:
                 raise DocumentParseError(
                     f"Unsupported file type: {extension}",
@@ -493,6 +500,8 @@ class DocumentParser:
                 text = self._parse_csv(binary_data)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                 text, image_base64 = self._parse_image(binary_data, extension)
+            elif extension == ".zip":
+                text = self._parse_archive(binary_data, extension)
             else:
                 raise DocumentParseError(
                     f"Unsupported file type: {extension}",
@@ -969,6 +978,54 @@ class DocumentParser:
             logger.error(f"Error parsing image: {e}", exc_info=True)
             raise DocumentParseError(
                 f"Failed to parse image: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_archive(self, binary_data: bytes, extension: str) -> str:
+        """
+        Parse archive file (ZIP) and return metadata information.
+
+        Archive files are stored as binary attachments without text extraction.
+        Only metadata (file size, file count) is returned as text.
+
+        Args:
+            binary_data: Archive file binary data
+            extension: File extension (e.g., '.zip')
+
+        Returns:
+            Metadata text describing the archive
+        """
+        try:
+            archive_file = io.BytesIO(binary_data)
+
+            # Build description
+            text = f"[压缩文件]\n"
+            text += f"格式: {extension[1:].upper()}\n"
+            text += f"文件大小: {len(binary_data)} 字节"
+
+            # Try to list contents for ZIP files
+            if extension == ".zip":
+                try:
+                    with zipfile.ZipFile(archive_file, "r") as zf:
+                        file_list = zf.namelist()
+                        text += f"\n包含文件数: {len(file_list)}"
+                        if file_list:
+                            # Show first few files
+                            preview_count = min(10, len(file_list))
+                            text += f"\n\n文件列表 (前 {preview_count} 个):"
+                            for name in file_list[:preview_count]:
+                                text += f"\n  - {name}"
+                            if len(file_list) > preview_count:
+                                text += f"\n  ... 还有 {len(file_list) - preview_count} 个文件"
+                except zipfile.BadZipFile:
+                    text += "\n(无法读取压缩包内容)"
+
+            return text
+
+        except Exception as e:
+            logger.error(f"Error parsing archive: {e}", exc_info=True)
+            raise DocumentParseError(
+                f"Failed to parse archive: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
 

@@ -228,6 +228,18 @@ class SubscriptionNotificationDispatcher:
                         execution_id=execution_id,
                     )
                 )
+            elif channel_type == "telegram":
+                tasks.append(
+                    self._send_telegram_notification(
+                        db=db,
+                        channel=channel,
+                        binding=binding,
+                        user_id=user_id,
+                        message=message,
+                        subscription_id=subscription_id,
+                        execution_id=execution_id,
+                    )
+                )
             else:
                 logger.warning(
                     f"[SubscriptionNotificationDispatcher] Unsupported channel type: {channel_type}"
@@ -321,6 +333,90 @@ class SubscriptionNotificationDispatcher:
         except Exception as e:
             logger.error(
                 f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                f"notification to user {user_id}: {e}"
+            )
+            raise
+
+    async def _send_telegram_notification(
+        self,
+        db: Session,
+        *,
+        channel: Kind,
+        binding: Any,
+        user_id: int,
+        message: str,
+        subscription_id: int,
+        execution_id: int,
+    ) -> None:
+        """
+        Send notification via Telegram.
+
+        Args:
+            db: Database session
+            channel: Messager Kind
+            binding: User's IM binding info
+            user_id: User ID
+            message: Notification message
+            subscription_id: Subscription ID
+            execution_id: Background execution ID
+        """
+        try:
+            # Get Telegram chat ID from binding
+            # For Telegram, we use sender_id which is the chat_id
+            telegram_chat_id = binding.sender_id
+            if not telegram_chat_id:
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] User {user_id} has no "
+                    f"sender_id (chat_id) for Telegram channel {channel.id}"
+                )
+                return
+
+            # Get channel config for bot token
+            spec = channel.json.get("spec", {})
+            config = spec.get("config", {})
+            bot_token_encrypted = config.get("bot_token")
+
+            if not bot_token_encrypted:
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] Channel {channel.id} missing "
+                    f"bot_token"
+                )
+                return
+
+            # Decrypt the bot_token (stored encrypted in database)
+            from shared.utils.crypto import decrypt_sensitive_data
+
+            bot_token = decrypt_sensitive_data(bot_token_encrypted)
+
+            # Send actual Telegram message via bot API
+            from app.services.channels.telegram.sender import TelegramBotSender
+
+            sender = TelegramBotSender(bot_token=bot_token)
+
+            # Send markdown message for better formatting
+            logger.info(
+                f"[_send_telegram_notification] Sending message with length: {len(message)}, "
+                f"contains detail_url: {'[查看详情]' in message}"
+            )
+            result = await sender.send_markdown_message(
+                chat_id=int(telegram_chat_id),
+                text=message,
+            )
+
+            if result.get("success"):
+                logger.info(
+                    f"[SubscriptionNotificationDispatcher] Sent Telegram notification "
+                    f"to user {user_id} (chat_id={telegram_chat_id})"
+                )
+            else:
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] Failed to send Telegram "
+                    f"notification to user {user_id}: {result.get('error')}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"[SubscriptionNotificationDispatcher] Failed to send Telegram "
                 f"notification to user {user_id}: {e}"
             )
             raise

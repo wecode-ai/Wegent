@@ -32,7 +32,9 @@ RUN dnf install -y \
     poppler-utils pandoc tesseract \
     # Chromium dependencies for Playwright browser automation
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
-    && npm install -g @anthropic-ai/claude-code@2.1.27 \
+    # Skill-creator dependencies (JSON parsing and packaging)
+    jq zip \
+    && npm install -g @anthropic-ai/claude-code@2.1.33 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 
@@ -48,6 +50,7 @@ RUN claude plugin marketplace add anthropics/skills \
 RUN pip install python-pptx openpyxl python-docx reportlab Pillow pandas \
     pypdf pdfplumber pytesseract \
     "markitdown[pptx]" defusedxml weasyprint \
+    pyyaml \
     && pip cache purge || true
 
 # Download Chinese fonts for document generation

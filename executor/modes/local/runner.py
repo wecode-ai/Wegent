@@ -197,14 +197,18 @@ class LocalRunner:
         await self.task_queue.put(task_data)
 
     async def cancel_task(self, task_id: int) -> None:
-        """Cancel a running task and send CANCELLED callback."""
+        """Cancel a running task.
+
+        Note: Cancel callback will be sent by response_processor after SDK interrupt
+        messages are fully processed, to avoid duplicate status updates to frontend.
+        """
         if self.current_task and self.current_task.get("task_id") == task_id:
             if self.current_agent and hasattr(self.current_agent, "cancel_run"):
                 self.current_agent.cancel_run()
                 logger.info(f"Cancelled task: task_id={task_id}")
 
-                # Send CANCELLED status callback
-                await self._send_cancel_callback(task_id)
+                # NOTE: Do NOT send cancel callback here - response_processor will send it
+                # after SDK interrupt messages are fully processed, avoiding duplicate callbacks
             else:
                 logger.warning(
                     f"Cannot cancel task {task_id}: agent doesn't support cancellation"
@@ -283,60 +287,6 @@ class LocalRunner:
             logger.info(f"Sent heartbeat after closing session for task {task_id}")
         except Exception as e:
             logger.error(f"Failed to send heartbeat after closing session: {e}")
-
-    async def _send_cancel_callback(self, task_id: int) -> None:
-        """Send CANCELLED status callback to Backend."""
-        try:
-            if not self.current_task:
-                return
-
-            subtask_id = self.current_task.get("subtask_id", -1)
-            task_title = self.current_task.get("task_title", "")
-            subtask_title = self.current_task.get("subtask_title", "")
-
-            await self.websocket_client.emit(
-                TaskEvents.PROGRESS,
-                {
-                    "task_id": task_id,
-                    "subtask_id": subtask_id,
-                    "task_title": task_title,
-                    "subtask_title": subtask_title,
-                    "progress": 100,
-                    "status": "cancelled",
-                    "message": "${{tasks.cancel_task}}",
-                },
-            )
-            logger.info(f"Cancel callback sent for task {task_id}")
-        except Exception as e:
-            logger.error(f"Failed to send cancel callback for task {task_id}: {e}")
-
-    async def _send_close_session_callback(self, task_id: int) -> None:
-        """Send session closed callback to Backend."""
-        try:
-            if not self.current_task:
-                return
-
-            subtask_id = self.current_task.get("subtask_id", -1)
-            task_title = self.current_task.get("task_title", "")
-            subtask_title = self.current_task.get("subtask_title", "")
-
-            await self.websocket_client.emit(
-                TaskEvents.PROGRESS,
-                {
-                    "task_id": task_id,
-                    "subtask_id": subtask_id,
-                    "task_title": task_title,
-                    "subtask_title": subtask_title,
-                    "progress": 100,
-                    "status": "completed",
-                    "message": "Session closed",
-                },
-            )
-            logger.info(f"Close session callback sent for task {task_id}")
-        except Exception as e:
-            logger.error(
-                f"Failed to send close session callback for task {task_id}: {e}"
-            )
 
     async def _task_loop(self) -> None:
         """Main task processing loop."""
@@ -453,7 +403,7 @@ class LocalRunner:
 
         # Execute the task (Claude client will be created inside, triggering heartbeat callback)
         result = await self.current_agent.execute_async()
-        logger.info(f"Task execution completed: task_id={task_id}, result={result}")
+        logger.info(f"Task execution completed: task_id={task_id}")
 
         # Get execution result
         execution_result = {}
@@ -470,6 +420,13 @@ class LocalRunner:
                 result_str[:20] + "..." if len(result_str) > 20 else result_str
             )
             logger.info(f"Execution result for task_id={task_id}: {truncated_result}")
+
+            # Log workbench status if present
+            if "workbench" in execution_result:
+                workbench_status = execution_result["workbench"].get("status", "N/A")
+                logger.info(
+                    f"Workbench status for task_id={task_id}: {workbench_status}"
+                )
 
         # Report final result
         await progress_reporter.report_result(
@@ -543,6 +500,8 @@ class LocalRunner:
                 # Agent and download loggers
                 "claude_code_agent",
                 "executor.services.attachment_downloader",
+                "progress_state_manager",  # Add for unified state management logging
+                "claude_response_processor",  # Add for cancellation flow logging
             ]
             for name in logger_names:
                 log = logging.getLogger(name)

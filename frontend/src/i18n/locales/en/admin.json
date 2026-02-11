@@ -719,6 +719,7 @@
     "types": {
       "dingtalk": "DingTalk",
       "feishu": "Feishu",
+      "telegram": "Telegram",
       "not_supported": "Not supported"
     },
     "status": {
@@ -738,6 +739,9 @@
       "client_secret": "Client Secret",
       "client_secret_placeholder": "Enter the platform Client Secret",
       "client_secret_edit_placeholder": "Enter new Client Secret (leave empty to keep existing)",
+      "bot_token": "Bot Token",
+      "bot_token_placeholder": "Enter Telegram Bot Token",
+      "bot_token_edit_placeholder": "Enter new Bot Token (leave empty to keep existing)",
       "leave_empty_to_keep": "Leave empty to keep existing",
       "default_team": "Default Agent",
       "default_team_placeholder": "Select default agent",
@@ -779,6 +783,7 @@
       "restart_failed": "Failed to restart IM channel",
       "name_required": "Channel name is required",
       "config_required": "Client ID and Client Secret are required",
+      "bot_token_required": "Bot Token is required",
       "team_required": "A default agent must be selected",
       "model_required_for_team": "The selected agent has no model configured. You must select a default model.",
       "target_user_required": "A target user must be selected when using Specific User mode"

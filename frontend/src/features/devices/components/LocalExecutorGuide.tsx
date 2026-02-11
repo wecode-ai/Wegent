@@ -4,12 +4,31 @@
 
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback, useEffect } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import { Terminal, Copy, Check, ExternalLink, AlertTriangle } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Terminal,
+  Copy,
+  Check,
+  ExternalLink,
+  AlertTriangle,
+  KeyIcon,
+  Plus,
+  Loader2,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys'
 
 // Install script URLs from GitHub
 const INSTALL_SCRIPT_URL_UNIX =
@@ -30,10 +49,12 @@ function CopyButton({
   text,
   className,
   onCopySuccess,
+  copyFailedText,
 }: {
   text: string
   className?: string
   onCopySuccess?: () => void
+  copyFailedText?: string
 }) {
   const [copied, setCopied] = useState(false)
 
@@ -44,7 +65,7 @@ function CopyButton({
       onCopySuccess?.()
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      toast.error('Failed to copy')
+      toast.error(copyFailedText ?? 'Failed to copy')
     }
   }
 
@@ -70,12 +91,14 @@ function CommandStep({
   description,
   command,
   isWindows = false,
+  copyFailedText,
 }: {
   stepNumber: number
   title: string
   description: string
   command: string
   isWindows?: boolean
+  copyFailedText?: string
 }) {
   const stepCircles = ['①', '②', '③', '④', '⑤']
   const prompt = isWindows ? '>' : '$'
@@ -95,7 +118,7 @@ function CommandStep({
           <div className="flex-1 overflow-x-auto">
             <code className="text-sm font-mono whitespace-pre text-green-400">{command}</code>
           </div>
-          <CopyButton text={command} />
+          <CopyButton text={command} copyFailedText={copyFailedText} />
         </div>
       </div>
     </div>
@@ -139,9 +162,13 @@ function OsTabSelector({
   )
 }
 
+// Auth mode type
+type AuthMode = 'token' | 'apikey'
+
 /**
- * External network version of Local Executor Guide
- * Shows 2 steps: Install from GitHub -> Run with environment variables
+ * Local Executor Guide with API Key support and Windows support
+ * Shows 2 steps: Install from GitHub -> Run with authentication
+ * Supports both JWT token and API Key authentication methods
  * Supports macOS, Linux, and Windows
  */
 export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExecutorGuideProps) {
@@ -149,6 +176,75 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
   const [selectedOs, setSelectedOs] = useState<OsType>('macos')
 
   const isWindows = selectedOs === 'windows'
+
+  // Auth mode state
+  const [authMode, setAuthMode] = useState<AuthMode>('token')
+
+  // API Key state
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
+  const [loadingKeys, setLoadingKeys] = useState(false)
+  const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null)
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<ApiKeyCreated | null>(null)
+
+  // Create API Key dialog state
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [keyName, setKeyName] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
+
+  // Fetch API keys when switching to API Key mode
+  const fetchApiKeys = useCallback(async () => {
+    setLoadingKeys(true)
+    try {
+      const response = await apiKeyApis.getApiKeys()
+      setApiKeys(response.items || [])
+    } catch (error) {
+      console.error('Failed to fetch API keys:', error)
+      toast.error(t('apikey_load_failed'))
+    } finally {
+      setLoadingKeys(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    if (authMode === 'apikey') {
+      fetchApiKeys()
+    }
+  }, [authMode, fetchApiKeys])
+
+  // Handle creating a new API Key
+  const handleCreateKey = async () => {
+    if (!keyName.trim()) {
+      toast.error(t('apikey_name_required'))
+      return
+    }
+
+    setIsCreating(true)
+    try {
+      const created = await apiKeyApis.createApiKey({ name: keyName.trim() })
+      setCreateDialogOpen(false)
+      setKeyName('')
+      toast.success(t('apikey_create_success'))
+      // Auto-select the newly created key
+      setSelectedKeyId(created.id)
+      setNewlyCreatedKey(created)
+      fetchApiKeys()
+    } catch (error) {
+      toast.error(t('apikey_create_failed'))
+      console.error('Failed to create API key:', error)
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
+  // Get the auth token value for the command
+  const authTokenValue = useMemo(() => {
+    if (authMode === 'token') return authToken
+    if (newlyCreatedKey && newlyCreatedKey.id === selectedKeyId) return newlyCreatedKey.key
+    return '<YOUR_API_KEY>'
+  }, [authMode, authToken, newlyCreatedKey, selectedKeyId])
+
+  const hasRealApiKey =
+    authMode === 'apikey' && newlyCreatedKey && newlyCreatedKey.id === selectedKeyId
 
   // Step 1: Install from GitHub (different for Unix vs Windows)
   const installCommand = useMemo(() => {
@@ -161,10 +257,10 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
   // Step 2: Run with environment variables (different for Unix vs Windows)
   const runCommand = useMemo(() => {
     if (isWindows) {
-      return `$env:EXECUTOR_MODE="local"\n$env:WEGENT_BACKEND_URL="${backendUrl}"\n$env:WEGENT_AUTH_TOKEN="${authToken}"\n& "$env:USERPROFILE\\.wegent-executor\\bin\\wegent-executor.exe"`
+      return `$env:EXECUTOR_MODE="local"\n$env:WEGENT_BACKEND_URL="${backendUrl}"\n$env:WEGENT_AUTH_TOKEN="${authTokenValue}"\n& "$env:USERPROFILE\\.wegent-executor\\bin\\wegent-executor.exe"`
     }
-    return `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authToken} \\\n~/.wegent-executor/bin/wegent-executor`
-  }, [backendUrl, authToken, isWindows])
+    return `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authTokenValue} \\\n~/.wegent-executor/bin/wegent-executor`
+  }, [backendUrl, authTokenValue, isWindows])
 
   // Get description text based on OS
   const getDescription = () => {
@@ -193,6 +289,9 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
     return t('gatekeeper_hint')
   }
 
+  // Active API keys only
+  const activeApiKeys = apiKeys.filter(key => key.is_active)
+
   return (
     <div className="flex flex-col items-center justify-center py-8">
       {/* Main card */}
@@ -218,16 +317,130 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
           description={getInstallDesc()}
           command={installCommand}
           isWindows={isWindows}
+          copyFailedText={t('copy_failed')}
         />
 
-        {/* Step 2: Run */}
-        <CommandStep
-          stepNumber={2}
-          title={t('step_run')}
-          description={t('step_run_desc')}
-          command={runCommand}
-          isWindows={isWindows}
-        />
+        {/* Step 2: Auth Mode Selector and Run Command */}
+        <div className="mb-6">
+          <div className="flex items-start gap-3 mb-3">
+            <span className="text-xl text-primary font-medium">②</span>
+            <div className="flex-1">
+              <h4 className="font-medium text-text-primary">{t('step_run')}</h4>
+              <p className="text-sm text-text-muted">{t('step_run_desc')}</p>
+
+              {/* Auth mode tabs */}
+              <div className="flex gap-2 mt-3 mb-4">
+                <Button
+                  variant={authMode === 'token' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setAuthMode('token')}
+                  className="flex items-center gap-2"
+                >
+                  <KeyIcon className="w-4 h-4" />
+                  {t('auth_mode_token')}
+                </Button>
+                <Button
+                  variant={authMode === 'apikey' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setAuthMode('apikey')}
+                  className="flex items-center gap-2"
+                >
+                  <KeyIcon className="w-4 h-4" />
+                  {t('auth_mode_apikey')}
+                </Button>
+              </div>
+
+              {/* API Key Selection (when in apikey mode) */}
+              {authMode === 'apikey' && (
+                <div className="mb-4 p-4 bg-muted rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-medium text-text-primary">
+                      {t('select_apikey')}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCreateDialogOpen(true)}
+                      className="flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      {t('create_apikey')}
+                    </Button>
+                  </div>
+
+                  {loadingKeys ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
+                    </div>
+                  ) : activeApiKeys.length === 0 ? (
+                    <p className="text-sm text-text-muted text-center py-4">{t('no_apikeys')}</p>
+                  ) : (
+                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                      {activeApiKeys.map(apiKey => (
+                        <div
+                          key={apiKey.id}
+                          className={cn(
+                            'flex items-center gap-3 p-2 rounded-md cursor-pointer transition-colors',
+                            selectedKeyId === apiKey.id
+                              ? 'bg-primary/10 border border-primary'
+                              : 'hover:bg-hover border border-transparent'
+                          )}
+                          onClick={() => {
+                            setSelectedKeyId(apiKey.id)
+                            // Clear newly created key if selecting a different key
+                            if (newlyCreatedKey && newlyCreatedKey.id !== apiKey.id) {
+                              setNewlyCreatedKey(null)
+                            }
+                          }}
+                        >
+                          <div
+                            className={cn(
+                              'w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0',
+                              selectedKeyId === apiKey.id
+                                ? 'border-primary bg-primary'
+                                : 'border-border'
+                            )}
+                          >
+                            {selectedKeyId === apiKey.id && (
+                              <Check className="w-2.5 h-2.5 text-white" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium text-text-primary truncate block">
+                              {apiKey.name}
+                            </span>
+                            <code className="text-xs text-text-muted">{apiKey.key_prefix}</code>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Warning for existing key selection */}
+                  {selectedKeyId && !hasRealApiKey && (
+                    <div className="flex items-start gap-2 p-2 mt-3 bg-amber-50 border border-amber-200 rounded-md">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-700">{t('apikey_existing_warning')}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Command display */}
+          <div className="bg-gray-900 rounded-lg px-5 py-4 ml-8">
+            <div className="flex items-start gap-3">
+              <span className="text-gray-500 select-none pt-0.5">{isWindows ? '>' : '$'}</span>
+              <div className="flex-1 overflow-x-auto">
+                <code className="text-sm font-mono whitespace-pre text-green-400">
+                  {runCommand}
+                </code>
+              </div>
+              <CopyButton text={runCommand} copyFailedText={t('copy_failed')} />
+            </div>
+          </div>
+        </div>
 
         {/* Security warning */}
         <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
@@ -241,11 +454,21 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
           <p className="text-sm text-blue-700">{getSecurityHint()}</p>
         </div>
 
-        {/* Token expiry hint */}
-        <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-          <span className="text-blue-600 shrink-0">🔄</span>
-          <p className="text-sm text-blue-700">{t('token_expiry_hint')}</p>
-        </div>
+        {/* Token expiry hint (only for token mode) */}
+        {authMode === 'token' && (
+          <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <span className="text-blue-600 shrink-0">🔄</span>
+            <p className="text-sm text-blue-700">{t('token_expiry_hint')}</p>
+          </div>
+        )}
+
+        {/* API Key benefit hint (only for apikey mode) */}
+        {authMode === 'apikey' && (
+          <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <span className="text-blue-600 shrink-0">✨</span>
+            <p className="text-sm text-blue-700">{t('apikey_benefit_hint')}</p>
+          </div>
+        )}
 
         {/* Guide link */}
         {guideUrl && (
@@ -262,6 +485,58 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
           </div>
         )}
       </div>
+
+      {/* Create API Key Dialog */}
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={open => {
+          setCreateDialogOpen(open)
+          // Clear keyName when dialog is closed
+          if (!open) {
+            setKeyName('')
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('create_apikey_title')}</DialogTitle>
+            <DialogDescription>{t('create_apikey_desc')}</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <label className="text-sm font-medium text-text-primary">{t('apikey_name')}</label>
+            <Input
+              className="mt-2"
+              placeholder={t('apikey_name_placeholder')}
+              value={keyName}
+              onChange={e => setKeyName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !isCreating && handleCreateKey()}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCreateDialogOpen(false)}
+              disabled={isCreating}
+            >
+              {t('cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleCreateKey}
+              disabled={isCreating || !keyName.trim()}
+            >
+              {isCreating ? (
+                <div className="flex items-center">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  {t('creating')}
+                </div>
+              ) : (
+                t('create')
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
