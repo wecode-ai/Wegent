@@ -7,8 +7,7 @@ Docling document processing pipeline.
 
 This pipeline uses the Docling API service to convert documents
 (DOC, DOCX, PPT, PPTX, PDF) to Markdown with advanced layout
-understanding and structure preservation, then uses MarkdownProcessor
-for intelligent chunking with preprocessing and context injection.
+understanding and structure preservation.
 """
 
 import logging
@@ -16,6 +15,7 @@ from typing import List, Optional
 
 import httpx
 from llama_index.core import Document
+from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 
 from app.services.rag.pipeline.base import BaseDocumentPipeline
 
@@ -275,14 +275,9 @@ class DoclingPipeline(BaseDocumentPipeline):
         """
         Split Markdown content into Document chunks.
 
-        Uses MarkdownProcessor for intelligent markdown chunking with:
-        - Table conversion to key-value format
-        - Noise removal (horizontal rules, empty links, HTML comments)
-        - Code block protection (never split code blocks)
-        - Header-based splitting (H1-H3)
-        - Small chunk merging (< 256 chars)
-        - Large chunk splitting (> chunk_size)
-        - Context prefix injection (document title + header hierarchy)
+        Uses a two-pass splitting strategy optimized for Markdown:
+        1. First pass: Split by Markdown structure (headers)
+        2. Second pass: Apply sentence splitting for large sections
 
         Args:
             text_content: Markdown text content
@@ -294,15 +289,37 @@ class DoclingPipeline(BaseDocumentPipeline):
             logger.warning("Empty text content received for splitting")
             return []
 
-        from app.services.rag.splitter.markdown_processor import MarkdownProcessor
+        # Create initial Document
+        doc = Document(text=text_content)
 
-        processor = MarkdownProcessor(
+        # First pass: Split by Markdown structure (headers)
+        markdown_parser = MarkdownNodeParser()
+        nodes = markdown_parser.get_nodes_from_documents([doc])
+
+        # Second pass: Apply sentence splitting to large nodes
+        sentence_splitter = SentenceSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
         )
 
-        documents = processor.process(text_content, document_title="")
+        # Convert nodes back to documents for second pass
+        intermediate_docs = [
+            Document(
+                text=node.text,
+                metadata=node.metadata if hasattr(node, "metadata") else {},
+            )
+            for node in nodes
+        ]
 
-        logger.info(f"Docling split created {len(documents)} chunks")
+        final_nodes = sentence_splitter.get_nodes_from_documents(intermediate_docs)
 
-        return documents
+        logger.info(f"Docling split created {len(final_nodes)} chunks")
+
+        # Convert nodes to Documents
+        return [
+            Document(
+                text=node.text,
+                metadata=node.metadata if hasattr(node, "metadata") else {},
+            )
+            for node in final_nodes
+        ]
