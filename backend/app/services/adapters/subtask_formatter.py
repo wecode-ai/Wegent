@@ -1080,7 +1080,7 @@ This is a subscription task (scheduled background task). Note:
         # This creates a root span for the task execution lifecycle
         self._start_dispatch_traces(formatted_subtasks)
 
-        # Note: Push mode dispatch is handled by task_dispatcher.schedule_dispatch()
+        # Note: Push mode dispatch is handled by schedule_dispatch() from execution module
         # which is called after task/subtask creation. Do NOT dispatch here to avoid
         # duplicate dispatches (schedule_dispatch already calls dispatch_tasks internally).
 

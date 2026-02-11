@@ -22,6 +22,7 @@ from executor.config import config
 from executor.services.agent_service import AgentService
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
+from shared.models.openai_converter import get_metadata_field
 from shared.status import TaskStatus
 from shared.telemetry.decorators import (
     add_span_event,
@@ -73,6 +74,8 @@ def _get_callback_params(
     """
     Extract common callback parameters from execution request or task data.
 
+    Supports ExecutionRequest, OpenAI format dict, and legacy dict.
+
     Args:
         request: ExecutionRequest object or task data dict
 
@@ -88,8 +91,8 @@ def _get_callback_params(
         }
     else:
         return {
-            "task_id": request.get("task_id", -1),
-            "subtask_id": request.get("subtask_id", -1),
+            "task_id": get_metadata_field(request, "task_id", -1),
+            "subtask_id": get_metadata_field(request, "subtask_id", -1),
             "executor_name": os.getenv("EXECUTOR_NAME"),
             "executor_namespace": os.getenv("EXECUTOR_NAMESPACE"),
         }
@@ -116,14 +119,14 @@ def _extract_task_attributes(
                 attrs["user.name"] = user_data.get("name")
     else:
         attrs = {
-            "task.id": str(request.get("task_id", -1)),
-            "task.subtask_id": str(request.get("subtask_id", -1)),
-            "task.title": request.get("task_title", ""),
-            "task.type": request.get("type", "online"),
+            "task.id": str(get_metadata_field(request, "task_id", -1)),
+            "task.subtask_id": str(get_metadata_field(request, "subtask_id", -1)),
+            "task.title": get_metadata_field(request, "task_title", ""),
+            "task.type": get_metadata_field(request, "type", "online"),
             "executor.name": os.getenv("EXECUTOR_NAME", ""),
         }
         # Extract user info if available
-        user_data = request.get("user", {})
+        user_data = get_metadata_field(request, "user", {})
         if user_data:
             if user_data.get("id"):
                 attrs["user.id"] = str(user_data.get("id"))
@@ -138,6 +141,11 @@ def _normalize_request(
     """
     Normalize input to ExecutionRequest.
 
+    Supports:
+    - ExecutionRequest objects (returned as-is)
+    - OpenAI Responses API format dicts (detected by "model" + "metadata" keys)
+    - Legacy ExecutionRequest dict format
+
     Args:
         request: ExecutionRequest object or task data dict
 
@@ -146,6 +154,11 @@ def _normalize_request(
     """
     if isinstance(request, ExecutionRequest):
         return request
+    # Detect OpenAI format by checking for "model" + "metadata" keys
+    if isinstance(request, dict) and "model" in request and "metadata" in request:
+        from shared.models import OpenAIRequestConverter
+
+        return OpenAIRequestConverter.to_execution_request(request)
     return ExecutionRequest.from_dict(request)
 
 
@@ -239,6 +252,15 @@ def process(request: Union[ExecutionRequest, Dict[str, Any]]) -> TaskStatus:
         done_result = None
         if validation_id:
             done_result = {"validation_id": validation_id, "stage": "completed"}
+            # Try to retrieve detailed validation results from the agent
+            try:
+                agent = agent_service.get_agent(f"{exec_request.task_id}")
+                if agent and hasattr(agent, "validation_result"):
+                    import json
+
+                    done_result["value"] = json.dumps(agent.validation_result)
+            except Exception as e:
+                logger.warning(f"Failed to retrieve validation result: {e}")
         send_done_event(result=done_result, **callback_params)
         add_span_event("task_done_event_sent")
     elif status == TaskStatus.FAILED:
@@ -370,6 +392,15 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
         done_result = None
         if validation_id:
             done_result = {"validation_id": validation_id, "stage": "completed"}
+            # Try to retrieve detailed validation results from the agent
+            try:
+                agent = agent_service.get_agent(f"{exec_request.task_id}")
+                if agent and hasattr(agent, "validation_result"):
+                    import json
+
+                    done_result["value"] = json.dumps(agent.validation_result)
+            except Exception as e:
+                logger.warning(f"Failed to retrieve validation result: {e}")
         await send_done_event_async(result=done_result, **callback_params)
         add_span_event("task_done_event_sent")
     elif status == TaskStatus.FAILED:

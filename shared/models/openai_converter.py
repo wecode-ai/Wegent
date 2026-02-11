@@ -26,6 +26,32 @@ from .execution import ExecutionRequest
 logger = logging.getLogger(__name__)
 
 
+def get_metadata_field(task: dict, field: str, default=None):
+    """Get a field from OpenAI metadata or legacy top-level dict.
+
+    Detects OpenAI format by checking if metadata contains task_id.
+    Falls back to reading from top-level dict for legacy ExecutionRequest format.
+
+    When a field exists but has a None value, the default is returned instead.
+    This handles cases where metadata contains explicit None values (e.g.,
+    executor_image=None when backend doesn't populate it on ExecutionRequest).
+
+    Args:
+        task: Task dict in either OpenAI or legacy format
+        field: Field name to retrieve
+        default: Default value if not found or if value is None
+
+    Returns:
+        Field value or default
+    """
+    metadata = task.get("metadata") or {}
+    if metadata and "task_id" in metadata:
+        value = metadata.get(field, default)
+        return value if value is not None else default
+    value = task.get(field, default)
+    return value if value is not None else default
+
+
 class OpenAIRequestConverter:
     """Converter between ExecutionRequest and OpenAI Responses API format.
 
@@ -134,6 +160,18 @@ class OpenAIRequestConverter:
             "is_subscription": request.is_subscription,
             "request_id": request.request_id,
             "executor_name": request.executor_name,
+            # Fields needed by executor-manager for container management
+            "executor_image": request.executor_image,
+            "executor_type": request.executor_type,
+            "type": request.type,
+            "mode": request.mode,
+            "subtask_next_id": request.subtask_next_id,
+            "subtask_title": request.subtask_title,
+            "task_title": request.task_title,
+            "git_repo": request.git_repo,
+            "validation_params": request.validation_params,
+            "sandbox_metadata": request.sandbox_metadata,
+            "callback_url": request.callback_url,
         }
         openai_request["metadata"] = metadata
 
@@ -175,7 +213,7 @@ class OpenAIRequestConverter:
 
         # Extract MCP servers from tools
         mcp_servers = []
-        tools = openai_request.get("tools", [])
+        tools = openai_request.get("tools") or []
         for tool in tools:
             if isinstance(tool, dict) and tool.get("type") == "mcp":
                 server = {
@@ -197,7 +235,6 @@ class OpenAIRequestConverter:
         # Ensure user_dict is a proper dict (handle None case)
         if user_dict is None:
             user_dict = {}
-            print("[DEBUG to_execution_request] user_dict was None, using empty dict")
             logger.warning(
                 "[to_execution_request] user_dict was None, using empty dict"
             )
@@ -245,6 +282,18 @@ class OpenAIRequestConverter:
             is_subscription=metadata.get("is_subscription", False),
             request_id=metadata.get("request_id", ""),
             executor_name=metadata.get("executor_name"),
+            # Fields for executor-manager container management
+            executor_image=metadata.get("executor_image"),
+            executor_type=metadata.get("executor_type"),
+            type=metadata.get("type"),
+            mode=metadata.get("mode"),
+            subtask_next_id=metadata.get("subtask_next_id"),
+            subtask_title=metadata.get("subtask_title"),
+            task_title=metadata.get("task_title"),
+            git_repo=metadata.get("git_repo"),
+            validation_params=metadata.get("validation_params"),
+            sandbox_metadata=metadata.get("sandbox_metadata"),
+            callback_url=metadata.get("callback_url"),
         )
 
 

@@ -42,6 +42,14 @@ from shared.utils.http_client import traced_async_client
 # Setup logger
 logger = setup_logger(__name__)
 
+# In-memory registry: validation task_id -> {validation_id, shell_type, image, created_at}
+# Used by callback_handler to update Redis validation status when validation completes.
+# Entries are cleaned up on terminal callback events or after TTL (5 min).
+_validation_task_registry: Dict[int, Dict[str, Any]] = {}
+
+# Maximum age for validation registry entries before cleanup (seconds)
+_VALIDATION_REGISTRY_MAX_AGE = 300
+
 # Create FastAPI app
 app = FastAPI(
     title="Executor Manager API",
@@ -274,6 +282,13 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
         }
         if event_type in terminal_events:
+            # Bridge validation task callbacks to Redis validation status
+            validation_meta = _validation_task_registry.pop(task_id, None)
+            if validation_meta:
+                await _update_validation_status_from_callback(
+                    validation_meta, event_type, event_data
+                )
+
             try:
                 from executor_manager.services.task_heartbeat_manager import (
                     get_running_task_tracker,
@@ -552,6 +567,147 @@ class ValidateImageResponse(BaseModel):
     validation_task_id: Optional[int] = None
 
 
+def _cleanup_stale_validation_entries() -> None:
+    """Remove stale entries from the validation task registry (>5 min old)."""
+    now = time.time()
+    stale_keys = [
+        k
+        for k, v in _validation_task_registry.items()
+        if now - v.get("created_at", 0) > _VALIDATION_REGISTRY_MAX_AGE
+    ]
+    for k in stale_keys:
+        _validation_task_registry.pop(k, None)
+        logger.info(f"[Validation] Cleaned up stale validation entry: task_id={k}")
+
+
+def _extract_validation_result_from_event(event_data: dict) -> Optional[Dict[str, Any]]:
+    """Extract validation result from a response.completed callback event.
+
+    The ImageValidatorAgent stores its validation result as JSON in the
+    done_event content, which ends up at:
+      data.response.output[0].content[0].text
+
+    Args:
+        event_data: Full callback event data dict
+
+    Returns:
+        Parsed validation result dict, or None if not found/parseable
+    """
+    import json
+
+    try:
+        response = event_data.get("data", {}).get("response", {})
+        output_items = response.get("output", [])
+        for item in output_items:
+            if not isinstance(item, dict):
+                continue
+            for content_part in item.get("content", []):
+                if not isinstance(content_part, dict):
+                    continue
+                text = content_part.get("text", "")
+                if not text:
+                    continue
+                try:
+                    result = json.loads(text)
+                    if isinstance(result, dict) and "valid" in result:
+                        return result
+                except (json.JSONDecodeError, TypeError):
+                    continue
+    except Exception:
+        pass
+    return None
+
+
+async def _update_validation_status_from_callback(
+    validation_meta: Dict[str, Any],
+    event_type: str,
+    event_data: dict,
+) -> None:
+    """Bridge callback terminal events to Redis validation status for frontend polling.
+
+    When a validation task completes via the callback chain, this function
+    forwards the result to the backend's validation-status endpoint so the
+    Redis entry gets updated and the frontend polling can see the completion.
+
+    Args:
+        validation_meta: Validation metadata from _validation_task_registry
+        event_type: Terminal event type (response.completed, error, etc.)
+        event_data: Full event data dict from the callback
+    """
+    from shared.models.responses_api import ResponsesAPIStreamEvents
+
+    validation_id = validation_meta.get("validation_id")
+    if not validation_id:
+        return
+
+    task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
+    update_url = f"{task_api_domain}/api/shells/validation-status/{validation_id}"
+
+    if event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
+        update_payload: Dict[str, Any] = {
+            "status": "completed",
+            "stage": "Validation completed",
+            "progress": 100,
+            "valid": True,
+        }
+        # Try to extract detailed validation results from event content
+        # The content is at data.response.output[0].content[0].text
+        # and contains JSON-serialized validation_result from ImageValidatorAgent
+        validation_result = _extract_validation_result_from_event(event_data)
+        if validation_result:
+            update_payload["valid"] = validation_result.get("valid", True)
+            if validation_result.get("checks"):
+                update_payload["checks"] = validation_result["checks"]
+            if validation_result.get("errors"):
+                update_payload["errors"] = validation_result["errors"]
+    elif event_type == ResponsesAPIStreamEvents.ERROR.value:
+        error_data = event_data.get("data", {})
+        error_obj = error_data.get("error")
+        if isinstance(error_obj, dict):
+            error_message = error_obj.get("message", "Unknown error")
+        else:
+            error_message = str(error_obj or "Validation failed")
+        update_payload = {
+            "status": "completed",
+            "stage": "Validation failed",
+            "progress": 100,
+            "valid": False,
+            "errorMessage": error_message,
+        }
+    else:
+        # response.incomplete or other terminal events
+        update_payload = {
+            "status": "completed",
+            "stage": "Validation incomplete",
+            "progress": 100,
+            "valid": False,
+            "errorMessage": "Validation task did not complete normally",
+        }
+
+    # Include executor_name for container cleanup by the backend
+    executor_name = event_data.get("executor_name")
+    if executor_name:
+        update_payload["executor_name"] = executor_name
+
+    try:
+        async with traced_async_client(timeout=10.0) as client:
+            response = await client.post(update_url, json=update_payload)
+            if response.status_code == 200:
+                logger.info(
+                    f"[Callback] Updated validation status: "
+                    f"{validation_id} valid={update_payload.get('valid')}"
+                )
+            else:
+                logger.warning(
+                    f"[Callback] Failed to update validation status: "
+                    f"{response.status_code} {response.text}"
+                )
+    except Exception as e:
+        logger.error(
+            f"[Callback] Error updating validation status {validation_id}: {e}"
+        )
+
+
 @api_router.post("/images/validate")
 async def validate_image(request: ValidateImageRequest, http_request: Request):
     """
@@ -631,6 +787,18 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     }
 
     try:
+        # Clean stale registry entries before registering new one
+        _cleanup_stale_validation_entries()
+
+        # Register for callback interception so we can update Redis
+        # validation status when the terminal callback event arrives
+        _validation_task_registry[validation_task_id] = {
+            "validation_id": validation_id,
+            "shell_type": shell_type,
+            "image": image,
+            "created_at": time.time(),
+        }
+
         # Submit validation task using the task processor
         task_processor.process_tasks([validation_task])
 
@@ -768,43 +936,6 @@ class CancelRequest(BaseModel):
     executor_name: Optional[str] = None
 
 
-def _find_running_container_for_task(task_id: int) -> Optional[str]:
-    """Find a running container for the given task_id via Docker label lookup.
-
-    In multi-turn conversations, a container from a previous subtask may still
-    be running. This function checks Docker labels to find it.
-
-    Args:
-        task_id: Task ID to search for
-
-    Returns:
-        Container name if found, None otherwise
-    """
-    try:
-        result = get_running_task_details(label_selector=f"task_id={task_id}")
-        if result.get("status") != "success":
-            return None
-
-        containers = result.get("containers", [])
-        if not containers:
-            return None
-
-        # Return the first matching container
-        container_name = containers[0].get("container_name")
-        if container_name:
-            logger.info(
-                f"[v1/responses] Found existing container for task {task_id}: "
-                f"{container_name}"
-            )
-        return container_name
-
-    except Exception as e:
-        logger.warning(
-            f"[v1/responses] Error looking up container for task {task_id}: {e}"
-        )
-        return None
-
-
 @api_router.post("/v1/cancel")
 async def cancel_task_v1(request: CancelRequest, http_request: Request):
     """Cancel task execution - transparent proxy.
@@ -933,144 +1064,14 @@ async def _cleanup_task_heartbeat(task_id: int) -> None:
         logger.warning(f"[v1/cancel] Failed to clean up heartbeat data: {e}")
 
 
-async def _wait_for_container_ready(
-    host: str,
-    port: int,
-    executor_name: str,
-    max_retries: int = 10,
-    retry_interval: float = 0.5,
-) -> bool:
-    """Wait for container HTTP service to be ready.
-
-    Polls the container's health endpoint until it responds or timeout.
-
-    Args:
-        host: Container host
-        port: Container port
-        executor_name: Container name for logging
-        max_retries: Maximum number of retry attempts (default: 10)
-        retry_interval: Seconds between retries (default: 0.5)
-
-    Returns:
-        True if container is ready, False if timeout
-    """
-    import asyncio
-
-    health_endpoint = f"http://{host}:{port}/"
-
-    for attempt in range(max_retries):
-        try:
-            async with traced_async_client(timeout=2.0) as client:
-                response = await client.get(health_endpoint)
-                if response.status_code == 200:
-                    logger.info(
-                        f"[v1/responses] Container {executor_name} is ready "
-                        f"(attempt {attempt + 1}/{max_retries})"
-                    )
-                    return True
-        except Exception as e:
-            logger.debug(
-                f"[v1/responses] Container {executor_name} not ready yet "
-                f"(attempt {attempt + 1}/{max_retries}): {e}"
-            )
-
-        if attempt < max_retries - 1:
-            await asyncio.sleep(retry_interval)
-
-    logger.warning(
-        f"[v1/responses] Container {executor_name} did not become ready "
-        f"after {max_retries} attempts"
-    )
-    return False
-
-
-async def _forward_openai_request_to_container(
-    executor_name: str, request_data: Dict[str, Any], wait_for_ready: bool = False
-) -> Dict[str, Any]:
-    """Forward OpenAI Responses API request to an existing container.
-
-    This is a pure proxy function - no business logic processing.
-    Forwards to /v1/responses endpoint on the container.
-
-    Args:
-        executor_name: Name of the target container
-        request_data: OpenAI format request payload to forward
-        wait_for_ready: If True, wait for container to be ready before forwarding
-
-    Returns:
-        Response from the container
-
-    Raises:
-        HTTPException: If container not found or forwarding fails
-    """
-    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-
-    # Get container port
-    port, error = executor._get_container_port(executor_name)
-    if not port:
-        logger.warning(f"Container {executor_name} not found or has no port: {error}")
-        raise HTTPException(
-            status_code=404,
-            detail=f"Container {executor_name} not found: {error}",
-        )
-
-    # Wait for container to be ready if requested (for newly created containers)
-    if wait_for_ready:
-        is_ready = await _wait_for_container_ready(
-            DEFAULT_DOCKER_HOST, port, executor_name
-        )
-        if not is_ready:
-            logger.error(
-                f"[v1/responses] Container {executor_name} failed to become ready"
-            )
-            raise HTTPException(
-                status_code=503,
-                detail=f"Container {executor_name} failed to start in time",
-            )
-
-    # Forward request to container's /v1/responses endpoint
-    endpoint = f"http://{DEFAULT_DOCKER_HOST}:{port}/v1/responses"
-    logger.info(
-        f"[v1/responses] Forwarding OpenAI request to container {executor_name} at {endpoint}"
-    )
-
-    try:
-        async with traced_async_client(timeout=30.0) as client:
-            response = await client.post(endpoint, json=request_data)
-
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.warning(
-                    f"Container {executor_name} returned error: "
-                    f"{response.status_code} {response.text}"
-                )
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Container error: {response.text}",
-                )
-
-    except httpx.RequestError as e:
-        logger.error(
-            f"[v1/responses] Failed to forward request to container {executor_name}: {e}"
-        )
-        raise HTTPException(
-            status_code=503,
-            detail=f"Failed to communicate with container: {str(e)}",
-        )
-
-
 @api_router.post("/v1/responses")
 async def openai_responses(http_request: Request):
-    """OpenAI Responses API endpoint - transparent proxy.
+    """OpenAI Responses API endpoint - async queue mode.
 
-    This endpoint implements the OpenAI Responses API background mode:
-    1. Extract task_id from metadata to find or create container
-    2. Forward the entire OpenAI format request to the container
-    3. Return the response (queued status for background mode)
-
-    The executor_manager does NOT process any business logic here.
-    It only handles container routing and forwarding.
+    This endpoint accepts OpenAI Responses API format requests and enqueues
+    them directly to Redis for async processing. The OpenAI format is stored
+    as-is in the queue - no conversion to ExecutionRequest format.
+    The task queue consumer will handle container creation and task execution.
 
     Request format (OpenAI Responses API):
     {
@@ -1082,6 +1083,7 @@ async def openai_responses(http_request: Request):
         "metadata": {
             "task_id": 123,
             "subtask_id": 456,
+            "type": "online",
             ...
         },
         "model_config": {...}
@@ -1091,7 +1093,7 @@ async def openai_responses(http_request: Request):
         http_request: HTTP request object
 
     Returns:
-        dict: Response from executor container (queued status for background mode)
+        dict: Queued status response
     """
     client_ip = http_request.client.host if http_request.client else "unknown"
 
@@ -1100,9 +1102,6 @@ async def openai_responses(http_request: Request):
     import json
 
     request_data = json.loads(body_bytes)
-
-    # Debug logging for raw request data
-    logger.info(f"[v1/responses] Raw request_data: {request_data}")
 
     # Extract task identification from metadata
     metadata = request_data.get("metadata", {})
@@ -1119,85 +1118,28 @@ async def openai_responses(http_request: Request):
     set_task_context(task_id=task_id, subtask_id=subtask_id)
 
     try:
-        # Find existing container for this task
-        executor_name = _find_running_container_for_task(task_id)
+        # Enqueue OpenAI format directly to Redis (no conversion needed)
+        from executor_manager.services.task_queue_service import TaskQueueService
 
-        if executor_name:
-            # Forward to existing container
-            logger.info(
-                f"[v1/responses] Forwarding to existing container: {executor_name}"
-            )
-            try:
-                return await _forward_openai_request_to_container(
-                    executor_name, request_data
-                )
-            except HTTPException as e:
-                if e.status_code == 404:
-                    # Container no longer exists, fall through to create a new one
-                    logger.info(
-                        f"[v1/responses] Container {executor_name} no longer exists, "
-                        f"creating new container for task {task_id}"
-                    )
-                else:
-                    raise
+        queue_type = metadata.get("type") or "online"
+        service_pool = os.getenv("SERVICE_POOL", "default")
+        queue_service = TaskQueueService(service_pool, queue_type)
+        success = queue_service.enqueue_task(request_data)
 
-        # Create new container and submit task
-        logger.info(f"[v1/responses] Creating new container for task {task_id}")
+        if not success:
+            logger.error(f"[v1/responses] Failed to enqueue task {task_id}")
+            raise HTTPException(status_code=500, detail="Failed to enqueue task")
 
-        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-
-        # Convert OpenAI request to ExecutionRequest format for container creation
-        # The executor will receive the original OpenAI format request
-        from shared.models import OpenAIRequestConverter
-
-        # Debug: log metadata.user before conversion
-        metadata_user = request_data.get("metadata", {}).get("user")
         logger.info(
-            f"[v1/responses] BEFORE conversion: metadata.user={metadata_user}, "
-            f"type={type(metadata_user)}"
+            f"[v1/responses] Task {task_id} enqueued to "
+            f"pool '{service_pool}' queue '{queue_type}'"
         )
 
-        execution_request = OpenAIRequestConverter.to_execution_request(request_data)
-
-        # Debug logging for execution_request before to_dict()
-        logger.info(
-            f"[v1/responses] AFTER conversion: execution_request.user={execution_request.user}, "
-            f"user_id={execution_request.user_id}, user_name={execution_request.user_name}"
-        )
-
-        task_data = execution_request.to_dict()
-
-        # Debug logging for task_data after conversion
-        logger.info(
-            f"[v1/responses] task_data after to_dict(): user={task_data.get('user')}, "
-            f"user_id={task_data.get('user_id')}, user_name={task_data.get('user_name')}"
-        )
-
-        # Submit to executor (creates container)
-        result = executor.submit_executor(task_data)
-
-        if not result or not result.get("executor_name"):
-            error_msg = (
-                result.get("error_msg", "Unknown error")
-                if result
-                else "No result returned"
-            )
-            logger.error(
-                f"[v1/responses] Failed to create container for task {task_id}: {error_msg}"
-            )
-            raise HTTPException(status_code=500, detail=error_msg)
-
-        new_executor_name = result.get("executor_name")
-        logger.info(
-            f"[v1/responses] Container created: {new_executor_name}, "
-            f"forwarding OpenAI request"
-        )
-
-        # Forward the original OpenAI request to the new container
-        # wait_for_ready=True because the container was just created and may not be ready yet
-        return await _forward_openai_request_to_container(
-            new_executor_name, request_data, wait_for_ready=True
-        )
+        return {
+            "id": f"resp_{subtask_id}",
+            "status": "queued",
+            "message": "Task enqueued for processing",
+        }
 
     except HTTPException:
         raise

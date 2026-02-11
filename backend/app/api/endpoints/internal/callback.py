@@ -27,6 +27,7 @@ from app.api.dependencies import get_db
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.models.task import TaskResource
 from app.services.execution.dispatcher import ResponsesAPIEventParser
+from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from shared.models import EventType
 
@@ -111,8 +112,15 @@ async def handle_callback(
             logger.debug(f"[Callback] Skipping lifecycle event: {request.event_type}")
             return CallbackResponse(status="ok", message="Lifecycle event skipped")
 
-        # Emit event via WebSocketResultEmitter
-        emitter = WebSocketResultEmitter(
+        # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
+        # StatusUpdatingEmitter intercepts terminal events (DONE, ERROR, CANCELLED)
+        # and updates the database status accordingly
+        ws_emitter = WebSocketResultEmitter(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+        )
+        emitter = StatusUpdatingEmitter(
+            wrapped=ws_emitter,
             task_id=request.task_id,
             subtask_id=request.subtask_id,
         )
@@ -252,8 +260,13 @@ async def handle_batch_callback(
                 skipped += 1
                 continue
 
-            # Emit event via WebSocketResultEmitter
-            emitter = WebSocketResultEmitter(
+            # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
+            ws_emitter = WebSocketResultEmitter(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+            )
+            emitter = StatusUpdatingEmitter(
+                wrapped=ws_emitter,
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
             )

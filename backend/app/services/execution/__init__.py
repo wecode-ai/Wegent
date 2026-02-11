@@ -10,6 +10,7 @@ This module provides unified task dispatch functionality including:
 - ExecutionDispatcher: Dispatches tasks via SSE/WebSocket/HTTP
 - ResultEmitter: Unified interface for emitting execution events
 - TaskRequestBuilder: Builds ExecutionRequest from database models
+- schedule_dispatch: Helper for dispatching tasks from sync context
 """
 
 from .dispatcher import ExecutionDispatcher, execution_dispatcher
@@ -29,6 +30,7 @@ from .emitters import (
 )
 from .request_builder import TaskRequestBuilder
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
+from .schedule_helper import schedule_dispatch
 
 __all__ = [
     # Router
@@ -40,6 +42,8 @@ __all__ = [
     "execution_dispatcher",
     # Request Builder
     "TaskRequestBuilder",
+    # Schedule Helper
+    "schedule_dispatch",
     # Emitters - Protocol
     "ResultEmitter",
     "StreamableEmitter",

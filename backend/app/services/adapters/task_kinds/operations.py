@@ -94,9 +94,9 @@ class TaskOperationsMixin:
         # Push mode: dispatch task to executor_manager immediately after commit
         # Skip dispatch for device tasks - they are routed via WebSocket to local devices
         if obj_in.task_type != "task":
-            from app.services.task_dispatcher import task_dispatcher
+            from app.services.execution import schedule_dispatch
 
-            task_dispatcher.schedule_dispatch(task.id)
+            schedule_dispatch(task.id)
 
         return convert_to_task_dict(task, db, user.id)
 
