@@ -223,19 +223,22 @@ class TestTextToSQLGenerator:
 
     @pytest.mark.asyncio
     async def test_generate_with_llm_error(self):
-        """Test generate method when LLM fails.
+        """Test generate method when LLM returns fallback SQL.
 
-        When _call_llm raises an exception, the generator should
-        catch it and return a fallback SQL query.
+        When the Anthropic client fails, _call_llm catches the exception
+        internally and returns fallback SQL. We test that this fallback
+        is properly processed by generate().
         """
+        # Generate the expected fallback response
+        fallback_sql_response = self.generator._generate_fallback_sql(
+            f"Table: {self.table_name}"
+        )
+
         with patch.object(
             self.generator, "_call_llm", new_callable=AsyncMock
         ) as mock_llm:
-            # Simulate LLM failure by returning fallback SQL
-            # (since _call_llm catches exceptions internally and returns fallback)
-            mock_llm.return_value = self.generator._generate_fallback_sql(
-                f"Table: {self.table_name}"
-            )
+            # Simulate _call_llm returning fallback SQL (as it does when Anthropic fails)
+            mock_llm.return_value = fallback_sql_response
 
             result = await self.generator.generate(
                 query="What is the total?",
@@ -243,11 +246,17 @@ class TestTextToSQLGenerator:
                 table_name=self.table_name,
             )
 
+            # Verify _call_llm was called
+            mock_llm.assert_awaited_once()
+
             # Should return a valid result with fallback SQL
             assert "sql" in result
             assert "SELECT" in result["sql"]
             assert self.table_name in result["sql"]
             assert "LIMIT" in result["sql"]
+
+            # Verify the response contains the fallback SQL
+            assert result["raw_response"] == fallback_sql_response
 
     def test_system_prompt_content(self):
         """Test that system prompt contains necessary instructions."""

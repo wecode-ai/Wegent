@@ -11,6 +11,7 @@ Each knowledge base gets its own isolated in-memory DuckDB instance.
 
 import io
 import logging
+import threading
 from collections import OrderedDict
 from typing import Any, ClassVar, Dict, List, Optional
 
@@ -33,12 +34,16 @@ class DuckDBManager:
     Thread Safety:
         DuckDB connections are not thread-safe. Each thread should use its own
         connection. This class creates new connections per operation for safety.
+        The _data_store cache is protected by a threading.Lock for concurrent access.
     """
 
     # Class-level storage for DuckDB data (table_name -> DataFrame)
     # We store DataFrames instead of connections for thread safety
     # Using OrderedDict for LRU eviction
     _data_store: ClassVar[Dict[str, pd.DataFrame]] = OrderedDict()
+
+    # Lock for thread-safe access to _data_store
+    _data_store_lock: ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
     def get_table_name(cls, kb_id: int, doc_id: int) -> str:
@@ -47,7 +52,10 @@ class DuckDBManager:
 
     @classmethod
     def _evict_if_needed(cls) -> None:
-        """Evict oldest entries if cache exceeds max size."""
+        """Evict oldest entries if cache exceeds max size.
+
+        Note: Caller must hold _data_store_lock before calling this method.
+        """
         while len(cls._data_store) > MAX_CACHE_SIZE:
             evicted_key, _ = cls._data_store.popitem(last=False)
             logger.info(f"[DuckDBManager] Evicted table from cache: {evicted_key}")
@@ -59,15 +67,16 @@ class DuckDBManager:
         Returns:
             Dict with cache_size, table_names, and estimated_memory_mb
         """
-        total_memory = sum(
-            df.memory_usage(deep=True).sum() for df in cls._data_store.values()
-        )
-        return {
-            "cache_size": len(cls._data_store),
-            "max_cache_size": MAX_CACHE_SIZE,
-            "table_names": list(cls._data_store.keys()),
-            "estimated_memory_mb": round(total_memory / (1024 * 1024), 2),
-        }
+        with cls._data_store_lock:
+            total_memory = sum(
+                df.memory_usage(deep=True).sum() for df in cls._data_store.values()
+            )
+            return {
+                "cache_size": len(cls._data_store),
+                "max_cache_size": MAX_CACHE_SIZE,
+                "table_names": list(cls._data_store.keys()),
+                "estimated_memory_mb": round(total_memory / (1024 * 1024), 2),
+            }
 
     @classmethod
     def ingest_csv(
@@ -105,12 +114,13 @@ class DuckDBManager:
             if df is None:
                 raise ValueError("Could not decode CSV file with any supported encoding")
 
-            # Store DataFrame with LRU management
-            # Move to end if exists, evict oldest if over limit
-            if table_name in cls._data_store:
-                cls._data_store.move_to_end(table_name)
-            cls._data_store[table_name] = df
-            cls._evict_if_needed()
+            # Store DataFrame with LRU management (thread-safe)
+            with cls._data_store_lock:
+                # Move to end if exists, evict oldest if over limit
+                if table_name in cls._data_store:
+                    cls._data_store.move_to_end(table_name)
+                cls._data_store[table_name] = df
+                cls._evict_if_needed()
 
             # Extract schema
             schema = cls._extract_schema_from_df(df, table_name)
@@ -158,11 +168,12 @@ class DuckDBManager:
                 engine="openpyxl",
             )
 
-            # Store DataFrame with LRU management
-            if table_name in cls._data_store:
-                cls._data_store.move_to_end(table_name)
-            cls._data_store[table_name] = df
-            cls._evict_if_needed()
+            # Store DataFrame with LRU management (thread-safe)
+            with cls._data_store_lock:
+                if table_name in cls._data_store:
+                    cls._data_store.move_to_end(table_name)
+                cls._data_store[table_name] = df
+                cls._evict_if_needed()
 
             # Extract schema
             schema = cls._extract_schema_from_df(df, table_name)
@@ -200,11 +211,16 @@ class DuckDBManager:
         """
         import re
 
-        if table_name not in cls._data_store:
-            raise ValueError(f"Table not found: {table_name}")
+        # Thread-safe access to _data_store
+        with cls._data_store_lock:
+            if table_name not in cls._data_store:
+                raise ValueError(f"Table not found: {table_name}")
 
-        # Move to end for LRU tracking
-        cls._data_store.move_to_end(table_name)
+            # Move to end for LRU tracking
+            cls._data_store.move_to_end(table_name)
+
+            # Get a copy of the DataFrame reference while holding the lock
+            df = cls._data_store[table_name]
 
         conn = None
         try:
@@ -212,7 +228,6 @@ class DuckDBManager:
             conn = duckdb.connect(":memory:")
 
             # Register the DataFrame as a table
-            df = cls._data_store[table_name]
             conn.register(table_name, df)
 
             # Safely add LIMIT if not present
@@ -260,16 +275,17 @@ class DuckDBManager:
         Returns:
             Schema metadata dict or None if table not found
         """
-        if table_name not in cls._data_store:
-            return None
-
-        df = cls._data_store[table_name]
+        with cls._data_store_lock:
+            if table_name not in cls._data_store:
+                return None
+            df = cls._data_store[table_name]
         return cls._extract_schema_from_df(df, table_name)
 
     @classmethod
     def table_exists(cls, table_name: str) -> bool:
         """Check if a table exists."""
-        return table_name in cls._data_store
+        with cls._data_store_lock:
+            return table_name in cls._data_store
 
     @classmethod
     def drop_table(cls, table_name: str) -> bool:
@@ -281,11 +297,12 @@ class DuckDBManager:
         Returns:
             True if table was dropped, False if not found
         """
-        if table_name in cls._data_store:
-            del cls._data_store[table_name]
-            logger.info(f"[DuckDB] Dropped table: {table_name}")
-            return True
-        return False
+        with cls._data_store_lock:
+            if table_name in cls._data_store:
+                del cls._data_store[table_name]
+                logger.info(f"[DuckDB] Dropped table: {table_name}")
+                return True
+            return False
 
     @classmethod
     def drop_kb_tables(cls, kb_id: int) -> int:
@@ -297,16 +314,17 @@ class DuckDBManager:
         Returns:
             Number of tables dropped
         """
-        prefix = f"kb_{kb_id}_"
-        tables_to_drop = [t for t in cls._data_store.keys() if t.startswith(prefix)]
+        with cls._data_store_lock:
+            prefix = f"kb_{kb_id}_"
+            tables_to_drop = [t for t in cls._data_store.keys() if t.startswith(prefix)]
 
-        for table_name in tables_to_drop:
-            del cls._data_store[table_name]
+            for table_name in tables_to_drop:
+                del cls._data_store[table_name]
 
-        if tables_to_drop:
-            logger.info(f"[DuckDB] Dropped {len(tables_to_drop)} tables for KB {kb_id}")
+            if tables_to_drop:
+                logger.info(f"[DuckDB] Dropped {len(tables_to_drop)} tables for KB {kb_id}")
 
-        return len(tables_to_drop)
+            return len(tables_to_drop)
 
     @classmethod
     def _extract_schema_from_df(cls, df: pd.DataFrame, table_name: str) -> Dict[str, Any]:
@@ -335,7 +353,7 @@ class DuckDBManager:
             columns.append({
                 "name": str(col_name),
                 "type": sql_type,
-                "nullable": col.isna().any(),
+                "nullable": bool(col.isna().any()),
                 "sample_values": sample_values,
             })
 

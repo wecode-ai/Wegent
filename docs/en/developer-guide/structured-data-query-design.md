@@ -438,23 +438,13 @@ async def structured_query(
 ```python
 class Settings(BaseSettings):
     # Structured data feature flag
-    ENABLE_STRUCTURED_DATA: bool = Field(
-        default=False,
-        env="ENABLE_STRUCTURED_DATA",
-        description="Enable structured data (CSV/XLSX) query support"
-    )
+    STRUCTURED_DATA_ENABLED: bool = False  # Enable structured data (CSV/XLSX) query support
 
     # Text-to-SQL model (default: fast and cheap)
-    STRUCTURED_QUERY_MODEL: str = Field(
-        default="claude-3-5-haiku-20241022",
-        description="Model for Text-to-SQL generation"
-    )
+    STRUCTURED_DATA_MODEL: str = "claude-3-5-haiku-20241022"  # Model for Text-to-SQL generation
 
     # Safety limits
-    MAX_STRUCTURED_ROWS: int = Field(
-        default=10000,
-        description="Maximum rows per structured query"
-    )
+    STRUCTURED_DATA_MAX_ROWS: int = 10000  # Maximum rows per structured query
 ```
 
 ### 6.2 Per-KB Configuration

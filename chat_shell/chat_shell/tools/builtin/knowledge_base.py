@@ -1725,7 +1725,13 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                 data = response.json()
 
                 # Format structured result for LLM consumption
-                return self._format_structured_result(data, query, warning_level)
+                formatted_result = self._format_structured_result(data, query, warning_level)
+
+                # Persist structured query results if user_subtask_id is available
+                if self.user_subtask_id and data.get("error") is None:
+                    await self._persist_structured_query_result(data, query, kb_id)
+
+                return formatted_result
 
         except Exception as e:
             logger.error(f"[KnowledgeBaseTool] Structured query error: {e}")
@@ -1737,6 +1743,73 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                     "fallback_suggestion": "Try using semantic search with query_type='semantic'",
                 },
                 ensure_ascii=False,
+            )
+
+    async def _persist_structured_query_result(
+        self,
+        data: Dict[str, Any],
+        query: str,
+        kb_id: int,
+    ) -> None:
+        """Persist structured query results to context database.
+
+        Args:
+            data: Response data from structured query API
+            query: Original search query
+            kb_id: Knowledge base ID used for the query
+        """
+        try:
+            # Build chunks from structured query results for persistence
+            result = data.get("result", {})
+            rows = result.get("rows", [])
+            columns = result.get("columns", [])
+
+            if not rows:
+                logger.debug("[KnowledgeBaseTool] No structured query results to persist")
+                return
+
+            # Create a single chunk with the query results summary
+            chunk_content = f"Structured Query: {query}\n"
+            chunk_content += f"Generated SQL: {data.get('generated_sql', 'N/A')}\n"
+            chunk_content += f"Results: {len(rows)} rows returned\n"
+
+            # Add first few rows as preview
+            preview_rows = rows[:5]
+            if columns and preview_rows:
+                chunk_content += f"Columns: {', '.join(columns)}\n"
+                chunk_content += "Sample data:\n"
+                for row in preview_rows:
+                    chunk_content += f"  {row}\n"
+
+            kb_chunks = [{
+                "content": chunk_content,
+                "metadata": {
+                    "kb_id": kb_id,
+                    "query_type": "structured",
+                    "sql": data.get("generated_sql", ""),
+                    "row_count": len(rows),
+                },
+                "score": 1.0,
+            }]
+
+            source_references = [{
+                "kb_id": kb_id,
+                "title": f"Structured Query: {query[:50]}...",
+                "source": "structured_query",
+            }]
+
+            # Use HTTP mode for persistence
+            await self._persist_rag_result_http_mode(
+                kb_id, kb_chunks, source_references, query, "structured_query"
+            )
+
+            logger.info(
+                f"[KnowledgeBaseTool] Persisted structured query result for query: {query[:50]}..."
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"[KnowledgeBaseTool] Failed to persist structured query result: {e}"
             )
 
     def _format_structured_result(

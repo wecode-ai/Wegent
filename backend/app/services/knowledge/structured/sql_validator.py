@@ -133,7 +133,7 @@ class SQLValidator:
         # Check 3: SQL injection patterns
         for pattern in self.INJECTION_PATTERNS:
             if re.search(pattern, sql_upper):
-                errors.append(f"Potential SQL injection detected")
+                errors.append("Potential SQL injection detected")
                 break
 
         # Check 4: Multiple statements (prevent stacked queries)

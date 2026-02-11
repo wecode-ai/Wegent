@@ -438,23 +438,13 @@ async def structured_query(
 ```python
 class Settings(BaseSettings):
     # 结构化数据功能开关
-    ENABLE_STRUCTURED_DATA: bool = Field(
-        default=False,
-        env="ENABLE_STRUCTURED_DATA",
-        description="启用结构化数据（CSV/XLSX）查询支持"
-    )
+    STRUCTURED_DATA_ENABLED: bool = False  # 启用结构化数据（CSV/XLSX）查询支持
 
     # Text-to-SQL 模型（默认：快速且便宜）
-    STRUCTURED_QUERY_MODEL: str = Field(
-        default="claude-3-5-haiku-20241022",
-        description="用于 Text-to-SQL 生成的模型"
-    )
+    STRUCTURED_DATA_MODEL: str = "claude-3-5-haiku-20241022"  # 用于 Text-to-SQL 生成的模型
 
     # 安全限制
-    MAX_STRUCTURED_ROWS: int = Field(
-        default=10000,
-        description="每次结构化查询的最大行数"
-    )
+    STRUCTURED_DATA_MAX_ROWS: int = 10000  # 每次结构化查询的最大行数
 ```
 
 ### 6.2 每个知识库的配置
