@@ -16,6 +16,7 @@ class RetrievalMode(str, Enum):
     VECTOR = "vector"  # Pure vector search
     KEYWORD = "keyword"  # Pure BM25 keyword search (full-text search)
     HYBRID = "hybrid"  # Hybrid search (vector + BM25)
+    STRUCTURED = "structured"  # SQL-based structured query for CSV/XLSX data
 
 
 class SplitterType(str, Enum):

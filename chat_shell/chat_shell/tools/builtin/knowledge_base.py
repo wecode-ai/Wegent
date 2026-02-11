@@ -10,7 +10,7 @@ between direct injection and RAG retrieval based on context window capacity.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -43,6 +43,15 @@ class KnowledgeBaseInput(BaseModel):
     max_results: int = Field(
         default=20,
         description="Maximum number of results to return. Increased from 5 to 20 for better RAG coverage.",
+    )
+    query_type: str = Field(
+        default="auto",
+        description=(
+            "Query type: 'semantic' for text search, 'structured' for SQL queries on "
+            "tabular data (CSV/XLSX), or 'auto' to detect automatically. Use 'structured' "
+            "when asking about aggregations (sum, count, average), comparisons (top N, "
+            "ranking), or filtering tabular data."
+        ),
     )
 
 
@@ -455,6 +464,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         self,
         query: str,
         max_results: int = 20,
+        query_type: str = "auto",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Synchronous run - not implemented, use async version."""
@@ -464,6 +474,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         self,
         query: str,
         max_results: int = 20,
+        query_type: str = "auto",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Execute knowledge base search with intelligent injection strategy.
@@ -545,6 +556,18 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
                     else ""
                 )
             )
+
+            # Step 2.5: Check if structured query mode should be used
+            should_use_structured = self._should_use_structured_query(
+                query, query_type, kb_info
+            )
+
+            if should_use_structured:
+                # Execute structured query (SQL-based) for tabular data
+                logger.info(
+                    f"[KnowledgeBaseTool] Using structured query mode for query: {query[:50]}..."
+                )
+                return await self._execute_structured_query(query, warning_level)
 
             # Step 2: Get knowledge base info to decide strategy (already cached from Step 0)
             # kb_info is already fetched at Step 0, no need to fetch again
@@ -1569,3 +1592,337 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         await self._persist_rag_result_http_mode(
             kb_id, kb_chunks, source_references, query, injection_mode
         )
+
+    # Patterns indicating structured query intent
+    STRUCTURED_QUERY_PATTERNS: ClassVar[List[str]] = [
+        # Aggregations
+        r"\b(sum|total|合计|总计|累计)\b",
+        r"\b(count|数量|个数|有多少)\b",
+        r"\b(average|avg|平均|均值)\b",
+        r"\b(max|maximum|最大|最高)\b",
+        r"\b(min|minimum|最小|最低)\b",
+        # Rankings
+        r"\b(top\s*\d+|前\d+|排名前)\b",
+        r"\b(bottom\s*\d+|后\d+|排名后)\b",
+        r"\b(rank|ranking|排名|排序)\b",
+        # Grouping
+        r"\b(group\s*by|按.*分组|分类统计)\b",
+        r"\b(by\s+category|按类别|按类型)\b",
+        # Filtering/comparisons
+        r"\b(greater\s*than|larger\s*than|大于|超过)\b",
+        r"\b(less\s*than|smaller\s*than|小于|低于)\b",
+        r"\b(between|介于.*之间)\b",
+        r"\b(equal\s*to|等于)\b",
+        # SQL-like keywords (Chinese)
+        r"(筛选|过滤|查询.*数据)",
+        r"(统计|汇总)",
+    ]
+
+    def _should_use_structured_query(
+        self,
+        query: str,
+        query_type: str,
+        kb_info: Dict[str, Any],
+    ) -> bool:
+        """Determine if structured query mode should be used.
+
+        Args:
+            query: User's natural language query
+            query_type: Explicit query type ("semantic", "structured", "auto")
+            kb_info: Cached KB information
+
+        Returns:
+            True if structured query should be used
+        """
+        import re
+
+        # Explicit query type overrides auto-detection
+        if query_type == "structured":
+            logger.info("[KnowledgeBaseTool] Using structured mode: explicit query_type")
+            return True
+        elif query_type == "semantic":
+            return False
+
+        # Auto-detection: check if any KB has structured data documents
+        items = kb_info.get("items", [])
+        has_structured_data = any(
+            item.get("has_structured_data", False) for item in items
+        )
+
+        if not has_structured_data:
+            logger.debug(
+                "[KnowledgeBaseTool] No structured data in KBs, using semantic mode"
+            )
+            return False
+
+        # Pattern-based intent detection
+        query_lower = query.lower()
+        for pattern in self.STRUCTURED_QUERY_PATTERNS:
+            if re.search(pattern, query_lower, re.IGNORECASE):
+                logger.info(
+                    f"[KnowledgeBaseTool] Detected structured query pattern: {pattern}"
+                )
+                return True
+
+        return False
+
+    async def _execute_structured_query(
+        self,
+        query: str,
+        warning_level: Optional[str] = None,
+    ) -> str:
+        """Execute structured query via backend API.
+
+        Args:
+            query: Natural language query
+            warning_level: Warning level for call limits
+
+        Returns:
+            JSON string with structured query results
+        """
+        import httpx
+
+        from chat_shell.core.config import settings
+
+        # Get backend API URL
+        remote_url = getattr(settings, "REMOTE_STORAGE_URL", "")
+        if remote_url:
+            backend_url = remote_url.replace("/api/internal", "")
+        else:
+            backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
+
+        # Use the first KB for structured query (currently single-table only)
+        kb_id = self.knowledge_base_ids[0]
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                payload = {
+                    "query": query,
+                    "knowledge_base_id": kb_id,
+                }
+                if self.document_ids:
+                    payload["document_ids"] = self.document_ids
+
+                response = await client.post(
+                    f"{backend_url}/api/internal/rag/structured-query",
+                    json=payload,
+                )
+
+                if response.status_code != 200:
+                    logger.warning(
+                        f"[KnowledgeBaseTool] Structured query failed: {response.status_code}"
+                    )
+                    return json.dumps(
+                        {
+                            "status": "error",
+                            "error_code": "structured_query_failed",
+                            "message": f"Structured query request failed with status {response.status_code}",
+                            "fallback_suggestion": "Try using semantic search with query_type='semantic'",
+                        },
+                        ensure_ascii=False,
+                    )
+
+                data = response.json()
+
+                # Format structured result for LLM consumption
+                formatted_result = self._format_structured_result(data, query, warning_level)
+
+                # Persist structured query results if user_subtask_id is available
+                if self.user_subtask_id and data.get("error") is None:
+                    await self._persist_structured_query_result(data, query, kb_id)
+
+                return formatted_result
+
+        except Exception as e:
+            logger.error(f"[KnowledgeBaseTool] Structured query error: {e}")
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error_code": "structured_query_error",
+                    "message": f"Structured query failed: {str(e)}",
+                    "fallback_suggestion": "Try using semantic search with query_type='semantic'",
+                },
+                ensure_ascii=False,
+            )
+
+    async def _persist_structured_query_result(
+        self,
+        data: Dict[str, Any],
+        query: str,
+        kb_id: int,
+    ) -> None:
+        """Persist structured query results to context database.
+
+        Args:
+            data: Response data from structured query API
+            query: Original search query
+            kb_id: Knowledge base ID used for the query
+        """
+        try:
+            # Build chunks from structured query results for persistence
+            result = data.get("result", {})
+            rows = result.get("rows", [])
+            columns = result.get("columns", [])
+
+            if not rows:
+                logger.debug("[KnowledgeBaseTool] No structured query results to persist")
+                return
+
+            # Create a single chunk with the query results summary
+            chunk_content = f"Structured Query: {query}\n"
+            chunk_content += f"Generated SQL: {data.get('generated_sql', 'N/A')}\n"
+            chunk_content += f"Results: {len(rows)} rows returned\n"
+
+            # Add first few rows as preview
+            preview_rows = rows[:5]
+            if columns and preview_rows:
+                chunk_content += f"Columns: {', '.join(columns)}\n"
+                chunk_content += "Sample data:\n"
+                for row in preview_rows:
+                    chunk_content += f"  {row}\n"
+
+            kb_chunks = [{
+                "content": chunk_content,
+                "metadata": {
+                    "kb_id": kb_id,
+                    "query_type": "structured",
+                    "sql": data.get("generated_sql", ""),
+                    "row_count": len(rows),
+                },
+                "score": 1.0,
+            }]
+
+            source_references = [{
+                "kb_id": kb_id,
+                "title": f"Structured Query: {query[:50]}...",
+                "source": "structured_query",
+            }]
+
+            # Use HTTP mode for persistence
+            await self._persist_rag_result_http_mode(
+                kb_id, kb_chunks, source_references, query, "structured_query"
+            )
+
+            logger.info(
+                f"[KnowledgeBaseTool] Persisted structured query result for query: {query[:50]}..."
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"[KnowledgeBaseTool] Failed to persist structured query result: {e}"
+            )
+
+    def _format_structured_result(
+        self,
+        data: Dict[str, Any],
+        query: str,
+        warning_level: Optional[str] = None,
+    ) -> str:
+        """Format structured query result for LLM.
+
+        Args:
+            data: Response from structured query API
+            query: Original query
+            warning_level: Warning level for call limits
+
+        Returns:
+            JSON string with formatted result
+        """
+        # Check for errors in response (explicit None check to handle empty string errors)
+        if data.get("error") is not None:
+            return json.dumps(
+                {
+                    "query": query,
+                    "mode": "structured_query",
+                    "status": "error",
+                    "message": data.get("error"),
+                    "generated_sql": data.get("generated_sql", ""),
+                },
+                ensure_ascii=False,
+            )
+
+        # Extract results
+        results = data.get("results", {})
+        columns = results.get("columns", [])
+        rows = results.get("rows", [])
+        row_count = results.get("row_count", 0)
+        truncated = results.get("truncated", False)
+
+        # Build formatted table for LLM
+        formatted_table = self._format_table_for_llm(columns, rows)
+
+        # Update accumulated tokens
+        self._accumulated_tokens += self._estimate_tokens_from_content(formatted_table)
+
+        # Build call statistics header
+        stats_header = self._build_call_statistics_header(warning_level, row_count)
+
+        return json.dumps(
+            {
+                "query": query,
+                "mode": "structured_query",
+                "stats_header": stats_header,
+                "generated_sql": data.get("generated_sql", ""),
+                "explanation": data.get("explanation", ""),
+                "confidence": data.get("confidence", 0.0),
+                "results": {
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": row_count,
+                    "truncated": truncated,
+                    "formatted_table": formatted_table,
+                },
+                "sources": data.get("sources", []),
+                "message": (
+                    "Structured query executed successfully. "
+                    "The results are from SQL query on tabular data (CSV/XLSX). "
+                    "Use the formatted_table for a human-readable view."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    def _format_table_for_llm(
+        self,
+        columns: List[str],
+        rows: List[List[Any]],
+        max_rows: int = 50,
+    ) -> str:
+        """Format table data as markdown for LLM consumption.
+
+        Args:
+            columns: List of column names
+            rows: List of row data
+            max_rows: Maximum rows to include in formatted output
+
+        Returns:
+            Markdown-formatted table string
+        """
+        if not columns or not rows:
+            return "No data available"
+
+        # Limit rows for context efficiency
+        display_rows = rows[:max_rows]
+        truncation_note = (
+            f"\n\n(Showing {max_rows} of {len(rows)} rows)"
+            if len(rows) > max_rows
+            else ""
+        )
+
+        # Build markdown table
+        lines = []
+
+        # Header
+        header = "| " + " | ".join(str(col) for col in columns) + " |"
+        lines.append(header)
+
+        # Separator
+        separator = "| " + " | ".join("---" for _ in columns) + " |"
+        lines.append(separator)
+
+        # Rows
+        for row in display_rows:
+            row_str = "| " + " | ".join(str(cell) if cell is not None else "" for cell in row) + " |"
+            lines.append(row_str)
+
+        return "\n".join(lines) + truncation_note
