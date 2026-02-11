@@ -114,6 +114,11 @@ export default function ChatInput({
   const badgeRef = useRef<HTMLSpanElement>(null)
   const [badgeWidth, setBadgeWidth] = useState(0)
 
+  // Flag to skip sync when user is actively editing (to preserve browser undo history)
+  // When true, the useEffect sync will be skipped to avoid innerHTML rewrite
+  // which would destroy the browser's native undo stack
+  const skipSyncRef = useRef(false)
+
   // Track if we should show placeholder
   const [showPlaceholder, setShowPlaceholder] = useState(!message)
 
@@ -211,8 +216,18 @@ export default function ChatInput({
   }, [])
 
   // Sync contenteditable content with message prop
+  // IMPORTANT: This sync is skipped when user is actively editing to preserve
+  // the browser's native undo/redo history. The innerHTML assignment destroys
+  // the undo stack, so we only sync when message changes from external sources
+  // (e.g., clearing input after send, programmatic updates from parent component)
   useEffect(() => {
     if (editableRef.current) {
+      // Skip sync if user just edited - this preserves browser undo history
+      if (skipSyncRef.current) {
+        skipSyncRef.current = false
+        return
+      }
+
       // Get current content with newlines preserved
       const currentContent = getTextWithNewlines(editableRef.current)
       if (currentContent !== message) {
@@ -317,6 +332,11 @@ export default function ChatInput({
     (e: React.FormEvent<HTMLDivElement>) => {
       if (isInputDisabled) return
       const text = getTextWithNewlines(e.currentTarget)
+
+      // Set skip flag to preserve browser undo history
+      // The useEffect sync would destroy the undo stack via innerHTML assignment
+      skipSyncRef.current = true
+
       setMessage(text)
       setShowPlaceholder(!text)
 
@@ -423,6 +443,8 @@ export default function ChatInput({
           const textAfterWord = textAfterAt.substring(currentWord.length)
           // Build new text: text before @ + mention + space + remaining text
           const newText = textBefore + mention + ' ' + textAfterWord.trimStart()
+          // Skip useEffect sync since we're manually updating DOM
+          skipSyncRef.current = true
           setMessage(newText)
           setContentWithNewlines(editableRef.current, newText)
         }
@@ -465,6 +487,8 @@ export default function ChatInput({
           const textAfterWord = textAfterSlash.substring(currentWord.length)
           // Build new text: text before / + remaining text (remove the /query)
           const newText = textBefore + textAfterWord.trimStart()
+          // Skip useEffect sync since we're manually updating DOM
+          skipSyncRef.current = true
           setMessage(newText)
           setContentWithNewlines(editableRef.current, newText)
         }
@@ -600,6 +624,8 @@ export default function ChatInput({
         }
 
         // Update message state - use getTextWithNewlines to preserve newlines
+        // Set skip flag to preserve browser undo history
+        skipSyncRef.current = true
         const newText = getTextWithNewlines(editableRef.current)
         setMessage(newText)
         setShowPlaceholder(!newText)
