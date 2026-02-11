@@ -441,6 +441,8 @@ export default function UnifiedRepositorySelector({
                               className="hidden group-hover:flex items-center justify-center h-4 w-4 rounded-full hover:bg-hover text-text-muted hover:text-text-primary transition-colors"
                               onClick={e => {
                                 e.stopPropagation()
+                                // Prevent clearing when disabled (e.g., historical conversation)
+                                if (disabled) return
                                 handleRequiresWorkspaceToggle(false)
                               }}
                             >
