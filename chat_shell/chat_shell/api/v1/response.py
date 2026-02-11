@@ -53,6 +53,7 @@ class OpenAIResponsesRequest(BaseModel):
     input: Union[str, list[dict]] = Field(..., description="User input")
     instructions: Optional[str] = Field(None, description="System instructions")
     stream: bool = Field(True, description="Whether to stream response")
+    tools: Optional[list[dict]] = Field(None, description="Tools including MCP servers")
 
     # Custom extensions for internal use (passed via extra_body)
     metadata: Optional[dict] = Field(None, description="Internal metadata")
@@ -222,6 +223,7 @@ async def _stream_response(
             "model": request.model,
             "input": request.input,
             "instructions": request.instructions,
+            "tools": request.tools or [],
             "metadata": request.metadata or {},
             "model_config": request.model_config_data or {},
         }
