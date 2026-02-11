@@ -33,8 +33,11 @@ export default function DeviceTaskSync() {
       return
     }
 
-    // Skip if task doesn't have a device_id
+    // Task has no device_id — clear device selection
     if (!selectedTaskDetail.device_id) {
+      if (selectedDeviceId) {
+        setSelectedDeviceId(null)
+      }
       lastProcessedTaskIdRef.current = selectedTaskDetail.id
       return
     }
@@ -56,9 +59,6 @@ export default function DeviceTaskSync() {
     }
 
     // Auto-select the device
-    console.log(
-      `[DeviceTaskSync] Auto-selecting device ${selectedTaskDetail.device_id} for task ${selectedTaskDetail.id}`
-    )
     setSelectedDeviceId(selectedTaskDetail.device_id)
     lastProcessedTaskIdRef.current = selectedTaskDetail.id
   }, [selectedTaskDetail, devices, selectedDeviceId, setSelectedDeviceId])

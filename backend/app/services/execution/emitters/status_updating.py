@@ -324,19 +324,16 @@ class StatusUpdatingEmitter(ResultEmitter):
                     f"for subtask {self._subtask_id}"
                 )
 
-            # Update subtask status to CANCELLED
-            # Note: We use COMPLETED status for cancelled tasks to preserve partial response
-            # This is consistent with the behavior in streaming/core.py
             await db_handler.update_subtask_status(
                 self._subtask_id,
-                "COMPLETED",
+                "CANCELLED",
                 result=result,
             )
 
             self._status_updated = True
             logger.info(
                 f"[StatusUpdatingEmitter] Updated subtask {self._subtask_id} "
-                f"and task {self._task_id} status to COMPLETED (cancelled with partial response)"
+                f"and task {self._task_id} status to CANCELLED"
             )
 
             # Clean up collector state

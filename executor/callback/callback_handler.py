@@ -9,8 +9,9 @@
 """
 Task callback handler module.
 
-Uses ResponsesAPIEmitter with CallbackTransport for sending events
-via HTTP callback to executor_manager -> backend.
+Uses ResponsesAPIEmitter with configurable transport for sending events.
+Default transport is CallbackTransport (HTTP callback to executor_manager -> backend).
+In local mode, WebSocketTransport can be injected via set_transport().
 
 All events follow OpenAI's official Responses API specification.
 """
@@ -20,14 +21,37 @@ from typing import Any, Coroutine, Dict, Optional, TypeVar
 
 from executor.callback.callback_client import CallbackClient
 from shared.logger import setup_logger
-from shared.models import CallbackTransport, ResponsesAPIEmitter
+from shared.models import CallbackTransport, EventTransport, ResponsesAPIEmitter
 
 logger = setup_logger("task_callback_handler")
 
-# Singleton callback client
+# Singleton callback client (used by default CallbackTransport)
 _callback_client = CallbackClient()
 
+# Transport override for local mode (WebSocket) or other transports.
+# When set, get_emitter() uses this instead of CallbackTransport.
+_transport_override: Optional[EventTransport] = None
+
 T = TypeVar("T")
+
+
+def set_transport(transport: EventTransport) -> None:
+    """Set transport override for event emission.
+
+    In local mode, this is called with a WebSocketTransport instance
+    so that all events from response_processor.py are sent via WebSocket.
+
+    Args:
+        transport: The transport to use for event emission.
+    """
+    global _transport_override
+    _transport_override = transport
+
+
+def clear_transport() -> None:
+    """Clear transport override, reverting to default CallbackTransport."""
+    global _transport_override
+    _transport_override = None
 
 
 def _run_async(coro: Coroutine[Any, Any, T]) -> T:
@@ -66,7 +90,10 @@ def get_emitter(
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
 ) -> ResponsesAPIEmitter:
-    """Get a configured emitter for callback mode.
+    """Get a configured emitter for sending events.
+
+    Uses the transport override if set (e.g., WebSocketTransport in local mode),
+    otherwise falls back to CallbackTransport (HTTP callback in Docker mode).
 
     Args:
         task_id: Task ID
@@ -78,7 +105,10 @@ def get_emitter(
     Returns:
         Configured ResponsesAPIEmitter
     """
-    transport = CallbackTransport(_callback_client)
+    if _transport_override is not None:
+        transport = _transport_override
+    else:
+        transport = CallbackTransport(_callback_client)
     return ResponsesAPIEmitter(
         task_id=task_id,
         subtask_id=subtask_id,
