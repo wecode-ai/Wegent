@@ -35,7 +35,11 @@ from .emitter import (
 from .execution import EventType, ExecutionEvent, ExecutionRequest
 
 # OpenAI Request Converter
-from .openai_converter import OpenAIEventConverter, OpenAIRequestConverter
+from .openai_converter import (
+    OpenAIEventConverter,
+    OpenAIRequestConverter,
+    get_metadata_field,
+)
 
 # OpenAI Responses API types and event builder
 from .responses_api import (

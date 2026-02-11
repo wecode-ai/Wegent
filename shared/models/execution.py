@@ -162,6 +162,15 @@ class ExecutionRequest:
     # === Executor Information (from Task) ===
     executor_name: Optional[str] = None
     executor_namespace: Optional[str] = None
+    executor_image: Optional[str] = None  # Docker image for executor container
+    executor_type: Optional[str] = None  # Executor dispatch type (e.g., "docker")
+
+    # === Callback Configuration ===
+    callback_url: Optional[str] = None  # Callback URL for executor-manager
+
+    # === Validation / Sandbox Configuration ===
+    validation_params: Optional[dict] = None  # Validation task parameters
+    sandbox_metadata: Optional[dict] = None  # Sandbox task metadata
 
     # === Timestamps (from Task) ===
     created_at: Optional[str] = None  # ISO format datetime

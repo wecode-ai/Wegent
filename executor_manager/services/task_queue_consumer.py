@@ -28,6 +28,7 @@ from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.services.task_queue_service import TaskQueueService
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
+from shared.models.openai_converter import get_metadata_field
 
 logger = setup_logger(__name__)
 
@@ -187,8 +188,8 @@ class TaskQueueConsumer:
         Args:
             task: Task dictionary to process
         """
-        task_id = task.get("task_id", "unknown")
-        subtask_id = task.get("subtask_id", "unknown")
+        task_id = get_metadata_field(task, "task_id", "unknown")
+        subtask_id = get_metadata_field(task, "subtask_id", "unknown")
         retry_count = TaskQueueService.get_retry_count(task)
 
         if retry_count > 0:
@@ -233,8 +234,8 @@ class TaskQueueConsumer:
             task: Failed task dictionary
             error_msg: Error message describing the failure
         """
-        task_id = task.get("task_id")
-        subtask_id = task.get("subtask_id")
+        task_id = get_metadata_field(task, "task_id")
+        subtask_id = get_metadata_field(task, "subtask_id")
 
         # Try to requeue
         should_retry, retry_count = self.queue_service.requeue_task(task)
