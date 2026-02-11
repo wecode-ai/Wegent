@@ -18,6 +18,7 @@ from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.base import BaseService
 from app.services.group_permission import check_group_permission, get_user_groups
+from app.services.knowledge.knowledge_service import _is_organization_namespace
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,8 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
             HTTPException: If retriever not found or access denied
         """
         # Check permissions for group resources
-        if namespace != "default":
+        # Skip permission check for organization namespace (visible to all users)
+        if namespace != "default" and not _is_organization_namespace(db, namespace):
             if not check_group_permission(
                 db, user_id, namespace, required_role="Reporter"
             ):

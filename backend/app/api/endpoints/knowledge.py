@@ -52,6 +52,7 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.knowledge_service import _is_organization_namespace
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
 from shared.telemetry.decorators import (
@@ -75,7 +76,7 @@ router = APIRouter()
 def list_knowledge_bases(
     scope: str = Query(
         default="all",
-        description="Resource scope: personal, group, or all",
+        description="Resource scope: personal, group, organization, or all",
     ),
     group_name: Optional[str] = Query(
         default=None,
@@ -89,6 +90,7 @@ def list_knowledge_bases(
 
     - **scope=personal**: Only user's own personal knowledge bases
     - **scope=group**: Knowledge bases from a specific group (requires group_name)
+    - **scope=organization**: Organization knowledge bases (visible to all, admin only for management)
     - **scope=all**: All accessible knowledge bases (personal + team)
     """
     try:
@@ -96,7 +98,7 @@ def list_knowledge_bases(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid scope: {scope}. Must be one of: personal, group, all",
+            detail=f"Invalid scope: {scope}. Must be one of: personal, group, organization, all",
         )
 
     if resource_scope == ResourceScope.GROUP and not group_name:
@@ -151,6 +153,38 @@ def get_knowledge_config():
     """
     return {
         "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+    }
+
+
+@router.get("/organization-namespace")
+@trace_sync("get_organization_namespace", "knowledge.api")
+def get_organization_namespace(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the organization-level namespace name.
+
+    Returns the namespace name that has level='organization'.
+    This is used by frontend when creating organization knowledge bases.
+
+    Returns:
+        {"namespace": str} - The organization namespace name, or null if not configured
+    """
+    from app.models.namespace import Namespace
+    from app.schemas.namespace import GroupLevel
+
+    org_namespace = (
+        db.query(Namespace)
+        .filter(
+            Namespace.level == GroupLevel.organization.value,
+            Namespace.is_active == True,
+        )
+        .first()
+    )
+
+    return {
+        "namespace": org_namespace.name if org_namespace else None,
     }
 
 
@@ -425,7 +459,7 @@ async def create_document(
         # Skip RAG indexing for TABLE source type as table data should be queried in real-time
         if knowledge_base and data.source_type != DocumentSourceType.TABLE:
             rag_params = _extract_rag_config_from_knowledge_base(
-                knowledge_base, current_user.id
+                knowledge_base, current_user.id, db
             )
 
             if rag_params:
@@ -493,7 +527,7 @@ class RAGIndexingParams:
 
 @trace_sync("extract_rag_config", "knowledge.api")
 def _extract_rag_config_from_knowledge_base(
-    knowledge_base: Kind, current_user_id: int
+    knowledge_base: Kind, current_user_id: int, db: Session
 ) -> Optional[RAGIndexingParams]:
     """
     Extract RAG indexing configuration from a knowledge base.
@@ -511,25 +545,50 @@ def _extract_rag_config_from_knowledge_base(
     spec = (knowledge_base.json or {}).get("spec", {})
     retrieval_config = spec.get("retrievalConfig")
 
+    # Debug logging to diagnose incomplete retrieval_config issues
+    logger.info(
+        f"[RAG Config Debug] KB {knowledge_base.id}: retrievalConfig = {retrieval_config}"
+    )
+
     if not retrieval_config:
+        logger.warning(
+            f"[RAG Config Debug] KB {knowledge_base.id}: No retrievalConfig found in spec"
+        )
         return None
 
     retriever_name = retrieval_config.get("retriever_name")
     retriever_namespace = retrieval_config.get("retriever_namespace", "default")
     embedding_config = retrieval_config.get("embedding_config")
 
+    logger.info(
+        f"[RAG Config Debug] KB {knowledge_base.id}: retriever_name={retriever_name}, "
+        f"retriever_namespace={retriever_namespace}, embedding_config={embedding_config}"
+    )
+
     if not retriever_name or not embedding_config:
+        logger.warning(
+            f"[RAG Config Debug] KB {knowledge_base.id}: Missing retriever_name or embedding_config. "
+            f"retriever_name={retriever_name}, embedding_config={embedding_config}"
+        )
         return None
 
     embedding_model_name = embedding_config.get("model_name")
     embedding_model_namespace = embedding_config.get("model_namespace", "default")
 
     if not embedding_model_name:
+        logger.warning(
+            f"[RAG Config Debug] KB {knowledge_base.id}: Missing embedding model_name. "
+            f"embedding_config={embedding_config}"
+        )
         return None
 
     # Pre-compute KB index info
     summary_enabled = spec.get("summaryEnabled", False)
     if knowledge_base.namespace == "default":
+        index_owner_user_id = current_user_id
+    elif _is_organization_namespace(db, knowledge_base.namespace):
+        # Organization KB - use current user's ID for index naming
+        # All users can access organization KBs, so we use the current user's ID
         index_owner_user_id = current_user_id
     else:
         # Group KB - use creator's user_id for shared index
@@ -664,6 +723,10 @@ def _get_kb_index_info_sync(
     # Determine index_owner_user_id based on namespace
     if kb.namespace == "default":
         # Personal knowledge base - use current user's ID
+        index_owner_user_id = current_user_id
+    elif _is_organization_namespace(db, kb.namespace):
+        # Organization knowledge base - use current user's ID for index naming
+        # All users can access organization KBs, so we use the current user's ID
         index_owner_user_id = current_user_id
     else:
         # Group knowledge base - use KB creator's user_id for index naming
@@ -1156,7 +1219,7 @@ async def reindex_document(
 
     # Extract RAG config using shared helper
     rag_params = _extract_rag_config_from_knowledge_base(
-        knowledge_base, current_user.id
+        knowledge_base, current_user.id, db
     )
 
     if not rag_params:
@@ -1318,7 +1381,12 @@ async def update_document_content(
                     summary_enabled = spec.get("summaryEnabled", False)
                     if knowledge_base.namespace == "default":
                         index_owner_user_id = current_user.id
+                    elif _is_organization_namespace(db, knowledge_base.namespace):
+                        # Organization KB - use current user's ID for index naming
+                        # All users can access organization KBs, so we use the current user's ID
+                        index_owner_user_id = current_user.id
                     else:
+                        # Group KB - use creator's user_id for shared index
                         index_owner_user_id = knowledge_base.user_id
 
                     kb_index_info = KnowledgeBaseIndexInfo(

@@ -33,12 +33,39 @@ from app.schemas.knowledge import (
     ResourceScope,
     TeamKnowledgeGroup,
 )
-from app.schemas.namespace import GroupRole
+from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_permission import (
     check_group_permission,
     get_effective_role_in_group,
     get_user_groups,
 )
+
+
+def _is_organization_namespace(db: Session, namespace_name: str) -> bool:
+    """
+    Check if a namespace is an organization-level namespace.
+
+    Args:
+        db: Database session
+        namespace_name: Namespace name
+
+    Returns:
+        True if the namespace has level='organization', False otherwise
+    """
+    # Special case: 'default' namespace is never organization-level
+    if namespace_name == "default":
+        return False
+
+    namespace = (
+        db.query(Namespace)
+        .filter(
+            Namespace.name == namespace_name,
+            Namespace.is_active == True,
+        )
+        .first()
+    )
+
+    return namespace is not None and namespace.level == GroupLevel.organization.value
 
 
 @dataclass
@@ -100,8 +127,16 @@ class KnowledgeService:
         """
         from datetime import datetime
 
+        # Check permission for organization-level knowledge base (admin only)
+        if _is_organization_namespace(db, data.namespace):
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError("Only admin can create organization knowledge base")
+
         # Check permission for team knowledge base
-        if data.namespace != "default":
+        elif data.namespace != "default":
             role = get_effective_role_in_group(db, user_id, data.namespace)
             if role is None:
                 raise ValueError(
@@ -320,6 +355,22 @@ class KnowledgeService:
                 .all()
             )
 
+        elif scope == ResourceScope.ORGANIZATION:
+            # Organization knowledge bases are visible to all users
+            # Query knowledge bases in namespaces with level='organization'
+            return (
+                db.query(Kind)
+                .join(Namespace, Kind.namespace == Namespace.name)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Namespace.level == GroupLevel.organization.value,
+                    Namespace.is_active == True,
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
         else:  # ALL
             from app.models.resource_member import MemberStatus, ResourceMember
             from app.models.share_link import ResourceType
@@ -339,36 +390,59 @@ class KnowledgeService:
             )
             shared_kb_ids = [p.resource_id for p in shared_permissions]
 
-            # Single query to get personal, team, and shared knowledge bases
-            # Personal: user_id matches and namespace is "default"
-            # Team: namespace is in accessible_groups
-            # Shared: id is in shared_kb_ids
-            all_kbs = (
-                db.query(Kind)
+            # Get organization-level namespace names
+            org_namespaces = (
+                db.query(Namespace.name)
                 .filter(
-                    Kind.kind == "KnowledgeBase",
-                    Kind.is_active == True,
-                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
-                    | (
-                        (Kind.namespace.in_(accessible_groups))
-                        if accessible_groups
-                        else False
-                    )
-                    | ((Kind.id.in_(shared_kb_ids)) if shared_kb_ids else False),
+                    Namespace.level == GroupLevel.organization.value,
+                    Namespace.is_active == True,
                 )
                 .all()
             )
+            org_namespace_names = [n[0] for n in org_namespaces]
 
-            # Separate into personal, team, and shared
+            # Single query to get personal, team, organization, and shared knowledge bases
+            # Personal: user_id matches and namespace is "default"
+            # Team: namespace is in accessible_groups
+            # Organization: namespace has level='organization'
+            # Shared: id is in shared_kb_ids
+            query = db.query(Kind).filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+
+            conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
+
+            if accessible_groups:
+                conditions.append(Kind.namespace.in_(accessible_groups))
+
+            if org_namespace_names:
+                conditions.append(Kind.namespace.in_(org_namespace_names))
+
+            if shared_kb_ids:
+                conditions.append(Kind.id.in_(shared_kb_ids))
+
+            if conditions:
+                from sqlalchemy import or_
+                query = query.filter(or_(*conditions))
+
+            all_kbs = query.all()
+
+            # Separate into personal, team, organization, and shared
             personal = [
                 kb
                 for kb in all_kbs
                 if kb.user_id == user_id and kb.namespace == "default"
             ]
             team = [kb for kb in all_kbs if kb.namespace in accessible_groups]
-            shared = [kb for kb in all_kbs if kb not in personal and kb not in team]
+            organization = [kb for kb in all_kbs if kb.namespace in org_namespace_names]
+            shared = [
+                kb
+                for kb in all_kbs
+                if kb not in personal and kb not in team and kb not in organization
+            ]
 
-            return personal + team + shared
+            return personal + team + organization + shared
 
     @staticmethod
     def update_knowledge_base(
@@ -396,8 +470,16 @@ class KnowledgeService:
         if not kb:
             return None
 
+        # Check permission for organization-level knowledge base (admin only)
+        if _is_organization_namespace(db, kb.namespace):
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError("Only admin can update organization knowledge base")
+
         # Check permission for team knowledge base
-        if kb.namespace != "default":
+        elif kb.namespace != "default":
             if not check_group_permission(
                 db, user_id, kb.namespace, GroupRole.Maintainer
             ):
@@ -512,13 +594,36 @@ class KnowledgeService:
         """
         from app.services.share import knowledge_share_service
 
-        kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
+        # First, try to get the KB without permission check to check namespace
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
         if not kb:
             return False
 
-        # Only creator can delete knowledge base
-        if kb.user_id != user_id:
-            raise ValueError("Only the creator can delete this knowledge base")
+        # Check permission for organization-level knowledge base (admin only)
+        if _is_organization_namespace(db, kb.namespace):
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError("Only admin can delete organization knowledge base")
+            # Admin can delete organization KB, skip get_knowledge_base permission check
+        else:
+            # For non-organization KBs, use get_knowledge_base for permission check
+            kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
+            if not kb:
+                return False
+            # Only creator can delete personal/group knowledge base
+            if kb.user_id != user_id:
+                raise ValueError("Only the creator can delete this knowledge base")
 
         # Check if knowledge base has documents - prevent deletion if documents exist
         document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
@@ -724,12 +829,36 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
-        kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
+        # First, query the KB directly without permission check to determine namespace
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
+        # Check permission based on namespace type
+        if _is_organization_namespace(db, kb.namespace):
+            # Organization KB - admin only
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError(
+                    "Only admin can add documents to organization knowledge base"
+                )
+        elif kb.namespace == "default":
+            # Personal KB - only owner can add documents
+            if kb.user_id != user_id:
+                raise ValueError("Knowledge base not found or access denied")
+        else:
+            # Team/Group KB - check group permission
             if not check_group_permission(
                 db, user_id, kb.namespace, GroupRole.Maintainer
             ):
@@ -859,19 +988,30 @@ class KnowledgeService:
         if not doc:
             return None
 
-        # Check permission for team knowledge base
+        # Check permission for knowledge base
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can update documents in this knowledge base"
-                )
+        if kb:
+            # Check permission for organization-level knowledge base (admin only)
+            if _is_organization_namespace(db, kb.namespace):
+                from app.models.user import User
+
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or user.role != "admin":
+                    raise ValueError(
+                        "Only admin can update documents in organization knowledge base"
+                    )
+            # Check permission for team knowledge base
+            elif kb.namespace != "default":
+                if not check_group_permission(
+                    db, user_id, kb.namespace, GroupRole.Maintainer
+                ):
+                    raise ValueError(
+                        "Only Owner or Maintainer can update documents in this knowledge base"
+                    )
 
         if data.name is not None:
             doc.name = data.name
@@ -947,19 +1087,30 @@ class KnowledgeService:
         if not doc:
             return DocumentDeleteResult(success=False, kb_id=None)
 
-        # Check permission for team knowledge base
+        # Check permission for knowledge base
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can delete documents from this knowledge base"
-                )
+        if kb:
+            # Check permission for organization-level knowledge base (admin only)
+            if _is_organization_namespace(db, kb.namespace):
+                from app.models.user import User
+
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or user.role != "admin":
+                    raise ValueError(
+                        "Only admin can delete documents from organization knowledge base"
+                    )
+            # Check permission for team knowledge base
+            elif kb.namespace != "default":
+                if not check_group_permission(
+                    db, user_id, kb.namespace, GroupRole.Maintainer
+                ):
+                    raise ValueError(
+                        "Only Owner or Maintainer can delete documents from this knowledge base"
+                    )
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
@@ -998,7 +1149,11 @@ class KnowledgeService:
                             # Get the correct user_id for index naming
                             # For group knowledge bases, use the KB creator's user_id
                             # This ensures we delete from the same index where documents were stored
-                            if kb.namespace == "default":
+                            if (
+                                kb.namespace == "default"
+                                or _is_organization_namespace(db, kb.namespace)
+                            ):
+                                # Personal/Organization knowledge base - use current user's ID
                                 index_owner_user_id = user_id
                             else:
                                 # Group knowledge base - use KB creator's user_id
@@ -1145,7 +1300,7 @@ class KnowledgeService:
             user_id: Requesting user ID
 
         Returns:
-            AccessibleKnowledgeResponse with personal and team knowledge bases
+            AccessibleKnowledgeResponse with personal, team, and organization knowledge bases
         """
         # Get personal knowledge bases
         personal_kbs = (
@@ -1217,6 +1372,52 @@ class KnowledgeService:
                                 updated_at=kb.updated_at,
                             )
                             for kb in group_kbs
+                        ],
+                    )
+                )
+
+        # Get organization knowledge bases (accessible to all authenticated users)
+        # Query knowledge bases in namespaces with level='organization'
+        org_kbs = (
+            db.query(Kind, Namespace)
+            .join(Namespace, Kind.namespace == Namespace.name)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .order_by(Kind.updated_at.desc())
+            .all()
+        )
+
+        if org_kbs:
+            # Group KBs by namespace
+            org_groups: dict[str, list] = {}
+            for kb, ns in org_kbs:
+                if ns.name not in org_groups:
+                    org_groups[ns.name] = {"namespace": ns, "kbs": []}
+                org_groups[ns.name]["kbs"].append(kb)
+
+            for ns_name, group_data in org_groups.items():
+                ns = group_data["namespace"]
+                kbs = group_data["kbs"]
+                team_groups.append(
+                    TeamKnowledgeGroup(
+                        group_name=ns_name,
+                        group_display_name=ns.display_name or ns_name,
+                        knowledge_bases=[
+                            AccessibleKnowledgeBase(
+                                id=kb.id,
+                                name=kb.json.get("spec", {}).get("name", ""),
+                                description=kb.json.get("spec", {}).get("description")
+                                or None,  # Convert empty string to None
+                                document_count=KnowledgeService.get_active_document_count(
+                                    db, kb.id
+                                ),
+                                updated_at=kb.updated_at,
+                            )
+                            for kb in kbs
                         ],
                     )
                 )

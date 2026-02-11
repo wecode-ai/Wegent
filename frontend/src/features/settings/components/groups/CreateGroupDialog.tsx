@@ -19,8 +19,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { createGroup, listGroups } from '@/apis/groups'
+import { useUser } from '@/features/common/UserContext'
 import { toast } from 'sonner'
-import type { GroupCreate, Group, GroupVisibility } from '@/types/group'
+import type { GroupCreate, Group, GroupVisibility, GroupLevel } from '@/types/group'
 
 interface CreateGroupDialogProps {
   isOpen: boolean
@@ -30,11 +31,15 @@ interface CreateGroupDialogProps {
 
 export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDialogProps) {
   const { t } = useTranslation()
+  const { user } = useUser()
+  const isAdmin = user?.role === 'admin'
+
   const [formData, setFormData] = useState<GroupCreate>({
     name: '',
     display_name: '',
     visibility: 'internal',
     description: '',
+    level: 'group',
   })
   const [parentGroup, setParentGroup] = useState<string>('__none__')
   const [availableGroups, setAvailableGroups] = useState<Group[]>([])
@@ -119,6 +124,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         display_name: formData.display_name?.trim() || baseName,
         visibility: formData.visibility,
         description: formData.description?.trim() || undefined,
+        level: formData.level,
       }
 
       await createGroup(payload)
@@ -130,6 +136,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         display_name: '',
         visibility: 'internal',
         description: '',
+        level: 'group',
       })
       setParentGroup('__none__')
       setErrors({})
@@ -152,6 +159,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         display_name: '',
         visibility: 'internal',
         description: '',
+        level: 'group',
       })
       setParentGroup('__none__')
       setErrors({})
@@ -261,6 +269,38 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
             {formData.visibility === 'internal' && t('groups:groupCreate.visibilityInternalHint')}
           </p>
         </div>
+
+        {/* Level - Admin Only */}
+        {isAdmin && (
+          <div>
+            <Label htmlFor="level">{t('groups:groups.level')}</Label>
+            <Select
+              value={formData.level}
+              onValueChange={(value: GroupLevel) => setFormData({ ...formData, level: value })}
+              disabled={isSubmitting}
+            >
+              <SelectTrigger id="level" data-testid="level-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="group">
+                  <div className="flex flex-col">
+                    <span>{t('groups:groups.levels.group')}</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="organization">
+                  <div className="flex flex-col">
+                    <span>{t('groups:groups.levels.organization')}</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-text-muted mt-1">
+              {formData.level === 'organization' && t('groups:groupCreate.levelOrganizationHint')}
+              {formData.level === 'group' && t('groups:groupCreate.levelGroupHint')}
+            </p>
+          </div>
+        )}
 
         {/* Description */}
         <div>

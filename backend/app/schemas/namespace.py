@@ -26,6 +26,13 @@ class GroupVisibility(str, Enum):
     public = "public"
 
 
+class GroupLevel(str, Enum):
+    """Group level types"""
+
+    group = "group"
+    organization = "organization"
+
+
 class GroupBase(BaseModel):
     """Base group model"""
 
@@ -74,7 +81,7 @@ class GroupBase(BaseModel):
 class GroupCreate(GroupBase):
     """Group creation model"""
 
-    pass
+    level: Optional[GroupLevel] = Field(default=GroupLevel.group, description="Group level: 'group' or 'organization' (admin only)")
 
 
 class GroupUpdate(BaseModel):
@@ -83,6 +90,7 @@ class GroupUpdate(BaseModel):
     display_name: Optional[str] = Field(None, max_length=100)
     visibility: Optional[GroupVisibility] = None
     description: Optional[str] = None
+    level: Optional[GroupLevel] = Field(default=None, description="Group level: 'group' or 'organization' (admin only)")
 
 
 class GroupResponse(GroupBase):
@@ -90,6 +98,7 @@ class GroupResponse(GroupBase):
 
     id: int
     owner_user_id: int
+    level: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
