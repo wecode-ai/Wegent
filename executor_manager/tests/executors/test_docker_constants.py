@@ -28,7 +28,10 @@ class TestDockerConstants:
 
     def test_default_docker_host(self):
         """Test DEFAULT_DOCKER_HOST constant"""
-        assert DEFAULT_DOCKER_HOST == "host.docker.internal"
+        import os
+
+        expected = os.getenv("DOCKER_HOST_ADDR", "host.docker.internal")
+        assert DEFAULT_DOCKER_HOST == expected
         assert isinstance(DEFAULT_DOCKER_HOST, str)
 
     def test_docker_socket_path(self):
