@@ -778,3 +778,154 @@ class TestRunningTaskTracker:
 
         # Should return early without error
         mock_heartbeat.delete_heartbeat.assert_not_called()
+
+    # ----- Keep-Alive Label Protection Tests -----
+
+    @pytest.mark.asyncio
+    async def test_handle_task_dead_skips_keep_alive_pod(
+        self, tracker_with_mock_redis, mocker
+    ):
+        """Test _handle_task_dead skips pods with keep-alive label protection."""
+        tracker = tracker_with_mock_redis
+
+        # Mock check_keep_alive_protection to return True
+        mocker.patch(
+            "executor_manager.services.keep_alive_utils.check_keep_alive_protection",
+            return_value=True,
+        )
+
+        # Mock heartbeat manager
+        mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
+        mocker.patch(
+            "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
+            return_value=mock_heartbeat,
+        )
+
+        # Mock TaskApiClient
+        mock_api_client = MagicMock()
+        mocker.patch(
+            "executor_manager.clients.task_api_client.TaskApiClient",
+            return_value=mock_api_client,
+        )
+
+        await tracker._handle_task_dead(
+            task_id_str="123",
+            subtask_id_str="456",
+            executor_name="wegent-task-test-123",
+            last_heartbeat=time.time() - 60,
+        )
+
+        # Should NOT mark task as failed due to keep-alive protection
+        mock_api_client.update_task_status_by_fields.assert_not_called()
+
+        # Should NOT delete heartbeat
+        mock_heartbeat.delete_heartbeat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_task_dead_processes_non_keep_alive_pod(
+        self, tracker_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test _handle_task_dead processes pods without keep-alive label normally."""
+        tracker = tracker_with_mock_redis
+
+        # Mock check_keep_alive_protection to return False
+        mocker.patch(
+            "executor_manager.services.keep_alive_utils.check_keep_alive_protection",
+            return_value=False,
+        )
+
+        # Mock executor with container status
+        mock_executor = MagicMock()
+        mock_executor.get_container_status.return_value = {
+            "exists": True,
+            "status": "exited",
+            "oom_killed": True,
+            "exit_code": 137,
+            "error_msg": None,
+        }
+        mocker.patch(
+            "executor_manager.executors.dispatcher.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
+        )
+
+        # Mock heartbeat manager
+        mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
+        mocker.patch(
+            "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
+            return_value=mock_heartbeat,
+        )
+
+        # Mock TaskApiClient
+        mock_api_client = MagicMock()
+        mock_api_client.update_task_status_by_fields.return_value = (True, {})
+        mocker.patch(
+            "executor_manager.clients.task_api_client.TaskApiClient",
+            return_value=mock_api_client,
+        )
+
+        await tracker._handle_task_dead(
+            task_id_str="123",
+            subtask_id_str="456",
+            executor_name="wegent-task-test-123",
+            last_heartbeat=time.time() - 60,
+        )
+
+        # Should mark task as failed (no keep-alive protection)
+        mock_api_client.update_task_status_by_fields.assert_called_once()
+        call_kwargs = mock_api_client.update_task_status_by_fields.call_args[1]
+        assert call_kwargs["status"] == "FAILED"
+
+    @pytest.mark.asyncio
+    async def test_handle_task_dead_docker_mode_skips_keep_alive_check(
+        self, tracker_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test _handle_task_dead skips keep-alive check in docker mode."""
+        tracker = tracker_with_mock_redis
+
+        # Mock check_keep_alive_protection to return False (docker mode returns False)
+        mocker.patch(
+            "executor_manager.services.keep_alive_utils.check_keep_alive_protection",
+            return_value=False,
+        )
+
+        # Mock executor - container exited with OOM
+        mock_executor = MagicMock()
+        mock_executor.get_container_status.return_value = {
+            "exists": True,
+            "status": "exited",
+            "oom_killed": True,
+            "exit_code": 137,
+            "error_msg": None,
+        }
+        mocker.patch(
+            "executor_manager.executors.dispatcher.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
+        )
+
+        # Mock heartbeat manager
+        mock_heartbeat = MagicMock()
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
+        mocker.patch(
+            "executor_manager.services.heartbeat_manager.get_heartbeat_manager",
+            return_value=mock_heartbeat,
+        )
+
+        # Mock TaskApiClient
+        mock_api_client = MagicMock()
+        mock_api_client.update_task_status_by_fields.return_value = (True, {})
+        mocker.patch(
+            "executor_manager.clients.task_api_client.TaskApiClient",
+            return_value=mock_api_client,
+        )
+
+        await tracker._handle_task_dead(
+            task_id_str="123",
+            subtask_id_str="456",
+            executor_name="wegent-task-test-123",
+            last_heartbeat=time.time() - 60,
+        )
+
+        # Should mark task as failed normally
+        mock_api_client.update_task_status_by_fields.assert_called_once()

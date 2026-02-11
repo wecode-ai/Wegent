@@ -680,6 +680,122 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SetKeepAliveRequest(BaseModel):
+    """Request body for setting keep-alive label on a pod"""
+
+    executor_name: str
+    enabled: bool = True
+
+
+class SetKeepAliveResponse(BaseModel):
+    """Response for keep-alive label operations"""
+
+    status: str
+    pod_name: Optional[str] = None
+    keep_alive: Optional[bool] = None
+    error_msg: Optional[str] = None
+
+
+@api_router.post("/executor/keep-alive", response_model=SetKeepAliveResponse)
+async def set_executor_keep_alive(request: SetKeepAliveRequest, http_request: Request):
+    """Set or remove keep-alive label protection on an executor pod.
+
+    This endpoint allows administrators to protect specific pods from automatic
+    deletion by adding the `aigc.weibo.com/keep-alive=true` label.
+
+    Protected pods will NOT be deleted in the following scenarios:
+    - Heartbeat timeout detection (task_heartbeat_manager)
+    - Task completion cleanup (delete_executor_by_task_id)
+
+    Protected pods CAN still be deleted via:
+    - Manual DELETE /executor/delete API call
+    - Manual kubectl delete command
+
+    Args:
+        request: Request containing executor_name and enabled flag
+
+    Returns:
+        SetKeepAliveResponse with operation result
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    action = "enable" if request.enabled else "disable"
+    logger.info(
+        f"Received request to {action} keep-alive for executor: {request.executor_name} from {client_ip}"
+    )
+
+    # Only supported in K8s mode
+    if EXECUTOR_DISPATCHER_MODE != "k8s":
+        return SetKeepAliveResponse(
+            status="skipped",
+            error_msg="Keep-alive label is only supported in Kubernetes mode",
+        )
+
+    try:
+        from executor_manager.services.keep_alive_utils import set_keep_alive_protection
+
+        result = set_keep_alive_protection(
+            request.executor_name,
+            EXECUTOR_DISPATCHER_MODE,
+            request.enabled,
+            "[KeepAliveAPI]",
+        )
+
+        return SetKeepAliveResponse(
+            status=result.get("status", "failed"),
+            pod_name=result.get("pod_name"),
+            keep_alive=result.get("keep_alive"),
+            error_msg=result.get("error_msg"),
+        )
+    except Exception as e:
+        logger.error(
+            f"Error setting keep-alive for executor '{request.executor_name}': {e}"
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/executor/{executor_name}/keep-alive")
+async def get_executor_keep_alive(executor_name: str, http_request: Request):
+    """Check if an executor pod has keep-alive label protection.
+
+    Args:
+        executor_name: Name of the executor/pod to check
+
+    Returns:
+        Dict with pod_name and keep_alive status
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"Received request to check keep-alive for executor: {executor_name} from {client_ip}"
+    )
+
+    # Only supported in K8s mode
+    if EXECUTOR_DISPATCHER_MODE != "k8s":
+        return {
+            "status": "skipped",
+            "pod_name": executor_name,
+            "keep_alive": False,
+            "message": "Keep-alive label is only supported in Kubernetes mode",
+        }
+
+    try:
+        from executor_manager.services.keep_alive_utils import (
+            check_keep_alive_protection,
+        )
+
+        has_protection = check_keep_alive_protection(
+            executor_name, EXECUTOR_DISPATCHER_MODE, "[KeepAliveAPI]"
+        )
+
+        return {
+            "status": "success",
+            "pod_name": executor_name,
+            "keep_alive": has_protection,
+        }
+    except Exception as e:
+        logger.error(f"Error checking keep-alive for executor '{executor_name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.get("/executor/load")
 async def get_executor_load(http_request: Request):
     try:

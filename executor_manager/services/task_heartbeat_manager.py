@@ -365,10 +365,11 @@ class RunningTaskTracker:
         """Handle regular task executor death.
 
         Before marking task as failed, checks container status to determine:
-        1. If container was OOM killed -> mark as OOM failure
-        2. If container exited with error -> mark as crash failure
-        3. If container doesn't exist -> check if task already completed
-        4. If container still running -> likely network issue, skip
+        1. If container has keep-alive label -> skip failure marking
+        2. If container was OOM killed -> mark as OOM failure
+        3. If container exited with error -> mark as crash failure
+        4. If container doesn't exist -> check if task already completed
+        5. If container still running -> likely network issue, skip
 
         Args:
             task_id_str: Task ID as string
@@ -397,6 +398,20 @@ class RunningTaskTracker:
         except ValueError:
             logger.error(
                 f"[RunningTaskTracker] Invalid task_id or subtask_id: {task_id_str}, {subtask_id_str}"
+            )
+            return
+
+        # Step 0: Check if pod has keep-alive label protection (K8s mode only)
+        from executor_manager.services.keep_alive_utils import (
+            check_keep_alive_protection,
+        )
+
+        if check_keep_alive_protection(
+            executor_name, EXECUTOR_DISPATCHER_MODE, "[RunningTaskTracker]"
+        ):
+            logger.info(
+                f"[RunningTaskTracker] Skipping failure handling for pod '{executor_name}' "
+                "due to keep-alive label protection"
             )
             return
 
@@ -539,25 +554,37 @@ class RunningTaskTracker:
         self.remove_running_task(task_id)
 
         # Step 5: Optionally delete container (for OOM debugging, keep by default)
+        # Note: Pods with keep-alive label are already filtered at Step 0
         delete_zombie_containers = os.getenv(
             "DELETE_ZOMBIE_CONTAINERS", "false"
         ).lower() in ("true", "1", "yes")
 
         if container_status["exists"] and delete_zombie_containers:
-            try:
-                executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-                result = executor.delete_executor(executor_name)
-                if result.get("status") != "success":
+            # Double-check keep-alive label before deletion (safety net)
+            if check_keep_alive_protection(
+                executor_name, EXECUTOR_DISPATCHER_MODE, "[RunningTaskTracker]"
+            ):
+                logger.info(
+                    f"[RunningTaskTracker] Skipping deletion of container '{executor_name}' "
+                    "due to keep-alive label protection"
+                )
+            else:
+                try:
+                    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+                    result = executor.delete_executor(executor_name)
+                    if result.get("status") != "success":
+                        logger.warning(
+                            f"[RunningTaskTracker] Failed to delete container {executor_name}: "
+                            f"{result.get('error_msg')}"
+                        )
+                    else:
+                        logger.info(
+                            f"[RunningTaskTracker] Deleted zombie container {executor_name}"
+                        )
+                except Exception as e:
                     logger.warning(
-                        f"[RunningTaskTracker] Failed to delete container {executor_name}: "
-                        f"{result.get('error_msg')}"
+                        f"[RunningTaskTracker] Error deleting container: {e}"
                     )
-                else:
-                    logger.info(
-                        f"[RunningTaskTracker] Deleted zombie container {executor_name}"
-                    )
-            except Exception as e:
-                logger.warning(f"[RunningTaskTracker] Error deleting container: {e}")
         elif container_status["exists"]:
             logger.info(
                 f"[RunningTaskTracker] Container {executor_name} preserved for debugging. "
