@@ -370,6 +370,9 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
   connected: boolean;
   error?: string;
 }> {
+  const initialAttachWaitMs = 2500;
+  const graceAttachWaitMs = 1500;
+
   const status = await getStatus();
 
   if (!status.relayRunning) {
@@ -398,10 +401,17 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
     openUrlInChrome(targetUrl);
   }
 
-  // Wait for extension to attach
-  const connected = await waitForConnection(3000);
+  // Wait for extension to attach.
+  // Extension auto-attach can be slightly delayed after browser/tab activation.
+  const connected = await waitForConnection(initialAttachWaitMs);
 
   if (connected) {
+    return { connected: true };
+  }
+
+  // Final grace period before showing install instructions to avoid false negatives.
+  const connectedAfterGrace = await waitForConnection(graceAttachWaitMs);
+  if (connectedAfterGrace) {
     return { connected: true };
   }
 
