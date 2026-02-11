@@ -723,33 +723,41 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
 
 
 # =============================================================================
-# V1 Transparent Proxy APIs
+# V1 Transparent Proxy APIs (OpenAI Responses API)
 # =============================================================================
-# These endpoints implement the transparent proxy pattern for task dispatch.
+# These endpoints implement the transparent proxy pattern for task dispatch
+# using OpenAI Responses API format with background mode.
 # executor_manager only forwards requests to containers without business logic.
 # =============================================================================
 
 
-class ExecuteRequest(BaseModel):
-    """Request model for /v1/execute endpoint.
+class OpenAIResponsesRequest(BaseModel):
+    """Request model for /v1/responses endpoint (OpenAI Responses API format).
 
-    This is a transparent proxy request that forwards TaskExecutionRequest
-    to the appropriate executor container.
+    This is a transparent proxy request that forwards OpenAI Responses API
+    format requests to the appropriate executor container.
+
+    Supports background mode (non-streaming) for HTTP+Callback dispatch.
     """
 
-    # Container identification (optional - if provided, forward to existing container)
-    executor_name: Optional[str] = None
+    # OpenAI Responses API standard fields
+    model: str
+    input: Any  # Can be string or list of messages
+    instructions: Optional[str] = None
+    stream: bool = False
 
-    # Task identification (required for new container creation)
-    task_id: int
-    subtask_id: int
+    # Background mode flag (OpenAI extension)
+    background: bool = False
 
-    # Shell type for routing (required for new container creation)
-    shell_type: Optional[str] = None
+    # Custom metadata for task identification
+    metadata: Optional[Dict[str, Any]] = None
 
-    # Full request payload to forward to container
-    # This contains the complete TaskExecutionRequest data
-    payload: Dict[str, Any]
+    # Model configuration
+    model_config_data: Optional[Dict[str, Any]] = None
+
+    class Config:
+        # Allow extra fields for forward compatibility
+        extra = "allow"
 
 
 class CancelRequest(BaseModel):
@@ -758,62 +766,6 @@ class CancelRequest(BaseModel):
     task_id: int
     subtask_id: Optional[int] = None
     executor_name: Optional[str] = None
-
-
-async def _forward_to_container(
-    executor_name: str, request_data: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Forward request to an existing container.
-
-    This is a pure proxy function - no business logic processing.
-
-    Args:
-        executor_name: Name of the target container
-        request_data: Request payload to forward
-
-    Returns:
-        Response from the container
-
-    Raises:
-        HTTPException: If container not found or forwarding fails
-    """
-    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-
-    # Get container port
-    port, error = executor._get_container_port(executor_name)
-    if not port:
-        logger.warning(f"Container {executor_name} not found or has no port: {error}")
-        raise HTTPException(
-            status_code=404,
-            detail=f"Container {executor_name} not found: {error}",
-        )
-
-    # Forward request to container
-    endpoint = f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/execute"
-    logger.info(f"Forwarding request to container {executor_name} at {endpoint}")
-
-    try:
-        async with traced_async_client(timeout=30.0) as client:
-            response = await client.post(endpoint, json=request_data)
-
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.warning(
-                    f"Container {executor_name} returned error: "
-                    f"{response.status_code} {response.text}"
-                )
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Container error: {response.text}",
-                )
-
-    except httpx.RequestError as e:
-        logger.error(f"Failed to forward request to container {executor_name}: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail=f"Failed to communicate with container: {str(e)}",
-        )
 
 
 def _find_running_container_for_task(task_id: int) -> Optional[str]:
@@ -841,96 +793,16 @@ def _find_running_container_for_task(task_id: int) -> Optional[str]:
         container_name = containers[0].get("container_name")
         if container_name:
             logger.info(
-                f"[v1/execute] Found existing container for task {task_id}: "
+                f"[v1/responses] Found existing container for task {task_id}: "
                 f"{container_name}"
             )
         return container_name
 
     except Exception as e:
         logger.warning(
-            f"[v1/execute] Error looking up container for task {task_id}: {e}"
+            f"[v1/responses] Error looking up container for task {task_id}: {e}"
         )
         return None
-
-
-@api_router.post("/v1/execute")
-async def execute_task(request: ExecuteRequest, http_request: Request):
-    """Unified execution endpoint - transparent proxy.
-
-    This endpoint implements the transparent proxy pattern:
-    1. If executor_name is provided, forward request to existing container
-    2. Otherwise, check Docker labels for a running container with matching task_id
-    3. If no running container found, create a new container and submit the task
-
-    The executor_manager does NOT process any business logic here.
-    It only handles container routing and forwarding.
-
-    Args:
-        request: ExecuteRequest containing task info and optional executor_name
-        http_request: HTTP request object
-
-    Returns:
-        dict: Execution result from container or container creation status
-    """
-    client_ip = http_request.client.host if http_request.client else "unknown"
-    logger.info(
-        f"[v1/execute] Received request: task_id={request.task_id}, "
-        f"subtask_id={request.subtask_id}, executor_name={request.executor_name} "
-        f"from {client_ip}"
-    )
-
-    # Set task context for tracing
-    set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
-
-    try:
-        # Resolve executor_name: explicit > label lookup
-        executor_name = request.executor_name or _find_running_container_for_task(
-            request.task_id
-        )
-
-        if executor_name:
-            # Try to forward to existing container
-            logger.info(
-                f"[v1/execute] Forwarding to existing container: {executor_name}"
-            )
-            try:
-                return await _forward_to_container(executor_name, request.payload)
-            except HTTPException as e:
-                if e.status_code == 404:
-                    # Container no longer exists, fall through to create a new one
-                    logger.info(
-                        f"[v1/execute] Container {executor_name} no longer exists, "
-                        f"creating new container for task {request.task_id}"
-                    )
-                else:
-                    raise
-
-        # Create new container and submit task
-        logger.info(f"[v1/execute] Creating new container for task {request.task_id}")
-
-        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-
-        # Build task data for container creation
-        # The payload already contains the full TaskExecutionRequest
-        task_data = request.payload.copy()
-        task_data["task_id"] = request.task_id
-        task_data["subtask_id"] = request.subtask_id
-
-        # Submit to executor (creates container and sends task)
-        result = executor.submit_executor(task_data)
-
-        logger.info(
-            f"[v1/execute] Container creation result: status={result.get('status')}, "
-            f"executor_name={result.get('executor_name')}"
-        )
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[v1/execute] Error executing task {request.task_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @api_router.post("/v1/cancel")
@@ -1059,6 +931,279 @@ async def _cleanup_task_heartbeat(task_id: int) -> None:
         tracker.remove_running_task(task_id)
     except Exception as e:
         logger.warning(f"[v1/cancel] Failed to clean up heartbeat data: {e}")
+
+
+async def _wait_for_container_ready(
+    host: str,
+    port: int,
+    executor_name: str,
+    max_retries: int = 10,
+    retry_interval: float = 0.5,
+) -> bool:
+    """Wait for container HTTP service to be ready.
+
+    Polls the container's health endpoint until it responds or timeout.
+
+    Args:
+        host: Container host
+        port: Container port
+        executor_name: Container name for logging
+        max_retries: Maximum number of retry attempts (default: 10)
+        retry_interval: Seconds between retries (default: 0.5)
+
+    Returns:
+        True if container is ready, False if timeout
+    """
+    import asyncio
+
+    health_endpoint = f"http://{host}:{port}/"
+
+    for attempt in range(max_retries):
+        try:
+            async with traced_async_client(timeout=2.0) as client:
+                response = await client.get(health_endpoint)
+                if response.status_code == 200:
+                    logger.info(
+                        f"[v1/responses] Container {executor_name} is ready "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    return True
+        except Exception as e:
+            logger.debug(
+                f"[v1/responses] Container {executor_name} not ready yet "
+                f"(attempt {attempt + 1}/{max_retries}): {e}"
+            )
+
+        if attempt < max_retries - 1:
+            await asyncio.sleep(retry_interval)
+
+    logger.warning(
+        f"[v1/responses] Container {executor_name} did not become ready "
+        f"after {max_retries} attempts"
+    )
+    return False
+
+
+async def _forward_openai_request_to_container(
+    executor_name: str, request_data: Dict[str, Any], wait_for_ready: bool = False
+) -> Dict[str, Any]:
+    """Forward OpenAI Responses API request to an existing container.
+
+    This is a pure proxy function - no business logic processing.
+    Forwards to /v1/responses endpoint on the container.
+
+    Args:
+        executor_name: Name of the target container
+        request_data: OpenAI format request payload to forward
+        wait_for_ready: If True, wait for container to be ready before forwarding
+
+    Returns:
+        Response from the container
+
+    Raises:
+        HTTPException: If container not found or forwarding fails
+    """
+    executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+
+    # Get container port
+    port, error = executor._get_container_port(executor_name)
+    if not port:
+        logger.warning(f"Container {executor_name} not found or has no port: {error}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Container {executor_name} not found: {error}",
+        )
+
+    # Wait for container to be ready if requested (for newly created containers)
+    if wait_for_ready:
+        is_ready = await _wait_for_container_ready(
+            DEFAULT_DOCKER_HOST, port, executor_name
+        )
+        if not is_ready:
+            logger.error(
+                f"[v1/responses] Container {executor_name} failed to become ready"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Container {executor_name} failed to start in time",
+            )
+
+    # Forward request to container's /v1/responses endpoint
+    endpoint = f"http://{DEFAULT_DOCKER_HOST}:{port}/v1/responses"
+    logger.info(
+        f"[v1/responses] Forwarding OpenAI request to container {executor_name} at {endpoint}"
+    )
+
+    try:
+        async with traced_async_client(timeout=30.0) as client:
+            response = await client.post(endpoint, json=request_data)
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(
+                    f"Container {executor_name} returned error: "
+                    f"{response.status_code} {response.text}"
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Container error: {response.text}",
+                )
+
+    except httpx.RequestError as e:
+        logger.error(
+            f"[v1/responses] Failed to forward request to container {executor_name}: {e}"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to communicate with container: {str(e)}",
+        )
+
+
+@api_router.post("/v1/responses")
+async def openai_responses(http_request: Request):
+    """OpenAI Responses API endpoint - transparent proxy.
+
+    This endpoint implements the OpenAI Responses API background mode:
+    1. Extract task_id from metadata to find or create container
+    2. Forward the entire OpenAI format request to the container
+    3. Return the response (queued status for background mode)
+
+    The executor_manager does NOT process any business logic here.
+    It only handles container routing and forwarding.
+
+    Request format (OpenAI Responses API):
+    {
+        "model": "...",
+        "input": "..." or [...],
+        "instructions": "...",
+        "stream": false,
+        "background": true,
+        "metadata": {
+            "task_id": 123,
+            "subtask_id": 456,
+            ...
+        },
+        "model_config": {...}
+    }
+
+    Args:
+        http_request: HTTP request object
+
+    Returns:
+        dict: Response from executor container (queued status for background mode)
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+
+    # Read raw JSON data from request body
+    body_bytes = await http_request.body()
+    import json
+
+    request_data = json.loads(body_bytes)
+
+    # Debug logging for raw request data
+    logger.info(f"[v1/responses] Raw request_data: {request_data}")
+
+    # Extract task identification from metadata
+    metadata = request_data.get("metadata", {})
+    task_id = metadata.get("task_id", 0)
+    subtask_id = metadata.get("subtask_id", 0)
+    background = request_data.get("background", False)
+
+    logger.info(
+        f"[v1/responses] Received OpenAI request: task_id={task_id}, "
+        f"subtask_id={subtask_id}, background={background} from {client_ip}"
+    )
+
+    # Set task context for tracing
+    set_task_context(task_id=task_id, subtask_id=subtask_id)
+
+    try:
+        # Find existing container for this task
+        executor_name = _find_running_container_for_task(task_id)
+
+        if executor_name:
+            # Forward to existing container
+            logger.info(
+                f"[v1/responses] Forwarding to existing container: {executor_name}"
+            )
+            try:
+                return await _forward_openai_request_to_container(
+                    executor_name, request_data
+                )
+            except HTTPException as e:
+                if e.status_code == 404:
+                    # Container no longer exists, fall through to create a new one
+                    logger.info(
+                        f"[v1/responses] Container {executor_name} no longer exists, "
+                        f"creating new container for task {task_id}"
+                    )
+                else:
+                    raise
+
+        # Create new container and submit task
+        logger.info(f"[v1/responses] Creating new container for task {task_id}")
+
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+
+        # Convert OpenAI request to ExecutionRequest format for container creation
+        # The executor will receive the original OpenAI format request
+        from shared.models import OpenAIRequestConverter
+
+        # Debug: log metadata.user before conversion
+        metadata_user = request_data.get("metadata", {}).get("user")
+        logger.info(
+            f"[v1/responses] BEFORE conversion: metadata.user={metadata_user}, "
+            f"type={type(metadata_user)}"
+        )
+
+        execution_request = OpenAIRequestConverter.to_execution_request(request_data)
+
+        # Debug logging for execution_request before to_dict()
+        logger.info(
+            f"[v1/responses] AFTER conversion: execution_request.user={execution_request.user}, "
+            f"user_id={execution_request.user_id}, user_name={execution_request.user_name}"
+        )
+
+        task_data = execution_request.to_dict()
+
+        # Debug logging for task_data after conversion
+        logger.info(
+            f"[v1/responses] task_data after to_dict(): user={task_data.get('user')}, "
+            f"user_id={task_data.get('user_id')}, user_name={task_data.get('user_name')}"
+        )
+
+        # Submit to executor (creates container)
+        result = executor.submit_executor(task_data)
+
+        if not result or not result.get("executor_name"):
+            error_msg = (
+                result.get("error_msg", "Unknown error")
+                if result
+                else "No result returned"
+            )
+            logger.error(
+                f"[v1/responses] Failed to create container for task {task_id}: {error_msg}"
+            )
+            raise HTTPException(status_code=500, detail=error_msg)
+
+        new_executor_name = result.get("executor_name")
+        logger.info(
+            f"[v1/responses] Container created: {new_executor_name}, "
+            f"forwarding OpenAI request"
+        )
+
+        # Forward the original OpenAI request to the new container
+        # wait_for_ready=True because the container was just created and may not be ready yet
+        return await _forward_openai_request_to_container(
+            new_executor_name, request_data, wait_for_ready=True
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v1/responses] Error processing request for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @api_router.post("/tasks/{task_id}/heartbeat")

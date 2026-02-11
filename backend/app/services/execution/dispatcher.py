@@ -576,44 +576,63 @@ class ExecutionDispatcher:
         target: ExecutionTarget,
         emitter: ResultEmitter,
     ) -> None:
-        """Dispatch task via HTTP+Callback.
+        """Dispatch task via HTTP+Callback using OpenAI background mode.
 
-        Backend sends HTTP request, executor executes asynchronously
-        and returns result via callback.
+        Uses OpenAI Responses API background mode (non-streaming).
+        Backend sends HTTP request with background=true, executor executes
+        asynchronously and returns result via callback.
 
         Args:
             request: Execution request
             target: Execution target configuration
             emitter: Result emitter for event emission
         """
-        url = f"{target.url}{target.endpoint}"
-        logger.info(f"[ExecutionDispatcher] HTTP+Callback dispatch: url={url}")
-
-        # Build ExecuteRequest payload expected by executor_manager
-        shell_type = request.bot[0].get("shell_type") if request.bot else None
-        execute_request = {
-            "task_id": request.task_id,
-            "subtask_id": request.subtask_id,
-            "executor_name": request.executor_name,
-            "shell_type": shell_type,
-            "payload": request.to_dict(),
-        }
-
-        # Send request
-        response = await self.http_client.post(
-            url,
-            json=execute_request,
+        # Use OpenAI Responses API endpoint
+        base_url = f"{target.url}/v1"
+        url = f"{base_url}/responses"
+        logger.info(
+            f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): url={url}"
         )
 
-        if response.status_code != 200:
-            detail = response.text[:500] if response.text else "no detail"
-            raise Exception(
-                f"HTTP dispatch failed: {response.status_code}, detail={detail}"
-            )
+        # Convert ExecutionRequest to OpenAI format
+        openai_request = OpenAIRequestConverter.from_execution_request(request)
+
+        # Set background mode (non-streaming)
+        # background=true: Execute asynchronously, result via callback
+        # stream=false: No streaming, just return queued status
+        openai_request["background"] = True
+        openai_request["stream"] = False
 
         logger.info(
-            f"[ExecutionDispatcher] HTTP+Callback dispatch: "
-            f"url={url}, status={response.status_code}"
+            f"[ExecutionDispatcher] Sending OpenAI background request: url={url}, "
+            f"model={openai_request.get('model')}, task_id={request.task_id}, "
+            f"subtask_id={request.subtask_id}"
+        )
+
+        # Send request using OpenAI client
+        client = AsyncOpenAI(
+            base_url=base_url,
+            api_key="dummy",  # Not used by executor_manager but required by client
+            timeout=300.0,
+        )
+
+        # Use responses.create with background mode
+        response = await client.responses.create(
+            model=openai_request.get("model", ""),
+            input=openai_request.get("input", ""),
+            instructions=openai_request.get("instructions"),
+            stream=False,
+            extra_body={
+                "background": True,
+                "metadata": openai_request.get("metadata", {}),
+                "model_config": openai_request.get("model_config", {}),
+            },
+        )
+
+        logger.info(
+            f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): "
+            f"response_id={getattr(response, 'id', 'N/A')}, "
+            f"status={getattr(response, 'status', 'N/A')}"
         )
 
         # In HTTP+Callback mode, subsequent events are handled via /callback API

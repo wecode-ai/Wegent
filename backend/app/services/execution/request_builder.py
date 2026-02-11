@@ -1031,7 +1031,7 @@ class TaskRequestBuilder:
         Returns:
             User info dictionary
         """
-        return {
+        user_info = {
             "id": user.id,
             "name": user.user_name,
             "git_domain": getattr(user, "git_domain", None),
@@ -1040,6 +1040,8 @@ class TaskRequestBuilder:
             "git_login": getattr(user, "git_login", None),
             "git_email": getattr(user, "git_email", None),
         }
+
+        return user_info
 
     def _build_workspace(self, task: TaskResource) -> dict:
         """Build workspace configuration.

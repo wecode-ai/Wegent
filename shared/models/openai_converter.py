@@ -17,10 +17,13 @@ Usage:
     execution_request = OpenAIRequestConverter.to_execution_request(openai_request)
 """
 
+import logging
 from dataclasses import asdict
 from typing import Any, Optional
 
 from .execution import ExecutionRequest
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIRequestConverter:
@@ -92,10 +95,13 @@ class OpenAIRequestConverter:
         metadata = {
             "task_id": request.task_id,
             "subtask_id": request.subtask_id,
+            "user": request.user,  # Include full user dict for executor_manager
             "user_id": request.user_id,
             "user_name": request.user_name,
             "team_id": request.team_id,
             "team_name": request.team_name,
+            "team_namespace": request.team_namespace,
+            "bot": request.bot,  # Include bot config with shell_type for executor
             "bot_name": request.bot_name,
             "bot_namespace": request.bot_namespace,
             "message_id": request.message_id,
@@ -118,8 +124,12 @@ class OpenAIRequestConverter:
             "table_contexts": request.table_contexts,
             "task_data": request.task_data,
             "auth_token": request.auth_token,
+            "task_token": request.task_token,
+            "backend_url": request.backend_url,
+            "workspace": request.workspace,
             "is_subscription": request.is_subscription,
             "request_id": request.request_id,
+            "executor_name": request.executor_name,
         }
         openai_request["metadata"] = metadata
 
@@ -172,13 +182,29 @@ class OpenAIRequestConverter:
                     }
                 )
 
+        # Get user dict directly from metadata (passed from from_execution_request)
+        user_dict = metadata.get("user", {})
+        user_id = metadata.get("user_id", 0)
+        user_name = metadata.get("user_name", "")
+
+        # Ensure user_dict is a proper dict (handle None case)
+        if user_dict is None:
+            user_dict = {}
+            print("[DEBUG to_execution_request] user_dict was None, using empty dict")
+            logger.warning(
+                "[to_execution_request] user_dict was None, using empty dict"
+            )
+
         return ExecutionRequest(
             task_id=metadata.get("task_id", 0),
             subtask_id=metadata.get("subtask_id", 0),
-            user_id=metadata.get("user_id", 0),
-            user_name=metadata.get("user_name", ""),
+            user=user_dict,
+            user_id=user_id,
+            user_name=user_name,
             team_id=metadata.get("team_id", 0),
             team_name=metadata.get("team_name", ""),
+            team_namespace=metadata.get("team_namespace"),
+            bot=metadata.get("bot", []),  # Bot config with shell_type for executor
             bot_name=metadata.get("bot_name", ""),
             bot_namespace=metadata.get("bot_namespace", ""),
             message_id=metadata.get("message_id"),
@@ -187,7 +213,7 @@ class OpenAIRequestConverter:
             is_group_chat=metadata.get("is_group_chat", False),
             history_limit=metadata.get("history_limit"),
             model_config=model_config,
-            system_prompt=openai_request.get("instructions", ""),
+            system_prompt=openai_request.get("instructions") or "",
             prompt=prompt,
             history=history,
             enable_tools=metadata.get("enable_tools", True),
@@ -206,8 +232,12 @@ class OpenAIRequestConverter:
             table_contexts=metadata.get("table_contexts", []),
             task_data=metadata.get("task_data"),
             auth_token=metadata.get("auth_token", ""),
+            task_token=metadata.get("task_token", ""),
+            backend_url=metadata.get("backend_url", ""),
+            workspace=metadata.get("workspace", {}),
             is_subscription=metadata.get("is_subscription", False),
             request_id=metadata.get("request_id", ""),
+            executor_name=metadata.get("executor_name"),
         )
 
 

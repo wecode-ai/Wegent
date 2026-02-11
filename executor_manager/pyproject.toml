@@ -14,7 +14,8 @@ dependencies = [
     "cryptography>=42.0.4",
     "fastapi==0.121.2",
     "httpcore>=1.0.9",
-    "httpx>=0.27.0",
+    "httpx[socks]>=0.27.0",
+    "socksio>=1.0.0",  # Explicit dependency for SOCKS proxy support
     "jinja2>=3.1.6",
     "kubernetes==29.0.0",
     "pydantic>=2.12.5",
@@ -28,8 +29,8 @@ dependencies = [
     "uvicorn==0.38.0",
     "websocket-client>=1.9.0",
     
-    # Shared module
-    "wegent-shared @ file:///${PROJECT_ROOT}/../shared",
+    # Shared module - use editable install for auto-update
+    "wegent-shared",
 
     # OpenTelemetry core packages
     "opentelemetry-api>=1.27.0",
@@ -92,3 +93,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+
+[tool.uv.sources]
+# Use editable install for shared module - changes to shared/ will be reflected immediately
+wegent-shared = { path = "../shared", editable = true }

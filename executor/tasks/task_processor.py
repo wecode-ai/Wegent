@@ -12,15 +12,23 @@ from typing import Any, Dict, Optional, Tuple, Union
 from executor.agents import Agent, AgentFactory
 from executor.callback.callback_handler import (
     send_done_event,
+    send_done_event_async,
     send_error_event,
+    send_error_event_async,
     send_start_event,
+    send_start_event_async,
 )
 from executor.config import config
 from executor.services.agent_service import AgentService
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
-from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_async,
+    trace_sync,
+)
 
 logger = setup_logger("task_processor")
 
@@ -269,6 +277,137 @@ def process(request: Union[ExecutionRequest, Dict[str, Any]]) -> TaskStatus:
     return status
 
 
+@trace_async(
+    span_name="execute_task",
+    tracer_name="executor.tasks",
+    extract_attributes=_extract_task_attributes,
+)
+async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> TaskStatus:
+    """
+    Process task and send callback with distributed tracing support (async version).
+
+    This is the async version of process() that should be used when called from
+    an async context (e.g., FastAPI lifespan).
+
+    For subscription tasks, the container will exit after task completion
+    (success or failure) since subscription tasks are one-time background
+    executions that don't need to keep the container running.
+
+    Args:
+        request: ExecutionRequest object or task data dict (for backward compatibility)
+
+    Returns:
+        TaskStatus: Processing status
+    """
+    # Normalize to ExecutionRequest for type safety
+    exec_request = _normalize_request(request)
+
+    # Convert to dict for AgentService (which still uses dict internally)
+    task_data = exec_request.to_dict()
+
+    callback_params = _get_callback_params(exec_request)
+
+    # Check if this is a subscription task
+    is_subscription = exec_request.is_subscription
+
+    # Extract validation_id for validation tasks
+    # Note: validation_params is not in ExecutionRequest, check task_data for backward compatibility
+    validation_params = task_data.get("validation_params", {})
+    validation_id = (
+        validation_params.get("validation_id") if validation_params else None
+    )
+
+    started_result = None
+    if validation_id:
+        started_result = {"validation_id": validation_id, "stage": "running"}
+
+    # Send task started event using unified ExecutionEvent format (async)
+    result = await send_start_event_async(**callback_params)
+    if not result or result.get("status") != TaskStatus.SUCCESS.value:
+        logger.error("Failed to send 'start' event")
+        set_span_attribute("error", True)
+        set_span_attribute("error.message", "Failed to send start event")
+        # For subscription tasks, exit container on failure
+        if is_subscription:
+            logger.info(
+                "Subscription task failed to start, exiting container with code 1"
+            )
+            os._exit(1)
+        return TaskStatus.FAILED
+
+    add_span_event("task_started_event_sent")
+
+    # Execute task using AgentService
+    try:
+        agent_service = AgentService()
+        status, error_message = agent_service.execute_task(task_data)
+
+        message = (
+            "Task executed successfully"
+            if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]
+            else error_message
+        )
+
+        set_span_attribute("task.execution_status", status.value)
+        if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
+            add_span_event("task_execution_completed")
+        elif status == TaskStatus.FAILED:
+            set_span_attribute("error", True)
+            set_span_attribute("error.message", error_message or "Unknown error")
+        elif status == TaskStatus.RUNNING:
+            add_span_event("task_execution_running")
+
+    except Exception as e:
+        error_msg = f"Unexpected error during task execution: {str(e)}"
+        logger.exception(error_msg)
+        status = TaskStatus.FAILED
+        message = error_msg
+        set_span_attribute("error", True)
+        set_span_attribute("error.message", error_msg)
+
+    # Send task completion or failure event using unified ExecutionEvent format (async)
+    if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
+        done_result = None
+        if validation_id:
+            done_result = {"validation_id": validation_id, "stage": "completed"}
+        await send_done_event_async(result=done_result, **callback_params)
+        add_span_event("task_done_event_sent")
+    elif status == TaskStatus.FAILED:
+        fail_result = None
+        if validation_id:
+            fail_result = {
+                "validation_id": validation_id,
+                "stage": "failed",
+                "validation_result": {
+                    "valid": False,
+                    "checks": [],
+                    "errors": [message] if message else [],
+                },
+            }
+        await send_error_event_async(
+            error=message or "Unknown error",
+            **callback_params,
+        )
+        add_span_event("task_error_event_sent")
+
+    # For subscription tasks, exit container after completion
+    # Subscription tasks are one-time background executions that don't need
+    # to keep the container running for follow-up messages
+    if is_subscription and status in [
+        TaskStatus.SUCCESS,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+    ]:
+        exit_code = 0 if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED] else 1
+        logger.info(
+            f"Subscription task completed with status {status.value}, "
+            f"exiting container with code {exit_code}"
+        )
+        os._exit(exit_code)
+
+    return status
+
+
 def run_task() -> TaskStatus:
     """
     Main function, used to read task data and process it
@@ -278,3 +417,17 @@ def run_task() -> TaskStatus:
     """
     task_data = read_task_data()
     return process(task_data)
+
+
+async def run_task_async() -> TaskStatus:
+    """
+    Main function (async version), used to read task data and process it.
+
+    This is the async version of run_task() that should be used when called from
+    an async context (e.g., FastAPI lifespan).
+
+    Returns:
+        TaskStatus: Processing status
+    """
+    task_data = read_task_data()
+    return await process_async(task_data)
