@@ -125,6 +125,25 @@ erDiagram
         datetime created_at
         datetime updated_at
     }
+    
+    TopicVersion {
+        int id PK
+        int topic_id FK
+        string version
+        json question_snapshots
+        datetime published_at
+        int published_by FK
+    }
+    
+    TopicPermission {
+        int id PK
+        int topic_id FK
+        int user_id FK
+        enum role
+        int granted_by FK
+        datetime granted_at
+    }
+    
     Question {
         int id PK
         int topic_id FK
@@ -137,6 +156,16 @@ erDiagram
         int creator_id FK
     }
     
+    QuestionVersion {
+        int id PK
+        int question_id FK
+        string version
+        json content_data
+        json criteria_data
+        datetime published_at
+        int published_by FK
+    }
+    
     Answer {
         int id PK
         int question_id FK
@@ -146,7 +175,6 @@ erDiagram
         json content_data
         datetime submitted_at
         boolean is_latest
-    }
     }
     
     GradingTask {
