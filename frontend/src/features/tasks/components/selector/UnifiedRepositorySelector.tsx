@@ -274,9 +274,13 @@ export default function UnifiedRepositorySelector({
 
   // Auto-open popover when requiresWorkspace changes from false to true (e.g., team switch)
   // and no repo is currently selected
+  // NOTE: Do NOT auto-open when disabled (e.g., historical conversation page)
   useEffect(() => {
     const prevValue = prevRequiresWorkspaceRef.current
     prevRequiresWorkspaceRef.current = requiresWorkspace
+
+    // Skip auto-open when disabled (e.g., viewing historical conversation)
+    if (disabled) return
 
     // If changed from false to true and no repo selected, auto-open
     if (!prevValue && requiresWorkspace && !selectedRepo) {
@@ -284,7 +288,7 @@ export default function UnifiedRepositorySelector({
         setIsOpen(true)
       }, 100)
     }
-  }, [requiresWorkspace, selectedRepo])
+  }, [requiresWorkspace, selectedRepo, disabled])
 
   // Navigate to settings page
   const handleIntegrationClick = () => {
@@ -336,15 +340,16 @@ export default function UnifiedRepositorySelector({
       if (!checked) {
         onRepoChange(null)
         onBranchChange(null)
-      } else {
+      } else if (!disabled) {
         // When turning on workspace requirement, auto-open the popover
         // Use setTimeout to ensure the toggle animation completes first
+        // NOTE: Do NOT auto-open when disabled (defensive check)
         setTimeout(() => {
           setIsOpen(true)
         }, 100)
       }
     },
-    [onRequiresWorkspaceChange, onRepoChange, onBranchChange]
+    [onRequiresWorkspaceChange, onRepoChange, onBranchChange, disabled]
   )
 
   // Determine the display text
