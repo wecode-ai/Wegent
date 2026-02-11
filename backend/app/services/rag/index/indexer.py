@@ -4,18 +4,24 @@
 
 """
 Document indexing orchestration.
+
+This module provides the DocumentIndexer class for orchestrating document
+indexing, including:
+- Traditional indexing using LlamaIndex's SimpleDirectoryReader
+- Pipeline-based indexing for Office documents (DOC, DOCX, PPT, PPTX) using
+  Docling or Pandoc for Markdown conversion
 """
 
 import logging
 import tempfile
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from llama_index.core import Document, SimpleDirectoryReader
 
-from app.schemas.rag import SplitterConfig
+from app.schemas.rag import SmartSplitterConfig, SplitterConfig
+from app.services.rag.pipeline.factory import create_pipeline, should_use_pipeline
 from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
 from app.services.rag.storage.base import BaseStorageBackend
@@ -35,6 +41,8 @@ SAFE_METADATA_KEYS = {
     "last_modified_date",
     "page_label",
     "page_number",
+    "source_file",
+    "pipeline",
 }
 
 
@@ -68,7 +76,15 @@ def sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class DocumentIndexer:
-    """Orchestrates document indexing process."""
+    """Orchestrates document indexing process.
+
+    This class handles document indexing with support for:
+    - Traditional flow using LlamaIndex's SimpleDirectoryReader
+    - Pipeline-based flow for Office documents using Docling or Pandoc
+
+    The pipeline architecture is automatically selected for Office documents
+    (DOC, DOCX, PPT, PPTX) when using SmartSplitter configuration.
+    """
 
     def __init__(
         self,
@@ -89,6 +105,7 @@ class DocumentIndexer:
         self.storage_backend = storage_backend
         self.embed_model = embed_model
         self.file_extension = file_extension
+        self.splitter_config = splitter_config
         self.splitter = create_splitter(splitter_config, embed_model, file_extension)
 
     def index_document(
@@ -136,9 +153,10 @@ class DocumentIndexer:
         """
         Index a document from binary data (synchronous).
 
-        This method writes binary data to a temporary file and uses
-        SimpleDirectoryReader to parse it, leveraging LlamaIndex's
-        built-in document parsing capabilities for various file formats.
+        For Office documents (DOC, DOCX, PPT, PPTX) with SmartSplitter config,
+        this method uses the pipeline architecture (Docling or Pandoc) for
+        better Markdown conversion. For other file types, it uses LlamaIndex's
+        SimpleDirectoryReader.
 
         Supports MySQL and external storage (S3/MinIO) binary data.
 
@@ -156,8 +174,340 @@ class DocumentIndexer:
         Raises:
             Exception: If indexing fails
         """
+        logger.info(
+            f"Indexing document from binary: source_file={source_file}, "
+            f"extension={file_extension}, size={len(binary_data)} bytes"
+        )
+
+        # Check if we should use the pipeline architecture
+        # Pipeline is used for Office documents with SmartSplitter config
+        use_pipeline = self._should_use_pipeline(file_extension)
+
+        if use_pipeline:
+            return self._index_with_pipeline(
+                knowledge_id=knowledge_id,
+                binary_data=binary_data,
+                source_file=source_file,
+                file_extension=file_extension,
+                doc_ref=doc_ref,
+                **kwargs,
+            )
+        else:
+            return self._index_with_llamaindex(
+                knowledge_id=knowledge_id,
+                binary_data=binary_data,
+                source_file=source_file,
+                file_extension=file_extension,
+                doc_ref=doc_ref,
+                **kwargs,
+            )
+
+    def _should_use_pipeline(self, file_extension: str) -> bool:
+        """
+        Determine if pipeline architecture should be used.
+
+        Pipeline is used when:
+        1. The file type requires conversion (Office documents)
+        2. SmartSplitter is configured
+
+        Args:
+            file_extension: File extension to check
+
+        Returns:
+            True if pipeline should be used
+        """
+        # Only use pipeline with SmartSplitter config
+        if not isinstance(self.splitter_config, SmartSplitterConfig):
+            return False
+
+        # Check if file type requires pipeline processing
+        return should_use_pipeline(file_extension)
+
+    def _index_with_pipeline(
+        self,
+        knowledge_id: str,
+        binary_data: bytes,
+        source_file: str,
+        file_extension: str,
+        doc_ref: str,
+        **kwargs,
+    ) -> Dict:
+        """
+        Index document using the pipeline architecture.
+
+        This method creates an appropriate pipeline (Docling or Pandoc)
+        for the file type and uses it for document processing.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            binary_data: Binary file content
+            source_file: Original filename
+            file_extension: File extension
+            doc_ref: Document reference ID
+            **kwargs: Additional parameters
+
+        Returns:
+            Indexing result dict
+        """
+        add_span_event(
+            "rag.indexer.pipeline.started",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "source_file": source_file,
+                "file_extension": file_extension,
+            },
+        )
+
+        # Get chunk configuration from splitter config
+        chunk_size = SmartSplitter.DEFAULT_CHUNK_SIZE
+        chunk_overlap = SmartSplitter.DEFAULT_CHUNK_OVERLAP
+
+        if isinstance(self.splitter_config, SmartSplitterConfig):
+            chunk_size = self.splitter_config.chunk_size
+            chunk_overlap = self.splitter_config.chunk_overlap
+
+        # Create appropriate pipeline
+        try:
+            pipeline = create_pipeline(
+                file_extension=file_extension,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+        except ValueError as e:
+            logger.error(f"Failed to create pipeline for {file_extension}: {e}")
+            # Fall back to LlamaIndex if pipeline creation fails
+            logger.warning("Falling back to LlamaIndex processing")
+            return self._index_with_llamaindex(
+                knowledge_id=knowledge_id,
+                binary_data=binary_data,
+                source_file=source_file,
+                file_extension=file_extension,
+                doc_ref=doc_ref,
+                **kwargs,
+            )
+
+        add_span_event(
+            "rag.indexer.pipeline.created",
+            {
+                "pipeline_type": type(pipeline).__name__,
+                "chunk_size": str(chunk_size),
+                "chunk_overlap": str(chunk_overlap),
+            },
+        )
+
+        # Process document through pipeline
+        try:
+            documents = pipeline.process(
+                binary_data=binary_data,
+                file_extension=file_extension,
+                source_file=source_file,
+            )
+        except Exception as e:
+            logger.error(f"Pipeline processing failed: {e}")
+            # For Office documents, we should not fall back to LlamaIndex
+            # as LlamaIndex may not handle them well
+            raise
+
+        add_span_event(
+            "rag.indexer.pipeline.processed",
+            {
+                "document_count": str(len(documents)),
+                "pipeline_type": type(pipeline).__name__,
+            },
+        )
+
+        # The pipeline already splits documents, so we convert them to nodes
+        # and proceed directly to indexing
+        return self._index_pipeline_documents(
+            documents=documents,
+            knowledge_id=knowledge_id,
+            doc_ref=doc_ref,
+            source_file=source_file,
+            pipeline_type=type(pipeline).__name__,
+            **kwargs,
+        )
+
+    def _index_pipeline_documents(
+        self,
+        documents: List[Document],
+        knowledge_id: str,
+        doc_ref: str,
+        source_file: str,
+        pipeline_type: str,
+        **kwargs,
+    ) -> Dict:
+        """
+        Index documents that have already been processed by a pipeline.
+
+        Pipeline documents are already split and just need to be indexed.
+
+        Args:
+            documents: List of Document objects from pipeline
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID
+            source_file: Source filename
+            pipeline_type: Name of the pipeline used
+            **kwargs: Additional parameters
+
+        Returns:
+            Indexing result dict
+        """
+        add_span_event(
+            "rag.indexer.pipeline_documents.received",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "source_file": source_file,
+                "document_count": str(len(documents)),
+                "pipeline_type": pipeline_type,
+            },
+        )
+
+        # Sanitize document metadata
+        for doc in documents:
+            if doc.metadata:
+                doc.metadata = sanitize_metadata(doc.metadata)
+
+        # Build chunk metadata for storage in database
+        chunks_data = self._build_chunks_metadata_from_documents(
+            documents, pipeline_type
+        )
+
+        # Prepare metadata
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        # For pipeline documents, we need to convert them to nodes for the storage backend
+        # Create simple text nodes from documents
+        from llama_index.core.schema import TextNode
+
+        nodes = []
+        for doc in documents:
+            node = TextNode(
+                text=doc.text,
+                metadata=doc.metadata or {},
+            )
+            nodes.append(node)
+
+        # Delegate to storage backend for indexing
+        add_span_event(
+            "rag.indexer.vector_store.indexing_started",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "node_count": str(len(nodes)),
+                "storage_backend": type(self.storage_backend).__name__,
+            },
+        )
+
+        result = self.storage_backend.index_with_metadata(
+            nodes=nodes,
+            knowledge_id=knowledge_id,
+            doc_ref=doc_ref,
+            source_file=source_file,
+            created_at=created_at,
+            embed_model=self.embed_model,
+            **kwargs,
+        )
+
+        add_span_event(
+            "rag.indexer.vector_store.indexing_completed",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "indexed_count": str(result.get("indexed_count", 0)),
+                "index_name": result.get("index_name", "unknown"),
+                "status": result.get("status", "unknown"),
+            },
+        )
+
+        # Add document info to result
+        result.update(
+            {
+                "doc_ref": doc_ref,
+                "knowledge_id": knowledge_id,
+                "source_file": source_file,
+                "chunk_count": len(nodes),
+                "created_at": created_at,
+                "chunks_data": chunks_data,
+                "pipeline_type": pipeline_type,
+            }
+        )
+
+        return result
+
+    def _build_chunks_metadata_from_documents(
+        self, documents: List[Document], pipeline_type: str
+    ) -> Dict[str, Any]:
+        """
+        Build chunk metadata from documents for storage in database.
+
+        Args:
+            documents: List of Document objects from pipeline
+            pipeline_type: Name of the pipeline used
+
+        Returns:
+            Dictionary with chunk metadata suitable for JSON storage
+        """
+        items = []
+        current_position = 0
+
+        for idx, doc in enumerate(documents):
+            text = doc.text
+            text_length = len(text)
+
+            # Estimate token count (roughly 4 characters per token)
+            token_count = text_length // 4
+
+            items.append(
+                {
+                    "index": idx,
+                    "content": text,
+                    "token_count": token_count,
+                    "start_position": current_position,
+                    "end_position": current_position + text_length,
+                }
+            )
+
+            current_position += text_length
+
+        return {
+            "items": items,
+            "total_count": len(items),
+            "splitter_type": "smart",
+            "splitter_subtype": "markdown_sentence",  # Pipeline uses markdown splitting
+            "pipeline_type": pipeline_type,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _index_with_llamaindex(
+        self,
+        knowledge_id: str,
+        binary_data: bytes,
+        source_file: str,
+        file_extension: str,
+        doc_ref: str,
+        **kwargs,
+    ) -> Dict:
+        """
+        Index document using traditional LlamaIndex flow.
+
+        This method writes binary data to a temporary file and uses
+        SimpleDirectoryReader to parse it, leveraging LlamaIndex's
+        built-in document parsing capabilities.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            binary_data: Binary file content
+            source_file: Original filename
+            file_extension: File extension
+            doc_ref: Document reference ID
+            **kwargs: Additional parameters
+
+        Returns:
+            Indexing result dict
+        """
         # Write binary data to a temporary file for SimpleDirectoryReader
-        # This allows LlamaIndex to use its built-in parsers for various formats
         with tempfile.NamedTemporaryFile(
             suffix=file_extension, delete=False
         ) as tmp_file:
@@ -165,11 +515,6 @@ class DocumentIndexer:
             tmp_file_path = tmp_file.name
 
         try:
-            logger.info(
-                f"Indexing document from binary: source_file={source_file}, "
-                f"extension={file_extension}, size={len(binary_data)} bytes"
-            )
-
             # Load document using SimpleDirectoryReader
             documents = SimpleDirectoryReader(input_files=[tmp_file_path]).load_data()
 
@@ -201,7 +546,7 @@ class DocumentIndexer:
         **kwargs,
     ) -> Dict:
         """
-        Internal method to index documents.
+        Internal method to index documents using the configured splitter.
 
         Args:
             documents: List of LlamaIndex Document objects

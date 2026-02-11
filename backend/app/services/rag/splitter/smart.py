@@ -33,13 +33,17 @@ class SmartSplitter:
     - Markdown (.md): First splits by markdown structure (headers), then
       applies sentence splitting for large sections
     - Text (.txt): Uses sentence-based splitting
-    - PDF/DOC/DOCX: Uses recursive character splitting via LangChain
+    - PDF/DOC/DOCX/PPT/PPTX: Uses recursive character splitting via LangChain
 
     All strategies use unified chunk_size=1024 and chunk_overlap=50.
+
+    Note: For Office documents (DOC, DOCX, PPT, PPTX), the DocumentIndexer
+    may use the pipeline architecture (Docling or Pandoc) to convert them
+    to Markdown first, which provides better structure preservation.
     """
 
     # File extensions that support smart splitting
-    SMART_EXTENSIONS = {".pdf", ".txt", ".doc", ".docx", ".md"}
+    SMART_EXTENSIONS = {".pdf", ".txt", ".doc", ".docx", ".ppt", ".pptx", ".md"}
 
     # Default configuration
     DEFAULT_CHUNK_SIZE = 1024
@@ -94,7 +98,7 @@ class SmartSplitter:
         elif self.file_extension == ".txt":
             return self._split_text(documents)
         else:
-            # PDF, DOC, DOCX use recursive character splitting
+            # PDF, DOC, DOCX, PPT, PPTX use recursive character splitting
             return self._split_recursive(documents)
 
     def _split_markdown(self, documents: List[Document]) -> List[BaseNode]:
