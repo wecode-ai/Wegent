@@ -101,9 +101,15 @@ function QuestionDetailContent() {
       // Initialize edit form
       setEditTitle(questionData.title)
       setEditContentType(questionData.content_type)
-      setEditContentText((questionData.content_data?.text as string) || '')
-      setEditContentUrl((questionData.content_data?.url as string) || '')
-      setEditCriteriaText((questionData.criteria_data?.text as string) || '')
+      setEditContentText(
+        typeof questionData.content_data?.text === 'string' ? questionData.content_data.text : ''
+      )
+      setEditContentUrl(
+        typeof questionData.content_data?.url === 'string' ? questionData.content_data.url : ''
+      )
+      setEditCriteriaText(
+        typeof questionData.criteria_data?.text === 'string' ? questionData.criteria_data.text : ''
+      )
 
       // Load my answers if respondent
       if (roleData.can_answer) {
@@ -396,32 +402,32 @@ function QuestionDetailContent() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {question.content_data?.text && (
+            {typeof question.content_data?.text === 'string' && question.content_data.text && (
               <div>
                 <h3 className="mb-2 font-medium">{t('questions.content')}</h3>
                 <p className="whitespace-pre-wrap text-text-secondary">
-                  {question.content_data.text as string}
+                  {question.content_data.text}
                 </p>
               </div>
             )}
-            {question.content_data?.url && (
+            {typeof question.content_data?.url === 'string' && question.content_data.url && (
               <div>
                 <h3 className="mb-2 font-medium">URL</h3>
                 <a
-                  href={question.content_data.url as string}
+                  href={question.content_data.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:underline"
                 >
-                  {question.content_data.url as string}
+                  {question.content_data.url}
                 </a>
               </div>
             )}
-            {question.criteria_data?.text && (
+            {typeof question.criteria_data?.text === 'string' && question.criteria_data.text && (
               <div>
                 <h3 className="mb-2 font-medium">{t('questions.criteria')}</h3>
                 <p className="whitespace-pre-wrap text-text-secondary">
-                  {question.criteria_data.text as string}
+                  {question.criteria_data.text}
                 </p>
               </div>
             )}
@@ -472,7 +478,7 @@ function QuestionDetailContent() {
                     {answer.is_latest && <Badge variant="success">{t('answers.latest')}</Badge>}
                   </div>
                   <p className="whitespace-pre-wrap">
-                    {(answer.content_data?.text as string) || ''}
+                    {typeof answer.content_data?.text === 'string' ? answer.content_data.text : ''}
                   </p>
                 </div>
               ))}
