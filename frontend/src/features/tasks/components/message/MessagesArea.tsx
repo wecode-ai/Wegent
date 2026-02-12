@@ -28,6 +28,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTypewriter } from '@/hooks/useTypewriter'
 import MessageBubble, { type Message } from './MessageBubble'
+import { PreserveExecutorToggle } from '../PreserveExecutorToggle'
 import TaskShareModal from '../share/TaskShareModal'
 import ExportSelectModal, {
   type SelectableMessage,
@@ -920,6 +921,13 @@ export default function MessagesArea({
     // Desktop: Show all buttons inline
     return (
       <div className="flex items-center gap-2">
+        {/* Preserve Executor Indicator - only show for code tasks when preserved */}
+        {selectedTaskDetail?.task_type === 'code' && (
+          <PreserveExecutorToggle
+            preserveExecutor={selectedTaskDetail.preserve_executor || false}
+          />
+        )}
+
         {showMembersButton && (
           <Button
             variant="outline"
@@ -994,6 +1002,9 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     selectedTaskDetail?.is_group_chat,
     selectedTaskDetail?.team?.agent_type,
+    selectedTaskDetail?.status,
+    selectedTaskDetail?.preserve_executor,
+    selectedTaskDetail?.task_type,
     messages.length,
     isSharing,
     isMobile,

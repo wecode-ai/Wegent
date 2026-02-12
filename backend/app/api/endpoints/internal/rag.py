@@ -446,6 +446,15 @@ async def save_kb_tool_result(
                         success=False,
                         message="Missing required fields for RAG: injection_mode, query, chunks_count",
                     )
+                # For rag_retrieval mode, extracted_text is required (it contains the actual content)
+                if (
+                    request.injection_mode == "rag_retrieval"
+                    and not request.extracted_text
+                ):
+                    return SaveKbToolResultResponse(
+                        success=False,
+                        message="extracted_text is required for rag_retrieval mode",
+                    )
                 result_data = {
                     "extracted_text": request.extracted_text or "",
                     "sources": request.sources or [],
@@ -454,6 +463,12 @@ async def save_kb_tool_result(
                     "chunks_count": request.chunks_count,
                 }
             else:  # kb_head
+                # Validate that document_ids is not empty for kb_head
+                if not request.document_ids:
+                    return SaveKbToolResultResponse(
+                        success=False,
+                        message="document_ids is required for kb_head (at least one document ID)",
+                    )
                 result_data = {
                     "document_ids": request.document_ids,
                     "offset": request.offset,
@@ -497,6 +512,15 @@ async def save_kb_tool_result(
                     success=False,
                     message="Missing required fields for RAG: injection_mode, query, chunks_count",
                 )
+            # For rag_retrieval mode, extracted_text is required
+            if (
+                request.injection_mode == "rag_retrieval"
+                and not request.extracted_text
+            ):
+                return SaveKbToolResultResponse(
+                    success=False,
+                    message="extracted_text is required for rag_retrieval mode",
+                )
 
             # Update the context with RAG results
             updated_context = context_service.update_knowledge_base_retrieval_result(
@@ -526,6 +550,12 @@ async def save_kb_tool_result(
                 )
 
         elif request.tool_type == "kb_head":
+            # Validate that document_ids is not empty for kb_head
+            if not request.document_ids:
+                return SaveKbToolResultResponse(
+                    success=False,
+                    message="document_ids is required for kb_head (at least one document ID)",
+                )
             # Update the context with kb_head usage (append mode - preserve existing data)
             updated_context = context_service.update_knowledge_base_kb_head_result(
                 db=db,

@@ -5,6 +5,7 @@
 """
 Factory for creating Kind services
 """
+
 from typing import Dict, Type
 
 from app.services.kind_base import KindBaseService

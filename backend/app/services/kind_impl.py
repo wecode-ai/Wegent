@@ -5,6 +5,7 @@
 """
 Implementation of specific Kind services
 """
+
 import logging
 from typing import Any, Dict
 

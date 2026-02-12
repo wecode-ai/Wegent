@@ -101,5 +101,17 @@
     "analyzing": "Analyzing in depth",
     "generating_response": "Please wait, generating response",
     "longer_than_usual": "Response is taking longer than usual"
+  },
+  "preserve_executor": {
+    "preserve": "Preserve",
+    "preserved": "Preserved",
+    "enabled_title": "Executor Preserved",
+    "enabled_desc": "This task's executor pod will not be cleaned up after completion.",
+    "disabled_title": "Executor Cleanup Enabled",
+    "disabled_desc": "This task's executor pod will be cleaned up normally.",
+    "error_title": "Failed to Update",
+    "error_desc": "Could not update executor preservation setting.",
+    "tooltip_preserved": "Executor is preserved and will not be cleaned up",
+    "tooltip_not_preserved": "Click to preserve executor from cleanup"
   }
 }

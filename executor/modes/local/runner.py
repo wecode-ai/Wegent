@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from executor.config import config
+from executor.config.device_config import DeviceConfig
 from executor.modes.local.events import ChatEvents, TaskEvents
 from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
@@ -41,10 +42,17 @@ class LocalRunner:
     - Graceful shutdown handling via SIGINT/SIGTERM
     """
 
-    def __init__(self):
-        """Initialize the local runner."""
+    def __init__(self, device_config: Optional[DeviceConfig] = None):
+        """Initialize the local runner.
+
+        Args:
+            device_config: Optional device configuration. If not provided,
+                          will use environment variables for backward compatibility.
+        """
+        self.device_config = device_config
+
         # WebSocket client
-        self.websocket_client = WebSocketClient()
+        self.websocket_client = WebSocketClient(device_config=device_config)
 
         # Heartbeat service
         self.heartbeat_service = LocalHeartbeatService(self.websocket_client)
