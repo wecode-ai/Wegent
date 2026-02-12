@@ -51,6 +51,8 @@ Wegent 基于 Kubernetes 风格的声明式 API 和 CRD (Custom Resource Definit
 | 🤝 | **Collaboration** | 协作模式 | Bot 之间的交互模式 |
 | 💼 | **Workspace** | 工作环境 | 隔离的代码工作空间 |
 | 🎯 | **Task** | 任务 | 分配给 Team 的工作单元 |
+| 📱 | **Device** | 本地设备 | 本地执行器连接（新） |
+| 🧩 | **Skill** | 技能 | 按需加载的能力包 |
 
 ### 资源层级关系
 
@@ -62,6 +64,27 @@ Bot (Ghost + Shell + 可选 Model)           ← UI: 机器人
 Team (多个 Bot 及其角色)                    ← UI: 智能体
    ↓
 Task (Team + Workspace) → 子任务
+   ↓
+Device (可选，本地执行器)                   ← UI: 本地设备
+```
+
+### Kind 资源唯一标识
+
+⚠️ **关键：** 一个 Kind 资源由三个字段唯一标识：`namespace`、`name` 和 `user_id`。
+
+```python
+# ✅ 正确：使用三个字段唯一标识
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name,
+    Kind.user_id == user_id
+).first()
+
+# ❌ 错误：缺少 user_id，可能返回错误的资源
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name
+).first()
 ```
 
 ### 数据库表映射
@@ -70,7 +93,7 @@ Task (Team + Workspace) → 子任务
 
 | CRD Kind | 数据库表 | 模型类 |
 |----------|----------|--------|
-| Ghost, Model, Shell, Bot, Team, Skill | `kinds` | `Kind` |
+| Ghost, Model, Shell, Bot, Team, Skill, Device | `kinds` | `Kind` |
 | **Task, Workspace** | **`tasks`** | **`TaskResource`** |
 | **Skill Binary** | **`skill_binaries`** | **`SkillBinary`** |
 
@@ -170,6 +193,8 @@ spec:
   supportModel:
     - "openai"
     - "anthropic"
+  # 可选：基础镜像配置
+  baseImage: "wegent-executor:latest"
 status:
   state: "Available"
 ```
@@ -310,6 +335,8 @@ kind: Task
 metadata:
   name: implement-feature
   namespace: default
+  labels:
+    preserveExecutor: "true"  # 可选：保留执行器，不自动清理
 spec:
   title: "Implement new feature"
   prompt: "Please implement a user authentication feature with JWT tokens"
@@ -319,11 +346,81 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  deviceRef:  # 可选：指定本地设备执行
+    name: my-local-device
+    namespace: default
 status:
   state: "Available"
   status: "PENDING"
   progress: 0
 ```
+
+### Task 新增功能
+
+| 功能 | 说明 |
+|------|------|
+| **preserveExecutor** | 标签，设置为 "true" 时保留执行器容器不自动清理 |
+| **deviceRef** | 可选引用，指定使用本地设备执行任务 |
+
+---
+
+## 📱 Device - 本地设备（新）
+
+Device 是本地执行器的 CRD 表示，允许用户连接本地开发环境来执行任务。
+
+### 设备类型
+
+| 类型 | 说明 | 连接方式 |
+|------|------|----------|
+| **local** | 本地设备 | WebSocket |
+| **cloud** | 云端设备（未来扩展） | API |
+
+### YAML 配置示例
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Device
+metadata:
+  name: my-local-device
+  namespace: default
+spec:
+  deviceType: "local"
+  connectionMode: "websocket"
+  isDefault: true  # 是否为默认设备（每个用户只能有一个默认设备）
+  displayName: "My MacBook Pro"
+  description: "Local development machine"
+status:
+  state: "Connected"
+  lastHeartbeat: "2024-01-15T10:30:00Z"
+```
+
+### Device 提供者模式
+
+Device 使用策略模式实现，支持未来扩展新的设备类型：
+
+```python
+# 基础提供者接口
+class BaseDeviceProvider:
+    async def connect(self, device: Device) -> bool
+    async def disconnect(self, device: Device) -> bool
+    async def execute(self, device: Device, task: Task) -> Result
+
+# 本地设备提供者
+class LocalDeviceProvider(BaseDeviceProvider):
+    # WebSocket 连接实现
+
+# 工厂类
+class DeviceProviderFactory:
+    def get_provider(self, device_type: str) -> BaseDeviceProvider
+```
+
+### 核心特性
+
+- 📱 本地开发环境执行任务
+- 🔌 WebSocket 实时连接
+- 🎯 默认设备单例控制（每用户一个默认设备）
+- 🔄 心跳检测和自动重连
+- 🔐 安全认证
 
 ---
 
@@ -351,6 +448,7 @@ graph LR
 - ✅ 明确定义智能体的专业领域
 - ✅ 提供清晰的行为指南
 - ✅ 配置必要的 MCP 工具
+- ✅ 引用相关技能（skills）
 
 ### 2. Bot 组合
 - ✅ 为不同任务创建专门的 Bot
@@ -362,6 +460,15 @@ graph LR
 - ✅ 明确成员角色和职责
 - ✅ 为每个成员提供清晰的任务提示
 
+### 4. Device 使用
+- ✅ 本地开发时使用 Device 加速迭代
+- ✅ 合理设置默认设备
+- ✅ 确保设备连接稳定
+
+### 5. Task 管理
+- ✅ 复杂任务使用 `preserveExecutor` 保留执行器
+- ✅ 本地开发时指定 `deviceRef`
+
 ---
 
 ## 🔗 相关资源
@@ -369,3 +476,5 @@ graph LR
 - [YAML 配置详解](../reference/yaml-specification.md) - 完整的 YAML 配置格式说明
 - [协作模式详解](../concepts/collaboration-models.md) - 四种协作模式的详细说明
 - [核心概念](../concepts/core-concepts.md) - 平台概览和功能介绍
+- [技能系统](../concepts/skill-system.md) - 技能开发和使用指南
+- [本地设备架构](./local-device-architecture.md) - 本地设备详细设计
