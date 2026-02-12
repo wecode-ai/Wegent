@@ -8,6 +8,7 @@ Database model for Subscription (订阅).
 Subscription is a CRD resource stored in the kinds table.
 BackgroundExecution stores execution records in the background_executions table.
 """
+
 from datetime import datetime
 
 from sqlalchemy import (

@@ -8,6 +8,7 @@ Subscription (订阅) CRD schemas for automated task execution.
 Subscription is a CRD resource that defines scheduled or event-triggered
 task executions. It replaces the previous Flow concept.
 """
+
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional

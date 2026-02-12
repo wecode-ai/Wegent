@@ -130,7 +130,8 @@ def find_claude_agent_sdk_binary(
 ) -> tuple[str, str] | None:
     """Find the bundled Claude CLI binary from claude-agent-sdk.
 
-    For cross-platform builds, this will download the appropriate wheel.
+    Only Windows platform includes the Claude CLI binary in the build.
+    Mac and Linux platforms rely on system-installed Claude Code.
 
     Args:
         target_platform: Target platform ('Windows', 'Darwin', 'Linux').
@@ -138,15 +139,20 @@ def find_claude_agent_sdk_binary(
 
     Returns:
         Tuple of (source_path, dest_path) for PyInstaller --add-binary,
-        or None if not found.
+        or None if not found or not required for the platform.
     """
     target = target_platform or platform.system()
 
-    # Determine binary name based on target platform
-    if target == "Windows":
-        binary_name = "claude.exe"
-    else:
-        binary_name = "claude"
+    # Only Windows requires bundled Claude CLI binary
+    # Mac and Linux use system-installed Claude Code
+    if target != "Windows":
+        print(
+            f"Platform {target}: Using system-installed Claude Code (no binary bundled)"
+        )
+        return None
+
+    # For Windows, try to find local binary first
+    binary_name = "claude.exe"
 
     try:
         import claude_agent_sdk
@@ -165,12 +171,8 @@ def find_claude_agent_sdk_binary(
     except ImportError:
         pass
 
-    # For cross-platform builds or missing binary, download from PyPI
-    if target == "Windows":
-        return _download_windows_claude_binary()
-
-    print(f"Warning: Claude CLI binary not found for platform {target}")
-    return None
+    # For cross-platform Windows builds, download from PyPI
+    return _download_windows_claude_binary()
 
 
 def _download_windows_claude_binary() -> tuple[str, str] | None:
@@ -419,13 +421,14 @@ def build_executable(
             "--collect-data=certifi",
         ]
 
-        # Add Claude CLI binary if found (critical for Windows to avoid asyncio + .cmd issue)
+        # Add Claude CLI binary only for Windows (avoids asyncio + .cmd issue)
+        # Mac and Linux use system-installed Claude Code
         claude_binary = find_claude_agent_sdk_binary(target_platform=effective_platform)
         if claude_binary:
             src_path, dest_dir = claude_binary
             cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
             print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
-        else:
+        elif effective_platform == "Windows":
             print("Warning: Claude CLI binary not found, executor may fail on Windows")
 
         # Continue with remaining options

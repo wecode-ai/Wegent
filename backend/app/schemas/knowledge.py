@@ -46,6 +46,7 @@ class ResourceScope(str, Enum):
 
     PERSONAL = "personal"
     GROUP = "group"
+    ORGANIZATION = "organization"
     ALL = "all"
 
 

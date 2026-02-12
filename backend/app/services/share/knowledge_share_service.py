@@ -26,6 +26,7 @@ from app.schemas.share import (
 )
 from app.schemas.share import PermissionLevel as SchemaPermissionLevel
 from app.services.group_permission import get_effective_role_in_group
+from app.services.knowledge.knowledge_service import _is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
@@ -52,7 +53,8 @@ class KnowledgeShareService(UnifiedShareService):
         For Knowledge Bases, we check if resource exists and user has access via:
         1. Creator (user_id matches)
         2. Explicit shared access (ResourceMember)
-        3. Team membership (for team knowledge bases)
+        3. Organization membership (for organization knowledge bases)
+        4. Team membership (for team knowledge bases)
         """
         logger.info(
             f"[_get_resource] Fetching KnowledgeBase: resource_id={resource_id}, user_id={user_id}"
@@ -108,6 +110,13 @@ class KnowledgeShareService(UnifiedShareService):
             return kb
 
         logger.warning(f"[_get_resource] User has NO explicit shared access")
+
+        # For organization knowledge bases, all authenticated users have access
+        if _is_organization_namespace(db, kb.namespace):
+            logger.info(
+                f"[_get_resource] Organization KB - granting access to user_id={user_id}"
+            )
+            return kb
 
         # For team knowledge bases, check group permission
         if kb.namespace != "default":
@@ -238,6 +247,10 @@ class KnowledgeShareService(UnifiedShareService):
         if explicit_perm:
             return True, explicit_perm.permission_level, False
 
+        # For organization knowledge bases, all authenticated users have VIEW access
+        if _is_organization_namespace(db, kb.namespace):
+            return True, PermissionLevel.VIEW.value, False
+
         # For team knowledge bases, check group permission
         if kb.namespace != "default":
             role = get_effective_role_in_group(db, user_id, kb.namespace)
@@ -342,9 +355,12 @@ class KnowledgeShareService(UnifiedShareService):
                     requested_at=explicit_perm.requested_at,
                 )
 
-        # Check group permission for team KB
+        # Check group permission for team KB or organization KB
         group_level = None
-        if kb.namespace != "default":
+        if _is_organization_namespace(db, kb.namespace):
+            # Organization KB - all authenticated users have VIEW access
+            group_level = SchemaPermissionLevel.VIEW
+        elif kb.namespace != "default":
             role = get_effective_role_in_group(db, user_id, kb.namespace)
             if role is not None:
                 role_mapping = {

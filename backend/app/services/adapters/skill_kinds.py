@@ -5,6 +5,7 @@
 """
 Skill adapter service for managing Skills using kinds table
 """
+
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException

@@ -12,9 +12,14 @@
     "resources": "资源",
     "myRole": "我的角色",
     "createdAt": "创建时间",
+    "level": "级别",
     "private": "私有",
     "internal": "内部",
     "public": "公开",
+    "levels": {
+      "group": "群组",
+      "organization": "公司"
+    },
     "roles": {
       "Owner": "创建者",
       "Maintainer": "管理员",
@@ -78,7 +83,9 @@
     "finalNameWillBe": "最终群组名称将为：{{name}}",
     "visibilityPublicHint": "公开组：组内资源可被所有人通过 API 调用",
     "visibilityInternalHint": "内部组：组内资源仅成员可见和使用",
-    "visibilityPrivateHint": "私有组：仅创建者可见和使用"
+    "visibilityPrivateHint": "私有组：仅创建者可见和使用",
+    "levelGroupHint": "群组：普通群组，用于团队协作。",
+    "levelOrganizationHint": "公司：公司级别群组，所有用户可见。"
   },
   "groupMembers": {
     "selectUser": "选择用户...",

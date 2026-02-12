@@ -451,6 +451,28 @@ export const taskApis = {
   getTaskSkills: async (taskId: number): Promise<TaskSkillsResponse> => {
     return apiClient.get(`/tasks/${taskId}/skills`)
   },
+
+  /**
+   * Set preserve executor flag for a task
+   * When set, the executor pod will not be cleaned up after task completion
+   * @param taskId - Task ID
+   */
+  setPreserveExecutor: async (
+    taskId: number
+  ): Promise<{ task_id: number; preserve_executor: boolean; message: string }> => {
+    return apiClient.post(`/tasks/${taskId}/preserve-executor`, {})
+  },
+
+  /**
+   * Cancel preserve executor flag for a task
+   * When cancelled, the executor pod will be cleaned up normally
+   * @param taskId - Task ID
+   */
+  cancelPreserveExecutor: async (
+    taskId: number
+  ): Promise<{ task_id: number; preserve_executor: boolean; message: string }> => {
+    return apiClient.delete(`/tasks/${taskId}/preserve-executor`)
+  },
 }
 
 /**

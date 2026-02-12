@@ -32,8 +32,12 @@
     "tabs": {
       "personal": "个人知识",
       "group": "组知识",
+      "organization": "公司知识",
       "external": "外部知识库"
     },
+    "noOrgKnowledgeBase": "暂无公司知识库",
+    "noOrgKnowledgeBaseHint": "公司知识库由管理员创建和管理，所有成员可查看",
+    "orgKnowledgeBaseReadOnly": "您没有管理权限，仅可查看",
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",

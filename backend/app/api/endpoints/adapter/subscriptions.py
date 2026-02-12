@@ -8,6 +8,7 @@ API endpoints for Subscription (订阅) module.
 This module provides REST API endpoints for managing Subscription configurations
 and their background executions.
 """
+
 import hashlib
 import hmac
 import logging

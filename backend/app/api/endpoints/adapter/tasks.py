@@ -684,3 +684,42 @@ def delete_task_services(
     db.refresh(task)
 
     return {"app": app_data}
+
+
+@router.post("/{task_id}/preserve-executor")
+def set_preserve_executor(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Set preserve executor flag for a task.
+
+    When this flag is set, the executor pod for this task will not be cleaned up
+    by the cleanup_stale_executors job even after the task is completed.
+    This is useful for important tasks that need to retain their execution environment.
+
+    Only task owner or group chat members can set this flag.
+    """
+    return task_kinds_service.set_preserve_executor(
+        db=db, task_id=task_id, user_id=current_user.id, preserve=True
+    )
+
+
+@router.delete("/{task_id}/preserve-executor")
+def cancel_preserve_executor(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Cancel preserve executor flag for a task.
+
+    Removes the preserve flag, allowing the executor pod to be cleaned up
+    by the cleanup_stale_executors job when the task expires.
+
+    Only task owner or group chat members can cancel this flag.
+    """
+    return task_kinds_service.set_preserve_executor(
+        db=db, task_id=task_id, user_id=current_user.id, preserve=False
+    )

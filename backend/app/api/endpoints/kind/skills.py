@@ -5,6 +5,7 @@
 """
 Skills API endpoints for managing Claude Code Skills
 """
+
 import io
 import zipfile
 from typing import Any, Dict, List, Optional

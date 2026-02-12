@@ -5,6 +5,7 @@
 """
 GitLab repository provider implementation
 """
+
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
