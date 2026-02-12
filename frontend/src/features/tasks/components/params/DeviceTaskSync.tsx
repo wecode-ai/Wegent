@@ -51,9 +51,6 @@ export default function DeviceTaskSync() {
     // Check if the device exists in the devices list
     const deviceExists = devices.some(d => d.device_id === selectedTaskDetail.device_id)
     if (!deviceExists) {
-      console.log(
-        `[DeviceTaskSync] Device ${selectedTaskDetail.device_id} from task ${selectedTaskDetail.id} not found in device list`
-      )
       lastProcessedTaskIdRef.current = selectedTaskDetail.id
       return
     }

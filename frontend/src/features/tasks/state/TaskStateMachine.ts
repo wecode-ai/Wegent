@@ -562,6 +562,9 @@ export class TaskStateMachine {
   /**
    * Sync messages from backend subtasks
    */
+  /**
+   * Sync messages from backend subtasks
+   */
   private async doSync(subtasks?: TaskDetailSubtask[]): Promise<void> {
     try {
       if (subtasks && subtasks.length > 0) {
@@ -1023,9 +1026,15 @@ export class TaskStateMachine {
   private handleChatChunkEvent(event: Extract<Event, { type: 'CHAT_CHUNK' }>): void {
     const aiMessageId = generateMessageId('ai', event.subtaskId)
 
-    // If in joining/syncing state, queue the chunk for later processing
+    // If in idle/joining/syncing state, queue the chunk for later processing
     // This handles the race condition where chunks arrive before sync completes
-    if (this.state.status === 'joining' || this.state.status === 'syncing') {
+    // CRITICAL FIX: Also queue chunks when in 'idle' state, because after page refresh,
+    // WebSocket reconnects and starts receiving chunks before recover() is called
+    if (
+      this.state.status === 'idle' ||
+      this.state.status === 'joining' ||
+      this.state.status === 'syncing'
+    ) {
       this.pendingChunks.push({
         subtaskId: event.subtaskId,
         content: event.content,

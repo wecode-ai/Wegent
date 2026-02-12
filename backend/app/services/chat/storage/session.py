@@ -389,10 +389,29 @@ class SessionManager:
         """
         try:
             key = self._get_streaming_key(subtask_id)
-            content = await self._cache.get(key)
-            if content is not None and isinstance(content, str):
-                return content
-            return None
+            # Use direct Redis client to get raw string content
+            # (add_text_content uses redis APPEND which stores raw strings)
+            redis_client = await self._cache._get_client()
+            try:
+                content = await redis_client.get(key)
+                if content is not None:
+                    # Content is stored as raw bytes, decode to string
+                    if isinstance(content, bytes):
+                        result = content.decode("utf-8")
+                    else:
+                        result = str(content)
+                    logger.debug(
+                        f"[SessionManager] get_streaming_content: subtask_id={subtask_id}, "
+                        f"content_len={len(result)}, content_preview={result[:100] if result else 'None'}..."
+                    )
+                    return result
+                logger.debug(
+                    f"[SessionManager] get_streaming_content: subtask_id={subtask_id}, "
+                    f"content=None (key not found)"
+                )
+                return None
+            finally:
+                await redis_client.aclose()
         except Exception as e:
             logger.error(
                 f"Error getting streaming content for subtask {subtask_id}: {e}"
@@ -742,11 +761,20 @@ class SessionManager:
             text_block_key = self._get_current_text_block_key(subtask_id)
             blocks_key = self._get_blocks_key(subtask_id)
 
+            logger.debug(
+                f"[SessionManager] add_text_content: subtask_id={subtask_id}, "
+                f"content_len={len(content)}, streaming_key={streaming_key}"
+            )
+
             redis_client = await self._cache._get_client()
             try:
                 # Append content to streaming cache
-                await redis_client.append(streaming_key, content)
+                new_len = await redis_client.append(streaming_key, content)
                 await redis_client.expire(streaming_key, STREAMING_TTL)
+                logger.debug(
+                    f"[SessionManager] add_text_content: appended to Redis, "
+                    f"subtask_id={subtask_id}, new_total_len={new_len}"
+                )
 
                 # Check if we have a current text block
                 current_block_id = await redis_client.get(text_block_key)
@@ -870,11 +898,14 @@ class SessionManager:
         content = await self.get_streaming_content(subtask_id)
         return content or ""
 
-    async def cleanup_streaming_state(self, subtask_id: int) -> None:
+    async def cleanup_streaming_state(
+        self, subtask_id: int, task_id: Optional[int] = None
+    ) -> None:
         """Clean up all streaming state for a completed subtask.
 
         Args:
             subtask_id: Subtask ID
+            task_id: Optional Task ID for clearing task-level streaming status
         """
         try:
             streaming_key = self._get_streaming_key(subtask_id)
@@ -889,6 +920,10 @@ class SessionManager:
                 )
             finally:
                 await redis_client.aclose()
+
+            # Also clear task-level streaming status if task_id is provided
+            if task_id:
+                await self.clear_task_streaming_status(task_id)
         except Exception as e:
             logger.warning(
                 f"[SessionManager] Failed to cleanup streaming state for subtask {subtask_id}: {e}"

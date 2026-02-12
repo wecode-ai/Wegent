@@ -67,8 +67,28 @@ class StatusUpdatingEmitter(ResultEmitter):
         """
         from app.services.chat.storage import session_manager
 
+        logger.debug(
+            f"[StatusUpdatingEmitter] emit: event_type={event.type}, "
+            f"task_id={self._task_id}, subtask_id={self._subtask_id}, "
+            f"content_len={len(event.content) if event.content else 0}"
+        )
+
+        # Handle START event - set task streaming status for page refresh recovery
+        if event.type == EventType.START.value:
+            # Set task-level streaming status so get_active_streaming can find it
+            await session_manager.set_task_streaming_status(
+                task_id=self._task_id,
+                subtask_id=self._subtask_id,
+                user_id=0,  # Will be updated if needed
+                username="",
+            )
+            logger.info(
+                f"[StatusUpdatingEmitter] Set task streaming status: "
+                f"task_id={self._task_id}, subtask_id={self._subtask_id}"
+            )
+
         # Collect blocks for mixed content rendering using session_manager
-        if event.type == EventType.TOOL_START.value:
+        elif event.type == EventType.TOOL_START.value:
             # When a tool starts, finalize any current text block and add tool block
             display_name = event.data.get("display_name") if event.data else None
             await session_manager.add_tool_block(
@@ -258,8 +278,10 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"and task {self._task_id} status to COMPLETED"
             )
 
-            # Clean up streaming state
-            await session_manager.cleanup_streaming_state(self._subtask_id)
+            # Clean up streaming state (including task-level streaming status)
+            await session_manager.cleanup_streaming_state(
+                self._subtask_id, task_id=self._task_id
+            )
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
@@ -289,8 +311,10 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"and task {self._task_id} status to FAILED"
             )
 
-            # Clean up streaming state
-            await session_manager.cleanup_streaming_state(self._subtask_id)
+            # Clean up streaming state (including task-level streaming status)
+            await session_manager.cleanup_streaming_state(
+                self._subtask_id, task_id=self._task_id
+            )
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
@@ -337,8 +361,10 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"and task {self._task_id} status to CANCELLED"
             )
 
-            # Clean up streaming state
-            await session_manager.cleanup_streaming_state(self._subtask_id)
+            # Clean up streaming state (including task-level streaming status)
+            await session_manager.cleanup_streaming_state(
+                self._subtask_id, task_id=self._task_id
+            )
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",

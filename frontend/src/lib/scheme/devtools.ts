@@ -102,15 +102,8 @@ export function generateTypeDefinitions(): string {
  * Logs all registered schemes to console (for debugging)
  */
 export function debugSchemes(): void {
-  const schemes = getAllSchemes()
   console.group('[SchemeURL] Registered Schemes')
-  for (const [key, registration] of Object.entries(schemes)) {
-    console.log(`${key}:`, registration.pattern, {
-      requireAuth: registration.requireAuth,
-      description: registration.description,
-      examples: registration.examples,
-    })
-  }
+
   console.groupEnd()
 }
 
@@ -158,6 +151,5 @@ export function enableDevMode(): void {
       debug: debugSchemes,
       validate: validateRequiredSchemes,
     }
-    console.log('[SchemeURL] Dev mode enabled. Use window.__wegentScheme__ for debugging.')
   }
 }

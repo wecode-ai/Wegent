@@ -509,13 +509,6 @@ export function useChatStreamHandlers({
           }
         }
 
-        // Debug log for skill selection
-        console.log('[useChatStreamHandlers] Sending message with skills:', {
-          additionalSkills,
-          additional_skills_in_payload:
-            additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
-        })
-
         const tempTaskId = await contextSendMessage(
           {
             message: finalMessage,

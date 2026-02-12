@@ -142,11 +142,6 @@ function ChatAreaContent({
 
   // Filter teams by bind_mode based on current mode
   const filteredTeams = useMemo(() => {
-    console.log('[ChatArea] Filtering teams:', {
-      taskType,
-      totalTeams: teams.length,
-      teamsBindModes: teams.map(t => ({ name: t.name, bind_mode: t.bind_mode })),
-    })
     const teamsWithValidBindMode = teams.filter(team => {
       if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
       return true
@@ -156,10 +151,7 @@ function ChatAreaContent({
       const included = team.bind_mode.includes(taskType as 'chat' | 'code' | 'knowledge' | 'task')
       return included
     })
-    console.log(
-      '[ChatArea] Filtered teams result:',
-      result.map(t => t.name)
-    )
+
     return result
   }, [teams, taskType])
 
@@ -190,7 +182,6 @@ function ChatAreaContent({
         ) {
           const teamFromDetail = filteredTeams.find(t => t.id === detailTeamId)
           if (teamFromDetail) {
-            console.log('[ChatArea] Syncing team from task detail:', teamFromDetail.name)
             handleTeamChange(teamFromDetail)
             lastSyncedTaskIdRef.current = selectedTaskDetail.id
             hasInitializedTeamRef.current = true
@@ -200,7 +191,6 @@ function ChatAreaContent({
             const teamObject =
               typeof selectedTaskDetail.team === 'object' ? (selectedTaskDetail.team as Team) : null
             if (teamObject) {
-              console.log('[ChatArea] Using team object from detail:', teamObject.name)
               handleTeamChange(teamObject)
               lastSyncedTaskIdRef.current = selectedTaskDetail.id
               hasInitializedTeamRef.current = true
@@ -213,7 +203,6 @@ function ChatAreaContent({
         }
       } else {
         // URL and taskDetail don't match - wait for correct taskDetail to load
-        console.log('[ChatArea] Waiting for taskDetail to match URL')
         return
       }
     }
@@ -223,7 +212,6 @@ function ChatAreaContent({
       // Use the default team computed from server config
       const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
       if (defaultTeamForMode) {
-        console.log('[ChatArea] Using default team from server config:', defaultTeamForMode.name)
         handleTeamChange(defaultTeamForMode)
         hasInitializedTeamRef.current = true
         lastSyncedTaskIdRef.current = null
@@ -231,7 +219,6 @@ function ChatAreaContent({
       }
       // No default found, select first team
       if (!selectedTeam && filteredTeams.length > 0) {
-        console.log('[ChatArea] Selecting first team:', filteredTeams[0].name)
         handleTeamChange(filteredTeams[0])
       }
       hasInitializedTeamRef.current = true
@@ -243,13 +230,11 @@ function ChatAreaContent({
     if (selectedTeam) {
       const exists = filteredTeams.some(t => t.id === selectedTeam.id)
       if (!exists) {
-        console.log('[ChatArea] Current team not in filtered list, selecting default')
         const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
         handleTeamChange(defaultTeamForMode || filteredTeams[0])
       }
     } else if (!taskIdFromUrl) {
       // No selection and no task - select default team
-      console.log('[ChatArea] No selection, selecting default team')
       const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
       handleTeamChange(defaultTeamForMode || filteredTeams[0])
     }

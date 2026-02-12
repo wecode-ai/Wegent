@@ -136,13 +136,6 @@ export function CodePageDesktop() {
   // Get real-time blocks and workbench data from state machine
   // Priority: state machine (real-time) > selectedTaskDetail (API polling)
   const { blocksData, workbenchData } = useMemo(() => {
-    // DEBUG: Log taskState for analysis
-    console.log('[CodePageDesktop] taskState:', {
-      hasMessages: taskState?.messages ? taskState.messages.size : 0,
-      status: taskState?.status,
-    })
-    console.log('[CodePageDesktop] selectedTaskDetail?.workbench:', selectedTaskDetail?.workbench)
-
     // Try to get data from state machine first (real-time updates via WebSocket)
     if (taskState?.messages && taskState.messages.size > 0) {
       // Aggregate blocks from all AI messages (for timeline display)
@@ -152,24 +145,10 @@ export function CodePageDesktop() {
 
       for (const msg of taskState.messages.values()) {
         if (msg.type === 'ai') {
-          // DEBUG: Log each AI message's result
-          console.log('[CodePageDesktop] AI message:', {
-            id: msg.id,
-            status: msg.status,
-            hasResult: !!msg.result,
-            resultKeys: msg.result ? Object.keys(msg.result) : [],
-            blocksCount: msg.result?.blocks?.length || 0,
-          })
-
           // Collect blocks from all AI messages
           if (msg.result) {
             const result = msg.result as { blocks?: MessageBlock[]; workbench?: WorkbenchData }
             if (result.blocks && Array.isArray(result.blocks)) {
-              console.log(
-                '[CodePageDesktop] Found blocks:',
-                result.blocks.length,
-                result.blocks.map(b => ({ id: b.id, type: b.type, tool_name: b.tool_name }))
-              )
               allBlocks.push(...result.blocks)
             }
             // For streaming messages, always use their workbench (real-time updates)
@@ -181,8 +160,6 @@ export function CodePageDesktop() {
           }
         }
       }
-
-      console.log('[CodePageDesktop] Aggregated blocks:', allBlocks.length)
 
       // Return aggregated blocks and latest workbench
       if (allBlocks.length > 0 || latestWorkbench) {

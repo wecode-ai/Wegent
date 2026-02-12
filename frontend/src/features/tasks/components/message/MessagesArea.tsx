@@ -101,6 +101,16 @@ function StreamingMessageBubble({
     message.thinking && Array.isArray(message.thinking) && message.thinking.length > 0
   )
 
+  // CRITICAL FIX: For page refresh recovery, we need to show content immediately
+  // When page refreshes during streaming:
+  // 1. cached_content is returned from backend and set to message.content
+  // 2. useTypewriter starts from empty string and gradually types out
+  // 3. If we use displayContent (empty initially), nothing is shown
+  // Solution: Use the longer of displayContent or message.content
+  // This ensures cached_content is shown immediately, then typewriter continues from there
+  const effectiveContent =
+    displayContent.length >= (message.content?.length || 0) ? displayContent : message.content || ''
+
   // Create msg object with thinking data
   // IMPORTANT: Create a new object each time to ensure memo comparison detects changes
   const msgForBubble = {
@@ -109,7 +119,8 @@ function StreamingMessageBubble({
     timestamp: message.timestamp,
     botName: message.botName || selectedTeam?.name || t('common:messages.bot') || 'Bot',
     subtaskStatus: 'RUNNING',
-    recoveredContent: isStreaming ? displayContent : hasContent ? message.content : undefined,
+    // Use effectiveContent instead of displayContent to handle page refresh recovery
+    recoveredContent: isStreaming ? effectiveContent : hasContent ? message.content : undefined,
     isRecovered: false,
     isIncomplete: false,
     subtaskId: message.subtaskId,

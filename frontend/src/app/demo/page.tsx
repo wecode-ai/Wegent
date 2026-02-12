@@ -23,9 +23,7 @@ export default function DemoPage() {
     },
   })
 
-  const onSubmit = (data: Record<string, string>) => {
-    console.log(data)
-  }
+  const onSubmit = (_: Record<string, string>) => {}
 
   return (
     <UserProvider>
