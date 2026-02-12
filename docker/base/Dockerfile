@@ -10,6 +10,8 @@ RUN dnf upgrade -y \
     libX11 libXcomposite libXdamage libXext libXfixes libXrandr mesa-libgbm cairo pango alsa-lib libdrm \
     # OCR dependencies for scanned PDF support
     tesseract tesseract-langpack-chi-sim tesseract-langpack-eng poppler-utils \
+    # Pandoc for Office document conversion (DOC, DOCX, PPT, PPTX to Markdown)
+    pandoc \
  && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
  && dnf install -y nodejs gh tar gzip\
  && ln -sf /usr/bin/python3.12 /usr/bin/python \

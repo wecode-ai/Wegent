@@ -9,7 +9,7 @@ This module provides the DocumentIndexer class for orchestrating document
 indexing, including:
 - Traditional indexing using LlamaIndex's SimpleDirectoryReader
 - Pipeline-based indexing for Office documents (DOC, DOCX, PPT, PPTX) using
-  Docling or Pandoc for Markdown conversion
+  Pandoc for Markdown conversion
 """
 
 import logging
@@ -81,7 +81,7 @@ class DocumentIndexer:
 
     This class handles document indexing with support for:
     - Traditional flow using LlamaIndex's SimpleDirectoryReader
-    - Pipeline-based flow for Office documents using Docling or Pandoc
+    - Pipeline-based flow for Office documents using Pandoc
 
     The pipeline architecture is automatically selected for Office documents
     (DOC, DOCX, PPT, PPTX) when using SmartSplitter configuration.
@@ -155,7 +155,7 @@ class DocumentIndexer:
         Index a document from binary data (synchronous).
 
         For Office documents (DOC, DOCX, PPT, PPTX) with SmartSplitter config,
-        this method uses the pipeline architecture (Docling or Pandoc) for
+        this method uses the pipeline architecture (Pandoc) for
         better Markdown conversion. For other file types, it uses LlamaIndex's
         SimpleDirectoryReader.
 
@@ -236,7 +236,7 @@ class DocumentIndexer:
         """
         Index document using the pipeline architecture.
 
-        This method creates an appropriate pipeline (Docling or Pandoc)
+        This method creates an appropriate pipeline (Pandoc)
         for the file type and uses it for document processing.
 
         Args:

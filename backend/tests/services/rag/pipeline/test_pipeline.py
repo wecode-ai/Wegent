@@ -6,16 +6,12 @@
 Unit tests for document processing pipeline components.
 """
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from llama_index.core import Document
 
 from app.services.rag.pipeline.base import BaseDocumentPipeline
-from app.services.rag.pipeline.docling import (
-    DoclingPipeline,
-    DoclingServiceError,
-)
 from app.services.rag.pipeline.factory import (
     OFFICE_EXTENSIONS,
     PDF_EXTENSIONS,
@@ -32,7 +28,7 @@ from app.services.rag.pipeline.pandoc import (
 
 
 class TestBaseDocumentPipeline:
-    """Tests for the abstract base class."""
+    """Tests for t abstract base class."""
 
     def test_base_class_cannot_be_instantiated(self):
         """Test that BaseDocumentPipeline cannot be instantiated directly."""
@@ -96,156 +92,81 @@ class TestLlamaIndexPipeline:
 class TestPandocPipeline:
     """Tests for PandocPipeline."""
 
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_is_pandoc_available_true(self, mock_which):
+    def test_is_pandoc_available_true(self):
         """Test Pandoc availability check when Pandoc is installed."""
-        mock_which.return_value = "/usr/bin/pandoc"
-        assert PandocPipeline.is_pandoc_available() is True
+        with patch("builtins.__import__") as mock_import:
+            # Create a mock pypandoc module
+            mock_pypandoc = Mock()
+            mock_pypandoc.get_pandoc_version.return_value = "3.1.0"
+            # Set up __import__ to return our mock
+            mock_import.return_value = mock_pypandoc
 
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_is_pandoc_available_false(self, mock_which):
+            assert PandocPipeline.is_pandoc_available() is True
+
+    def test_is_pandoc_available_false(self):
         """Test Pandoc availability check when Pandoc is not installed."""
-        mock_which.return_value = None
-        assert PandocPipeline.is_pandoc_available() is False
+        with patch("builtins.__import__") as mock_import:
+            # Set up __import__ to raise ImportError
+            mock_import.side_effect = ImportError("No module named 'pypandoc'")
 
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_init_raises_when_pandoc_not_found(self, mock_which):
+            assert PandocPipeline.is_pandoc_available() is False
+
+    def test_init_raises_when_pandoc_not_found(self):
         """Test that initialization raises error when Pandoc is not found."""
-        mock_which.return_value = None
-        with pytest.raises(PandocNotFoundError):
-            PandocPipeline()
+        with patch("builtins.__import__") as mock_import:
+            # Create a mock pypandoc module that raises OSError
+            mock_pypandoc = Mock()
+            mock_pypandoc.get_pandoc_version.side_effect = OSError("Pandoc not found")
+            mock_pypandoc.download_pandoc.side_effect = Exception("Download failed")
+            mock_import.return_value = mock_pypandoc
 
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_supported_extensions(self, mock_which):
+            with pytest.raises(PandocNotFoundError):
+                PandocPipeline()
+
+    def test_supported_extensions(self):
         """Test supported extensions."""
-        mock_which.return_value = "/usr/bin/pandoc"
         extensions = PandocPipeline.get_supported_extensions()
         assert ".doc" in extensions
         assert ".docx" in extensions
         assert ".ppt" in extensions
         assert ".pptx" in extensions
 
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_read_passes_through_binary_data(self, mock_which):
-        """Test that read() returns binary data unchanged."""
-        mock_which.return_value = "/usr/bin/pandoc"
-        pipeline = PandocPipeline()
-        data = b"Test document content"
-        result = pipeline.read(data, ".docx")
-        assert result == data
-
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_convert_unsupported_format(self, mock_which):
-        """Test convert() with unsupported file format."""
-        mock_which.return_value = "/usr/bin/pandoc"
-        pipeline = PandocPipeline()
-        with pytest.raises(PandocConversionError):
-            pipeline.convert(b"data", ".xyz")
-
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_split_empty_content(self, mock_which):
-        """Test split() with empty content."""
-        mock_which.return_value = "/usr/bin/pandoc"
-        pipeline = PandocPipeline()
-        result = pipeline.split("")
-        assert result == []
-
-
-class TestDoclingPipeline:
-    """Tests for DoclingPipeline."""
-
-    def test_init_with_valid_url(self):
-        """Test initialization with valid URL."""
-        pipeline = DoclingPipeline(docling_url="http://localhost:8080")
-        assert pipeline.docling_url == "http://localhost:8080"
-        assert pipeline.timeout == 120
-
-    def test_init_with_custom_timeout(self):
-        """Test initialization with custom timeout."""
-        pipeline = DoclingPipeline(
-            docling_url="http://localhost:8080",
-            timeout=60,
-        )
-        assert pipeline.timeout == 60
-
-    def test_init_raises_for_empty_url(self):
-        """Test that initialization raises error for empty URL."""
-        with pytest.raises(ValueError):
-            DoclingPipeline(docling_url="")
-
-    def test_init_raises_for_none_url(self):
-        """Test that initialization raises error for None URL."""
-        with pytest.raises(ValueError):
-            DoclingPipeline(docling_url=None)
-
-    def test_supported_extensions(self):
-        """Test supported extensions."""
-        extensions = DoclingPipeline.get_supported_extensions()
-        assert ".doc" in extensions
-        assert ".docx" in extensions
-        assert ".ppt" in extensions
-        assert ".pptx" in extensions
-        assert ".pdf" in extensions
-
     def test_read_passes_through_binary_data(self):
         """Test that read() returns binary data unchanged."""
-        pipeline = DoclingPipeline(docling_url="http://localhost:8080")
-        data = b"Test document content"
-        result = pipeline.read(data, ".docx")
-        assert result == data
+        with patch("builtins.__import__") as mock_import:
+            # Create a mock pypandoc module
+            mock_pypandoc = Mock()
+            mock_pypandoc.get_pandoc_version.return_value = "3.1.0"
+            mock_import.return_value = mock_pypandoc
 
-    def test_extract_markdown_primary_format(self):
-        """Test _extract_markdown with primary response format."""
-        pipeline = DoclingPipeline(docling_url="http://localhost:8080")
-        response = {"document": {"md_content": "# Hello World"}}
-        result = pipeline._extract_markdown(response)
-        assert result == "# Hello World"
+            pipeline = PandocPipeline()
+            data = b"Test document content"
+            result = pipeline.read(data, ".docx")
+            assert result == data
 
-    def test_extract_markdown_alternative_format(self):
-        """Test _extract_markdown with alternative response format."""
-        pipeline = DoclingPipeline(docling_url="http://localhost:8080")
-        response = {"md_content": "# Hello World"}
-        result = pipeline._extract_markdown(response)
-        assert result == "# Hello World"
+    def test_convert_unsupported_format(self):
+        """Test convert() with unsupported file format."""
+        with patch("builtins.__import__") as mock_import:
+            # Create a mock pypandoc module
+            mock_pypandoc = Mock()
+            mock_pypandoc.get_pandoc_version.return_value = "3.1.0"
+            mock_import.return_value = mock_pypandoc
 
-    def test_extract_markdown_content_format(self):
-        """Test _extract_markdown with content key."""
-        pipeline = DoclingPipeline(docling_url="http://localhost:8080")
-        response = {"content": "# Hello World"}
-        result = pipeline._extract_markdown(response)
-        assert result == "# Hello World"
-
-    def test_extract_markdown_none_for_empty_response(self):
-        """Test _extract_markdown returns None for empty response."""
-        pipeline = DoclingPipeline(docling_url="http://localhost:8080")
-        response = {}
-        result = pipeline._extract_markdown(response)
-        assert result is None
+            pipeline = PandocPipeline()
+            with pytest.raises(PandocConversionError):
+                pipeline.convert(b"data", ".xyz")
 
     def test_split_empty_content(self):
         """Test split() with empty content."""
-        pipeline = DoclingPipeline(docling_url="http://localhost:8080")
-        result = pipeline.split("")
-        assert result == []
+        with patch("builtins.__import__") as mock_import:
+            # Create a mock pypandoc module
+            mock_pypandoc = Mock()
+            mock_pypandoc.get_pandoc_version.return_value = "3.1.0"
+            mock_import.return_value = mock_pypandoc
 
-    @patch("app.services.rag.pipeline.docling.httpx.Client")
-    def test_is_service_available_true(self, mock_client_class):
-        """Test service availability check when service is running."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_client = Mock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = Mock(return_value=mock_client)
-        mock_client.__exit__ = Mock(return_value=False)
-        mock_client_class.return_value = mock_client
-
-        result = DoclingPipeline.is_service_available("http://localhost:8080")
-        assert result is True
-
-    def test_is_service_available_false_for_empty_url(self):
-        """Test service availability check for empty URL."""
-        result = DoclingPipeline.is_service_available("")
-        assert result is False
+            pipeline = PandocPipeline()
+            result = pipeline.split("")
+            assert result == []
 
 
 class TestPipelineFactory:
@@ -258,21 +179,9 @@ class TestPipelineFactory:
         assert should_use_pipeline(".ppt") is True
         assert should_use_pipeline(".pptx") is True
 
-    def test_should_use_pipeline_for_pdf_without_docling(self):
-        """Test that PDF without Docling should not use pipeline."""
-        with patch(
-            "app.services.rag.pipeline.factory._is_docling_configured",
-            return_value=False,
-        ):
-            assert should_use_pipeline(".pdf") is False
-
-    def test_should_use_pipeline_for_pdf_with_docling(self):
-        """Test that PDF with Docling should use pipeline."""
-        with patch(
-            "app.services.rag.pipeline.factory._is_docling_configured",
-            return_value=True,
-        ):
-            assert should_use_pipeline(".pdf") is True
+    def test_should_use_pipeline_for_pdf(self):
+        """Test that PDF should not use pipeline."""
+        assert should_use_pipeline(".pdf") is False
 
     def test_should_use_pipeline_for_other_files(self):
         """Test that other file types should not use pipeline."""
@@ -281,84 +190,51 @@ class TestPipelineFactory:
         assert should_use_pipeline(".json") is False
 
     @patch(
-        "app.services.rag.pipeline.factory._is_docling_configured", return_value=False
-    )
-    @patch(
         "app.services.rag.pipeline.pandoc.PandocPipeline.is_pandoc_available",
         return_value=True,
     )
-    @patch(
-        "app.services.rag.pipeline.pandoc.shutil.which", return_value="/usr/bin/pandoc"
-    )
-    def test_create_pipeline_for_docx_with_pandoc(
-        self, mock_which, mock_pandoc, mock_docling
-    ):
-        """Test creating pipeline for DOCX when only Pandoc is available."""
+    def test_create_pipeline_for_docx_with_pandoc(self, mock_pandoc):
+        """Test creating pipeline for DOCX when Pandoc is available."""
         pipeline = create_pipeline(".docx")
         assert isinstance(pipeline, PandocPipeline)
 
-    @patch(
-        "app.services.rag.pipeline.factory._is_docling_configured", return_value=False
-    )
-    def test_create_pipeline_for_txt(self, mock_docling):
+    def test_create_pipeline_for_txt(self):
         """Test creating pipeline for TXT file."""
         pipeline = create_pipeline(".txt")
         assert isinstance(pipeline, LlamaIndexPipeline)
 
-    @patch(
-        "app.services.rag.pipeline.factory._is_docling_configured", return_value=False
-    )
-    def test_create_pipeline_for_md(self, mock_docling):
+    def test_create_pipeline_for_md(self):
         """Test creating pipeline for Markdown file."""
         pipeline = create_pipeline(".md")
         assert isinstance(pipeline, LlamaIndexPipeline)
 
-    @patch(
-        "app.services.rag.pipeline.factory._is_docling_configured", return_value=False
-    )
-    def test_create_pipeline_for_pdf_without_docling(self, mock_docling):
-        """Test creating pipeline for PDF without Docling."""
+    def test_create_pipeline_for_pdf(self):
+        """Test creating pipeline for PDF."""
         pipeline = create_pipeline(".pdf")
         assert isinstance(pipeline, LlamaIndexPipeline)
 
     @patch(
-        "app.services.rag.pipeline.factory._is_docling_configured", return_value=False
-    )
-    @patch(
         "app.services.rag.pipeline.pandoc.PandocPipeline.is_pandoc_available",
         return_value=False,
     )
-    def test_create_pipeline_raises_for_office_without_converters(
-        self, mock_pandoc, mock_docling
-    ):
-        """Test that creating pipeline for Office docs without converters raises."""
+    def test_create_pipeline_raises_for_office_without_pandoc(self, mock_pandoc):
+        """Test that creating pipeline for Office docs without Pandoc raises."""
         with pytest.raises(ValueError) as exc_info:
             create_pipeline(".docx")
-        assert "Docling is not configured and Pandoc is not installed" in str(
-            exc_info.value
-        )
+        assert "Pandoc is not installed" in str(exc_info.value)
 
-    @patch(
-        "app.services.rag.pipeline.factory._is_docling_configured", return_value=False
-    )
     @patch(
         "app.services.rag.pipeline.pandoc.PandocPipeline.is_pandoc_available",
         return_value=True,
     )
-    @patch(
-        "app.services.rag.pipeline.pandoc.shutil.which", return_value="/usr/bin/pandoc"
-    )
-    def test_get_pipeline_info_for_docx(self, mock_which, mock_pandoc, mock_docling):
+    def test_get_pipeline_info_for_docx(self, mock_pandoc):
         """Test getting pipeline info for DOCX file."""
         info = get_pipeline_info(".docx")
         assert info["file_extension"] == ".docx"
         assert info["requires_pipeline"] is True
         assert "PandocPipeline" in info["recommended_pipeline"]
 
-    @patch(
-        "app.services.rag.pipeline.factory._is_docling_configured", return_value=False
-    )
-    def test_get_pipeline_info_for_txt(self, mock_docling):
+    def test_get_pipeline_info_for_txt(self):
         """Test getting pipeline info for TXT file."""
         info = get_pipeline_info(".txt")
         assert info["file_extension"] == ".txt"
@@ -380,7 +256,7 @@ class TestPipelineIntegration:
         # Create a text content
         content = "This is a test document. " * 50  # About 1300 characters
 
-        # Split the content
+        # Split content
         documents = pipeline.split(content)
 
         # Should create multiple chunks
@@ -391,56 +267,28 @@ class TestPipelineIntegration:
             # Just verify we have valid documents
             assert len(doc.text) > 0
 
-    def test_docling_pipeline_split_markdown(self):
-        """Test Docling pipeline splitting markdown content."""
-        pipeline = DoclingPipeline(
-            docling_url="http://localhost:8080",
-            chunk_size=100,
-            chunk_overlap=10,
-        )
-
-        markdown_content = """# Header 1
-
-This is the first section with some content.
-
-## Header 2
-
-This is the second section with more content.
-
-### Header 3
-
-And this is a subsection with even more text to split.
-"""
-
-        documents = pipeline.split(markdown_content)
-
-        # Should create multiple chunks based on markdown structure
-        assert len(documents) >= 1
-        for doc in documents:
-            assert isinstance(doc, Document)
-
-    @patch("app.services.rag.pipeline.pandoc.shutil.which")
-    def test_pandoc_pipeline_split_markdown(self, mock_which):
+    def test_pandoc_pipeline_split_markdown(self):
         """Test Pandoc pipeline splitting markdown content."""
-        mock_which.return_value = "/usr/bin/pandoc"
+        # Mock pypandoc module using builtins import
+        import sys
 
-        pipeline = PandocPipeline(
-            chunk_size=100,
-            chunk_overlap=10,
-        )
+        mock_pypandoc = Mock()
+        mock_pypandoc.get_pandoc_version.return_value = "3.1.0"
 
-        markdown_content = """# Header 1
+        with patch.dict(sys.modules, {"pypandoc": mock_pypandoc}):
+            # Reset the _pandoc_ensured flag to force re-check
+            PandocPipeline._pandoc_ensured = False
 
-This is the first section with some content.
+            pipeline = PandocPipeline(
+                chunk_size=100,
+                chunk_overlap=10,
+            )
 
-## Header 2
+            markdown_content = "# Header 1\n\nThis is first section with some content.\n\n## Header 2\n\nThis is second section with more content.\n"
 
-This is the second section with more content.
-"""
+            documents = pipeline.split(markdown_content)
 
-        documents = pipeline.split(markdown_content)
-
-        # Should create chunks
-        assert len(documents) >= 1
-        for doc in documents:
-            assert isinstance(doc, Document)
+            # Should create chunks
+            assert len(documents) >= 1
+            for doc in documents:
+                assert isinstance(doc, Document)

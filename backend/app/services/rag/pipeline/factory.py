@@ -6,16 +6,14 @@
 Factory for creating document processing pipelines.
 
 This factory determines the appropriate pipeline based on file type
-and available services (Docling, Pandoc, LlamaIndex), with automatic
+and available services (Pandoc, LlamaIndex), with automatic
 fallback when services are unavailable.
 
 Pipeline Selection Strategy:
 1. DOC/DOCX/PPT/PPTX:
-   - If Docling is configured and available -> DoclingPipeline
-   - Else -> PandocPipeline (with Pandoc availability check)
+   -> PandocPipeline (with Pandoc availability check)
 2. PDF:
-   - If Docling is configured and available -> DoclingPipeline
-   - Else -> LlamaIndexPipeline (default)
+   -> LlamaIndexPipeline (default)
 3. Other files (TXT, MD, etc.):
    -> LlamaIndexPipeline
 """
@@ -23,9 +21,7 @@ Pipeline Selection Strategy:
 import logging
 from typing import Optional
 
-from app.core.config import settings
 from app.services.rag.pipeline.base import BaseDocumentPipeline
-from app.services.rag.pipeline.docling import DoclingPipeline
 from app.services.rag.pipeline.llamaindex import LlamaIndexPipeline
 from app.services.rag.pipeline.pandoc import (
     PandocNotFoundError,
@@ -37,7 +33,7 @@ logger = logging.getLogger(__name__)
 # File extensions that require conversion (not natively supported by LlamaIndex well)
 OFFICE_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx"}
 
-# PDF can benefit from Docling but LlamaIndex handles it well too
+# PDF extensions
 PDF_EXTENSIONS = {".pdf"}
 
 # Extensions that LlamaIndex handles natively
@@ -50,7 +46,6 @@ def should_use_pipeline(file_extension: str) -> bool:
 
     The pipeline architecture is used for:
     - Office documents (DOC, DOCX, PPT, PPTX) - always use pipeline
-    - PDF files when Docling is configured
 
     Args:
         file_extension: File extension to check (e.g., '.docx')
@@ -60,12 +55,8 @@ def should_use_pipeline(file_extension: str) -> bool:
     """
     ext = file_extension.lower()
 
-    # Office documents always use pipeline (Docling or Pandoc)
+    # Office documents always use pipeline (Pandoc)
     if ext in OFFICE_EXTENSIONS:
-        return True
-
-    # PDF uses pipeline only if Docling is configured
-    if ext in PDF_EXTENSIONS and _is_docling_configured():
         return True
 
     return False
@@ -81,11 +72,9 @@ def create_pipeline(
 
     Pipeline selection logic:
     1. DOC/DOCX/PPT/PPTX:
-       - Try Docling first (if configured)
-       - Fall back to Pandoc
+       - Use Pandoc
     2. PDF:
-       - Try Docling (if configured)
-       - Fall back to LlamaIndex
+       - Use LlamaIndex
     3. Other files:
        - Use LlamaIndex
 
@@ -128,9 +117,7 @@ def _create_office_pipeline(
     """
     Create pipeline for Office documents.
 
-    Priority:
-    1. DoclingPipeline (if configured and available)
-    2. PandocPipeline (if Pandoc is installed)
+    Uses PandocPipeline (if Pandoc is installed).
 
     Args:
         file_extension: File extension
@@ -141,15 +128,9 @@ def _create_office_pipeline(
         Pipeline instance
 
     Raises:
-        ValueError: If neither Docling nor Pandoc is available
+        ValueError: If Pandoc is not available
     """
-    # Try Docling first
-    docling_pipeline = _try_create_docling_pipeline(chunk_size, chunk_overlap)
-    if docling_pipeline:
-        logger.info(f"Using DoclingPipeline for {file_extension}")
-        return docling_pipeline
-
-    # Fall back to Pandoc
+    # Use Pandoc
     pandoc_pipeline = _try_create_pandoc_pipeline(chunk_size, chunk_overlap)
     if pandoc_pipeline:
         logger.info(f"Using PandocPipeline for {file_extension}")
@@ -158,8 +139,8 @@ def _create_office_pipeline(
     # No suitable pipeline available
     raise ValueError(
         f"Cannot process {file_extension} files: "
-        "Docling is not configured and Pandoc is not installed. "
-        "Please configure DOCLING_URL or install Pandoc."
+        "Pandoc is not installed. "
+        "Please install Pandoc."
     )
 
 
@@ -171,9 +152,7 @@ def _create_pdf_pipeline(
     """
     Create pipeline for PDF files.
 
-    Priority:
-    1. DoclingPipeline (if configured and available)
-    2. LlamaIndexPipeline (default fallback)
+    Uses LlamaIndexPipeline (default).
 
     Args:
         file_extension: File extension
@@ -183,74 +162,13 @@ def _create_pdf_pipeline(
     Returns:
         Pipeline instance
     """
-    # Try Docling first
-    docling_pipeline = _try_create_docling_pipeline(chunk_size, chunk_overlap)
-    if docling_pipeline:
-        logger.info(f"Using DoclingPipeline for {file_extension}")
-        return docling_pipeline
-
-    # Fall back to LlamaIndex
+    # Use LlamaIndex
     logger.info(f"Using LlamaIndexPipeline for {file_extension}")
     return LlamaIndexPipeline(
         file_extension=file_extension,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
     )
-
-
-def _is_docling_configured() -> bool:
-    """
-    Check if Docling is configured in settings.
-
-    Returns:
-        True if DOCLING_URL is set
-    """
-    docling_url = getattr(settings, "DOCLING_URL", None)
-    return bool(docling_url and docling_url.strip())
-
-
-def _try_create_docling_pipeline(
-    chunk_size: int,
-    chunk_overlap: int,
-) -> Optional[DoclingPipeline]:
-    """
-    Try to create a DoclingPipeline.
-
-    Checks if Docling is configured and the service is available.
-    Returns None if Docling cannot be used.
-
-    Args:
-        chunk_size: Maximum chunk size
-        chunk_overlap: Overlap between chunks
-
-    Returns:
-        DoclingPipeline instance or None
-    """
-    if not _is_docling_configured():
-        logger.debug("Docling not configured (DOCLING_URL not set)")
-        return None
-
-    docling_url = settings.DOCLING_URL
-    docling_timeout = settings.DOCLING_TIMEOUT
-
-    # Check if service is available
-    if not DoclingPipeline.is_service_available(docling_url):
-        logger.warning(
-            f"Docling service at {docling_url} is not available, "
-            "falling back to alternative pipeline"
-        )
-        return None
-
-    try:
-        return DoclingPipeline(
-            docling_url=docling_url,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            timeout=docling_timeout,
-        )
-    except Exception as e:
-        logger.warning(f"Failed to create DoclingPipeline: {e}")
-        return None
 
 
 def _try_create_pandoc_pipeline(
@@ -303,38 +221,19 @@ def get_pipeline_info(file_extension: str) -> dict:
 
     info = {
         "file_extension": ext,
-        "docling_configured": _is_docling_configured(),
-        "docling_url": (
-            getattr(settings, "DOCLING_URL", None) if _is_docling_configured() else None
-        ),
         "pandoc_available": PandocPipeline.is_pandoc_available(),
         "requires_pipeline": should_use_pipeline(ext),
         "recommended_pipeline": None,
     }
 
     if ext in OFFICE_EXTENSIONS:
-        if _is_docling_configured():
-            docling_url = settings.DOCLING_URL
-            if DoclingPipeline.is_service_available(docling_url):
-                info["recommended_pipeline"] = "DoclingPipeline"
-            elif PandocPipeline.is_pandoc_available():
-                info["recommended_pipeline"] = "PandocPipeline (Docling unavailable)"
-        elif PandocPipeline.is_pandoc_available():
+        if PandocPipeline.is_pandoc_available():
             info["recommended_pipeline"] = "PandocPipeline"
         else:
-            info["recommended_pipeline"] = "None (install Pandoc or configure Docling)"
+            info["recommended_pipeline"] = "None (install Pandoc)"
 
     elif ext in PDF_EXTENSIONS:
-        if _is_docling_configured():
-            docling_url = settings.DOCLING_URL
-            if DoclingPipeline.is_service_available(docling_url):
-                info["recommended_pipeline"] = "DoclingPipeline"
-            else:
-                info["recommended_pipeline"] = (
-                    "LlamaIndexPipeline (Docling unavailable)"
-                )
-        else:
-            info["recommended_pipeline"] = "LlamaIndexPipeline"
+        info["recommended_pipeline"] = "LlamaIndexPipeline"
 
     else:
         info["recommended_pipeline"] = "LlamaIndexPipeline"

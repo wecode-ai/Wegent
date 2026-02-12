@@ -28,7 +28,7 @@ class BaseDocumentPipeline(ABC):
 
     Subclasses implement specific strategies for reading, converting,
     and splitting different document types (e.g., LlamaIndex for general files,
-    Pandoc for Office documents, Docling for advanced document conversion).
+    Pandoc for Office documents).
 
     Attributes:
         chunk_size: Maximum chunk size in characters (default: 1024)
@@ -96,7 +96,7 @@ class BaseDocumentPipeline(ABC):
         pass
 
     @abstractmethod
-    def split(self, text_content: str) -> List[Document]:
+    def split(self, text_content: str, document_title: str = "") -> List[Document]:
         """
         Split text content into Document chunks.
 
@@ -105,6 +105,7 @@ class BaseDocumentPipeline(ABC):
 
         Args:
             text_content: Text content from convert stage
+            document_title: Optional document title for context prefix
 
         Returns:
             List of LlamaIndex Document objects
@@ -147,8 +148,12 @@ class BaseDocumentPipeline(ABC):
         text_content = self.convert(content, file_extension)
         logger.debug(f"Convert stage completed: {len(text_content)} characters")
 
+        # Extract document title from source_file for context prefix
+        from pathlib import Path
+        document_title = Path(source_file).stem if source_file else ""
+
         # Stage 3: Split
-        documents = self.split(text_content)
+        documents = self.split(text_content, document_title=document_title)
         logger.info(f"Split stage completed: {len(documents)} documents created")
 
         # Add source file metadata to all documents

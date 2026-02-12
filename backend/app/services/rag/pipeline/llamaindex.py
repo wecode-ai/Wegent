@@ -33,7 +33,7 @@ class LlamaIndexPipeline(BaseDocumentPipeline):
     for chunking based on file type.
 
     Suitable for:
-    - PDF files (when Docling is not configured)
+    - PDF files
     - TXT files
     - Markdown files
     - Other formats supported by LlamaIndex
@@ -120,7 +120,7 @@ class LlamaIndexPipeline(BaseDocumentPipeline):
             except Exception as e:
                 logger.warning(f"Failed to delete temporary file {tmp_file_path}: {e}")
 
-    def split(self, text_content: str) -> List[Document]:
+    def split(self, text_content: str, document_title: str = "") -> List[Document]:
         """
         Split text content into Document chunks.
 
@@ -129,6 +129,7 @@ class LlamaIndexPipeline(BaseDocumentPipeline):
 
         Args:
             text_content: Text content to split
+            document_title: Optional document title for context prefix
 
         Returns:
             List of Document objects
@@ -138,7 +139,7 @@ class LlamaIndexPipeline(BaseDocumentPipeline):
             return []
 
         # Create a Document from the text content
-        doc = Document(text=text_content)
+        doc = Document(text=text_content, metadata={"document_title": document_title})
 
         # Use SmartSplitter if file type is supported
         if SmartSplitter.supports_smart_split(self.file_extension):

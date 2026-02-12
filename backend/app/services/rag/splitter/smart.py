@@ -7,7 +7,8 @@ Smart document splitter that automatically selects the best splitting strategy
 based on file type.
 
 Supported file types and their strategies:
-- .md: Markdown structure splitting + sentence splitting
+- .md: Enhanced markdown processing with preprocessing, header-based splitting,
+       chunk merging/splitting, and context prefix injection
 - .txt: Sentence-based splitting
 - .pdf, .doc, .docx, .ppt, .pptx: Recursive character splitting (via LangChain)
 """
@@ -18,7 +19,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from llama_index.core import Document
 from llama_index.core.node_parser import (
     LangchainNodeParser,
-    MarkdownNodeParser,
     SentenceSplitter,
 )
 from llama_index.core.schema import BaseNode
@@ -38,7 +38,7 @@ class SmartSplitter:
     All strategies use unified chunk_size=1024 and chunk_overlap=50.
 
     Note: For Office documents (DOC, DOCX, PPT, PPTX), the DocumentIndexer
-    may use the pipeline architecture (Docling or Pandoc) to convert them
+    may use the pipeline architecture (Pandoc) to convert them
     to Markdown first, which provides better structure preservation.
     """
 
@@ -102,10 +102,16 @@ class SmartSplitter:
             return self._split_recursive(documents)
 
     def _split_markdown(self, documents: List[Document]) -> List[BaseNode]:
-        """Split markdown documents.
+        """Split markdown documents using enhanced MarkdownProcessor.
 
-        Uses MarkdownNodeParser to split by structure (headers), then
-        applies SentenceSplitter to break down large sections.
+        Uses MarkdownProcessor for intelligent markdown chunking with:
+        - Table conversion to key-value format
+        - Noise removal (horizontal rules, empty links, HTML comments)
+        - Code block protection (never split code blocks)
+        - Header-based splitting (H1-H3)
+        - Small chunk merging (< 256 chars)
+        - Large chunk splitting (> chunk_size)
+        - Context prefix injection (document title + header hierarchy)
 
         Args:
             documents: List of Document objects
@@ -113,22 +119,35 @@ class SmartSplitter:
         Returns:
             List of BaseNode objects
         """
-        # First pass: Split by markdown structure (headers)
-        markdown_parser = MarkdownNodeParser()
-        nodes = markdown_parser.get_nodes_from_documents(documents)
+        from llama_index.core.schema import TextNode
 
-        # Second pass: Apply sentence splitting to large nodes
-        sentence_splitter = SentenceSplitter(
+        from app.services.rag.splitter.markdown_processor import MarkdownProcessor
+
+        processor = MarkdownProcessor(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
         )
 
-        # Convert nodes back to documents for second pass
-        intermediate_docs = [
-            Document(text=node.text, metadata=node.metadata) for node in nodes
-        ]
+        result_nodes: List[BaseNode] = []
 
-        return sentence_splitter.get_nodes_from_documents(intermediate_docs)
+        for doc in documents:
+            # Extract document title from metadata or filename
+            document_title = doc.metadata.get(
+                "source_file", doc.metadata.get("filename", "")
+            )
+
+            # Process markdown with enhanced processor
+            processed_docs = processor.process(doc.text, document_title)
+
+            # Convert to TextNode objects
+            for processed_doc in processed_docs:
+                # Merge original metadata with new metadata
+                merged_metadata = {**doc.metadata, **processed_doc.metadata}
+                result_nodes.append(
+                    TextNode(text=processed_doc.text, metadata=merged_metadata)
+                )
+
+        return result_nodes
 
     def _split_text(self, documents: List[Document]) -> List[BaseNode]:
         """Split text documents using sentence-based splitting.
@@ -196,7 +215,7 @@ class SmartSplitter:
             Subtype string identifying the splitting strategy
         """
         if self.file_extension == ".md":
-            return "markdown_sentence"
+            return "markdown_enhanced"
         elif self.file_extension == ".txt":
             return "sentence"
         else:
