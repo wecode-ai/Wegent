@@ -343,13 +343,14 @@ def _build_user_message_content(
             knowledge_id = type_data.get("knowledge_id")
 
             # Try rag_result sub-object first, then fall back to flat field
-            rag_result = type_data.get("rag_result", {})
+            # Use `or {}` pattern to handle None values (dict.get returns None if key exists with None value)
+            rag_result = type_data.get("rag_result") or {}
             injection_mode = rag_result.get("injection_mode") or type_data.get(
                 "injection_mode"
             )
 
             # Try kb_head_result sub-object
-            kb_head_result = type_data.get("kb_head_result", {})
+            kb_head_result = type_data.get("kb_head_result") or {}
             kb_head_document_ids = kb_head_result.get("document_ids", [])
             kb_head_offset = kb_head_result.get("offset", 0)
             kb_head_limit = kb_head_result.get("limit", 50000)
