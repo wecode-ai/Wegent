@@ -1291,17 +1291,16 @@ class TaskOperationsMixin:
         if task_crd.metadata.labels is None:
             task_crd.metadata.labels = {}
 
-        # Set or remove the preserveExecutor label
+        # Set the preserveExecutor label (use "true"/"false" for consistency with autoDeleteExecutor)
         if preserve:
             task_crd.metadata.labels["preserveExecutor"] = "true"
             logger.info(
                 f"[set_preserve_executor] User {user_id} set preserveExecutor=true for task {task_id}"
             )
         else:
-            if "preserveExecutor" in task_crd.metadata.labels:
-                del task_crd.metadata.labels["preserveExecutor"]
+            task_crd.metadata.labels["preserveExecutor"] = "false"
             logger.info(
-                f"[set_preserve_executor] User {user_id} removed preserveExecutor for task {task_id}"
+                f"[set_preserve_executor] User {user_id} set preserveExecutor=false for task {task_id}"
             )
 
         # Save changes
