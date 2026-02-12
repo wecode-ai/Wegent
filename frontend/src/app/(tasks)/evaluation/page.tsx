@@ -82,7 +82,10 @@ function EvaluationContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-text-secondary">
-                  {t('topics.create_description', 'Create a new evaluation topic with questions and grading criteria.')}
+                  {t(
+                    'topics.create_description',
+                    'Create a new evaluation topic with questions and grading criteria.'
+                  )}
                 </p>
               </CardContent>
             </Card>
@@ -116,7 +119,10 @@ function EvaluationContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-text-secondary">
-                  {t('permissions.description', 'Manage who can view, answer, and grade your topics.')}
+                  {t(
+                    'permissions.description',
+                    'Manage who can view, answer, and grade your topics.'
+                  )}
                 </p>
               </CardContent>
             </Card>
@@ -155,7 +161,10 @@ function EvaluationContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-text-secondary">
-                  {t('topics.browse_description', 'View and search evaluation topics, answer questions, and check your results.')}
+                  {t(
+                    'topics.browse_description',
+                    'View and search evaluation topics, answer questions, and check your results.'
+                  )}
                 </p>
               </CardContent>
             </Card>

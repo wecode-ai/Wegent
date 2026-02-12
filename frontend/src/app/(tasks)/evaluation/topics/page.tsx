@@ -30,7 +30,12 @@ import {
 import TopNavigation from '@/features/layout/TopNavigation'
 import { listTopics } from '@wecode/api/evaluation'
 import type { Topic } from '@wecode/types/evaluation'
-import { TopicStatus, TopicVisibility, getStatusLabel, getVisibilityLabel } from '@wecode/types/evaluation'
+import {
+  TopicStatus,
+  TopicVisibility,
+  getStatusLabel,
+  getVisibilityLabel,
+} from '@wecode/types/evaluation'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
@@ -82,9 +87,7 @@ function TopicsContent() {
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-text-primary">Evaluation Topics</h1>
-          <p className="text-sm text-text-secondary">
-            Browse and manage evaluation topics
-          </p>
+          <p className="text-sm text-text-secondary">Browse and manage evaluation topics</p>
         </div>
         <Link href="/evaluation/topics/new">
           <Button variant="primary">
@@ -100,8 +103,8 @@ function TopicsContent() {
           <Input
             placeholder="Search topics..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSearch()}
             className="max-w-xs"
           />
           <Button variant="outline" onClick={handleSearch}>
@@ -120,10 +123,7 @@ function TopicsContent() {
           </SelectContent>
         </Select>
 
-        <Button
-          variant={myOnly ? 'default' : 'outline'}
-          onClick={() => setMyOnly(!myOnly)}
-        >
+        <Button variant={myOnly ? 'default' : 'outline'} onClick={() => setMyOnly(!myOnly)}>
           {myOnly ? 'My Topics' : 'All Topics'}
         </Button>
       </div>
@@ -148,9 +148,7 @@ function TopicsContent() {
           <FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />
           <h3 className="mb-2 text-lg font-medium text-text-primary">No topics found</h3>
           <p className="mb-4 text-sm text-text-secondary">
-            {search
-              ? 'Try adjusting your search terms'
-              : "Create your first topic to get started"}
+            {search ? 'Try adjusting your search terms' : 'Create your first topic to get started'}
           </p>
           <Link href="/evaluation/topics/new">
             <Button variant="primary">
@@ -161,7 +159,7 @@ function TopicsContent() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {topics.map((topic) => (
+          {topics.map(topic => (
             <Card
               key={topic.id}
               className="cursor-pointer transition-shadow hover:shadow-md"
@@ -173,9 +171,7 @@ function TopicsContent() {
                   <div className="flex gap-1">
                     <Badge
                       variant={
-                        topic.visibility === TopicVisibility.PUBLIC
-                          ? 'default'
-                          : 'secondary'
+                        topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'
                       }
                     >
                       {topic.visibility === TopicVisibility.PUBLIC ? (
@@ -185,13 +181,7 @@ function TopicsContent() {
                       )}
                       {getVisibilityLabel(topic.visibility)}
                     </Badge>
-                    <Badge
-                      variant={
-                        topic.status === TopicStatus.PUBLISHED
-                          ? 'success'
-                          : 'info'
-                      }
-                    >
+                    <Badge variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}>
                       {getStatusLabel(topic.status, 'topic')}
                     </Badge>
                   </div>
@@ -204,12 +194,8 @@ function TopicsContent() {
                   </p>
                 )}
                 <div className="flex items-center justify-between text-xs text-text-muted">
-                  <span>
-                    {topic.question_count ?? 0} questions
-                  </span>
-                  <span>
-                    {new Date(topic.updated_at).toLocaleDateString()}
-                  </span>
+                  <span>{topic.question_count ?? 0} questions</span>
+                  <span>{new Date(topic.updated_at).toLocaleDateString()}</span>
                 </div>
               </CardContent>
             </Card>
@@ -220,11 +206,7 @@ function TopicsContent() {
       {/* Pagination */}
       {total > 20 && (
         <div className="mt-6 flex justify-center gap-2">
-          <Button
-            variant="outline"
-            disabled={page === 1}
-            onClick={() => setPage(page - 1)}
-          >
+          <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
             Previous
           </Button>
           <span className="flex items-center px-4 text-sm text-text-secondary">

@@ -6,15 +6,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import {
-  ArrowLeft,
-  Trash2,
-  Plus,
-  Users,
-  FileCheck,
-  BarChart3,
-  Send,
-} from 'lucide-react'
+import { ArrowLeft, Trash2, Plus, Users, FileCheck, BarChart3, Send, Edit } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -47,12 +39,7 @@ import {
   listQuestions,
   getMyRole,
 } from '@wecode/api/evaluation'
-import type {
-  Topic,
-  Question,
-  TopicStatistics,
-  UserRole,
-} from '@wecode/types/evaluation'
+import type { Topic, Question, TopicStatistics, UserRole } from '@wecode/types/evaluation'
 import {
   TopicStatus,
   TopicVisibility,
@@ -171,9 +158,7 @@ function TopicDetailContent() {
     return null
   }
 
-  const publishedQuestions = questions.filter(
-    (q) => q.status === QuestionStatus.PUBLISHED
-  )
+  const publishedQuestions = questions.filter(q => q.status === QuestionStatus.PUBLISHED)
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8">
@@ -185,6 +170,13 @@ function TopicDetailContent() {
         </Button>
         {userRole?.can_edit && (
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => router.push(`/evaluation/topics/${topicId}/edit`)}
+            >
+              <Edit className="mr-2 h-4 w-4" />
+              Edit
+            </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" className="text-destructive">
@@ -196,8 +188,7 @@ function TopicDetailContent() {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete Topic</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Are you sure you want to delete this topic? This action
-                    cannot be undone.
+                    Are you sure you want to delete this topic? This action cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -220,22 +211,14 @@ function TopicDetailContent() {
       <div className="mb-8">
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-2xl font-semibold text-text-primary">{topic.name}</h1>
-          <Badge
-            variant={
-              topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'
-            }
-          >
+          <Badge variant={topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'}>
             {getVisibilityLabel(topic.visibility)}
           </Badge>
-          <Badge
-            variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}
-          >
+          <Badge variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}>
             {getStatusLabel(topic.status, 'topic')}
           </Badge>
         </div>
-        {topic.description && (
-          <p className="mb-4 text-text-secondary">{topic.description}</p>
-        )}
+        {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
         {userRole?.can_edit && publishedQuestions.length > 0 && (
           <Button variant="primary" onClick={handlePublish} disabled={publishing}>
             <Send className="mr-2 h-4 w-4" />
@@ -258,9 +241,7 @@ function TopicDetailContent() {
           <Card>
             <CardContent className="p-4">
               <div className="text-sm text-text-secondary">Respondents</div>
-              <div className="text-2xl font-semibold">
-                {statistics.total_respondents}
-              </div>
+              <div className="text-2xl font-semibold">{statistics.total_respondents}</div>
             </CardContent>
           </Card>
           <Card>
@@ -307,7 +288,7 @@ function TopicDetailContent() {
             {userRole?.can_edit && (
               <Button
                 variant="outline"
-                onClick={() => toast({ title: 'Coming Soon', description: 'Question creation feature will be available soon.' })}
+                onClick={() => router.push(`/evaluation/topics/${topicId}/questions/new`)}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 Add Question
@@ -323,7 +304,7 @@ function TopicDetailContent() {
                   <Button
                     variant="outline"
                     className="mt-4"
-                    onClick={() => toast({ title: 'Coming Soon', description: 'Question creation feature will be available soon.' })}
+                    onClick={() => router.push(`/evaluation/topics/${topicId}/questions/new`)}
                   >
                     <Plus className="mr-2 h-4 w-4" />
                     Create First Question
@@ -337,7 +318,9 @@ function TopicDetailContent() {
                 <Card
                   key={question.id}
                   className="cursor-pointer transition-shadow hover:shadow-md"
-                  onClick={() => toast({ title: 'Coming Soon', description: 'Question detail page will be available soon.' })}
+                  onClick={() =>
+                    router.push(`/evaluation/topics/${topicId}/questions/${question.id}`)
+                  }
                 >
                   <CardContent className="flex items-center justify-between p-4">
                     <div className="flex items-center gap-4">
@@ -346,17 +329,11 @@ function TopicDetailContent() {
                       </span>
                       <div>
                         <h3 className="font-medium">{question.title}</h3>
-                        <span className="text-xs text-text-muted">
-                          {question.content_type}
-                        </span>
+                        <span className="text-xs text-text-muted">{question.content_type}</span>
                       </div>
                     </div>
                     <Badge
-                      variant={
-                        question.status === QuestionStatus.PUBLISHED
-                          ? 'success'
-                          : 'info'
-                      }
+                      variant={question.status === QuestionStatus.PUBLISHED ? 'success' : 'info'}
                     >
                       {getStatusLabel(question.status, 'question')}
                     </Badge>
@@ -373,9 +350,16 @@ function TopicDetailContent() {
               <CardTitle>Permission Management</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-text-secondary">
-                Permission management feature will be available soon.
+              <p className="mb-4 text-text-secondary">
+                Manage who can view, answer, and grade your topic.
               </p>
+              <Button
+                variant="primary"
+                onClick={() => router.push(`/evaluation/topics/${topicId}/permissions`)}
+              >
+                <Users className="mr-2 h-4 w-4" />
+                Manage Permissions
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -386,9 +370,16 @@ function TopicDetailContent() {
               <CardTitle>Grading Tasks</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-text-secondary">
-                Grading task management feature will be available soon.
+              <p className="mb-4 text-text-secondary">
+                View and manage AI grading tasks for this topic.
               </p>
+              <Button
+                variant="primary"
+                onClick={() => router.push(`/evaluation/topics/${topicId}/grading`)}
+              >
+                <BarChart3 className="mr-2 h-4 w-4" />
+                View Grading Tasks
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
