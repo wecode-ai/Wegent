@@ -33,8 +33,8 @@ from app.schemas.device import (
 )
 from app.services.device.base_provider import BaseDeviceProvider
 from wecode.config.nevis_config import nevis_settings
-from wecode.service.nevis_client import NevisClient, NevisClientError, nevis_client
 from wecode.service.cloud_device_script import generate_simple_startup_script
+from wecode.service.nevis_client import NevisClient, NevisClientError, nevis_client
 
 logger = logging.getLogger(__name__)
 
@@ -330,9 +330,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
         # Delete sandbox via Nevis API
         try:
             await self._client.delete_sandbox(sandbox_id)
-            logger.info(
-                f"[CloudDeviceProvider] Nevis sandbox deleted: {sandbox_id}"
-            )
+            logger.info(f"[CloudDeviceProvider] Nevis sandbox deleted: {sandbox_id}")
         except NevisClientError as e:
             if e.status_code != 404:
                 logger.error(
@@ -564,6 +562,10 @@ class CloudDeviceProvider(BaseDeviceProvider):
         """Get device online info from Redis."""
         key = self.generate_online_key(user_id, device_id)
         result = await cache_manager.get(key)
+        logger.info(
+            f"[CloudDeviceProvider] _get_online_info: user_id={user_id}, "
+            f"device_id={device_id}, key={key}, found={result is not None}"
+        )
         return result
 
     async def list_devices(
@@ -586,6 +588,11 @@ class CloudDeviceProvider(BaseDeviceProvider):
             .all()
         )
 
+        logger.info(
+            f"[CloudDeviceProvider] list_devices: user_id={user_id}, "
+            f"total_devices={len(devices)}, include_offline={include_offline}"
+        )
+
         result = []
         for device_kind in devices:
             device_json = device_kind.json
@@ -594,6 +601,10 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
             # Only include cloud devices
             device_type = spec.get("deviceType")
+            logger.info(
+                f"[CloudDeviceProvider] checking device: device_id={device_id}, "
+                f"device_type={device_type}"
+            )
             if device_type != DeviceType.CLOUD.value:
                 continue
 
