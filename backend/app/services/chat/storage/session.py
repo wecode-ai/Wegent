@@ -8,6 +8,9 @@ Session manager for Chat Shell.
 Manages chat history and session state in Redis for multi-turn conversations.
 Also manages cancellation state for streaming chat requests using Redis
 for cross-worker communication in multi-worker deployments.
+
+Additionally manages streaming content and blocks for mixed content rendering,
+supporting page refresh recovery during streaming.
 """
 
 import asyncio
@@ -18,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.cache import cache_manager
 from app.core.config import settings
+from shared.models.blocks import BlockStatus, create_text_block, create_tool_block
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +36,8 @@ STREAMING_KEY_PREFIX = "chat:streaming:"
 STREAMING_CHANNEL_PREFIX = "chat:stream_channel:"
 # Redis key prefix for task-level streaming status (for group chat)
 TASK_STREAMING_KEY_PREFIX = "chat:task_streaming:"
-# Task streaming status TTL (1 hour)
-TASK_STREAMING_TTL = 3600
+# Unified TTL for all streaming-related data (1 hour)
+STREAMING_TTL = 3600
 
 
 class SessionManager:
@@ -540,9 +544,9 @@ class SessionManager:
             logger.info(
                 f"[SessionManager] set_task_streaming_status: key={key}, "
                 f"task_id={task_id}, subtask_id={subtask_id}, user_id={user_id}, "
-                f"expire={TASK_STREAMING_TTL}"
+                f"expire={STREAMING_TTL}"
             )
-            result = await self._cache.set(key, value, expire=TASK_STREAMING_TTL)
+            result = await self._cache.set(key, value, expire=STREAMING_TTL)
             logger.info(f"[SessionManager] set_task_streaming_status result: {result}")
             return result
         except Exception as e:
@@ -603,6 +607,292 @@ class SessionManager:
                 exc_info=True,
             )
             return False
+
+    # ==================== Blocks Collection (Mixed Content Rendering) ====================
+    # Uses Redis atomic operations for high performance:
+    # - accumulated_content: APPEND for O(1) content addition
+    # - blocks: RPUSH for O(1) block addition
+    # - current_text_block_id: separate key for O(1) read/write
+
+    def _get_blocks_key(self, subtask_id: int) -> str:
+        """Generate Redis key for blocks list."""
+        return f"{STREAMING_KEY_PREFIX}blocks:{subtask_id}"
+
+    def _get_current_text_block_key(self, subtask_id: int) -> str:
+        """Generate Redis key for current text block ID."""
+        return f"{STREAMING_KEY_PREFIX}text_block:{subtask_id}"
+
+    async def add_tool_block(
+        self,
+        subtask_id: int,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: Optional[Dict[str, Any]] = None,
+        display_name: Optional[str] = None,
+    ) -> None:
+        """Add a tool block for a subtask.
+
+        This also finalizes any current text block before adding the tool block.
+        Uses Redis RPUSH for O(1) block addition.
+
+        Args:
+            subtask_id: Subtask ID
+            tool_use_id: Tool use ID
+            tool_name: Tool name
+            tool_input: Tool input parameters
+            display_name: Optional display name for the tool
+        """
+        try:
+            # Finalize current text block before adding tool block
+            await self._finalize_current_text_block(subtask_id)
+
+            # Create tool block using unified function
+            block = create_tool_block(
+                tool_use_id=tool_use_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                display_name=display_name,
+            )
+
+            # Use RPUSH to append block to list (O(1) operation)
+            blocks_key = self._get_blocks_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            try:
+                await redis_client.rpush(blocks_key, json.dumps(block))
+                await redis_client.expire(blocks_key, STREAMING_TTL)
+            finally:
+                await redis_client.aclose()
+
+            logger.info(
+                f"[SessionManager] Added tool block for subtask {subtask_id}: "
+                f"id={block['id']}, tool_name={tool_name}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to add tool block for subtask {subtask_id}: {e}"
+            )
+
+    async def update_tool_block_status(
+        self,
+        subtask_id: int,
+        tool_use_id: str,
+        status: str = "done",
+        tool_output: Optional[str] = None,
+    ) -> None:
+        """Update tool block status.
+
+        Note: This requires reading and updating the block, which is O(n).
+        However, tool blocks are relatively rare compared to text chunks.
+
+        Args:
+            subtask_id: Subtask ID
+            tool_use_id: Tool use ID
+            status: New status (default: "done")
+            tool_output: Optional tool output
+        """
+        try:
+            blocks_key = self._get_blocks_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            try:
+                # Get all blocks
+                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
+                if not blocks_raw:
+                    return
+
+                # Find and update the tool block
+                for i, block_json in enumerate(blocks_raw):
+                    block = json.loads(block_json)
+                    if (
+                        block.get("type") == "tool"
+                        and block.get("tool_use_id") == tool_use_id
+                    ):
+                        block["status"] = status
+                        if tool_output:
+                            block["tool_output"] = tool_output
+                        # Update the block in place
+                        await redis_client.lset(blocks_key, i, json.dumps(block))
+                        logger.debug(
+                            f"[SessionManager] Updated tool block status for subtask {subtask_id}: "
+                            f"id={tool_use_id}, status={status}"
+                        )
+                        break
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to update tool block status for subtask {subtask_id}: {e}"
+            )
+
+    async def add_text_content(self, subtask_id: int, content: str) -> None:
+        """Add text content to the current text block.
+
+        Creates a new text block if there isn't one currently active.
+        Uses Redis APPEND for O(1) content addition.
+
+        Args:
+            subtask_id: Subtask ID
+            content: Text content to add
+        """
+        if not content:
+            return
+
+        try:
+            # Append to accumulated content using Redis APPEND (O(1))
+            streaming_key = self._get_streaming_key(subtask_id)
+            text_block_key = self._get_current_text_block_key(subtask_id)
+            blocks_key = self._get_blocks_key(subtask_id)
+
+            redis_client = await self._cache._get_client()
+            try:
+                # Append content to streaming cache
+                await redis_client.append(streaming_key, content)
+                await redis_client.expire(streaming_key, STREAMING_TTL)
+
+                # Check if we have a current text block
+                current_block_id = await redis_client.get(text_block_key)
+
+                if current_block_id:
+                    # Update existing text block's content
+                    # We need to find and update the last text block
+                    blocks_raw = await redis_client.lrange(blocks_key, -1, -1)
+                    if blocks_raw:
+                        last_block = json.loads(blocks_raw[0])
+                        if (
+                            last_block.get("id") == current_block_id.decode()
+                            if isinstance(current_block_id, bytes)
+                            else current_block_id
+                        ):
+                            last_block["content"] = (
+                                last_block.get("content", "") + content
+                            )
+                            await redis_client.lset(
+                                blocks_key, -1, json.dumps(last_block)
+                            )
+                else:
+                    # Create new text block
+                    block = create_text_block(content=content)
+                    await redis_client.rpush(blocks_key, json.dumps(block))
+                    await redis_client.set(
+                        text_block_key, block["id"], ex=STREAMING_TTL
+                    )
+                    await redis_client.expire(blocks_key, STREAMING_TTL)
+                    logger.info(
+                        f"[SessionManager] Created text block for subtask {subtask_id}: "
+                        f"id={block['id']}"
+                    )
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to add text content for subtask {subtask_id}: {e}"
+            )
+
+    async def _finalize_current_text_block(self, subtask_id: int) -> None:
+        """Finalize the current text block by setting status to done."""
+        try:
+            text_block_key = self._get_current_text_block_key(subtask_id)
+            blocks_key = self._get_blocks_key(subtask_id)
+
+            redis_client = await self._cache._get_client()
+            try:
+                current_block_id = await redis_client.get(text_block_key)
+                if not current_block_id:
+                    return
+
+                block_id = (
+                    current_block_id.decode()
+                    if isinstance(current_block_id, bytes)
+                    else current_block_id
+                )
+
+                # Find and update the text block
+                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
+                for i, block_json in enumerate(blocks_raw):
+                    block = json.loads(block_json)
+                    if block.get("id") == block_id:
+                        block["status"] = BlockStatus.DONE.value
+                        await redis_client.lset(blocks_key, i, json.dumps(block))
+                        break
+
+                # Clear current text block ID
+                await redis_client.delete(text_block_key)
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.warning(
+                f"[SessionManager] Failed to finalize text block for subtask {subtask_id}: {e}"
+            )
+
+    async def finalize_and_get_blocks(self, subtask_id: int) -> List[Dict[str, Any]]:
+        """Finalize any pending text block and return all blocks.
+
+        This should be called when the subtask completes (DONE event).
+
+        Args:
+            subtask_id: Subtask ID
+
+        Returns:
+            List of all blocks for the subtask
+        """
+        try:
+            # Finalize current text block
+            await self._finalize_current_text_block(subtask_id)
+
+            # Get all blocks
+            blocks_key = self._get_blocks_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            try:
+                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
+                blocks = [json.loads(b) for b in blocks_raw] if blocks_raw else []
+                logger.info(
+                    f"[SessionManager] Finalized blocks for subtask {subtask_id}: "
+                    f"count={len(blocks)}"
+                )
+                return blocks
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to get blocks for subtask {subtask_id}: {e}"
+            )
+            return []
+
+    async def get_accumulated_content(self, subtask_id: int) -> str:
+        """Get accumulated content for a subtask.
+
+        Args:
+            subtask_id: Subtask ID
+
+        Returns:
+            Accumulated content string
+        """
+        # Use the existing streaming content cache
+        content = await self.get_streaming_content(subtask_id)
+        return content or ""
+
+    async def cleanup_streaming_state(self, subtask_id: int) -> None:
+        """Clean up all streaming state for a completed subtask.
+
+        Args:
+            subtask_id: Subtask ID
+        """
+        try:
+            streaming_key = self._get_streaming_key(subtask_id)
+            blocks_key = self._get_blocks_key(subtask_id)
+            text_block_key = self._get_current_text_block_key(subtask_id)
+
+            redis_client = await self._cache._get_client()
+            try:
+                await redis_client.delete(streaming_key, blocks_key, text_block_key)
+                logger.debug(
+                    f"[SessionManager] Cleaned up streaming state for subtask {subtask_id}"
+                )
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.warning(
+                f"[SessionManager] Failed to cleanup streaming state for subtask {subtask_id}: {e}"
+            )
 
 
 # Global session manager instance

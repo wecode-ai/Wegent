@@ -12,7 +12,8 @@ This ensures unified status update logic across all execution modes
 (SSE, WebSocket, HTTP+Callback).
 
 Also collects blocks (tool calls and text segments) for mixed content rendering
-using a global BlocksCollector to maintain state across HTTP requests.
+using session_manager to maintain state across HTTP requests and support
+page refresh recovery.
 """
 
 import logging
@@ -20,7 +21,6 @@ from typing import Any, Dict, Optional
 
 from shared.models import EventType, ExecutionEvent
 
-from ..blocks_collector import get_blocks_collector
 from .protocol import ResultEmitter
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class StatusUpdatingEmitter(ResultEmitter):
     the event to the wrapped emitter.
 
     It also collects blocks (tool calls and text segments) for mixed content
-    rendering using a global BlocksCollector, ensuring the correct order of
+    rendering using session_manager, ensuring the correct order of
     tool-text-tool-text is preserved across multiple HTTP callback requests.
 
     This ensures consistent status updates regardless of the execution mode
@@ -58,8 +58,6 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._task_id = task_id
         self._subtask_id = subtask_id
         self._status_updated = False
-        # Use global blocks collector for cross-request state
-        self._blocks_collector = get_blocks_collector()
 
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit event and update status if terminal.
@@ -67,11 +65,13 @@ class StatusUpdatingEmitter(ResultEmitter):
         Args:
             event: Execution event to emit
         """
-        # Collect blocks for mixed content rendering using global collector
+        from app.services.chat.storage import session_manager
+
+        # Collect blocks for mixed content rendering using session_manager
         if event.type == EventType.TOOL_START.value:
             # When a tool starts, finalize any current text block and add tool block
             display_name = event.data.get("display_name") if event.data else None
-            await self._blocks_collector.add_tool_block(
+            await session_manager.add_tool_block(
                 subtask_id=self._subtask_id,
                 tool_use_id=event.tool_use_id or "",
                 tool_name=event.tool_name or "",
@@ -81,7 +81,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         elif event.type == EventType.TOOL_RESULT.value:
             # Update tool block status when result arrives
             if event.tool_use_id:
-                await self._blocks_collector.update_tool_block_status(
+                await session_manager.update_tool_block_status(
                     subtask_id=self._subtask_id,
                     tool_use_id=event.tool_use_id,
                     status="done",
@@ -91,7 +91,7 @@ class StatusUpdatingEmitter(ResultEmitter):
             # Accumulate content and track text blocks
             content = event.content or ""
             if content:
-                await self._blocks_collector.add_text_content(
+                await session_manager.add_text_content(
                     subtask_id=self._subtask_id,
                     content=content,
                 )
@@ -126,8 +126,10 @@ class StatusUpdatingEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Forward chunk event and accumulate content."""
+        from app.services.chat.storage import session_manager
+
         if content:
-            await self._blocks_collector.add_text_content(
+            await session_manager.add_text_content(
                 subtask_id=subtask_id,
                 content=content,
             )
@@ -214,16 +216,15 @@ class StatusUpdatingEmitter(ResultEmitter):
         Args:
             result: Optional result data from the event
         """
+        from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
         try:
-            # Get accumulated content and blocks from global collector
-            accumulated_content = await self._blocks_collector.get_accumulated_content(
+            # Get accumulated content and blocks from session_manager
+            accumulated_content = await session_manager.get_accumulated_content(
                 self._subtask_id
             )
-            blocks = await self._blocks_collector.finalize_and_get_blocks(
-                self._subtask_id
-            )
+            blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
 
             # Build result dict
             final_result = result
@@ -257,8 +258,8 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"and task {self._task_id} status to COMPLETED"
             )
 
-            # Clean up collector state
-            await self._blocks_collector.cleanup_subtask(self._subtask_id)
+            # Clean up streaming state
+            await session_manager.cleanup_streaming_state(self._subtask_id)
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
@@ -271,6 +272,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         Args:
             error_message: Error message
         """
+        from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
         try:
@@ -287,8 +289,8 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"and task {self._task_id} status to FAILED"
             )
 
-            # Clean up collector state
-            await self._blocks_collector.cleanup_subtask(self._subtask_id)
+            # Clean up streaming state
+            await session_manager.cleanup_streaming_state(self._subtask_id)
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
@@ -297,16 +299,15 @@ class StatusUpdatingEmitter(ResultEmitter):
 
     async def _update_status_cancelled(self) -> None:
         """Update subtask and task status to CANCELLED."""
+        from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
         try:
-            # Get accumulated content and blocks from global collector
-            accumulated_content = await self._blocks_collector.get_accumulated_content(
+            # Get accumulated content and blocks from session_manager
+            accumulated_content = await session_manager.get_accumulated_content(
                 self._subtask_id
             )
-            blocks = await self._blocks_collector.finalize_and_get_blocks(
-                self._subtask_id
-            )
+            blocks = await session_manager.finalize_and_get_blocks(self._subtask_id)
 
             # Build result with accumulated content
             result: Optional[Dict[str, Any]] = (
@@ -336,8 +337,8 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"and task {self._task_id} status to CANCELLED"
             )
 
-            # Clean up collector state
-            await self._blocks_collector.cleanup_subtask(self._subtask_id)
+            # Clean up streaming state
+            await session_manager.cleanup_streaming_state(self._subtask_id)
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",
