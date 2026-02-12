@@ -29,7 +29,7 @@ export default function NewTopicPage() {
   const [loading, setLoading] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [visibility, setVisibility] = useState(TopicVisibility.PRIVATE)
+  const [visibility, setVisibility] = useState<string>(TopicVisibility.PRIVATE)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
