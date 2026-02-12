@@ -23,7 +23,7 @@ import {
   ChevronUp,
   Settings2,
   Monitor,
-  FileCheck,
+  ClipboardCheck,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -145,7 +145,7 @@ export default function TaskSidebar({
     },
     {
       label: t('common:navigation.evaluation'),
-      icon: FileCheck,
+      icon: ClipboardCheck,
       path: paths.evaluation.getHref(),
       isActive: pageType === 'evaluation',
     },

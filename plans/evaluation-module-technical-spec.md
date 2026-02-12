@@ -42,8 +42,12 @@
 
 **例外情况（仅导航/路由集成）：**
 
-- 导航栏集成：`frontend/src/components/layout/Navbar.tsx` 添加入口
-- 路由集成：`frontend/src/app/` 添加路由挂载点
+- 导航栏集成：`frontend/src/features/tasks/components/sidebar/TaskSidebar.tsx` 添加入口
+  - 图标：`ClipboardCheck`（lucide-react）
+  - 标签：`AI考评`（中文）/ `AI Evaluation`（英文）
+  - 路径：`/evaluation`
+  - 位置：在「AI设备(devices)」之后
+- 路由集成：`frontend/src/app/(tasks)/evaluation/` 添加路由页面
 - API 路由注册：`backend/app/main.py` 注册路由
 
 ### 2.2 技术栈
@@ -654,9 +658,15 @@ frontend/wecode/
 
 ## 附录
 
-### A. 数据库迁移脚本
+### A. 数据库迁移规则
 
-详见 `backend/alembic/versions/` 目录下的迁移文件。
+> ⚠️ **重要**: 考评模块的数据库表**不使用 Alembic 管理**。
+>
+> 数据库 DDL 脚本由 DBA/运维独立管理和执行，不纳入应用代码的迁移流程。
+> 这样做的原因：
+> 1. 考评模块作为独立功能模块，便于按需部署
+> 2. 避免与核心业务表的迁移脚本冲突
+> 3. 便于 DBA 进行独立的表结构优化
 
 ### B. 环境配置
 
