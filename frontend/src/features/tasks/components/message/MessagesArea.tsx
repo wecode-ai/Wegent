@@ -15,8 +15,6 @@ import {
   MessageSquare,
   Users,
   MoreHorizontal,
-  Shield,
-  ShieldCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -905,54 +903,6 @@ export default function MessagesArea({
               <FileText className="h-4 w-4" />
               <span>{t('chat:export.export_docx') || 'Export DOCX'}</span>
             </DropdownMenuItem>
-            {/* Preserve Executor Toggle - show for all task statuses */}
-            {selectedTaskDetail?.id && (
-              <DropdownMenuItem
-                onClick={async () => {
-                  try {
-                    if (selectedTaskDetail.preserve_executor) {
-                      await taskApis.cancelPreserveExecutor(selectedTaskDetail.id)
-                      toast({
-                        title:
-                          t('tasks:preserve_executor.disabled_title') || 'Executor Cleanup Enabled',
-                        description:
-                          t('tasks:preserve_executor.disabled_desc') ||
-                          'Executor will be cleaned up normally.',
-                      })
-                    } else {
-                      await taskApis.setPreserveExecutor(selectedTaskDetail.id)
-                      toast({
-                        title: t('tasks:preserve_executor.enabled_title') || 'Executor Preserved',
-                        description:
-                          t('tasks:preserve_executor.enabled_desc') ||
-                          'Executor will not be cleaned up.',
-                      })
-                    }
-                    // Refresh task detail to get updated state from backend
-                    refreshSelectedTaskDetail(false)
-                  } catch (error) {
-                    toast({
-                      variant: 'destructive',
-                      title: t('tasks:preserve_executor.error_title') || 'Failed to Update',
-                      description: (error as Error)?.message || 'Could not update setting.',
-                    })
-                  }
-                }}
-                className="flex items-center gap-2 cursor-pointer"
-              >
-                {selectedTaskDetail.preserve_executor ? (
-                  <>
-                    <ShieldCheck className="h-4 w-4 text-primary" />
-                    <span>{t('tasks:preserve_executor.preserved') || 'Executor Preserved'}</span>
-                  </>
-                ) : (
-                  <>
-                    <Shield className="h-4 w-4" />
-                    <span>{t('tasks:preserve_executor.preserve') || 'Preserve Executor'}</span>
-                  </>
-                )}
-              </DropdownMenuItem>
-            )}
             <DropdownMenuItem
               onClick={() => {
                 const feedbackUrl = getRuntimeConfigSync().feedbackUrl
@@ -997,15 +947,10 @@ export default function MessagesArea({
           </Button>
         )}
 
-        {/* Preserve Executor Toggle - show for all task statuses */}
-        {selectedTaskDetail?.id && (
+        {/* Preserve Executor Indicator - only show for code tasks when preserved */}
+        {selectedTaskDetail?.task_type === 'code' && (
           <PreserveExecutorToggle
-            taskId={selectedTaskDetail.id}
             preserveExecutor={selectedTaskDetail.preserve_executor || false}
-            onToggle={() => {
-              // Refresh task detail to get updated preserve_executor state from backend
-              refreshSelectedTaskDetail(false)
-            }}
           />
         )}
 
@@ -1059,6 +1004,7 @@ export default function MessagesArea({
     selectedTaskDetail?.team?.agent_type,
     selectedTaskDetail?.status,
     selectedTaskDetail?.preserve_executor,
+    selectedTaskDetail?.task_type,
     messages.length,
     isSharing,
     isMobile,
@@ -1067,7 +1013,6 @@ export default function MessagesArea({
     handleExportDocx,
     t,
     hideGroupChatOptions,
-    refreshSelectedTaskDetail,
   ])
 
   // Pass share button to parent for rendering in TopNavigation
