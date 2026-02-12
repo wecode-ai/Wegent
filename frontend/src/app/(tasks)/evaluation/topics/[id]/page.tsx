@@ -6,10 +6,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import Link from 'next/link'
 import {
   ArrowLeft,
-  Edit,
   Trash2,
   Plus,
   Users,
@@ -187,12 +185,6 @@ function TopicDetailContent() {
         </Button>
         {userRole?.can_edit && (
           <div className="flex gap-2">
-            <Link href={`/evaluation/topics/${topicId}/edit`}>
-              <Button variant="outline">
-                <Edit className="mr-2 h-4 w-4" />
-                Edit
-              </Button>
-            </Link>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" className="text-destructive">
@@ -313,12 +305,13 @@ function TopicDetailContent() {
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-medium">Questions</h2>
             {userRole?.can_edit && (
-              <Link href={`/evaluation/topics/${topicId}/questions/new`}>
-                <Button variant="outline">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Question
-                </Button>
-              </Link>
+              <Button
+                variant="outline"
+                onClick={() => toast({ title: 'Coming Soon', description: 'Question creation feature will be available soon.' })}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Question
+              </Button>
             )}
           </div>
 
@@ -327,12 +320,14 @@ function TopicDetailContent() {
               <CardContent className="py-8 text-center">
                 <p className="text-text-secondary">No questions yet</p>
                 {userRole?.can_edit && (
-                  <Link href={`/evaluation/topics/${topicId}/questions/new`}>
-                    <Button variant="outline" className="mt-4">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Create First Question
-                    </Button>
-                  </Link>
+                  <Button
+                    variant="outline"
+                    className="mt-4"
+                    onClick={() => toast({ title: 'Coming Soon', description: 'Question creation feature will be available soon.' })}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create First Question
+                  </Button>
                 )}
               </CardContent>
             </Card>
@@ -342,11 +337,7 @@ function TopicDetailContent() {
                 <Card
                   key={question.id}
                   className="cursor-pointer transition-shadow hover:shadow-md"
-                  onClick={() =>
-                    router.push(
-                      `/evaluation/topics/${topicId}/questions/${question.id}`
-                    )
-                  }
+                  onClick={() => toast({ title: 'Coming Soon', description: 'Question detail page will be available soon.' })}
                 >
                   <CardContent className="flex items-center justify-between p-4">
                     <div className="flex items-center gap-4">
@@ -383,14 +374,8 @@ function TopicDetailContent() {
             </CardHeader>
             <CardContent>
               <p className="text-text-secondary">
-                Permission management will be available here.
+                Permission management feature will be available soon.
               </p>
-              <Link href={`/evaluation/topics/${topicId}/permissions`}>
-                <Button variant="outline" className="mt-4">
-                  <Users className="mr-2 h-4 w-4" />
-                  Manage Permissions
-                </Button>
-              </Link>
             </CardContent>
           </Card>
         </TabsContent>
@@ -402,14 +387,8 @@ function TopicDetailContent() {
             </CardHeader>
             <CardContent>
               <p className="text-text-secondary">
-                Grading task management will be available here.
+                Grading task management feature will be available soon.
               </p>
-              <Link href={`/evaluation/topics/${topicId}/grading`}>
-                <Button variant="outline" className="mt-4">
-                  <BarChart3 className="mr-2 h-4 w-4" />
-                  View Grading Tasks
-                </Button>
-              </Link>
             </CardContent>
           </Card>
         </TabsContent>

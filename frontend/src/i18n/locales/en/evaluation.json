@@ -1,1 +1,153 @@
-{}
+{
+  "title": "AI Evaluation",
+  "description": "Create and manage evaluation topics for AI-assisted grading",
+  "roles": {
+    "creator": "Creator",
+    "respondent": "Respondent",
+    "grader": "Grader"
+  },
+  "creator": {
+    "my_topics": "My Topics",
+    "my_topics_description": "Manage your evaluation topics, edit questions and settings.",
+    "statistics": "Statistics",
+    "statistics_description": "View respondent counts, completion rates, and other statistics."
+  },
+  "respondent": {
+    "my_answers_description": "View your answer history and submission records.",
+    "my_reports_description": "View grading reports and feedback you received.",
+    "progress_description": "View your answering progress and completion status."
+  },
+  "grader": {
+    "tasks_description": "View pending grading tasks and execute AI-assisted grading.",
+    "pending_tasks": "Pending Tasks",
+    "pending_tasks_description": "View tasks that need your grading or review.",
+    "completed_tasks": "Completed Tasks",
+    "completed_tasks_description": "View your completed grading tasks and reports.",
+    "publish_description": "Publish grading reports for respondents to view."
+  },
+  "topics": {
+    "title": "Topics",
+    "browse": "Browse Topics",
+    "browse_description": "View and search evaluation topics, answer questions, and check your results.",
+    "create": "Create Topic",
+    "create_description": "Create a new evaluation topic with questions and grading criteria.",
+    "edit": "Edit Topic",
+    "delete": "Delete Topic",
+    "publish": "Publish",
+    "unpublished": "Draft",
+    "published": "Published",
+    "public": "Public",
+    "private": "Private",
+    "name": "Topic Name",
+    "description": "Description",
+    "visibility": "Visibility",
+    "grading_team": "Grading Team",
+    "no_topics": "No topics yet",
+    "confirm_delete": "Are you sure you want to delete this topic?",
+    "created_success": "Topic created successfully",
+    "updated_success": "Topic updated successfully",
+    "deleted_success": "Topic deleted successfully",
+    "published_success": "Topic published successfully"
+  },
+  "questions": {
+    "title": "Questions",
+    "create": "Create Question",
+    "edit": "Edit Question",
+    "delete": "Delete Question",
+    "publish": "Publish",
+    "question_title": "Question Title",
+    "content_type": "Content Type",
+    "content": "Content",
+    "criteria": "Grading Criteria",
+    "order": "Order",
+    "no_questions": "No questions yet",
+    "confirm_delete": "Are you sure you want to delete this question?",
+    "created_success": "Question created successfully",
+    "updated_success": "Question updated successfully",
+    "deleted_success": "Question deleted successfully",
+    "published_success": "Question published successfully",
+    "content_types": {
+      "text": "Text",
+      "url": "URL",
+      "attachment": "Attachment",
+      "mixed": "Mixed"
+    }
+  },
+  "permissions": {
+    "title": "Permissions",
+    "description": "Manage who can view, answer, and grade your topics.",
+    "add": "Add Permission",
+    "remove": "Remove",
+    "user": "User",
+    "role": "Role",
+    "granted_by": "Granted By",
+    "granted_at": "Granted At",
+    "no_permissions": "No permissions configured",
+    "roles": {
+      "creator": "Creator",
+      "respondent": "Respondent",
+      "grader": "Grader"
+    },
+    "granted_success": "Permission granted successfully",
+    "revoked_success": "Permission revoked successfully"
+  },
+  "answers": {
+    "title": "Answers",
+    "submit": "Submit Answer",
+    "my_answers": "My Answers",
+    "content": "Answer Content",
+    "submitted_at": "Submitted At",
+    "version": "Question Version",
+    "latest": "Latest",
+    "history": "Answer History",
+    "no_answers": "No answers yet",
+    "submit_success": "Answer submitted successfully",
+    "new_version_available": "A new version of this question is available. You may want to re-answer.",
+    "progress": {
+      "title": "My Progress",
+      "total": "Total Questions",
+      "answered": "Answered",
+      "reports": "Reports Received",
+      "completion": "Completion Rate"
+    }
+  },
+  "grading": {
+    "title": "Grading",
+    "description": "Review AI-generated grading reports and publish results.",
+    "tasks": "Grading Tasks",
+    "execute": "Execute",
+    "publish": "Publish Report",
+    "report": "Grading Report",
+    "edit_report": "Edit Report",
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "published": "Published"
+    },
+    "no_tasks": "No grading tasks",
+    "execute_success": "Grading task started",
+    "publish_success": "Report published successfully",
+    "batch_execute": "Batch Execute",
+    "batch_publish": "Batch Publish",
+    "my_reports": "My Reports"
+  },
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "back": "Back",
+    "view": "View",
+    "edit": "Edit",
+    "delete": "Delete",
+    "refresh": "Refresh"
+  },
+  "errors": {
+    "load_failed": "Failed to load data",
+    "save_failed": "Failed to save",
+    "delete_failed": "Failed to delete",
+    "permission_denied": "Permission denied",
+    "not_found": "Not found"
+  }
+}

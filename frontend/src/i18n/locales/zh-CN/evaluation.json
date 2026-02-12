@@ -1,1 +1,153 @@
-{}
+{
+  "title": "AI考评",
+  "description": "创建和管理考评专题，支持 AI 辅助评分",
+  "roles": {
+    "creator": "出题人",
+    "respondent": "答题人",
+    "grader": "评分人"
+  },
+  "creator": {
+    "my_topics": "我的专题",
+    "my_topics_description": "管理您创建的考评专题，编辑题目和设置。",
+    "statistics": "统计数据",
+    "statistics_description": "查看答题人数、完成率等统计信息。"
+  },
+  "respondent": {
+    "my_answers_description": "查看您的作答历史和提交记录。",
+    "my_reports_description": "查看您收到的评分报告和反馈。",
+    "progress_description": "查看您的答题进度和完成情况。"
+  },
+  "grader": {
+    "tasks_description": "查看待评分的任务列表，执行 AI 辅助评分。",
+    "pending_tasks": "待处理任务",
+    "pending_tasks_description": "查看需要您评分或审核的任务。",
+    "completed_tasks": "已完成评分",
+    "completed_tasks_description": "查看您已完成的评分任务和报告。",
+    "publish_description": "发布评分报告，让答题人查看结果。"
+  },
+  "topics": {
+    "title": "专题",
+    "browse": "浏览专题",
+    "browse_description": "查看和搜索考评专题，答题并查看结果。",
+    "create": "创建专题",
+    "create_description": "创建新的考评专题，设置题目和评分标准。",
+    "edit": "编辑专题",
+    "delete": "删除专题",
+    "publish": "发布",
+    "unpublished": "草稿",
+    "published": "已发布",
+    "public": "公开",
+    "private": "私有",
+    "name": "专题名称",
+    "description": "描述",
+    "visibility": "可见性",
+    "grading_team": "评分智能体",
+    "no_topics": "暂无专题",
+    "confirm_delete": "确定要删除此专题吗？",
+    "created_success": "专题创建成功",
+    "updated_success": "专题更新成功",
+    "deleted_success": "专题删除成功",
+    "published_success": "专题发布成功"
+  },
+  "questions": {
+    "title": "题目",
+    "create": "创建题目",
+    "edit": "编辑题目",
+    "delete": "删除题目",
+    "publish": "发布",
+    "question_title": "题目标题",
+    "content_type": "内容类型",
+    "content": "内容",
+    "criteria": "评分标准",
+    "order": "排序",
+    "no_questions": "暂无题目",
+    "confirm_delete": "确定要删除此题目吗？",
+    "created_success": "题目创建成功",
+    "updated_success": "题目更新成功",
+    "deleted_success": "题目删除成功",
+    "published_success": "题目发布成功",
+    "content_types": {
+      "text": "文本",
+      "url": "链接",
+      "attachment": "附件",
+      "mixed": "混合"
+    }
+  },
+  "permissions": {
+    "title": "权限管理",
+    "description": "管理谁可以查看、答题和评分你的专题。",
+    "add": "添加权限",
+    "remove": "移除",
+    "user": "用户",
+    "role": "角色",
+    "granted_by": "授权人",
+    "granted_at": "授权时间",
+    "no_permissions": "暂无权限配置",
+    "roles": {
+      "creator": "创建者",
+      "respondent": "答题人",
+      "grader": "评分人"
+    },
+    "granted_success": "权限授予成功",
+    "revoked_success": "权限撤销成功"
+  },
+  "answers": {
+    "title": "作答",
+    "submit": "提交作答",
+    "my_answers": "我的作答",
+    "content": "作答内容",
+    "submitted_at": "提交时间",
+    "version": "题目版本",
+    "latest": "最新",
+    "history": "作答历史",
+    "no_answers": "暂无作答",
+    "submit_success": "作答提交成功",
+    "new_version_available": "题目有新版本，您可能需要重新作答。",
+    "progress": {
+      "title": "我的进度",
+      "total": "总题数",
+      "answered": "已作答",
+      "reports": "已收到报告",
+      "completion": "完成率"
+    }
+  },
+  "grading": {
+    "title": "评分",
+    "description": "查看 AI 生成的评分报告并发布结果。",
+    "tasks": "评分任务",
+    "execute": "执行评分",
+    "publish": "发布报告",
+    "report": "评分报告",
+    "edit_report": "编辑报告",
+    "status": {
+      "pending": "待处理",
+      "running": "评分中",
+      "completed": "已完成",
+      "failed": "失败",
+      "published": "已发布"
+    },
+    "no_tasks": "暂无评分任务",
+    "execute_success": "评分任务已启动",
+    "publish_success": "报告发布成功",
+    "batch_execute": "批量执行",
+    "batch_publish": "批量发布",
+    "my_reports": "我的报告"
+  },
+  "actions": {
+    "save": "保存",
+    "cancel": "取消",
+    "confirm": "确认",
+    "back": "返回",
+    "view": "查看",
+    "edit": "编辑",
+    "delete": "删除",
+    "refresh": "刷新"
+  },
+  "errors": {
+    "load_failed": "加载数据失败",
+    "save_failed": "保存失败",
+    "delete_failed": "删除失败",
+    "permission_denied": "没有权限",
+    "not_found": "未找到"
+  }
+}

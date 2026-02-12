@@ -111,6 +111,12 @@ class TopicService:
         """
         List topics accessible to a user.
 
+        Access rules:
+        - Creator: Can see all their own topics (including drafts)
+        - Others: Can only see published topics that are either:
+          - Public and published
+          - Topics where user has explicit permission
+
         Args:
             db: Database session
             user_id: Current user ID
@@ -127,13 +133,13 @@ class TopicService:
         query = db.query(EvalTopic).filter(EvalTopic.is_active == True)
 
         if my_only:
-            # Only user's own topics
+            # Only user's own topics (can see all including drafts)
             query = query.filter(EvalTopic.creator_id == user_id)
         else:
             # Topics user can access:
-            # 1. Public topics
-            # 2. User's own topics
-            # 3. Topics where user has permission
+            # 1. User's own topics (all statuses)
+            # 2. Public AND published topics
+            # 3. Topics where user has explicit permission (all statuses)
             permitted_topic_ids = (
                 db.query(EvalPermission.topic_id)
                 .filter(EvalPermission.user_id == user_id)
@@ -142,8 +148,14 @@ class TopicService:
 
             query = query.filter(
                 or_(
-                    EvalTopic.visibility == TopicVisibility.PUBLIC,
+                    # User's own topics - can see all
                     EvalTopic.creator_id == user_id,
+                    # Public topics - only if published
+                    and_(
+                        EvalTopic.visibility == TopicVisibility.PUBLIC,
+                        EvalTopic.status == TopicStatus.PUBLISHED,
+                    ),
+                    # Topics with explicit permission - can see all
                     EvalTopic.id.in_(permitted_topic_ids),
                 )
             )
