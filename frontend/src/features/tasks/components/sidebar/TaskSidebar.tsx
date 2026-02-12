@@ -23,6 +23,7 @@ import {
   ChevronUp,
   Settings2,
   Monitor,
+  FileCheck,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -44,7 +45,7 @@ import {
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices'
+  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'evaluation'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
@@ -141,6 +142,12 @@ export default function TaskSidebar({
       icon: Monitor,
       path: paths.devices.getHref(),
       isActive: pageType === 'devices',
+    },
+    {
+      label: t('common:navigation.evaluation'),
+      icon: FileCheck,
+      path: paths.evaluation.getHref(),
+      isActive: pageType === 'evaluation',
     },
   ]
 

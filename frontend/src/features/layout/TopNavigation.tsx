@@ -13,7 +13,7 @@ import TaskTitleDropdown from './TaskTitleDropdown'
 import { TaskDetail } from '@/types/api'
 
 type TopNavigationProps = {
-  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices'
+  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'devices' | 'evaluation'
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string
