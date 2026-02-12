@@ -19,12 +19,16 @@ class TestDifyAgent:
         """
         Mock all HTTP requests to prevent actual network calls during tests.
         - requests.get: DifyAgent.__init__ calls _get_app_mode() which makes GET to /v1/info
-        - requests.post: CallbackClient.send_callback() makes POST to callback URL
-        Without these mocks, tests would make real HTTP requests causing long timeouts.
+        - CallbackClient: Uses TracedSession (not raw requests.post), so we mock
+          the entire class to prevent retry loops with exponential backoff on empty URLs.
+        - send_progress_event: Mock to prevent asyncio event loop issues in tests.
         """
         with (
             patch("executor.agents.dify.dify_agent.requests.get") as mock_get,
-            patch("executor.callback.callback_client.requests.post") as mock_post,
+            patch("executor.agents.base.CallbackClient") as mock_callback_cls,
+            patch(
+                "executor.callback.callback_handler.send_progress_event"
+            ) as mock_progress,
         ):
             # Mock GET response for _get_app_mode()
             mock_get_response = MagicMock()
@@ -32,14 +36,19 @@ class TestDifyAgent:
             mock_get_response.json.return_value = {"mode": "chat"}
             mock_get.return_value = mock_get_response
 
-            # Mock POST response for callback
-            mock_post_response = MagicMock()
-            mock_post_response.status_code = 200
-            mock_post_response.content = b"{}"
-            mock_post_response.json.return_value = {}
-            mock_post.return_value = mock_post_response
+            # Mock CallbackClient instance
+            mock_callback = MagicMock()
+            mock_callback.send_event.return_value = {"status": "success"}
+            mock_callback_cls.return_value = mock_callback
 
-            yield {"get": mock_get, "post": mock_post}
+            # Mock send_progress_event to prevent asyncio issues
+            mock_progress.return_value = {"status": "success"}
+
+            yield {
+                "get": mock_get,
+                "callback": mock_callback,
+                "progress": mock_progress,
+            }
 
     @pytest.fixture
     def task_data(self):

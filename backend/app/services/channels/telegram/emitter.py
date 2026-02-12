@@ -5,7 +5,7 @@
 """
 Response Emitters for Telegram.
 
-This module provides ChatEventEmitter implementations for Telegram:
+This module provides ResultEmitter implementations for Telegram:
 - StreamingResponseEmitter: Telegram-specific streaming via message editing
 """
 
@@ -13,7 +13,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from app.services.chat.trigger.emitter import ChatEventEmitter
+from app.services.execution.emitters import ResultEmitter
+from shared.models import ExecutionEvent
 
 if TYPE_CHECKING:
     from telegram import Bot
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class StreamingResponseEmitter(ChatEventEmitter):
+class StreamingResponseEmitter(ResultEmitter):
     """Streaming response emitter for Telegram using message editing.
 
     This emitter uses Telegram's edit_message_text API to send streaming
@@ -251,30 +252,62 @@ class StreamingResponseEmitter(ChatEventEmitter):
             # Don't fail on edit errors - might be rate limited
             logger.warning(f"[TelegramStreamingEmitter] Failed to edit message: {e}")
 
-    async def emit_chat_start(
+    async def emit(self, event: ExecutionEvent) -> None:
+        """Emit a single event.
+
+        Args:
+            event: Execution event to emit
+        """
+        from shared.models import EventType
+
+        if event.type == EventType.START:
+            await self.emit_start(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                message_id=event.message_id,
+            )
+        elif event.type == EventType.CHUNK:
+            await self.emit_chunk(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                content=event.content or "",
+                offset=event.offset,
+            )
+        elif event.type == EventType.DONE:
+            await self.emit_done(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                result=event.result,
+            )
+        elif event.type == EventType.ERROR:
+            await self.emit_error(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                error=event.error or "Unknown error",
+            )
+
+    async def emit_start(
         self,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int] = None,
-        shell_type: str = "Chat",
+        **kwargs,
     ) -> None:
-        """Emit chat:start event - create the initial message."""
+        """Emit start event - create the initial message."""
         logger.info(
-            f"[TelegramStreamingEmitter] chat:start task={task_id} subtask={subtask_id}"
+            f"[TelegramStreamingEmitter] start task={task_id} subtask={subtask_id}"
         )
         await self._ensure_message_created()
 
-    async def emit_chat_chunk(
+    async def emit_chunk(
         self,
         task_id: int,
         subtask_id: int,
         content: str,
         offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        block_id: Optional[str] = None,
-        block_offset: Optional[int] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:chunk event - send streaming update to Telegram."""
+        """Emit chunk event - send streaming update to Telegram."""
         if not content:
             return
 
@@ -285,23 +318,22 @@ class StreamingResponseEmitter(ChatEventEmitter):
         # Use throttling to reduce API calls
         await self._send_streaming_update(content)
 
-    async def emit_chat_done(
+    async def emit_done(
         self,
         task_id: int,
         subtask_id: int,
-        offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        message_id: Optional[int] = None,
+        result: Optional[dict] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:done event - finalize the message."""
+        """Emit done event - finalize the message."""
         if self._finished:
             logger.warning(
-                "[TelegramStreamingEmitter] emit_chat_done called but already finished"
+                "[TelegramStreamingEmitter] emit_done called but already finished"
             )
             return
 
         logger.info(
-            f"[TelegramStreamingEmitter] chat:done task={task_id} subtask={subtask_id} "
+            f"[TelegramStreamingEmitter] done task={task_id} subtask={subtask_id} "
             f"full_content_len={len(self._full_content)}, pending_len={len(self._pending_content)}"
         )
 
@@ -351,19 +383,19 @@ class StreamingResponseEmitter(ChatEventEmitter):
                 f"[TelegramStreamingEmitter] Failed to finalize message: {e}"
             )
 
-    async def emit_chat_error(
+    async def emit_error(
         self,
         task_id: int,
         subtask_id: int,
         error: str,
-        message_id: Optional[int] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:error event - show error message."""
+        """Emit error event - show error message."""
         if self._finished:
             return
 
         logger.warning(
-            f"[TelegramStreamingEmitter] chat:error task={task_id} subtask={subtask_id} "
+            f"[TelegramStreamingEmitter] error task={task_id} subtask={subtask_id} "
             f"error={error}"
         )
 
@@ -390,17 +422,18 @@ class StreamingResponseEmitter(ChatEventEmitter):
                 f"[TelegramStreamingEmitter] Failed to send error message: {e}"
             )
 
-    async def emit_chat_cancelled(
+    async def emit_cancelled(
         self,
         task_id: int,
         subtask_id: int,
+        **kwargs,
     ) -> None:
-        """Emit chat:cancelled event - finalize with cancellation note."""
+        """Emit cancelled event - show cancellation message."""
         if self._finished:
             return
 
         logger.info(
-            f"[TelegramStreamingEmitter] chat:cancelled task={task_id} subtask={subtask_id}"
+            f"[TelegramStreamingEmitter] cancelled task={task_id} subtask={subtask_id}"
         )
 
         try:
@@ -408,13 +441,10 @@ class StreamingResponseEmitter(ChatEventEmitter):
             if not await self._ensure_message_created():
                 return
 
-            # Send any remaining content and add cancellation note
-            if self._pending_content:
-                self._full_content += self._pending_content
-                self._pending_content = ""
+            # Add cancellation note to content
+            self._full_content += "\n\n⚠️ 任务已取消"
 
-            self._full_content += "\n\n*(已取消)*"
-
+            # Update message with cancellation
             display_content = self._full_content
             if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
                 display_content = (
@@ -431,19 +461,9 @@ class StreamingResponseEmitter(ChatEventEmitter):
 
         except Exception as e:
             logger.exception(
-                f"[TelegramStreamingEmitter] Failed to cancel message: {e}"
+                f"[TelegramStreamingEmitter] Failed to send cancellation message: {e}"
             )
 
-    async def emit_chat_bot_complete(
-        self,
-        user_id: int,
-        task_id: int,
-        subtask_id: int,
-        content: str,
-        result: Dict[str, Any],
-    ) -> None:
-        """Emit chat:bot_complete event (no-op for streaming emitter)."""
-        logger.debug(
-            f"[TelegramStreamingEmitter] chat:bot_complete user={user_id} task={task_id} "
-            f"subtask={subtask_id} (skipped)"
-        )
+    async def close(self) -> None:
+        """Close the emitter and release resources."""
+        pass

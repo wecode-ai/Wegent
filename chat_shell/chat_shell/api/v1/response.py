@@ -1,67 +1,146 @@
 """
-/v1/response API endpoint implementation.
+/v1/responses API endpoint implementation.
 
 This is the main API endpoint for chat_shell.
-Uses ChatService for actual chat processing to avoid code duplication.
+Uses ChatService for actual chat processing.
+Output format is compatible with OpenAI Responses API for standard client consumption.
+
+Input format: OpenAI Responses API standard format
+- model: Model identifier
+- input: User message (string or messages array)
+- instructions: System prompt
+- stream: Whether to stream (always true for this endpoint)
+- metadata: Custom metadata for internal use
+- model_config: Model configuration for internal use
 """
 
 import asyncio
 import json
+import logging
 import time
 import uuid
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
-from chat_shell.api.v1.schemas import (
-    CancelRequest,
-    CancelResponse,
-    ContentDelta,
-    ErrorEvent,
-    HealthResponse,
-    ReasoningDelta,
-    ResponseCancelled,
-    ResponseDone,
-    ResponseEventType,
-    ResponseRequest,
-    StorageHealth,
-    ToolDone,
-    ToolStart,
-    UsageInfo,
-)
+from shared.models import ExecutionRequest, OpenAIRequestConverter
+from shared.models.emitter import GeneratorTransport, ResponsesAPIEmitter
+from shared.models.execution import EventType
+from shared.models.responses_api import ResponsesAPIStreamEvents
 
-router = APIRouter(prefix="/v1", tags=["response"])
+router = APIRouter(prefix="/v1", tags=["responses"])
+logger = logging.getLogger(__name__)
 
 # Track active streams for cancellation and health check
 _active_streams: dict[str, asyncio.Event] = {}
 _start_time = time.time()
 
 
-def _format_sse_event(event_type: str, data: dict) -> str:
-    """Format data as SSE event."""
-    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+# ============================================================
+# OpenAI Responses API Request Schema
+# ============================================================
+
+
+class OpenAIResponsesRequest(BaseModel):
+    """OpenAI Responses API compatible request schema.
+
+    This is the standard format that OpenAI client sends.
+    """
+
+    model: str = Field(..., description="Model identifier")
+    input: Union[str, list[dict]] = Field(..., description="User input")
+    instructions: Optional[str] = Field(None, description="System instructions")
+    stream: bool = Field(True, description="Whether to stream response")
+    tools: Optional[list[dict]] = Field(None, description="Tools including MCP servers")
+
+    # Custom extensions for internal use (passed via extra_body)
+    metadata: Optional[dict] = Field(None, description="Internal metadata")
+    model_config_data: Optional[dict] = Field(
+        None, alias="model_config", description="Model configuration"
+    )
+
+    class Config:
+        populate_by_name = True
+        extra = "allow"  # Allow extra fields from OpenAI client
+
+
+class CancelRequest(BaseModel):
+    """Cancel request schema."""
+
+    request_id: str = Field(..., description="Request ID to cancel")
+
+
+class CancelResponse(BaseModel):
+    """Cancel response schema."""
+
+    success: bool = Field(..., description="Whether cancel was successful")
+    message: str = Field(..., description="Status message")
+
+
+class StorageHealth(BaseModel):
+    """Storage health info."""
+
+    type: str = Field(..., description="Storage type")
+    status: str = Field(..., description="Storage status")
+
+
+class HealthResponse(BaseModel):
+    """Health check response schema."""
+
+    status: str = Field(..., description="Overall status")
+    version: str = Field(..., description="chat_shell version")
+    uptime_seconds: int = Field(..., description="Service uptime in seconds")
+    active_streams: int = Field(0, description="Active stream count")
+    storage: Optional[StorageHealth] = Field(None, description="Storage health")
+    model_providers: Optional[dict[str, str]] = Field(
+        None, description="Model provider status"
+    )
+
+
+# ============================================================
+# Helper Functions
+# ============================================================
+
+
+def _create_sse_event(event_type: str, data: dict) -> ServerSentEvent:
+    """Create SSE event in OpenAI Responses API format.
+
+    Args:
+        event_type: Event type string (e.g., "response.created")
+        data: Event data dictionary
+
+    Returns:
+        ServerSentEvent object
+    """
+    return ServerSentEvent(
+        event=event_type,
+        data=json.dumps(data, ensure_ascii=False),
+    )
 
 
 def _extract_stream_attributes(
-    request: "ResponseRequest",
+    request: OpenAIResponsesRequest,
     cancel_event: asyncio.Event,
     request_id: str,
 ) -> dict:
     """Extract attributes from stream request for tracing."""
     attrs = {"request.id": request_id}
     if request.metadata:
-        if request.metadata.task_id:
-            attrs["task.id"] = request.metadata.task_id
-        if request.metadata.subtask_id:
-            attrs["subtask.id"] = request.metadata.subtask_id
-        if request.metadata.user_id:
-            attrs["user.id"] = str(request.metadata.user_id)
-    if request.model_config_data:
-        attrs["model.id"] = request.model_config_data.model_id or ""
-        attrs["model.provider"] = request.model_config_data.model or ""
+        if request.metadata.get("task_id"):
+            attrs["task.id"] = request.metadata["task_id"]
+        if request.metadata.get("subtask_id"):
+            attrs["subtask.id"] = request.metadata["subtask_id"]
+        if request.metadata.get("user_id"):
+            attrs["user.id"] = str(request.metadata["user_id"])
+    attrs["model.id"] = request.model or ""
     return attrs
 
+
+# ============================================================
+# Stream Response Generator
+# ============================================================
 
 from shared.telemetry.decorators import trace_async_generator
 
@@ -72,268 +151,89 @@ from shared.telemetry.decorators import trace_async_generator
     extract_attributes=_extract_stream_attributes,
 )
 async def _stream_response(
-    request: ResponseRequest,
+    request: OpenAIResponsesRequest,
     cancel_event: asyncio.Event,
     request_id: str,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[ServerSentEvent, None]:
     """
     Stream response generator using ChatService.
 
-    Converts ResponseRequest to ChatRequest and uses ChatService for processing.
+    Converts OpenAI format request to ExecutionRequest and uses ChatService for processing.
+    Output format is compatible with OpenAI Responses API.
+    Uses ResponsesAPIEmitter with GeneratorTransport for unified event generation.
     """
-    import logging
-
-    from chat_shell.core.config import settings
     from chat_shell.core.shutdown import shutdown_manager
-    from chat_shell.interface import ChatEventType, ChatRequest
     from chat_shell.services.chat_service import chat_service
-
-    logger = logging.getLogger(__name__)
 
     # Register stream with shutdown manager
     await shutdown_manager.register_stream(request_id)
 
-    response_id = f"resp-{uuid.uuid4().hex[:12]}"
+    # Extract metadata
+    metadata = request.metadata or {}
+    task_id = metadata.get("task_id", 0)
+    subtask_id = metadata.get("subtask_id", 0)
+
+    # Create emitter with GeneratorTransport
+    transport = GeneratorTransport()
+    emitter = ResponsesAPIEmitter(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        transport=transport,
+        model=request.model,
+    )
+
     full_content = ""
     total_input_tokens = 0
     total_output_tokens = 0
-    emitted_tool_run_ids: set[str] = (
-        set()
-    )  # Track emitted tool events to avoid duplicates
-    accumulated_sources: list[dict] = []  # Track knowledge base sources for citation
-    accumulated_blocks: list[dict] = (
-        []
-    )  # Track message blocks for mixed content rendering
-    # Silent exit tracking for subscription tasks
+    emitted_tool_run_ids: set[str] = set()
+    accumulated_sources: list[dict] = []
     is_silent_exit = False
     silent_exit_reason = ""
-    # Extra fields from DONE event to pass through (e.g., loaded_skills)
     done_extra_fields: dict = {}
 
     try:
-        # Send response.start event
-        yield _format_sse_event(
-            ResponseEventType.RESPONSE_START.value,
-            {
-                "id": response_id,
-                "model": request.model_config_data.model_id,
-                "created": int(time.time()),
-            },
-        )
+        # Send response.created event
+        event_type, data = await emitter.start()
+        yield _create_sse_event(event_type, data)
 
-        # Build model config dict
-        model_config = {
-            "model_id": request.model_config_data.model_id,
-            "model": request.model_config_data.model,
-            "api_key": request.model_config_data.api_key,
-            "base_url": request.model_config_data.base_url,
-            "api_format": request.model_config_data.api_format,
-            "default_headers": request.model_config_data.default_headers,
-            "context_window": request.model_config_data.context_window,
-            "max_output_tokens": request.model_config_data.max_output_tokens,
-            "timeout": request.model_config_data.timeout,
-            "max_retries": request.model_config_data.max_retries,
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-            # Model CRD reference for subscription creation
-            "model_name": request.model_config_data.model_name,
-            "model_namespace": request.model_config_data.model_namespace,
-        }
+        # Send response.in_progress event
+        event_type, data = await emitter.in_progress()
+        yield _create_sse_event(event_type, data)
 
-        # Determine the message content
-        message: str | dict = ""
-        if request.input.messages:
-            # Full conversation history - extract last user message
-            for msg in reversed(request.input.messages):
-                if msg.role == "user":
-                    message = (
-                        msg.content
-                        if isinstance(msg.content, str)
-                        else {"type": "multi_vision", "content": msg.content}
-                    )
-                    break
-        elif request.input.content:
-            # Multimodal content - convert to vision format
-            message = {
-                "type": "multi_vision",
-                "text": "",
-                "images": [],
-            }
-            for c in request.input.content:
-                if c.type == "text" and c.text:
-                    message["text"] = c.text
-                elif c.type == "image" and c.source:
-                    message["images"].append(
-                        {
-                            "image_base64": c.source.get("data", ""),
-                            "mime_type": c.source.get("media_type", "image/png"),
-                        }
-                    )
-        elif request.input.text:
-            # Simple text or vision message dict
-            message = request.input.text
-
-        # Determine enable_web_search from tools.builtin or features
-        # Requires both: server-side WEB_SEARCH_ENABLED=True AND explicit request
-        enable_web_search = False
-        if getattr(settings, "WEB_SEARCH_ENABLED", False):
-            if request.tools and request.tools.builtin:
-                web_search_config = request.tools.builtin.get("web_search")
-                if web_search_config and web_search_config.enabled:
-                    enable_web_search = True
-            if request.features and request.features.web_search:
-                enable_web_search = True
-
-        # Extract MCP server configs
-        mcp_servers = []
-        if request.tools and request.tools.mcp_servers:
-            for server in request.tools.mcp_servers:
-                mcp_servers.append(
-                    {
-                        "name": server.name,
-                        "url": server.url,
-                        "type": server.type,
-                        "auth": server.auth,
-                    }
-                )
-
-        # Extract skill configs
-        skill_configs = []
-        if request.tools and request.tools.skills:
-            for skill in request.tools.skills:
-                skill_configs.append(
-                    {
-                        "name": skill.name,
-                        "version": skill.version,
-                        "preload": skill.preload,
-                    }
-                )
-
-        # Extract metadata
-        task_id = 0
-        subtask_id = 0
-        user_subtask_id = None  # User subtask ID for RAG persistence
-        user_id = 0
-        user_name = ""
-        team_id = 0
-        team_name = ""
-        is_group_chat = False
-        message_id = None
-        user_message_id = None  # For history exclusion
-        bot_name = ""
-        bot_namespace = ""
-        skill_names = []
-        skill_configs_from_meta = []
-        preload_skills = []
-        knowledge_base_ids = None
-        document_ids = None
-        is_user_selected_kb = True  # Default to strict mode for backward compatibility
-        table_contexts = []
-        task_data = None
-        history_limit = None  # For subscription tasks
-        auth_token = ""  # JWT token for API authentication
-        is_subscription = False  # For SilentExitTool injection
-        user_selected_skills = []
-
-        if request.metadata:
-            task_id = getattr(request.metadata, "task_id", 0) or 0
-            subtask_id = getattr(request.metadata, "subtask_id", 0) or 0
-            user_subtask_id = getattr(request.metadata, "user_subtask_id", None)
-            user_id = request.metadata.user_id or 0
-            user_name = request.metadata.user_name or ""
-            team_id = getattr(request.metadata, "team_id", 0) or 0
-            team_name = getattr(request.metadata, "team_name", "") or ""
-            is_group_chat = request.metadata.chat_type == "group"
-            message_id = getattr(request.metadata, "message_id", None)
-            user_message_id = getattr(request.metadata, "user_message_id", None)
-            bot_name = getattr(request.metadata, "bot_name", "") or ""
-            bot_namespace = getattr(request.metadata, "bot_namespace", "") or ""
-            skill_names = getattr(request.metadata, "skill_names", None) or []
-            skill_configs_from_meta = (
-                getattr(request.metadata, "skill_configs", None) or []
-            )
-            preload_skills = getattr(request.metadata, "preload_skills", None) or []
-            knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
-            document_ids = getattr(request.metadata, "document_ids", None)
-            # is_user_selected_kb: defaults to True if not provided (strict mode)
-            is_user_selected_kb = getattr(request.metadata, "is_user_selected_kb", True)
-            if is_user_selected_kb is None:
-                is_user_selected_kb = True  # Ensure it's never None
-            table_contexts = getattr(request.metadata, "table_contexts", None) or []
-            task_data = getattr(request.metadata, "task_data", None)
-            history_limit = getattr(request.metadata, "history_limit", None)
-            auth_token = getattr(request.metadata, "auth_token", None) or ""
-            is_subscription = (
-                getattr(request.metadata, "is_subscription", False) or False
-            )
-            user_selected_skills = (
-                getattr(request.metadata, "user_selected_skills", None) or []
-            )
-        # Merge skill configs from tools and metadata
-        all_skill_configs = skill_configs + skill_configs_from_meta
-
-        # Build ChatRequest for ChatService
-        chat_request = ChatRequest(
+        # Send output_item.added event for the message
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
             task_id=task_id,
             subtask_id=subtask_id,
-            user_subtask_id=user_subtask_id,  # User subtask ID for RAG persistence
-            message=message,
-            user_id=user_id,
-            user_name=user_name,
-            team_id=team_id,
-            team_name=team_name,
-            message_id=message_id,
-            user_message_id=user_message_id,
-            is_group_chat=is_group_chat,
-            history_limit=history_limit,  # For subscription tasks
-            model_config=model_config,
-            system_prompt=request.system or "",
-            enable_tools=True,
-            enable_web_search=enable_web_search,
-            enable_clarification=(
-                request.features.clarification if request.features else False
-            ),
-            enable_deep_thinking=(
-                request.features.deep_thinking if request.features else False
-            ),
-            search_engine=(
-                request.features.search_engine if request.features else None
-            ),
-            bot_name=bot_name,
-            bot_namespace=bot_namespace,
-            skills=all_skill_configs,
-            skill_names=skill_names,
-            skill_configs=all_skill_configs,
-            preload_skills=preload_skills,
-            knowledge_base_ids=knowledge_base_ids,
-            document_ids=document_ids,
-            is_user_selected_kb=is_user_selected_kb,
-            table_contexts=table_contexts,
-            task_data=task_data,
-            mcp_servers=mcp_servers,
-            auth_token=auth_token,
-            is_subscription=is_subscription,
-            user_selected_skills=user_selected_skills,
+            data=emitter.builder.output_item_added(),
         )
+        yield _create_sse_event(event_type, data)
+
+        # Send content_part.added event
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.content_part_added(),
+        )
+        yield _create_sse_event(event_type, data)
+
+        # Convert OpenAI format to ExecutionRequest using shared converter
+        openai_dict = {
+            "model": request.model,
+            "input": request.input,
+            "instructions": request.instructions,
+            "tools": request.tools or [],
+            "metadata": request.metadata or {},
+            "model_config": request.model_config_data or {},
+        }
+        execution_request = OpenAIRequestConverter.to_execution_request(openai_dict)
 
         logger.info(
-            "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
-            "enable_web_search=%s, mcp_servers=%d, skills=%d, "
-            "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
-            "table_contexts_count=%d, table_contexts=%s, user_selected_skills=%s",
+            "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, model=%s",
             task_id,
             subtask_id,
-            user_subtask_id,
-            enable_web_search,
-            len(mcp_servers),
-            len(all_skill_configs),
-            skill_names,
-            preload_skills,
-            knowledge_base_ids,
-            document_ids,
-            len(table_contexts),
-            table_contexts,  # Log the actual content
-            user_selected_skills,  # Log user selected skills from backend
+            request.model,
         )
 
         # Record request details to trace
@@ -343,83 +243,50 @@ async def _stream_response(
             {
                 SpanAttributes.TASK_ID: task_id,
                 SpanAttributes.SUBTASK_ID: subtask_id,
-                SpanAttributes.MCP_SERVERS_COUNT: len(mcp_servers),
-                SpanAttributes.MCP_SERVER_NAMES: (
-                    ",".join(s["name"] for s in mcp_servers) if mcp_servers else ""
-                ),
+                SpanAttributes.MCP_SERVERS_COUNT: len(execution_request.mcp_servers),
                 SpanAttributes.SKILL_NAMES: (
-                    ",".join(skill_names) if skill_names else ""
+                    ",".join(execution_request.skill_names)
+                    if execution_request.skill_names
+                    else ""
                 ),
-                SpanAttributes.SKILL_COUNT: len(all_skill_configs),
+                SpanAttributes.SKILL_COUNT: len(execution_request.skill_configs),
                 SpanAttributes.KB_IDS: (
-                    ",".join(map(str, knowledge_base_ids)) if knowledge_base_ids else ""
+                    ",".join(map(str, execution_request.knowledge_base_ids))
+                    if execution_request.knowledge_base_ids
+                    else ""
                 ),
-                SpanAttributes.KB_DOCUMENT_IDS: (
-                    ",".join(map(str, document_ids)) if document_ids else ""
+                SpanAttributes.CHAT_WEB_SEARCH: execution_request.enable_web_search,
+                SpanAttributes.CHAT_DEEP_THINKING: execution_request.enable_deep_thinking,
+                SpanAttributes.CHAT_TYPE: (
+                    "group" if execution_request.is_group_chat else "single"
                 ),
-                SpanAttributes.KB_TABLE_CONTEXTS_COUNT: len(table_contexts),
-                SpanAttributes.CHAT_WEB_SEARCH: enable_web_search,
-                SpanAttributes.CHAT_DEEP_THINKING: (
-                    request.features.deep_thinking if request.features else False
-                ),
-                SpanAttributes.CHAT_TYPE: "group" if is_group_chat else "single",
             }
         )
 
         # Stream from ChatService
-        async for event in chat_service.chat(chat_request):
+        async for event in chat_service.chat(execution_request):
+
             # Check for cancellation
             if cancel_event.is_set():
-                yield _format_sse_event(
-                    ResponseEventType.RESPONSE_CANCELLED.value,
-                    ResponseCancelled(
-                        id=response_id,
-                        partial_content=full_content,
-                    ).model_dump(),
-                )
+                event_type, data = await emitter.incomplete("cancelled", full_content)
+                yield _create_sse_event(event_type, data)
                 return
 
-            # Convert ChatEvent to SSE event
-            if event.type == ChatEventType.CHUNK:
-                chunk_text = event.data.get("content", "")
+            # Process ExecutionEvent
+            event_type_str = event.type
+            if event_type_str == EventType.CHUNK.value:
+                chunk_text = event.content or event.data.get("content", "")
+                result = event.result or event.data.get("result")
 
-                # Check for thinking data, sources, blocks, and block_id in result
-                result = event.data.get("result")
-                block_id = event.data.get(
-                    "block_id"
-                )  # Extract block_id for text block streaming
-                block_offset = event.data.get(
-                    "block_offset"
-                )  # Extract block_offset for incremental rendering
-                logger.debug(
-                    "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
-                    "thinking_count=%d, blocks_count=%d, block_id=%s, block_offset=%s",
-                    len(chunk_text),
-                    result is not None,
-                    len(result.get("thinking", [])) if result else 0,
-                    len(result.get("blocks", [])) if result else 0,
-                    block_id,
-                    block_offset,
-                )
-
-                # Send content.delta event with result (including blocks for real-time mixed content)
+                # Send output_text.delta event
                 if chunk_text:
                     full_content += chunk_text
-                    yield _format_sse_event(
-                        ResponseEventType.CONTENT_DELTA.value,
-                        ContentDelta(
-                            type="text",
-                            text=chunk_text,
-                            result=result,  # Include result for real-time mixed content rendering
-                            block_id=block_id,  # Include block_id for text block streaming
-                            block_offset=block_offset,  # Include block_offset for incremental rendering
-                        ).model_dump(exclude_none=True),
-                    )
+                    event_type, data = await emitter.text_delta(chunk_text)
+                    yield _create_sse_event(event_type, data)
 
-                # Accumulate sources from result (knowledge base citations)
+                # Accumulate sources
                 if result and result.get("sources"):
                     for source in result["sources"]:
-                        # Avoid duplicates based on (kb_id, title)
                         key = (source.get("kb_id"), source.get("title"))
                         existing_keys = {
                             (s.get("kb_id"), s.get("title"))
@@ -427,134 +294,86 @@ async def _stream_response(
                         }
                         if key not in existing_keys:
                             accumulated_sources.append(source)
-                if result and result.get("thinking"):
-                    for step in result["thinking"]:
-                        details = step.get("details", {})
-                        status = details.get("status")
-                        tool_name = details.get("tool_name", details.get("name", ""))
-                        run_id = step.get("run_id", "")
-                        title = step.get("title", "")
-                        blocks = result.get("blocks", [])
 
-                        # Create unique key for this tool event
-                        event_key = f"{run_id}:{status}"
-                        if event_key in emitted_tool_run_ids:
-                            continue  # Skip already emitted events
+                # Process tool_event directly from event.data (new format)
+                tool_event = event.data.get("tool_event") if event.data else None
+                if tool_event:
+                    tool_type = tool_event.get("type")
+                    tool_use_id = tool_event.get("tool_use_id", "")
+                    tool_name = tool_event.get("tool_name", "")
+                    status = tool_event.get("status", "")
+
+                    event_key = f"{tool_use_id}:{status}"
+                    if event_key not in emitted_tool_run_ids:
                         emitted_tool_run_ids.add(event_key)
 
-                        logger.info(
-                            "[RESPONSE] Processing thinking step: run_id=%s, status=%s, tool=%s, title=%s",
-                            run_id[:20] if run_id else "N/A",
-                            status,
-                            tool_name,
-                            title[:30] if title else "N/A",
-                        )
+                        if tool_type == "tool_use" and status == "started":
+                            # Get display_name from tool_event (Wegent extension)
+                            display_name = tool_event.get("display_name")
+                            tool_input = tool_event.get("input", {})
 
-                        if status == "started":
-                            yield _format_sse_event(
-                                ResponseEventType.TOOL_START.value,
-                                ToolStart(
-                                    id=run_id,
-                                    name=tool_name,
-                                    input=details.get("input", {}),
-                                    display_name=step.get("title", tool_name),
-                                    blocks=blocks,
-                                ).model_dump(),
+                            # Send tool start events
+                            # tool_start internally emits two events to transport
+                            await emitter.tool_start(
+                                tool_use_id, tool_name, tool_input, display_name
                             )
-                        elif status in ("completed", "failed"):
-                            logger.info(
-                                "[RESPONSE] Emitting TOOL_DONE: run_id=%s, status=%s, error=%s",
-                                run_id[:20] if run_id else "N/A",
-                                status,
-                                (
-                                    details.get("error", "none")[:50]
-                                    if details.get("error")
-                                    else "none"
-                                ),
-                            )
-                            yield _format_sse_event(
-                                ResponseEventType.TOOL_DONE.value,
-                                ToolDone(
-                                    id=run_id,
-                                    output=details.get(
-                                        "output", details.get("content")
-                                    ),
-                                    duration_ms=None,
-                                    error=(
-                                        details.get("error")
-                                        if status == "failed"
-                                        else None
-                                    ),
-                                    sources=None,
-                                    display_name=title if status == "failed" else None,
-                                    blocks=blocks,
-                                ).model_dump(),
-                            )
+                            # Get all events from transport and yield them
+                            for evt_type, evt_data in transport.get_events():
+                                yield _create_sse_event(evt_type, evt_data)
 
-            elif event.type == ChatEventType.THINKING:
-                thinking_text = event.data.get("content", "")
-                if thinking_text:
-                    yield _format_sse_event(
-                        ResponseEventType.REASONING_DELTA.value,
-                        ReasoningDelta(text=thinking_text).model_dump(),
-                    )
+                        elif tool_type == "tool_result" and status in (
+                            "completed",
+                            "failed",
+                        ):
+                            tool_input = tool_event.get("input", {})
 
-            elif event.type == ChatEventType.TOOL_START:
-                yield _format_sse_event(
-                    ResponseEventType.TOOL_START.value,
-                    ToolStart(
-                        id=event.data.get("tool_call_id", ""),
-                        name=event.data.get("tool_name", ""),
-                        input=event.data.get("tool_input", {}),
-                        display_name=event.data.get("tool_name"),
-                        blocks=event.data.get("blocks", []),
-                    ).model_dump(),
+                            # Send tool done events
+                            # tool_done internally emits two events to transport
+                            await emitter.tool_done(tool_use_id, tool_name, tool_input)
+                            # Get all events from transport and yield them
+                            for evt_type, evt_data in transport.get_events():
+                                yield _create_sse_event(evt_type, evt_data)
+
+            elif event_type_str == EventType.TOOL_START.value:
+                tool_use_id = event.tool_use_id or event.data.get("tool_call_id", "")
+                tool_name = event.tool_name or event.data.get("tool_name", "")
+                tool_input = event.tool_input or event.data.get("tool_input", {})
+                # Get display_name from event data (Wegent extension)
+                display_name = event.data.get("display_name") if event.data else None
+
+                # Send tool start events
+                # tool_start internally emits two events to transport
+                await emitter.tool_start(
+                    tool_use_id, tool_name, tool_input, display_name
                 )
+                # Get all events from transport and yield them
+                for evt_type, evt_data in transport.get_events():
+                    yield _create_sse_event(evt_type, evt_data)
 
-            elif event.type == ChatEventType.TOOL_RESULT:
-                yield _format_sse_event(
-                    ResponseEventType.TOOL_DONE.value,
-                    ToolDone(
-                        id=event.data.get("tool_call_id", ""),
-                        output=event.data.get("tool_output"),
-                        blocks=event.data.get("blocks", []),
-                        duration_ms=None,
-                        error=None,
-                        sources=None,
-                    ).model_dump(),
-                )
+            elif event_type_str == EventType.TOOL_RESULT.value:
+                tool_use_id = event.tool_use_id or event.data.get("tool_call_id", "")
 
-            elif event.type == ChatEventType.DONE:
-                # Extract usage info if available
-                result = event.data.get("result", {})
+                # Send tool done events
+                # tool_done internally emits two events to transport
+                await emitter.tool_done(tool_use_id, "", None)
+                # Get all events from transport and yield them
+                for evt_type, evt_data in transport.get_events():
+                    yield _create_sse_event(evt_type, evt_data)
+
+            elif event_type_str == EventType.DONE.value:
+                result = event.result or event.data.get("result", {})
                 usage = result.get("usage") if result else None
                 if usage:
                     total_input_tokens = usage.get("input_tokens", 0)
                     total_output_tokens = usage.get("output_tokens", 0)
-                # Extract silent exit flag from result
                 if result and result.get("silent_exit"):
                     is_silent_exit = True
                     silent_exit_reason = result.get("silent_exit_reason", "")
-                    logger.info(
-                        "[RESPONSE] Silent exit detected: subtask_id=%d, reason=%s",
-                        subtask_id,
-                        silent_exit_reason,
-                    )
-                # Extract blocks from DONE event (final blocks array)
-                if result and result.get("blocks"):
-                    accumulated_blocks = result["blocks"]
-                    logger.info(
-                        "[RESPONSE] Blocks extracted from DONE event: subtask_id=%d, blocks_count=%d",
-                        subtask_id,
-                        len(accumulated_blocks),
-                    )
-                # Collect extra fields from DONE event for pass-through
-                # These fields (like loaded_skills) will be forwarded to backend
+                # Collect extra fields (exclude blocks as it's no longer used)
                 known_fields = {
                     "usage",
                     "silent_exit",
                     "silent_exit_reason",
-                    "blocks",
                     "sources",
                     "shell_type",
                     "value",
@@ -564,162 +383,172 @@ async def _stream_response(
                     for key, value in result.items():
                         if key not in known_fields and value is not None:
                             done_extra_fields[key] = value
-                    if done_extra_fields:
-                        logger.info(
-                            "[RESPONSE] Collected extra fields from DONE event: subtask_id=%d, "
-                            "extra_fields=%s",
-                            subtask_id,
-                            list(done_extra_fields.keys()),
-                        )
 
-            elif event.type == ChatEventType.ERROR:
-                error_msg = event.data.get("error", "Unknown error")
-                yield _format_sse_event(
-                    ResponseEventType.ERROR.value,
-                    ErrorEvent(
-                        code="internal_error",
-                        message=error_msg,
-                        details=None,
-                    ).model_dump(),
-                )
+            elif event_type_str == EventType.ERROR.value:
+                error_msg = event.error or event.data.get("error", "Unknown error")
+                event_type, data = await emitter.error(error_msg)
+                yield _create_sse_event(event_type, data)
                 return
 
-            elif event.type == ChatEventType.CANCELLED:
-                yield _format_sse_event(
-                    ResponseEventType.RESPONSE_CANCELLED.value,
-                    ResponseCancelled(
-                        id=response_id,
-                        partial_content=full_content,
-                    ).model_dump(),
-                )
+            elif event_type_str == EventType.CANCELLED.value:
+                event_type, data = await emitter.incomplete("cancelled")
+                yield _create_sse_event(event_type, data)
                 return
 
-        # Send response.done event with accumulated sources
-        # Convert accumulated_sources to SourceItem format for proper serialization
+        # Send output_text.done event
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.text_done(full_content),
+        )
+        yield _create_sse_event(event_type, data)
+
+        # Build annotations from sources
+        annotations = []
+        if accumulated_sources:
+            annotations = [
+                {
+                    "type": "url_citation",
+                    "start_index": 0,
+                    "end_index": 0,
+                    "url": s.get("url", ""),
+                    "title": s.get("title", ""),
+                }
+                for s in accumulated_sources
+                if s.get("url")
+            ]
+
+        # Send content_part.done event
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.content_part_done(full_content, annotations),
+        )
+        yield _create_sse_event(event_type, data)
+
+        # Send output_item.done event
+        event_type, data = await transport.send(
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            data=emitter.builder.output_item_done(full_content),
+        )
+        yield _create_sse_event(event_type, data)
+
+        # Build sources for response
         formatted_sources = None
         if accumulated_sources:
-            from chat_shell.api.v1.schemas import SourceItem
-
             formatted_sources = [
-                SourceItem(
-                    index=source.get("index"),
-                    title=source.get("title", "Unknown"),
-                    kb_id=source.get("kb_id"),
-                    url=source.get("url"),
-                    snippet=source.get("snippet"),
-                )
+                {
+                    "index": source.get("index"),
+                    "title": source.get("title", "Unknown"),
+                    "kb_id": source.get("kb_id"),
+                    "url": source.get("url"),
+                    "snippet": source.get("snippet"),
+                }
                 for source in accumulated_sources
             ]
 
-        # Build ResponseDone with extra fields passed through
-        response_done = ResponseDone(
-            id=response_id,
-            usage=(
-                UsageInfo(
-                    input_tokens=total_input_tokens,
-                    output_tokens=total_output_tokens,
-                    total_tokens=total_input_tokens + total_output_tokens,
-                )
-                if total_input_tokens or total_output_tokens
-                else None
-            ),
+        # Build usage dict
+        usage_dict = None
+        if total_input_tokens or total_output_tokens:
+            usage_dict = {
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "total_tokens": total_input_tokens + total_output_tokens,
+            }
+
+        # Send response.completed event
+        event_type, data = await emitter.done(
+            content=full_content,
+            usage=usage_dict,
             stop_reason="silent_exit" if is_silent_exit else "end_turn",
             sources=formatted_sources,
-            blocks=(
-                accumulated_blocks if accumulated_blocks else None
-            ),  # Include accumulated blocks
             silent_exit=is_silent_exit if is_silent_exit else None,
             silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
-            **done_extra_fields,  # Pass through extra fields like loaded_skills
+            **done_extra_fields,
         )
 
-        # Log the response.done event being sent to backend
-        response_done_data = response_done.model_dump()
         logger.info(
-            "[RESPONSE] Sending response.done to backend: subtask_id=%d, "
-            "response_done_keys=%s, loaded_skills=%s, extra_fields=%s",
+            "[RESPONSE] Sending response.completed: subtask_id=%d, "
+            "loaded_skills=%s, extra_fields=%s",
             subtask_id,
-            list(response_done_data.keys()),
-            response_done_data.get("loaded_skills"),
-            done_extra_fields,
+            data.get("response", {}).get("loaded_skills"),
+            list(done_extra_fields.keys()),
         )
 
-        yield _format_sse_event(
-            ResponseEventType.RESPONSE_DONE.value,
-            response_done_data,
-        )
+        yield _create_sse_event(event_type, data)
 
     except asyncio.CancelledError:
-        yield _format_sse_event(
-            ResponseEventType.RESPONSE_CANCELLED.value,
-            ResponseCancelled(
-                id=response_id,
-                partial_content=full_content,
-            ).model_dump(),
-        )
+        event_type, data = await emitter.incomplete("cancelled")
+        yield _create_sse_event(event_type, data)
 
     except Exception as e:
         import traceback
 
         logger.error("[RESPONSE] Error: %s\n%s", e, traceback.format_exc())
-        yield _format_sse_event(
-            ResponseEventType.ERROR.value,
-            ErrorEvent(
-                code="internal_error",
-                message=str(e),
-                details={"type": type(e).__name__},
-            ).model_dump(),
-        )
+        event_type, data = await emitter.error(str(e))
+        yield _create_sse_event(event_type, data)
 
     finally:
-        # Unregister stream from shutdown manager
         await shutdown_manager.unregister_stream(request_id)
-        # Clean up from active streams dict
         cleanup_stream(request_id)
 
 
-@router.post("/response")
-async def create_response(request: ResponseRequest, req: Request):
+# ============================================================
+# API Endpoints
+# ============================================================
+
+
+@router.post("/responses")
+async def create_response(request: OpenAIResponsesRequest, req: Request):
     """
     Create a streaming response.
 
-    This is the main endpoint for generating AI responses.
-    Returns an SSE stream of events.
+    This endpoint is compatible with OpenAI Responses API.
+    Can be consumed with standard OpenAI client:
+
+    ```python
+    from openai import OpenAI
+    client = OpenAI(base_url="http://localhost:8100/v1", api_key="dummy")
+    stream = client.responses.create(
+        model="gpt-4",
+        input="Hello",
+        stream=True,
+        extra_body={
+            "metadata": {"task_id": 1, "subtask_id": 1},
+            "model_config": {"api_key": "...", "base_url": "..."}
+        }
+    )
+    for event in stream:
+        print(event)
+    ```
     """
     from shared.telemetry.context import set_request_context
 
-    # Extract request ID from header or generate new one
     request_id = req.headers.get("X-Request-ID")
     if not request_id:
-        request_id = (
-            request.metadata.request_id
-            if request.metadata and request.metadata.request_id
-            else f"req-{uuid.uuid4().hex[:12]}"
-        )
+        metadata = request.metadata or {}
+        request_id = metadata.get("request_id") or f"req_{uuid.uuid4().hex[:24]}"
 
-    # Set request context for log correlation
     set_request_context(request_id)
 
-    # Create cancel event for this request
     cancel_event = asyncio.Event()
     _active_streams[request_id] = cancel_event
 
-    try:
-        return StreamingResponse(
-            _stream_response(request, cancel_event, request_id),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Request-ID": request_id,
-            },
-        )
-    finally:
-        # Cleanup will happen when stream ends
-        pass
+    return EventSourceResponse(
+        _stream_response(request, cancel_event, request_id),
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Request-ID": request_id,
+        },
+    )
 
 
-@router.post("/response/cancel")
+@router.post("/responses/cancel")
 async def cancel_response(request: CancelRequest):
     """
     Cancel an ongoing response.
@@ -758,7 +587,7 @@ async def health_check():
         uptime_seconds=uptime,
         active_streams=len(_active_streams),
         storage=StorageHealth(type="memory", status="ok"),
-        model_providers=None,  # Could be populated with actual checks
+        model_providers=None,
     )
 
 

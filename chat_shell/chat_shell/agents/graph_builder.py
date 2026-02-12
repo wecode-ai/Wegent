@@ -197,10 +197,10 @@ class LangGraphAgentBuilder:
                         "[prompt_modifier] Final system prompt (len=%d)",
                         len(updated_content),
                     )
-                    logger.debug(
-                        "[prompt_modifier] Final system prompt content:\n%s",
-                        updated_content,
-                    )
+                    # logger.debug(
+                    #     "[prompt_modifier] Final system prompt content:\n%s",
+                    #     updated_content,
+                    # )
 
                 else:
                     new_messages.append(msg)
@@ -821,7 +821,6 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
-                    logger.info("[TOOL] %s started", tool_name)
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
@@ -842,7 +841,6 @@ class LangGraphAgentBuilder:
                     run_id = event.get("run_id", "")
                     # Get tool output for logging
                     tool_data = event.get("data", {})
-                    logger.info("[TOOL] %s completed", tool_name)
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
@@ -1075,7 +1073,6 @@ class LangGraphAgentBuilder:
                 if kind == "on_tool_start":
                     tool_name = event.get("name", "unknown")
                     run_id = event.get("run_id", "")
-                    logger.info("[TOOL] %s started", tool_name)
                     if on_tool_event:
                         on_tool_event(
                             "tool_start",
@@ -1089,7 +1086,6 @@ class LangGraphAgentBuilder:
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "unknown")
                     run_id = event.get("run_id", "")
-                    logger.info("[TOOL] %s completed", tool_name)
                     if on_tool_event:
                         on_tool_event(
                             "tool_end",

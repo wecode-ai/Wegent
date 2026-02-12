@@ -12,10 +12,10 @@ This service handles:
 """
 
 import logging
+from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
 from chat_shell.core.config import settings
-from chat_shell.interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
 from chat_shell.services.context import ChatContext
 from chat_shell.services.storage.session import session_manager
 from chat_shell.services.streaming.core import (
@@ -26,9 +26,60 @@ from chat_shell.services.streaming.core import (
 from chat_shell.services.streaming.emitters import SSEEmitter
 from chat_shell.tools.builtin.silent_exit import SilentExitException
 from chat_shell.tools.events import create_tool_event_handler
+from shared.models.execution import EventType, ExecutionEvent, ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async_generator
 
 logger = logging.getLogger(__name__)
+
+
+class ChatInterface(ABC):
+    """Abstract interface for Chat Shell operations.
+
+    This interface can be implemented by:
+    - PackageAdapter: Direct Python package import
+    - HTTPAdapter: HTTP/SSE remote calls
+    """
+
+    @abstractmethod
+    async def chat(self, request: ExecutionRequest) -> AsyncIterator[ExecutionEvent]:
+        """Process a chat request and stream events.
+
+        Args:
+            request: Execution request data
+
+        Yields:
+            ExecutionEvent: Events during chat processing
+        """
+        pass
+
+    @abstractmethod
+    async def resume(
+        self, subtask_id: int, offset: int = 0
+    ) -> AsyncIterator[ExecutionEvent]:
+        """Resume a streaming session from a given offset.
+
+        Used for reconnection after network interruption.
+
+        Args:
+            subtask_id: Subtask ID to resume
+            offset: Character offset to resume from
+
+        Yields:
+            ExecutionEvent: Events from the resumed position
+        """
+        pass
+
+    @abstractmethod
+    async def cancel(self, subtask_id: int) -> bool:
+        """Cancel an ongoing chat request.
+
+        Args:
+            subtask_id: Subtask ID to cancel
+
+        Returns:
+            bool: True if cancellation was successful
+        """
+        pass
 
 
 class ChatService(ChatInterface):
@@ -53,14 +104,14 @@ class ChatService(ChatInterface):
             "chat.is_group_chat": request.is_group_chat,
         },
     )
-    async def chat(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
+    async def chat(self, request: ExecutionRequest) -> AsyncIterator[ExecutionEvent]:
         """Process a chat request and stream events.
 
         Args:
-            request: Chat request data
+            request: Execution request data
 
         Yields:
-            ChatEvent: Events during chat processing
+            ExecutionEvent: Events during chat processing
         """
         add_span_event("chat_started", {"task_id": request.task_id})
 
@@ -138,11 +189,11 @@ class ChatService(ChatInterface):
     )
     async def _process_chat(
         self,
-        request: ChatRequest,
+        request: ExecutionRequest,
         core: StreamingCore,
         state: StreamingState,
         emitter: SSEEmitter,
-    ) -> AsyncIterator[ChatEvent]:
+    ) -> AsyncIterator[ExecutionEvent]:
         """Process chat request with agent streaming."""
         import time
 
@@ -219,7 +270,7 @@ class ChatService(ChatInterface):
             t1 = time.perf_counter()
             messages = agent.build_messages(
                 history=ctx_result.history,
-                current_message=request.message,
+                current_message=request.prompt,  # ExecutionRequest uses 'prompt' instead of 'message'
                 system_prompt=ctx_result.system_prompt,
                 username=request.user_name if request.is_group_chat else None,
                 config=agent_config,
@@ -312,8 +363,8 @@ class ChatService(ChatInterface):
 
     async def _emit_pending_events(
         self, emitter: SSEEmitter
-    ) -> AsyncIterator[ChatEvent]:
-        """Convert SSE emitter events to ChatEvents."""
+    ) -> AsyncIterator[ExecutionEvent]:
+        """Convert SSE emitter events to ExecutionEvents."""
         import json
 
         events = emitter.get_all_events()
@@ -329,8 +380,8 @@ class ChatService(ChatInterface):
                     try:
                         data = json.loads(json_str)
                         event_type = data.pop("type", "chunk")
-                        yield ChatEvent(
-                            type=ChatEventType(event_type),
+                        yield ExecutionEvent(
+                            type=event_type,
                             data=data,
                         )
                     except json.JSONDecodeError:
@@ -338,7 +389,7 @@ class ChatService(ChatInterface):
 
     async def resume(
         self, subtask_id: int, offset: int = 0
-    ) -> AsyncIterator[ChatEvent]:
+    ) -> AsyncIterator[ExecutionEvent]:
         """Resume a streaming session from a given offset.
 
         Args:
@@ -346,7 +397,7 @@ class ChatService(ChatInterface):
             offset: Character offset to resume from
 
         Yields:
-            ChatEvent: Events from the resumed position
+            ExecutionEvent: Events from the resumed position
         """
         logger.info(
             "[CHAT_SERVICE] Resuming stream: subtask_id=%d, offset=%d",
@@ -360,13 +411,11 @@ class ChatService(ChatInterface):
         if cached_content and offset < len(cached_content):
             # Send remaining cached content
             remaining = cached_content[offset:]
-            yield ChatEvent(
-                type=ChatEventType.CHUNK,
-                data={
-                    "content": remaining,
-                    "offset": offset,
-                    "subtask_id": subtask_id,
-                },
+            yield ExecutionEvent(
+                type=EventType.CHUNK.value,
+                content=remaining,
+                offset=offset,
+                subtask_id=subtask_id,
             )
 
         # Subscribe to streaming channel for real-time updates

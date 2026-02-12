@@ -380,7 +380,6 @@ export function SubscriptionForm({
       setModelsLoading(true)
       try {
         const response = await modelApis.getUnifiedModels(undefined, false, 'all')
-        console.log('Loaded models response:', response)
         const modelList: SubscriptionModel[] = (response.data || []).map((m: UnifiedModel) => ({
           name: m.name,
           displayName: m.displayName,
@@ -388,7 +387,6 @@ export function SubscriptionForm({
           modelId: m.modelId || undefined,
           type: m.type,
         }))
-        console.log('Processed model list:', modelList)
         setModels(modelList)
       } catch (error) {
         console.error('Failed to load models:', error)

@@ -7,35 +7,41 @@
 # -*- coding: utf-8 -*-
 
 """
-Status Synchronizer - Ensures task status is correctly synchronized to backend on cancellation
+Status Synchronizer - Ensures task status is correctly synchronized to backend on cancellation.
+
+Uses OpenAI Responses API format from shared.models.responses_api for all callbacks.
 """
 
 import asyncio
 from typing import Optional
 
-from executor.callback.callback_client import CallbackClient
+from executor.callback.callback_handler import (
+    send_cancelled_event,
+    send_progress_event,
+)
 from shared.logger import setup_logger
+from shared.status import TaskStatus
 
 logger = setup_logger("status_sync")
 
 
 class StatusSynchronizer:
-    """Ensures task status is correctly synchronized to backend on cancellation"""
+    """Ensures task status is correctly synchronized to backend on cancellation.
 
-    def __init__(self, callback_client: Optional[CallbackClient] = None):
-        """
-        Initialize status synchronizer
+    Uses OpenAI Responses API format for all events.
+    """
 
-        Args:
-            callback_client: Callback client, creates new one if not provided
-        """
-        self.callback_client = callback_client or CallbackClient()
+    def __init__(self):
+        """Initialize status synchronizer."""
+        pass
 
     async def sync_cancel_status(
         self, task_id: int, subtask_id: int, executor_name: Optional[str] = None
     ) -> bool:
         """
-        Synchronize cancel status to backend (async version)
+        Synchronize cancel status to backend (async version).
+
+        Uses OpenAI Responses API format (response.incomplete event).
 
         Args:
             task_id: Task ID
@@ -46,14 +52,15 @@ class StatusSynchronizer:
             Whether synchronization was successful
         """
         try:
-            # Send cancel status update
-            success = await self.callback_client.report_progress_async(
+            # Send cancel status update using OpenAI Responses API format
+            result = await asyncio.to_thread(
+                send_cancelled_event,
                 task_id=task_id,
                 subtask_id=subtask_id,
-                progress=100,
-                status="CANCELLED",
                 executor_name=executor_name,
-                error_message="Task was cancelled by user",
+            )
+            success = (
+                result is not None and result.get("status") == TaskStatus.SUCCESS.value
             )
 
             if success:
@@ -71,7 +78,7 @@ class StatusSynchronizer:
         self, task_id: int, subtask_id: int, executor_name: Optional[str] = None
     ) -> bool:
         """
-        Synchronize cancel status to backend (sync version)
+        Synchronize cancel status to backend (sync version).
 
         Args:
             task_id: Task ID
@@ -108,7 +115,9 @@ class StatusSynchronizer:
         error_message: Optional[str] = None,
     ) -> bool:
         """
-        Synchronize any status to backend (async version)
+        Synchronize any status to backend (async version).
+
+        Uses OpenAI Responses API format (response.in_progress event).
 
         Args:
             task_id: Task ID
@@ -122,13 +131,17 @@ class StatusSynchronizer:
             Whether synchronization was successful
         """
         try:
-            success = await self.callback_client.report_progress_async(
+            result = await asyncio.to_thread(
+                send_progress_event,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 progress=progress,
                 status=status,
+                content=error_message or "",
                 executor_name=executor_name,
-                error_message=error_message,
+            )
+            success = (
+                result is not None and result.get("status") == TaskStatus.SUCCESS.value
             )
 
             if success:

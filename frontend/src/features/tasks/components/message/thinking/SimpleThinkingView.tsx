@@ -86,12 +86,6 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
           details.type === 'tool_result' &&
           (details.status === 'completed' || details.status === 'failed')
         ) {
-          console.log('[SimpleThinkingView] Processing tool_result:', {
-            status: details.status,
-            tool_name: details.tool_name,
-            error: details.error,
-            title: step.title,
-          })
           const toolName: string =
             (typeof details.tool_name === 'string' ? details.tool_name : '') ||
             (typeof details.name === 'string' ? details.name : '') ||

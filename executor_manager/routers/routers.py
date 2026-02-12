@@ -7,7 +7,10 @@
 # -*- coding: utf-8 -*-
 
 """
-API routes module, defines FastAPI routes and models
+API routes module, defines FastAPI routes and models.
+
+Callback endpoint uses pure transparent proxy pattern - forwards all events
+to backend's callback endpoint without processing.
 """
 
 import os
@@ -15,26 +18,37 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
+import httpx
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
+from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
-from shared.models.task import TasksRequest
+from shared.models.execution import ExecutionRequest
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import (
     set_request_context,
     set_task_context,
     set_user_context,
 )
+from shared.utils.http_client import traced_async_client
 
 # Setup logger
 logger = setup_logger(__name__)
+
+# In-memory registry: validation task_id -> {validation_id, shell_type, image, created_at}
+# Used by callback_handler to update Redis validation status when validation completes.
+# Entries are cleaned up on terminal callback events or after TTL (5 min).
+_validation_task_registry: Dict[int, Dict[str, Any]] = {}
+
+# Maximum age for validation registry entries before cleanup (seconds)
+_VALIDATION_REGISTRY_MAX_AGE = 300
 
 # Create FastAPI app
 app = FastAPI(
@@ -66,10 +80,8 @@ api_router.include_router(e2b_router, prefix="/e2b")
 # Routes: /executor-manager/e2b/proxy/<sandboxID>/<port>/<path> -> container
 api_router.include_router(wegent_e2b_proxy_router, prefix="/e2b/proxy")
 
-# Create task processor for handling callbacks
+# Create task processor for validation tasks
 task_processor = TaskProcessor()
-# Create API client for direct API calls
-api_client = TaskApiClient()
 
 # Health check paths that should skip logging to reduce overhead
 HEALTH_CHECK_PATHS = {"/", "/health"}
@@ -219,109 +231,64 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-# Define callback request model
-class CallbackRequest(BaseModel):
-    task_id: int
-    subtask_id: int
-    task_title: Optional[str] = None
-    progress: int
-    executor_name: Optional[str] = None
-    executor_namespace: Optional[str] = None
-    status: Optional[str] = None
-    error_message: Optional[str] = None
-    result: Optional[Dict[str, Any]] = None
-    task_type: Optional[str] = (
-        None  # Task type: "validation" for validation tasks, None for regular tasks
-    )
-    sandbox_metadata: Optional[Dict[str, Any]] = None  # Sandbox metadata from task
-
-
 @api_router.post("/callback")
-async def callback_handler(request: CallbackRequest, http_request: Request):
+async def callback_handler(event_data: dict = Body(...), http_request: Request = None):
     """
     Receive callback interface for executor task progress and completion.
 
+    Pure transparent proxy - forwards all events to backend's callback endpoint.
+    Event format is OpenAI Responses API format from executor.
+
     Args:
-        request: Request body containing task ID, pod name, and progress.
+        event_data: Event data dict in OpenAI Responses API format.
 
     Returns:
         dict: Processing result
     """
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
-        logger.info(f"Received callback from {client_ip}")
 
-        # [DEBUG] Log result content for streaming debugging
-        if request.result:
-            result_value = request.result.get("value", "")
-            result_thinking = request.result.get("thinking", [])
-            logger.info(
-                f"[DEBUG] Callback result: task_id={request.task_id}, "
-                f"status={request.status}, progress={request.progress}, "
-                f"value_length={len(result_value) if result_value else 0}, "
-                f"thinking_count={len(result_thinking)}"
-            )
-            if result_value:
-                # Log first 200 chars of content
-                preview = (
-                    result_value[:200] if len(result_value) > 200 else result_value
+        # Extract task_id and subtask_id for logging and tracing
+        task_id = event_data.get("task_id", 0)
+        subtask_id = event_data.get("subtask_id", 0)
+        event_type = event_data.get("event_type", "")
+
+        logger.info(
+            f"[Callback] Received from {client_ip}: "
+            f"event_type={event_type}, task_id={task_id}, subtask_id={subtask_id}"
+        )
+
+        # Set task context for tracing
+        set_task_context(task_id=task_id, subtask_id=subtask_id)
+
+        # Pure transparent proxy - forward to backend
+        task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
+        callback_url = f"{task_api_domain}/api/internal/callback"
+
+        async with traced_async_client(timeout=30.0) as client:
+            response = await client.post(callback_url, json=event_data)
+            if response.status_code != 200:
+                logger.warning(
+                    f"[Callback] Backend returned error: "
+                    f"{response.status_code} {response.text}"
                 )
-                logger.info(f"[DEBUG] Content preview: {preview}...")
 
-        # Set task context for tracing (function handles OTEL enabled check internally)
-        set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+        # Handle terminal events - remove from RunningTaskTracker
+        from shared.models.responses_api import ResponsesAPIStreamEvents
 
-        # Check if this is a validation task callback
-        # Primary check: task_type == "validation"
-        # Fallback check: validation_id in result (for backward compatibility)
-        is_validation_task = request.task_type == "validation" or (
-            request.result and request.result.get("validation_id")
-        )
-        if is_validation_task:
-            await _forward_validation_callback(request)
-            # For validation tasks, we only need to forward to backend for Redis update
-            # No need to update task status in database (validation tasks don't exist in DB)
-            logger.info(
-                f"Successfully processed validation callback for task {request.task_id}"
-            )
-            return {
-                "status": "success",
-                "message": f"Successfully processed validation callback for task {request.task_id}",
-            }
+        terminal_events = {
+            ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+            ResponsesAPIStreamEvents.ERROR.value,
+            ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+        }
+        if event_type in terminal_events:
+            # Bridge validation task callbacks to Redis validation status
+            validation_meta = _validation_task_registry.pop(task_id, None)
+            if validation_meta:
+                await _update_validation_status_from_callback(
+                    validation_meta, event_type, event_data
+                )
 
-        # Check if this is a Sandbox execution callback
-        is_sandbox_task = request.task_type == "sandbox"
-        if is_sandbox_task:
-            await _handle_sandbox_callback(request)
-            logger.info(
-                f"Successfully processed Sandbox callback for task {request.task_id}"
-            )
-            return {
-                "status": "success",
-                "message": f"Successfully processed Sandbox callback for task {request.task_id}",
-            }
-
-        # For regular tasks, update task status in database
-        success, result = api_client.update_task_status_by_fields(
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            progress=request.progress,
-            executor_name=request.executor_name,
-            executor_namespace=request.executor_namespace,
-            status=request.status,
-            error_message=request.error_message,
-            title=request.task_title,
-            result=request.result,
-        )
-        if not success:
-            logger.warning(
-                f"Failed to update status for task {request.task_id}: {result}"
-            )
-
-        # Remove task from RunningTaskTracker when completed or failed
-        # This prevents false-positive heartbeat timeout detection
-        status_lower = request.status.lower() if request.status else ""
-        if status_lower in ("completed", "failed", "cancelled", "success"):
             try:
                 from executor_manager.services.task_heartbeat_manager import (
                     get_running_task_tracker,
@@ -329,287 +296,20 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
 
                 tracker = get_running_task_tracker()
                 logger.info(
-                    f"[Callback] Removing task {request.task_id} from RunningTaskTracker "
-                    f"(source: callback, status={status_lower})"
+                    f"[Callback] Removing task {task_id} from RunningTaskTracker "
+                    f"(source: callback, event_type={event_type})"
                 )
-                tracker.remove_running_task(request.task_id)
+                tracker.remove_running_task(task_id)
             except Exception as e:
                 logger.warning(f"Failed to remove task from RunningTaskTracker: {e}")
 
-        logger.info(f"Successfully processed callback for task {request.task_id}")
+        logger.info(f"[Callback] Successfully forwarded for task {task_id}")
         return {
             "status": "success",
-            "message": f"Successfully processed callback for task {request.task_id}",
+            "message": f"Successfully forwarded callback for task {task_id}",
         }
     except Exception as e:
-        logger.error(f"Error processing callback: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _forward_validation_callback(request: CallbackRequest):
-    """Forward validation task callback to Backend for Redis status update"""
-    import httpx
-
-    # Get validation_id from result if available
-    validation_id = request.result.get("validation_id") if request.result else None
-    if not validation_id:
-        # If no validation_id in result, we can't forward to backend
-        # This can happen when task_type is "validation" but result is None (e.g., early failure)
-        logger.warning(
-            f"Validation callback for task {request.task_id} has no validation_id, skipping forward"
-        )
-        return
-
-    # Map callback status to validation status (case-insensitive)
-    status_lower = request.status.lower() if request.status else ""
-    status_mapping = {
-        "running": "running_checks",
-        "completed": "completed",
-        "failed": "completed",
-    }
-    validation_status = status_mapping.get(status_lower, request.status)
-
-    # Extract validation result from callback
-    validation_result = request.result.get("validation_result", {})
-    stage = request.result.get("stage", "Running checks")
-    progress = request.progress
-
-    # For failed status, ensure valid is False if not explicitly set
-    valid_value = validation_result.get("valid")
-    if status_lower == "failed" and valid_value is None:
-        valid_value = False
-
-    # Build update payload
-    update_payload = {
-        "status": validation_status,
-        "stage": stage,
-        "progress": progress,
-        "valid": valid_value,
-        "checks": validation_result.get("checks"),
-        "errors": validation_result.get("errors"),
-        "errorMessage": request.error_message,
-        "executor_name": request.executor_name,  # Include executor_name for container cleanup
-    }
-
-    # Get backend URL
-    task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
-    update_url = f"{task_api_domain}/api/shells/validation-status/{validation_id}"
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(update_url, json=update_payload)
-            if response.status_code == 200:
-                logger.info(
-                    f"Successfully forwarded validation callback: {validation_id} -> {validation_status}, valid={valid_value}"
-                )
-            else:
-                logger.warning(
-                    f"Failed to forward validation callback: {response.status_code} {response.text}"
-                )
-    except Exception as e:
-        logger.error(f"Error forwarding validation callback: {e}")
-
-
-async def _handle_sandbox_callback(request: CallbackRequest):
-    """Handle Sandbox execution callback.
-
-    This function updates the execution status in sandbox_manager based on
-    the callback from executor container.
-
-    Args:
-        request: Callback request containing execution status and result
-    """
-    from executor_manager.services.sandbox import get_sandbox_manager
-
-    # Use task_id and subtask_id from callback request to identify execution
-    task_id = request.task_id
-    subtask_id = request.subtask_id
-
-    logger.info(
-        f"[SandboxCallback] Processing callback: "
-        f"task_id={task_id}, subtask_id={subtask_id}, "
-        f"status={request.status}, progress={request.progress}"
-    )
-
-    # Get sandbox manager
-    manager = get_sandbox_manager()
-
-    # Load execution from Redis Hash by task_id and subtask_id
-    execution = manager._repository.load_execution(task_id, subtask_id)
-    if not execution:
-        logger.error(
-            f"[SandboxCallback] Execution not found in Redis: "
-            f"task_id={task_id}, subtask_id={subtask_id}"
-        )
-        return
-
-    # Update execution status based on callback
-    status_lower = request.status.lower() if request.status else ""
-
-    if status_lower == "completed":
-        # Extract result from callback
-        result_value = None
-        if request.result:
-            result_value = request.result.get("value", "")
-
-        execution.set_completed(result_value or "")
-        logger.info(
-            f"[SandboxCallback] Execution completed: "
-            f"task_id={task_id}, subtask_id={subtask_id}, "
-            f"result_length={len(result_value) if result_value else 0}"
-        )
-
-    elif status_lower == "failed":
-        error_msg = request.error_message or "Execution failed"
-        execution.set_failed(error_msg)
-        logger.info(
-            f"[SandboxCallback] Execution failed: "
-            f"task_id={task_id}, subtask_id={subtask_id}, error={error_msg}"
-        )
-
-    elif status_lower == "running":
-        # Update progress for running status
-        execution.progress = request.progress
-        logger.debug(
-            f"[SandboxCallback] Execution progress: "
-            f"task_id={task_id}, subtask_id={subtask_id}, progress={request.progress}"
-        )
-
-    else:
-        logger.warning(
-            f"[SandboxCallback] Unknown status: "
-            f"task_id={task_id}, subtask_id={subtask_id}, status={request.status}"
-        )
-
-    # Save updated execution state to Redis
-    # Set update_activity=True because callback indicates the sandbox is actively being used
-    manager._repository.save_execution(execution, update_activity=True)
-
-    logger.info(
-        f"[SandboxCallback] Execution updated: "
-        f"task_id={task_id}, subtask_id={subtask_id}, status={execution.status.value}"
-    )
-
-
-def _verify_task_token(auth_header: Optional[str]) -> bool:
-    """Verify JWT token from Authorization header.
-
-    The token should be created by backend using the same SECRET_KEY.
-    This verification ensures the request is from a trusted source.
-
-    Args:
-        auth_header: Authorization header value (e.g., "Bearer xxx")
-
-    Returns:
-        True if token is valid, False otherwise
-    """
-    if not auth_header:
-        return False
-
-    if not auth_header.startswith("Bearer "):
-        return False
-
-    token = auth_header[7:]  # Remove "Bearer " prefix
-    secret_key = os.getenv("JWT_SECRET_KEY", "your-secret-key-here")
-    algorithm = os.getenv("JWT_ALGORITHM", "HS256")
-
-    try:
-        from jose import JWTError, jwt
-
-        # Just verify the token is valid, no need to check specific claims
-        jwt.decode(token, secret_key, algorithms=[algorithm])
-        return True
-    except Exception as e:
-        logger.warning(f"JWT verification failed: {e}")
-        return False
-
-
-@api_router.post("/tasks/receive")
-async def receive_tasks(
-    request: TasksRequest,
-    http_request: Request,
-    queue_type: str = "online",
-):
-    """
-    Receive tasks in batch via POST.
-
-    This endpoint supports two modes controlled by TASK_DISPATCH_MODE:
-    - pull (default): Process tasks directly via TaskProcessor
-    - push: Enqueue tasks to Redis for async processing with backpressure
-
-    In push mode, tasks are routed to either online or offline queue:
-    - online (default): Processed immediately by online consumer
-    - offline: Processed during night hours (21:00-08:00) by offline consumer
-
-    Authentication is optional, controlled by TASK_RECEIVE_AUTH_REQUIRED env var.
-
-    Args:
-        request: TasksRequest containing a list of tasks.
-        queue_type: Queue type ('online' or 'offline'), default is 'online'.
-    Returns:
-        dict: result code
-    """
-    try:
-        client_ip = http_request.client.host if http_request.client else "unknown"
-        logger.info(
-            f"Received {len(request.tasks)} tasks (queue_type={queue_type}), "
-            f"first task: {request.tasks[0].task_title if request.tasks else 'None'} from {client_ip}"
-        )
-
-        # Validate queue_type
-        if queue_type not in ("online", "offline"):
-            logger.warning(f"Invalid queue_type '{queue_type}', defaulting to 'online'")
-            queue_type = "online"
-
-        # Optional JWT authentication
-        auth_required = (
-            os.getenv("TASK_RECEIVE_AUTH_REQUIRED", "false").lower() == "true"
-        )
-        if auth_required:
-            auth_header = http_request.headers.get("Authorization")
-            if not _verify_task_token(auth_header):
-                logger.warning(f"Unauthorized task receive request from {client_ip}")
-                raise HTTPException(
-                    status_code=401, detail="Invalid or missing authorization token"
-                )
-
-        # Set task context for tracing (use first task's context)
-        # Functions handle OTEL enabled check internally
-        if request.tasks:
-            first_task = request.tasks[0]
-            set_task_context(
-                task_id=first_task.task_id, subtask_id=first_task.subtask_id
-            )
-            set_user_context(
-                user_id=str(first_task.user.id), user_name=first_task.user.name
-            )
-
-        # Check dispatch mode
-        dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "pull")
-
-        if dispatch_mode == "push":
-            # Push mode: enqueue to Redis for async processing with backpressure
-            from executor_manager.services.task_queue_service import TaskQueueService
-
-            service_pool = os.getenv("SERVICE_POOL", "default")
-            queue_service = TaskQueueService(service_pool, queue_type)
-
-            tasks_data = [task.dict() for task in request.tasks]
-            enqueued = queue_service.enqueue_tasks(tasks_data)
-
-            logger.info(
-                f"Push mode: enqueued {enqueued}/{len(request.tasks)} tasks to "
-                f"pool '{service_pool}' queue '{queue_type}'"
-            )
-        else:
-            # Pull mode (default): process tasks directly
-            task_processor.process_tasks([task.dict() for task in request.tasks])
-
-        return {"code": 0}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing tasks: {e}")
+        logger.error(f"[Callback] Error processing callback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -725,6 +425,147 @@ class ValidateImageResponse(BaseModel):
     validation_task_id: Optional[int] = None
 
 
+def _cleanup_stale_validation_entries() -> None:
+    """Remove stale entries from the validation task registry (>5 min old)."""
+    now = time.time()
+    stale_keys = [
+        k
+        for k, v in _validation_task_registry.items()
+        if now - v.get("created_at", 0) > _VALIDATION_REGISTRY_MAX_AGE
+    ]
+    for k in stale_keys:
+        _validation_task_registry.pop(k, None)
+        logger.info(f"[Validation] Cleaned up stale validation entry: task_id={k}")
+
+
+def _extract_validation_result_from_event(event_data: dict) -> Optional[Dict[str, Any]]:
+    """Extract validation result from a response.completed callback event.
+
+    The ImageValidatorAgent stores its validation result as JSON in the
+    done_event content, which ends up at:
+      data.response.output[0].content[0].text
+
+    Args:
+        event_data: Full callback event data dict
+
+    Returns:
+        Parsed validation result dict, or None if not found/parseable
+    """
+    import json
+
+    try:
+        response = event_data.get("data", {}).get("response", {})
+        output_items = response.get("output", [])
+        for item in output_items:
+            if not isinstance(item, dict):
+                continue
+            for content_part in item.get("content", []):
+                if not isinstance(content_part, dict):
+                    continue
+                text = content_part.get("text", "")
+                if not text:
+                    continue
+                try:
+                    result = json.loads(text)
+                    if isinstance(result, dict) and "valid" in result:
+                        return result
+                except (json.JSONDecodeError, TypeError):
+                    continue
+    except Exception:
+        pass
+    return None
+
+
+async def _update_validation_status_from_callback(
+    validation_meta: Dict[str, Any],
+    event_type: str,
+    event_data: dict,
+) -> None:
+    """Bridge callback terminal events to Redis validation status for frontend polling.
+
+    When a validation task completes via the callback chain, this function
+    forwards the result to the backend's validation-status endpoint so the
+    Redis entry gets updated and the frontend polling can see the completion.
+
+    Args:
+        validation_meta: Validation metadata from _validation_task_registry
+        event_type: Terminal event type (response.completed, error, etc.)
+        event_data: Full event data dict from the callback
+    """
+    from shared.models.responses_api import ResponsesAPIStreamEvents
+
+    validation_id = validation_meta.get("validation_id")
+    if not validation_id:
+        return
+
+    task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
+    update_url = f"{task_api_domain}/api/shells/validation-status/{validation_id}"
+
+    if event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
+        update_payload: Dict[str, Any] = {
+            "status": "completed",
+            "stage": "Validation completed",
+            "progress": 100,
+            "valid": True,
+        }
+        # Try to extract detailed validation results from event content
+        # The content is at data.response.output[0].content[0].text
+        # and contains JSON-serialized validation_result from ImageValidatorAgent
+        validation_result = _extract_validation_result_from_event(event_data)
+        if validation_result:
+            update_payload["valid"] = validation_result.get("valid", True)
+            if validation_result.get("checks"):
+                update_payload["checks"] = validation_result["checks"]
+            if validation_result.get("errors"):
+                update_payload["errors"] = validation_result["errors"]
+    elif event_type == ResponsesAPIStreamEvents.ERROR.value:
+        error_data = event_data.get("data", {})
+        error_obj = error_data.get("error")
+        if isinstance(error_obj, dict):
+            error_message = error_obj.get("message", "Unknown error")
+        else:
+            error_message = str(error_obj or "Validation failed")
+        update_payload = {
+            "status": "completed",
+            "stage": "Validation failed",
+            "progress": 100,
+            "valid": False,
+            "errorMessage": error_message,
+        }
+    else:
+        # response.incomplete or other terminal events
+        update_payload = {
+            "status": "completed",
+            "stage": "Validation incomplete",
+            "progress": 100,
+            "valid": False,
+            "errorMessage": "Validation task did not complete normally",
+        }
+
+    # Include executor_name for container cleanup by the backend
+    executor_name = event_data.get("executor_name")
+    if executor_name:
+        update_payload["executor_name"] = executor_name
+
+    try:
+        async with traced_async_client(timeout=10.0) as client:
+            response = await client.post(update_url, json=update_payload)
+            if response.status_code == 200:
+                logger.info(
+                    f"[Callback] Updated validation status: "
+                    f"{validation_id} valid={update_payload.get('valid')}"
+                )
+            else:
+                logger.warning(
+                    f"[Callback] Failed to update validation status: "
+                    f"{response.status_code} {response.text}"
+                )
+    except Exception as e:
+        logger.error(
+            f"[Callback] Error updating validation status {validation_id}: {e}"
+        )
+
+
 @api_router.post("/images/validate")
 async def validate_image(request: ValidateImageRequest, http_request: Request):
     """
@@ -804,6 +645,18 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     }
 
     try:
+        # Clean stale registry entries before registering new one
+        _cleanup_stale_validation_entries()
+
+        # Register for callback interception so we can update Redis
+        # validation status when the terminal callback event arrives
+        _validation_task_registry[validation_task_id] = {
+            "validation_id": validation_id,
+            "shell_type": shell_type,
+            "image": image,
+            "created_at": time.time(),
+        }
+
         # Submit validation task using the task processor
         task_processor.process_tasks([validation_task])
 
@@ -892,6 +745,264 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         raise
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# V1 Transparent Proxy APIs (OpenAI Responses API)
+# =============================================================================
+# These endpoints implement the transparent proxy pattern for task dispatch
+# using OpenAI Responses API format with background mode.
+# executor_manager only forwards requests to containers without business logic.
+# =============================================================================
+
+
+class OpenAIResponsesRequest(BaseModel):
+    """Request model for /v1/responses endpoint (OpenAI Responses API format).
+
+    This is a transparent proxy request that forwards OpenAI Responses API
+    format requests to the appropriate executor container.
+
+    Supports background mode (non-streaming) for HTTP+Callback dispatch.
+    """
+
+    # OpenAI Responses API standard fields
+    model: str
+    input: Any  # Can be string or list of messages
+    instructions: Optional[str] = None
+    stream: bool = False
+
+    # Background mode flag (OpenAI extension)
+    background: bool = False
+
+    # Custom metadata for task identification
+    metadata: Optional[Dict[str, Any]] = None
+
+    # Model configuration
+    model_config_data: Optional[Dict[str, Any]] = None
+
+    class Config:
+        # Allow extra fields for forward compatibility
+        extra = "allow"
+
+
+class CancelRequest(BaseModel):
+    """Request model for /v1/cancel endpoint."""
+
+    task_id: int
+    subtask_id: Optional[int] = None
+    executor_name: Optional[str] = None
+
+
+@api_router.post("/v1/cancel")
+async def cancel_task_v1(request: CancelRequest, http_request: Request):
+    """Cancel task execution - transparent proxy.
+
+    This endpoint cancels a running task by:
+    1. If executor_name is provided, send cancel request directly to that container
+    2. Otherwise, find the container by task_id and send cancel request
+
+    Args:
+        request: CancelRequest containing task_id and optional executor_name
+        http_request: HTTP request object
+
+    Returns:
+        dict: Cancellation result
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"[v1/cancel] Received request: task_id={request.task_id}, "
+        f"subtask_id={request.subtask_id}, executor_name={request.executor_name} "
+        f"from {client_ip}"
+    )
+
+    # Set task context for tracing
+    set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+    try:
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+
+        if request.executor_name:
+            # Direct cancel to specified container
+            port, error = executor._get_container_port(request.executor_name)
+            if not port:
+                logger.warning(
+                    f"[v1/cancel] Container {request.executor_name} not found: {error}"
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Container {request.executor_name} not found: {error}",
+                )
+
+            # Send cancel request to container
+            cancel_url = (
+                f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel"
+                f"?task_id={request.task_id}"
+            )
+
+            try:
+                async with traced_async_client(timeout=10.0) as client:
+                    response = await client.post(cancel_url)
+                    response.raise_for_status()
+
+                logger.info(
+                    f"[v1/cancel] Successfully cancelled task {request.task_id} "
+                    f"in container {request.executor_name}"
+                )
+
+                # Clean up heartbeat data
+                await _cleanup_task_heartbeat(request.task_id)
+
+                return {
+                    "status": "success",
+                    "message": f"Task {request.task_id} cancellation requested",
+                    "executor_name": request.executor_name,
+                }
+
+            except httpx.RequestError as e:
+                logger.error(
+                    f"[v1/cancel] Failed to send cancel to container "
+                    f"{request.executor_name}: {e}"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to communicate with container: {str(e)}",
+                )
+
+        else:
+            # Find container by task_id and cancel
+            result = executor.cancel_task(request.task_id)
+
+            if result.get("status") == "success":
+                logger.info(
+                    f"[v1/cancel] Successfully cancelled task {request.task_id}"
+                )
+                await _cleanup_task_heartbeat(request.task_id)
+                return result
+            else:
+                logger.warning(
+                    f"[v1/cancel] Failed to cancel task {request.task_id}: "
+                    f"{result.get('error_msg')}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=result.get("error_msg", "Failed to cancel task"),
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v1/cancel] Error cancelling task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _cleanup_task_heartbeat(task_id: int) -> None:
+    """Clean up heartbeat data for a cancelled task.
+
+    Args:
+        task_id: Task ID to clean up
+    """
+    try:
+        from executor_manager.services.heartbeat_manager import (
+            HeartbeatType,
+            get_heartbeat_manager,
+        )
+        from executor_manager.services.task_heartbeat_manager import (
+            get_running_task_tracker,
+        )
+
+        task_id_str = str(task_id)
+        heartbeat_mgr = get_heartbeat_manager()
+        tracker = get_running_task_tracker()
+
+        await heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+        logger.info(f"[v1/cancel] Removing task {task_id} from RunningTaskTracker")
+        tracker.remove_running_task(task_id)
+    except Exception as e:
+        logger.warning(f"[v1/cancel] Failed to clean up heartbeat data: {e}")
+
+
+@api_router.post("/v1/responses")
+async def openai_responses(http_request: Request):
+    """OpenAI Responses API endpoint - async queue mode.
+
+    This endpoint accepts OpenAI Responses API format requests and enqueues
+    them directly to Redis for async processing. The OpenAI format is stored
+    as-is in the queue - no conversion to ExecutionRequest format.
+    The task queue consumer will handle container creation and task execution.
+
+    Request format (OpenAI Responses API):
+    {
+        "model": "...",
+        "input": "..." or [...],
+        "instructions": "...",
+        "stream": false,
+        "background": true,
+        "metadata": {
+            "task_id": 123,
+            "subtask_id": 456,
+            "type": "online",
+            ...
+        },
+        "model_config": {...}
+    }
+
+    Args:
+        http_request: HTTP request object
+
+    Returns:
+        dict: Queued status response
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+
+    # Read raw JSON data from request body
+    body_bytes = await http_request.body()
+    import json
+
+    request_data = json.loads(body_bytes)
+
+    # Extract task identification from metadata
+    metadata = request_data.get("metadata", {})
+    task_id = metadata.get("task_id", 0)
+    subtask_id = metadata.get("subtask_id", 0)
+    background = request_data.get("background", False)
+
+    logger.info(
+        f"[v1/responses] Received OpenAI request: task_id={task_id}, "
+        f"subtask_id={subtask_id}, background={background} from {client_ip}"
+    )
+
+    # Set task context for tracing
+    set_task_context(task_id=task_id, subtask_id=subtask_id)
+
+    try:
+        # Enqueue OpenAI format directly to Redis (no conversion needed)
+        from executor_manager.services.task_queue_service import TaskQueueService
+
+        queue_type = metadata.get("type") or "online"
+        service_pool = os.getenv("SERVICE_POOL", "default")
+        queue_service = TaskQueueService(service_pool, queue_type)
+        success = queue_service.enqueue_task(request_data)
+
+        if not success:
+            logger.error(f"[v1/responses] Failed to enqueue task {task_id}")
+            raise HTTPException(status_code=500, detail="Failed to enqueue task")
+
+        logger.info(
+            f"[v1/responses] Task {task_id} enqueued to "
+            f"pool '{service_pool}' queue '{queue_type}'"
+        )
+
+        return {
+            "id": f"resp_{subtask_id}",
+            "status": "queued",
+            "message": "Task enqueued for processing",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v1/responses] Error processing request for task {task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

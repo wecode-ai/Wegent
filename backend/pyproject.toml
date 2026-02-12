@@ -31,6 +31,7 @@ dependencies = [
     "pyjwt>=2.8.0",
     # HTTP clients
     "httpx[brotli,socks]>=0.26.0",
+    "socksio>=1.0.0",  # Explicit dependency for SOCKS proxy support
     "requests>=2.31.0",
     "aiohttp>=3.8.0",
     # LangChain and LangGraph

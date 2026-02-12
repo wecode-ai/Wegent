@@ -127,7 +127,6 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
 
     // Device came online
     const handleDeviceOnline = (data: DeviceOnlinePayload) => {
-      console.log('[DeviceContext] device:online', data)
       setDevices(prev => {
         const exists = prev.find(d => d.device_id === data.device_id)
         if (exists) {
@@ -166,7 +165,6 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
 
     // Device went offline - update status instead of removing
     const handleDeviceOffline = (data: DeviceOfflinePayload) => {
-      console.log('[DeviceContext] device:offline', data)
       setDevices(prev =>
         prev.map(d => (d.device_id === data.device_id ? { ...d, status: 'offline' } : d))
       )
@@ -178,7 +176,6 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
 
     // Device status changed (online/busy)
     const handleDeviceStatus = (data: DeviceStatusPayload) => {
-      console.log('[DeviceContext] device:status', data)
       setDevices(prev =>
         prev.map(d =>
           d.device_id === data.device_id ? { ...d, status: data.status as DeviceInfo['status'] } : d
@@ -188,7 +185,6 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
 
     // Device slot usage updated
     const handleDeviceSlotUpdate = (data: DeviceSlotUpdatePayload) => {
-      console.log('[DeviceContext] device:slot_update', data)
       setDevices(prev =>
         prev.map(d =>
           d.device_id === data.device_id

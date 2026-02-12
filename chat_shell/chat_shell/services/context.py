@@ -21,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
 from chat_shell.core.database import get_db_context
-from chat_shell.interface import ChatRequest
+from chat_shell.tools.builtin import PreviewSubscriptionTool
+from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
@@ -60,11 +61,11 @@ class ChatContext:
       all execute concurrently
     """
 
-    def __init__(self, request: ChatRequest):
+    def __init__(self, request: ExecutionRequest):
         """Initialize chat context.
 
         Args:
-            request: The chat request containing all configuration
+            request: The execution request containing all configuration
         """
         self._request = request
         self._mcp_clients: list = []
@@ -480,6 +481,58 @@ class ChatContext:
             )
             return {"success": False, "client": None}
 
+    async def _connect_single_mcp_server_with_config(
+        self, server_name: str, server_config: dict
+    ) -> dict:
+        """Connect to a single MCP server with pre-built config.
+
+        This is a lighter version that accepts pre-built config for use in
+        parallel connection scenarios where fault isolation is needed.
+
+        Args:
+            server_name: Name of the MCP server
+            server_config: Config dict for the server (single-entry dict)
+
+        Returns:
+            Dict with success status, tools, client, and summary
+        """
+        from chat_shell.tools.mcp import MCPClient
+
+        try:
+            client = MCPClient(server_config, task_data=self._request.task_data)
+            await client.connect()
+            if client.is_connected:
+                tools = client.get_tools()
+                return {
+                    "success": True,
+                    "tools": tools,
+                    "client": client,
+                    "summary": f"{server_name}({len(tools)})",
+                }
+            else:
+                logger.warning(
+                    "[CHAT_CONTEXT] MCP server %s connected but not ready",
+                    server_name,
+                )
+                return {"success": False, "client": client}
+        except Exception as e:
+            error_msg = str(e)
+            if hasattr(e, "exceptions"):
+                for exc in e.exceptions:
+                    if hasattr(exc, "exceptions"):
+                        for sub_exc in exc.exceptions:
+                            error_msg = str(sub_exc)
+                            break
+                    else:
+                        error_msg = str(exc)
+                    break
+            logger.warning(
+                "[CHAT_CONTEXT] Failed to load MCP server %s: %s",
+                server_name,
+                error_msg,
+            )
+            return {"success": False, "client": None}
+
     @trace_async(
         span_name="chat_context.connect_mcp_servers",
         tracer_name="chat_shell.services",
@@ -488,12 +541,16 @@ class ChatContext:
         },
     )
     async def _connect_mcp_servers(self) -> tuple[list, list]:
-        """Connect to all MCP servers using a single MultiServerMCPClient.
+        """Connect to all MCP servers with individual fault isolation.
 
-        This approach leverages the SDK's internal parallelization via asyncio.gather
-        for optimal performance.
+        Each server is connected independently to prevent one failing server
+        from affecting others. This provides better resilience compared to
+        a single MultiServerMCPClient where shared connection issues can
+        cause total failure.
+
+        Memory impact: Minimal - only MCPClient instances for successfully
+        connected servers are retained (for cleanup purposes).
         """
-        from chat_shell.tools.mcp import MCPClient
 
         logger.info(
             "[CHAT_CONTEXT] _connect_mcp_servers called: task_id=%d, mcp_servers=%s",
@@ -516,76 +573,58 @@ class ChatContext:
             self._request.task_id,
         )
 
-        # Build unified config for all MCP servers
-        add_span_event("building_unified_mcp_config")
-        unified_config: dict = {}
-        for server in self._request.mcp_servers:
-            server_name = server.get("name", "server")
-            transport_type = server.get("type", "streamable-http")
-            server_url = server.get("url", "")
-            unified_config[server_name] = {
-                "type": transport_type,
-                "url": server_url,
-            }
-            auth = server.get("auth")
-            if auth:
-                unified_config[server_name]["headers"] = auth
-
-        add_span_event(
-            "unified_config_built",
-            {"server_names": list(unified_config.keys())},
-        )
-
-        # Use single MCPClient with all servers - SDK handles parallel internally
+        # Connect to each MCP server individually for fault isolation
+        # This prevents one failing server from affecting others
         mcp_tools = []
         mcp_clients = []
         mcp_summary = []
 
-        try:
-            client = MCPClient(unified_config, task_data=self._request.task_data)
-            add_span_event("mcp_client_created")
+        add_span_event("connecting_mcp_servers_individually")
 
-            await client.connect()
+        # Build individual server configs
+        server_configs = []
+        for server in self._request.mcp_servers:
+            server_name = server.get("name", "server")
+            transport_type = server.get("type", "streamable-http")
+            server_url = server.get("url", "")
+            config = {
+                server_name: {
+                    "type": transport_type,
+                    "url": server_url,
+                }
+            }
+            auth = server.get("auth")
+            if auth:
+                config[server_name]["headers"] = auth
+            server_configs.append((server_name, config))
 
-            if client.is_connected:
-                tools = client.get_tools()
-                mcp_tools.extend(tools)
-                mcp_clients.append(client)
-                mcp_summary = [f"{name}(*)" for name in unified_config.keys()]
-                add_span_event(
-                    "mcp_servers_connected",
-                    {
-                        "connected_count": len(unified_config),
-                        "total_tools": len(tools),
-                    },
-                )
-            else:
-                add_span_event("mcp_client_not_ready")
-                logger.warning(
-                    "[CHAT_CONTEXT] MCP client connected but not ready",
-                )
-                mcp_clients.append(client)
-        except Exception as e:
-            error_msg = str(e)
-            if hasattr(e, "exceptions"):
-                for exc in e.exceptions:
-                    if hasattr(exc, "exceptions"):
-                        for sub_exc in exc.exceptions:
-                            error_msg = str(sub_exc)
-                            break
-                    else:
-                        error_msg = str(exc)
-                    break
-            add_span_event(
-                "mcp_connection_failed",
-                {"error": error_msg},
-            )
-            logger.warning(
-                "[CHAT_CONTEXT] Failed to load MCP servers: %s",
-                error_msg,
-            )
+        # Connect to each server in parallel with individual error handling
+        results = await asyncio.gather(
+            *[
+                self._connect_single_mcp_server_with_config(name, config)
+                for name, config in server_configs
+            ],
+            return_exceptions=True,
+        )
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("[CHAT_CONTEXT] MCP server connection error: %s", result)
+                continue
+            if result.get("success"):
+                mcp_tools.extend(result["tools"])
+                if result.get("client"):
+                    mcp_clients.append(result["client"])
+                mcp_summary.append(result["summary"])
 
         if mcp_summary:
+            add_span_event(
+                "mcp_servers_connected",
+                {
+                    "connected_count": len(mcp_summary),
+                    "total_tools": len(mcp_tools),
+                },
+            )
             logger.info(
                 "[CHAT_CONTEXT] Connected %d MCP servers: %s (total %d tools)",
                 len(mcp_summary),
@@ -708,7 +747,20 @@ class ChatContext:
             model_name=model_name,
             model_namespace=model_namespace,
         )
+
         extra_tools.append(create_subscription_tool)
+
+        preview_subscription_tool = PreviewSubscriptionTool(
+            user_id=self._request.user_id,
+            team_id=self._request.team_id,
+            team_name=self._request.team_name,
+            team_namespace=self._request.bot_namespace or "default",
+            timezone=self._request.timezone,
+            model_name=model_name,
+            model_namespace=model_namespace,
+        )
+
+        extra_tools.append(preview_subscription_tool)
         logger.debug(
             "[CHAT_CONTEXT] Added CreateSubscriptionTool: team_id=%d, team_name=%s, "
             "model_name=%s, model_namespace=%s, backend_url=%s",

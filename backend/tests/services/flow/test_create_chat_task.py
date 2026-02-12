@@ -109,11 +109,20 @@ class TestTaskCreationResult:
 
 
 class TestCreateChatTaskRouting:
-    """Test create_chat_task routing logic."""
+    """Test create_chat_task routing logic.
+
+    NOTE: After the unified execution architecture refactor, all tasks go through
+    the same path. ExecutionDispatcher automatically routes based on shell_type.
+    The should_use_direct_chat function has been removed.
+    """
 
     @pytest.mark.asyncio
-    async def test_direct_chat_path_routing(self):
-        """Test that create_chat_task routes to Chat Shell path when supports_direct_chat is True."""
+    async def test_unified_path_routing(self):
+        """Test that create_chat_task uses unified path (create_task_and_subtasks).
+
+        After the unified execution architecture refactor, all tasks go through
+        the same path. ExecutionDispatcher automatically routes based on shell_type.
+        """
         from app.services.chat.storage.task_manager import create_chat_task
 
         # Mock dependencies
@@ -138,17 +147,11 @@ class TestCreateChatTaskRouting:
             rag_prompt=None,
         )
 
-        with (
-            patch(
-                "app.services.chat.config.should_use_direct_chat",
-                return_value=True,
-            ),
-            patch(
-                "app.services.chat.storage.task_manager.create_task_and_subtasks",
-                new_callable=AsyncMock,
-                return_value=mock_result,
-            ) as mock_create_task,
-        ):
+        with patch(
+            "app.services.chat.storage.task_manager.create_task_and_subtasks",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ) as mock_create_task:
             result = await create_chat_task(
                 db=mock_db,
                 user=mock_user,
@@ -158,64 +161,7 @@ class TestCreateChatTaskRouting:
                 should_trigger_ai=True,
             )
 
-            # Verify create_task_and_subtasks was called (Chat Shell path)
+            # Verify create_task_and_subtasks was called (unified path)
             mock_create_task.assert_called_once()
             assert result.task.id == 100
-            assert result.ai_triggered is True
-
-    @pytest.mark.asyncio
-    async def test_executor_path_routing(self):
-        """Test that create_chat_task routes to Executor path when supports_direct_chat is False."""
-        from app.services.chat.storage.task_manager import create_chat_task
-
-        # Mock dependencies
-        mock_db = MagicMock()
-        mock_user = MagicMock()
-        mock_user.id = 1
-        mock_team = MagicMock()
-        mock_team.id = 1
-        mock_team.name = "test-team"
-        mock_team.namespace = "default"
-
-        params = TaskCreationParams(
-            message="Test message",
-            title="Test Task",
-        )
-
-        mock_task_dict = {"id": 100}
-        mock_task_resource = MagicMock(id=100)
-        mock_user_subtask = MagicMock(id=200)
-        mock_assistant_subtask = MagicMock(id=300)
-
-        # Configure query mock
-        mock_db.query.return_value.filter.return_value.first.return_value = (
-            mock_task_resource
-        )
-        mock_db.query.return_value.filter.return_value.order_by.return_value.first.side_effect = [
-            mock_user_subtask,
-            mock_assistant_subtask,
-        ]
-
-        with (
-            patch(
-                "app.services.chat.config.should_use_direct_chat",
-                return_value=False,
-            ),
-            patch(
-                "app.services.adapters.task_kinds.task_kinds_service"
-            ) as mock_service,
-        ):
-            mock_service.create_task_or_append.return_value = mock_task_dict
-
-            result = await create_chat_task(
-                db=mock_db,
-                user=mock_user,
-                team=mock_team,
-                message="Test message",
-                params=params,
-                should_trigger_ai=True,
-            )
-
-            # Verify task_kinds_service.create_task_or_append was called (Executor path)
-            mock_service.create_task_or_append.assert_called_once()
             assert result.ai_triggered is True

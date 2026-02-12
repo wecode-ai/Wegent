@@ -178,7 +178,6 @@ export function PetProvider({ children }: PetProviderProps) {
 
     // Handle stage evolved event
     const handleStageEvolved = (data: StageEvolvedEvent) => {
-      console.log('[PetContext] Stage evolved:', data)
       setPendingEvolution(data)
       setAnimationState('evolving')
 
@@ -194,7 +193,6 @@ export function PetProvider({ children }: PetProviderProps) {
 
     // Handle traits updated event
     const handleTraitsUpdated = (data: { traits: Pet['appearance_traits'] }) => {
-      console.log('[PetContext] Traits updated:', data)
       setPet(prev => {
         if (!prev) return prev
         return {

@@ -476,9 +476,9 @@ class TaskKindService(TaskResourceBaseService):
             db.commit()
 
             # Push mode: dispatch task to executor_manager
-            from app.services.task_dispatcher import task_dispatcher
+            from app.services.execution import schedule_dispatch
 
-            task_dispatcher.schedule_dispatch(db_resource.id)
+            schedule_dispatch(db_resource.id)
 
         except Exception as e:
             # Log error but don't interrupt the process
@@ -522,9 +522,9 @@ class TaskKindService(TaskResourceBaseService):
             db.commit()
 
             # Push mode: dispatch task to executor_manager
-            from app.services.task_dispatcher import task_dispatcher
+            from app.services.execution import schedule_dispatch
 
-            task_dispatcher.schedule_dispatch(db_resource.id)
+            schedule_dispatch(db_resource.id)
 
         except Exception as e:
             # Log error but don't interrupt the process

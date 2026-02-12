@@ -113,14 +113,15 @@ class RunningTaskTracker:
             self._sync_client.zadd(RUNNING_TASKS_ZSET, {task_id_str: start_time})
 
             # Store task metadata in a hash
+            # Guard against None values - Redis hset rejects NoneType
             meta_key = RUNNING_TASK_META_KEY.format(task_id=task_id)
             self._sync_client.hset(
                 meta_key,
                 mapping={
                     "task_id": str(task_id),
                     "subtask_id": str(subtask_id),
-                    "executor_name": executor_name,
-                    "task_type": task_type,
+                    "executor_name": executor_name or "",
+                    "task_type": task_type or "online",
                     "start_time": str(start_time),
                 },
             )
@@ -507,28 +508,13 @@ class RunningTaskTracker:
                     f"{container_status['exit_code']}"
                 )
 
-        # Step 3: Mark task as failed via Backend API
-        try:
-            api_client = TaskApiClient()
-            success, result = api_client.update_task_status_by_fields(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                progress=0,
-                status="FAILED",
-                result={"value": error_message},
-                error_message=error_message,
-                executor_name=executor_name,
-            )
-            if success:
-                logger.info(
-                    f"[RunningTaskTracker] Marked task {task_id} as failed via Backend API"
-                )
-            else:
-                logger.warning(
-                    f"[RunningTaskTracker] Failed to mark task {task_id} as failed: {result}"
-                )
-        except Exception as e:
-            logger.error(f"[RunningTaskTracker] Error calling Backend API: {e}")
+        # Step 3: Mark task as failed via callback API (OpenAI Responses API format)
+        await self._send_error_callback(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error_message=error_message,
+            executor_name=executor_name,
+        )
 
         # Step 4: Clean up heartbeat key
         logger.info(
@@ -563,6 +549,35 @@ class RunningTaskTracker:
                 f"[RunningTaskTracker] Container {executor_name} preserved for debugging. "
                 f"Set DELETE_ZOMBIE_CONTAINERS=true to auto-delete."
             )
+
+    async def _send_error_callback(
+        self,
+        task_id: int,
+        subtask_id: int,
+        error_message: str,
+        executor_name: str,
+    ) -> None:
+        """Send error callback to backend using OpenAI Responses API format.
+
+        This method sends an ERROR event to the backend's callback endpoint,
+        which will update the task status and notify the frontend via WebSocket.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            error_message: Error message describing the failure
+            executor_name: Executor container name
+        """
+        from executor_manager.clients.callback_client import get_callback_client
+
+        callback_client = get_callback_client()
+        await callback_client.send_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error_message=error_message,
+            executor_name=executor_name,
+            error_code="executor_crash",
+        )
 
 
 # Global singleton instance

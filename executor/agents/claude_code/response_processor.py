@@ -128,7 +128,7 @@ async def process_response(
 
                 elif isinstance(msg, UserMessage):
                     # Handle UserMessage and check for silent_exit in tool results
-                    is_silent, reason = _handle_user_message(
+                    is_silent, reason = await _handle_user_message(
                         msg, thinking_manager, state_manager
                     )
                     if is_silent:
@@ -141,7 +141,9 @@ async def process_response(
                 elif isinstance(msg, AssistantMessage):
                     # Handle assistant message and detect API errors
                     # Note: Retry logic is handled in ResultMessage processing to avoid duplicate retries
-                    _handle_assistant_message(msg, state_manager, thinking_manager)
+                    await _handle_assistant_message(
+                        msg, state_manager, thinking_manager
+                    )
 
                 elif isinstance(msg, ResultMessage):
 
@@ -290,11 +292,10 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
         )
 
 
-def _handle_user_message(
+async def _handle_user_message(
     msg: UserMessage, thinking_manager=None, state_manager=None
 ) -> tuple[bool, str]:
-    """处理用户消息，提取详细信息
-
+    """
     Args:
         msg: UserMessage to process
         thinking_manager: Optional ThinkingStepManager instance
@@ -303,6 +304,7 @@ def _handle_user_message(
     Returns:
         Tuple of (silent_exit_detected, silent_exit_reason)
     """
+    from executor.callback.callback_handler import send_tool_result_event_async
     from executor.tools.silent_exit import detect_silent_exit
 
     # Track silent exit detection
@@ -400,6 +402,31 @@ def _handle_user_message(
                     f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}"
                 )
 
+                # Send tool_result callback event (response.output_item.done)
+                try:
+                    task_id = (
+                        state_manager.task_data.get("task_id", -1)
+                        if state_manager
+                        else -1
+                    )
+                    subtask_id = (
+                        state_manager.task_data.get("subtask_id", -1)
+                        if state_manager
+                        else -1
+                    )
+                    await send_tool_result_event_async(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        tool_use_id=block.tool_use_id,
+                        tool_output=block.content,
+                        error=str(block.content) if block.is_error else None,
+                    )
+                    logger.info(
+                        f"Sent tool_result event for tool_use_id {block.tool_use_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send tool_result event: {e}")
+
                 # Check for silent_exit marker in tool result content
                 # The content can be a string or a list of content blocks
                 content_to_check = block.content
@@ -453,11 +480,10 @@ def _handle_user_message(
     return silent_exit_detected, silent_exit_reason
 
 
-def _handle_assistant_message(
+async def _handle_assistant_message(
     msg: AssistantMessage, state_manager, thinking_manager=None
 ) -> bool:
-    """处理助手消息，提取详细信息
-
+    """
     Args:
         msg: AssistantMessage to process
         state_manager: ProgressStateManager instance
@@ -466,6 +492,14 @@ def _handle_assistant_message(
     Returns:
         bool: True if API error detected and retry is needed, False otherwise
     """
+    from executor.callback.callback_handler import (
+        send_chunk_event_async,
+        send_tool_start_event_async,
+    )
+
+    # Get task info from state_manager
+    task_id = state_manager.task_data.get("task_id", -1) if state_manager else -1
+    subtask_id = state_manager.task_data.get("subtask_id", -1) if state_manager else -1
 
     # 收集所有内容块的详细信息，符合目标格式
     message_details = {
@@ -521,6 +555,19 @@ def _handle_assistant_message(
 
             logger.info(f"ToolUseBlock: tool = {block.name}")
 
+            # Send tool_start callback event (response.output_item.added)
+            try:
+                await send_tool_start_event_async(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_use_id=block.id,
+                    tool_name=block.name,
+                    tool_input=block.input,
+                )
+                logger.info(f"Sent tool_start event for tool {block.name}")
+            except Exception as e:
+                logger.warning(f"Failed to send tool_start event: {e}")
+
         elif isinstance(block, TextBlock):
             # 文本内容详情，符合目标格式
             text_detail = {"type": "text", "text": block.text}
@@ -529,6 +576,17 @@ def _handle_assistant_message(
             state_manager.update_workbench_summary(block.text)
 
             logger.info(f"TextBlock: {len(block.text)} chars")
+
+            # Send chunk callback event (response.output_text.delta)
+            try:
+                await send_chunk_event_async(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=block.text,
+                )
+                logger.info(f"Sent chunk event with {len(block.text)} chars")
+            except Exception as e:
+                logger.warning(f"Failed to send chunk event: {e}")
 
         elif isinstance(block, ToolResultBlock):
             # 工具结果详情，符合目标格式
@@ -700,6 +758,17 @@ async def _process_result_message(
 
     # If it's a successful result message, send the result back via callback
     if msg.subtype == "success" and not msg.is_error:
+        from executor.callback.callback_handler import send_done_event_async
+
+        # Get task info from state_manager
+        task_id = state_manager.task_data.get("task_id", -1) if state_manager else -1
+        subtask_id = (
+            state_manager.task_data.get("subtask_id", -1) if state_manager else -1
+        )
+        message_id = (
+            state_manager.task_data.get("message_id") if state_manager else None
+        )
+
         # Ensure result is string type
         result_str = str(msg.result) if msg.result is not None else "No result"
         logger.info(f"Sending successful result via callback: {result_str}")
@@ -713,7 +782,7 @@ async def _process_result_message(
                 details=masked_result_details,
             )
 
-        # If there's a result, pass it as result parameter to report_progress
+        # If there's a result, pass it as result parameter to send_done_event
         if msg.result is not None:
             try:
                 # Try to parse result as dict, wrap as dict if not
@@ -736,15 +805,21 @@ async def _process_result_message(
                 # Update task status to completed
                 state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
-                # Report progress using state manager
-                state_manager.report_progress(
-                    progress=100,
-                    status=TaskStatus.COMPLETED.value,
-                    message=result_str,
-                    extra_result=result_dict,
+                # Send done event (response.completed) via callback
+                await send_done_event_async(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    result=result_dict,
+                    message_id=message_id,
+                    usage=msg.usage,
+                    silent_exit=silent_exit_detected if silent_exit_detected else None,
+                    silent_exit_reason=(
+                        silent_exit_reason if silent_exit_reason else None
+                    ),
                 )
+                logger.info(f"Sent done event for task {task_id}")
             except Exception as e:
-                logger.error(f"Failed to parse result as dict: {e}")
+                logger.error(f"Failed to send done event: {e}")
                 if thinking_manager:
                     thinking_manager.add_thinking_step(
                         title="thinking.result_parsing_error",
@@ -755,18 +830,27 @@ async def _process_result_message(
                 # Update task status to failed
                 state_manager.set_task_status(TaskStatus.FAILED.value)
 
-                # Report error using state manager
-                state_manager.report_progress(
-                    progress=100, status=TaskStatus.FAILED.value, message=result_str
+                # Send error event via callback
+                from executor.callback.callback_handler import send_error_event_async
+
+                await send_error_event_async(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=str(e),
                 )
         else:
             # Update task status to completed
             state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
-            # Report progress using state manager
-            state_manager.report_progress(
-                progress=100, status=TaskStatus.COMPLETED.value, message=result_str
+            # Send done event (response.completed) via callback
+            await send_done_event_async(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                result={"value": result_str},
+                message_id=message_id,
+                usage=msg.usage,
             )
+            logger.info(f"Sent done event for task {task_id}")
         return TaskStatus.COMPLETED
 
     if msg.is_error:

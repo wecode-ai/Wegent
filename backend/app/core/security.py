@@ -802,6 +802,160 @@ def get_current_user_flexible_for_executor(
         )
 
 
+def get_current_user_jwt_apikey_tasktoken(
+    db: Session = Depends(get_db),
+    authorization: str = Header(default=""),
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+) -> User:
+    """
+    Flexible authentication supporting JWT Token, API Key, and Task Token.
+
+    Supported authentication methods (in priority order):
+    1. API Key via X-API-Key header (if starts with 'wg-')
+    2. API Key via Authorization: Bearer header (if starts with 'wg-')
+    3. Standard JWT Token via Authorization: Bearer header
+    4. Task Token via Authorization: Bearer header (fallback)
+
+    Task tokens are special JWT tokens issued for task execution that contain
+    task_id, subtask_id, user_id, and user_name. They are typically used by
+    executors to access task-related resources.
+
+    Args:
+        db: Database session
+        authorization: Authorization header value (Bearer token)
+        x_api_key: X-API-Key header value
+
+    Returns:
+        Authenticated User object
+
+    Raises:
+        HTTPException: 401 if authentication fails
+    """
+    from app.core.auth_utils import is_api_key, verify_api_key, verify_jwt_token_with_db
+    from app.services.auth.task_token import verify_task_token
+
+    with _tracer.start_as_current_span(
+        "auth.get_current_user_jwt_apikey_tasktoken"
+    ) as span:
+        # Priority 1: X-API-Key header
+        if x_api_key and is_api_key(x_api_key):
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
+                span.set_attribute(SpanAttributes.AUTH_SOURCE, "x_api_key_header")
+
+            user = verify_api_key(db, x_api_key)
+            if user:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                    span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                    span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                return user
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "invalid_api_key"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Priority 2: Authorization Bearer header
+        if authorization:
+            # Handle both "Bearer xxx" and plain token
+            if authorization.startswith("Bearer "):
+                token = authorization[7:]
+            else:
+                token = authorization
+
+            # Check if it's an API Key in Bearer header
+            if is_api_key(token):
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_SOURCE, "authorization_header"
+                    )
+
+                user = verify_api_key(db, token)
+                if user:
+                    if is_telemetry_enabled():
+                        span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                        span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                        span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                        set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    return user
+
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "invalid_api_key"
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired API key",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            # Try standard JWT token first
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+                span.set_attribute(SpanAttributes.AUTH_SOURCE, "authorization_header")
+
+            user = verify_jwt_token_with_db(db, token)
+            if user:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                    span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                    span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                return user
+
+            # Try task token as fallback
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "task_token")
+
+            token_info = verify_task_token(token)
+            if token_info:
+                # Get user from database using user_id from task token
+                user = db.query(User).filter(User.id == token_info.user_id).first()
+                if user and user.is_active:
+                    if is_telemetry_enabled():
+                        span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                        span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                        span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                        span.set_attribute("auth.task_id", str(token_info.task_id))
+                        set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    logger.debug(
+                        f"Task token auth successful: user={user.user_name}, "
+                        f"task_id={token_info.task_id}"
+                    )
+                    return user
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, "invalid_token")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # No authentication provided
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+            span.set_attribute(
+                SpanAttributes.AUTH_FAILURE_REASON, "missing_credentials"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def get_current_user_optional(
     token: Optional[str] = Depends(oauth2_scheme_optional),
     db: Session = Depends(get_db),

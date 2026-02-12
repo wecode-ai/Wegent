@@ -4,7 +4,7 @@
 
 'use client'
 
-import { memo, useState } from 'react'
+import { memo, useState, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolBlockProps, ToolStatus, ToolRendererProps } from '../types'
@@ -17,6 +17,107 @@ import { GrepToolRenderer } from './tools/GrepToolRenderer'
 import { GlobToolRenderer } from './tools/GlobToolRenderer'
 import { TodoWriteToolRenderer } from './tools/TodoWriteToolRenderer'
 import { UploadToolRenderer } from './tools/UploadToolRenderer'
+
+/**
+ * Get a short preview of the tool input for display in the header
+ * Returns a truncated string suitable for inline display
+ */
+function getToolInputPreview(
+  tool: ToolRendererProps['tool'],
+  maxLength: number = 60
+): string | null {
+  const input = tool.toolUse?.details?.input as Record<string, unknown> | string | undefined
+  if (!input) return null
+
+  const toolName = tool.toolName
+
+  // Handle different tool types
+  switch (toolName) {
+    case 'Bash': {
+      const command = typeof input === 'object' ? (input.command as string) : input
+      if (command) {
+        return truncateText(command, maxLength)
+      }
+      break
+    }
+    case 'Read': {
+      const filePath = typeof input === 'object' ? (input.file_path as string) : input
+      if (filePath) {
+        return truncateText(filePath, maxLength)
+      }
+      break
+    }
+    case 'Write': {
+      const filePath = typeof input === 'object' ? (input.file_path as string) : input
+      if (filePath) {
+        return truncateText(filePath, maxLength)
+      }
+      break
+    }
+    case 'Edit': {
+      const filePath = typeof input === 'object' ? (input.file_path as string) : input
+      if (filePath) {
+        return truncateText(filePath, maxLength)
+      }
+      break
+    }
+    case 'Grep': {
+      const pattern = typeof input === 'object' ? (input.pattern as string) : input
+      if (pattern) {
+        return truncateText(`"${pattern}"`, maxLength)
+      }
+      break
+    }
+    case 'Glob': {
+      const pattern = typeof input === 'object' ? (input.pattern as string) : input
+      if (pattern) {
+        return truncateText(pattern, maxLength)
+      }
+      break
+    }
+    case 'knowledge_base_search':
+    case 'web_search': {
+      const query = typeof input === 'object' ? (input.query as string) : input
+      if (query) {
+        return truncateText(`"${query}"`, maxLength)
+      }
+      break
+    }
+    default: {
+      // For generic tools, try to extract a meaningful preview
+      if (typeof input === 'string') {
+        return truncateText(input, maxLength)
+      }
+      // Try common field names
+      if (typeof input === 'object') {
+        const preview =
+          (input.command as string) ||
+          (input.query as string) ||
+          (input.file_path as string) ||
+          (input.path as string) ||
+          (input.content as string) ||
+          (input.text as string)
+        if (preview && typeof preview === 'string') {
+          return truncateText(preview, maxLength)
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Truncate text to a maximum length, adding ellipsis if needed
+ */
+function truncateText(text: string, maxLength: number): string {
+  // Remove newlines and extra whitespace for inline display
+  const cleaned = text.replace(/\s+/g, ' ').trim()
+  if (cleaned.length <= maxLength) {
+    return cleaned
+  }
+  return cleaned.substring(0, maxLength - 3) + '...'
+}
 
 /**
  * ToolBlock Component
@@ -37,6 +138,9 @@ export const ToolBlock = memo(function ToolBlock({
 
   // Get tool display name
   const toolDisplayName = getToolDisplayName(tool, t)
+
+  // Get tool input preview for header display
+  const inputPreview = useMemo(() => getToolInputPreview(tool), [tool])
 
   // Get specialized renderer
   const ToolRenderer = getToolRenderer(tool.toolName)
@@ -63,11 +167,19 @@ export const ToolBlock = memo(function ToolBlock({
         } transition-colors`}
         onClick={() => isExpandable && setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center gap-2">
-          <StatusIcon className={`h-4 w-4 ${statusColor}`} />
-          <span className="text-sm font-medium text-text-primary">{toolDisplayName}</span>
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <StatusIcon className={`h-4 w-4 flex-shrink-0 ${statusColor}`} />
+          <span className="text-sm font-medium text-text-primary flex-shrink-0">
+            {toolDisplayName}
+          </span>
+          {/* Input preview - shown inline after tool name */}
+          {inputPreview && (
+            <code className="text-xs text-text-muted bg-fill-tert px-1.5 py-0.5 rounded font-mono truncate max-w-[300px]">
+              {inputPreview}
+            </code>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           {isDownloadable && (
             <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded">
               {t('thinking.downloadable') || 'Downloadable'}
