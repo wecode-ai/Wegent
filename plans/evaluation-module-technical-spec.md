@@ -31,6 +31,19 @@
 
 **代码目录规范：** 所有考评模块代码必须放在 `wecode/` 目录下，与开源基础代码隔离。
 
+**⚠️ 重要：数据库迁移规则**
+
+由于考评模块是**独立的内网功能**，其数据表的生命周期管理完全独立于开源主项目：
+
+| 项目           | 迁移方式     | 说明                                |
+| -------------- | ------------ | ----------------------------------- |
+| **开源主项目** | Alembic 迁移 | 位于 `backend/alembic/versions/`    |
+| **考评模块**   | **独立操作** | **禁止创建或修改任何 alembic 文件** |
+
+- 考评模块的数据表由 DBA 或运维人员独立创建和维护
+- 不允许在 `backend/alembic/versions/` 目录下创建任何与考评模块相关的迁移文件
+- 数据表结构变更通过内部流程管理，不纳入开源项目的 Alembic 版本控制
+
 | 代码类型 | 正确位置                      | 说明              |
 | -------- | ----------------------------- | ----------------- |
 | 后端服务 | `backend/wecode/service/`     | 服务层代码        |
@@ -42,9 +55,44 @@
 
 **例外情况（仅导航/路由集成）：**
 
-- 导航栏集成：`frontend/src/components/layout/Navbar.tsx` 添加入口
-- 路由集成：`frontend/src/app/` 添加路由挂载点
-- API 路由注册：`backend/app/main.py` 注册路由
+- 导航栏集成：`frontend/src/features/tasks/components/sidebar/TaskSidebar.tsx` 添加入口
+  - 在 `navigationButtons` 数组中添加【AI考评】导航项，位于【AI设备】之后
+  - 配置项：
+    - `label`: `t('common:navigation.evaluation')`
+    - `icon`: `ClipboardCheck` (来自 `lucide-react`)
+    - `path`: `paths.evaluation.getHref()`
+    - `isActive`: `pageType === 'evaluation'`
+- 路由配置：`frontend/src/config/paths.ts` 添加路径
+  ```typescript
+  evaluation: {
+    getHref: () => '/evaluation',
+  },
+  ```
+- 路由集成：`frontend/src/app/` 添加路由挂载点 `(evaluation)/`
+- API 路由注册：`backend/app/main.py` 注册路由 `/api/v1/wecode/evaluation`
+
+**⚠️ 前端路由设计变更说明：**
+
+本文档第 10 节已按**业务角色工作流**重新设计前端路由，替代了原 CRUD 思路：
+
+| 维度     | 原设计（CRUD）                      | 新设计（角色工作流）             |
+| -------- | ----------------------------------- | -------------------------------- |
+| 出题人   | `/topics`, `/topics/{id}/questions` | `/author`, `/author/topics/{id}` |
+| 答题人   | 混在 `/topics` 下                   | 独立 `/respondent` 入口          |
+| 评分人   | `/topics/{id}/grading`              | 独立 `/grader` Dashboard         |
+| 创建流程 | 分页面跳转                          | Wizard 一站式流程                |
+
+此设计更符合业务场景，各角色有清晰独立的工作空间。
+
+**导航栏入口位置：**
+
+在【关注】、【编码】、【知识】、【AI设备】之后添加【AI考评】入口，导航顺序为：
+
+1. 关注 (flow)
+2. 编码 (code)
+3. 知识 (wiki/knowledge)
+4. AI设备 (devices)
+5. **AI考评 (evaluation)** ← 新增
 
 ### 2.2 技术栈
 
@@ -160,112 +208,133 @@ erDiagram
 
 ### 3.2 数据表定义
 
-> **数据库设计规范要点：**
->
-> - 使用 `idx_` 前缀命名索引
-> - 禁止使用 ENUM、外键约束、表级排序规则
-> - JSON 字段必须 NOT NULL
-> - 时间戳使用 `DEFAULT CURRENT_TIMESTAMP`
+**DBA 数据库约束规范：**
+
+| 约束类型           | 要求                         | 说明                                                                       |
+| ------------------ | ---------------------------- | -------------------------------------------------------------------------- |
+| **索引命名**       | 使用 `idx_` 前缀             | 如 `idx_wecode_eval_topics_creator`                                        |
+| **禁止使用**       | ENUM、外键约束、表级排序规则 | 不得使用 `mysql_collate` 参数                                              |
+| **JSON 字段**      | 必须 NOT NULL                | JSON 类型字段不能为 NULL                                                   |
+| **id 列注释**      | 必须设置                     | 所有表的主键 id 列必须添加 `comment="Primary key ID"`                      |
+| **列默认值**       | 必须设置                     | 所有非 JSON 类型列必须设置 `server_default`                                |
+| **VARCHAR 字符集** | 禁止显式设置                 | VARCHAR 列不得设置 `charset` 或 `collation`，使用表默认字符集              |
+| **DATETIME 列**    | NOT NULL + 默认值            | 使用 `DEFAULT CURRENT_TIMESTAMP` 或 `'1970-01-01 00:00:00'` 作为空值默认值 |
+
+**SQLAlchemy/Alembic 示例：**
+
+```python
+# ✅ 正确
+sa.Column("id", sa.Integer(), autoincrement=True, nullable=False, comment="Primary key ID")
+sa.Column("name", sa.String(200), nullable=False, server_default="", comment="Topic name")
+sa.Column("started_at", sa.DateTime(), nullable=False, server_default=sa.text("'1970-01-01 00:00:00'"))
+# ...
+mysql_charset="utf8mb4"  # 只允许设置 charset
+
+# ❌ 错误
+sa.Column("id", sa.Integer(), autoincrement=True, nullable=False)  # 缺少注释
+sa.Column("name", sa.String(200), nullable=False)  # 缺少默认值
+mysql_collate="utf8mb4_unicode_ci"  # 禁止设置 collate
+```
 
 #### 3.2.1 专题表 (wecode_eval_topics)
 
-| 字段                | 类型         | 约束                        | 说明                       |
-| ------------------- | ------------ | --------------------------- | -------------------------- |
-| id                  | INT          | PK, AUTO_INCREMENT          | 主键                       |
-| name                | VARCHAR(200) | NOT NULL                    | 专题名称                   |
-| creator_id          | INT          | NOT NULL, INDEX             | 创建者用户ID               |
-| visibility          | VARCHAR(20)  | NOT NULL, DEFAULT 'private' | 可见性: public/private     |
-| status              | TINYINT      | NOT NULL, DEFAULT 0         | 状态: 0=draft, 1=published |
-| current_version     | VARCHAR(25)  | NOT NULL, DEFAULT ''        | 当前发布版本号             |
-| extra_data          | JSON         | NOT NULL                    | 扩展数据 (description 等)  |
-| grading_team_config | JSON         | NOT NULL                    | 评分智能体配置             |
-| created_at          | DATETIME     | DEFAULT CURRENT_TIMESTAMP   | 创建时间                   |
-| updated_at          | DATETIME     | ON UPDATE CURRENT_TIMESTAMP | 更新时间                   |
-| is_active           | BOOLEAN      | NOT NULL, DEFAULT TRUE      | 是否有效                   |
+| 字段                | 类型         | 约束                                             | 说明                       |
+| ------------------- | ------------ | ------------------------------------------------ | -------------------------- |
+| id                  | INT          | PK, AUTO_INCREMENT, **COMMENT 'Primary key ID'** | 主键                       |
+| name                | VARCHAR(200) | NOT NULL, **DEFAULT ''**                         | 专题名称                   |
+| creator_id          | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 创建者用户ID               |
+| visibility          | VARCHAR(20)  | NOT NULL, DEFAULT 'private'                      | 可见性: public/private     |
+| status              | TINYINT      | NOT NULL, DEFAULT 0                              | 状态: 0=draft, 1=published |
+| current_version     | VARCHAR(25)  | NOT NULL, DEFAULT ''                             | 当前发布版本号             |
+| extra_data          | JSON         | NOT NULL                                         | 扩展数据 (description 等)  |
+| grading_team_config | JSON         | NOT NULL                                         | 评分智能体配置             |
+| created_at          | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 创建时间                   |
+| updated_at          | DATETIME     | NOT NULL, ON UPDATE CURRENT_TIMESTAMP            | 更新时间                   |
+| is_active           | BOOLEAN      | NOT NULL, DEFAULT TRUE                           | 是否有效                   |
 
 #### 3.2.2 专题版本表 (wecode_eval_topic_versions)
 
-| 字段               | 类型        | 约束                      | 说明         |
-| ------------------ | ----------- | ------------------------- | ------------ |
-| id                 | INT         | PK, AUTO_INCREMENT        | 主键         |
-| topic_id           | INT         | NOT NULL, INDEX           | 关联专题ID   |
-| version            | VARCHAR(25) | NOT NULL                  | 版本号       |
-| question_snapshots | JSON        | NOT NULL                  | 题目版本快照 |
-| published_at       | DATETIME    | DEFAULT CURRENT_TIMESTAMP | 发布时间     |
-| published_by       | INT         | NOT NULL, DEFAULT 0       | 发布人用户ID |
+| 字段               | 类型        | 约束                                             | 说明         |
+| ------------------ | ----------- | ------------------------------------------------ | ------------ |
+| id                 | INT         | PK, AUTO_INCREMENT, **COMMENT 'Primary key ID'** | 主键         |
+| topic_id           | INT         | NOT NULL, **DEFAULT 0**, INDEX                   | 关联专题ID   |
+| version            | VARCHAR(25) | NOT NULL, **DEFAULT ''**                         | 版本号       |
+| question_snapshots | JSON        | NOT NULL                                         | 题目版本快照 |
+| published_at       | DATETIME    | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 发布时间     |
+| published_by       | INT         | NOT NULL, DEFAULT 0                              | 发布人用户ID |
 
 #### 3.2.3 题目表 (wecode_eval_questions)
 
-| 字段            | 类型         | 约束                        | 说明                                |
-| --------------- | ------------ | --------------------------- | ----------------------------------- |
-| id              | INT          | PK, AUTO_INCREMENT          | 主键                                |
-| topic_id        | INT          | NOT NULL, INDEX             | 所属专题ID                          |
-| title           | VARCHAR(500) | NOT NULL                    | 题目标题                            |
-| content_type    | VARCHAR(20)  | NOT NULL, DEFAULT 'text'    | 内容类型: text/url/attachment/mixed |
-| content_data    | JSON         | NOT NULL                    | 内容数据                            |
-| status          | TINYINT      | NOT NULL, DEFAULT 0         | 状态: 0=draft, 1=published          |
-| current_version | VARCHAR(25)  | NOT NULL, DEFAULT ''        | 当前发布版本                        |
-| order_index     | INT          | NOT NULL, DEFAULT 0         | 排序索引                            |
-| creator_id      | INT          | NOT NULL, INDEX             | 创建者用户ID                        |
-| created_at      | DATETIME     | DEFAULT CURRENT_TIMESTAMP   | 创建时间                            |
-| updated_at      | DATETIME     | ON UPDATE CURRENT_TIMESTAMP | 更新时间                            |
-| is_active       | BOOLEAN      | NOT NULL, DEFAULT TRUE      | 是否有效                            |
+| 字段            | 类型         | 约束                                             | 说明                                |
+| --------------- | ------------ | ------------------------------------------------ | ----------------------------------- |
+| id              | INT          | PK, AUTO_INCREMENT, **COMMENT 'Primary key ID'** | 主键                                |
+| topic_id        | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 所属专题ID                          |
+| title           | VARCHAR(500) | NOT NULL, **DEFAULT ''**                         | 题目标题                            |
+| content_type    | VARCHAR(20)  | NOT NULL, DEFAULT 'text'                         | 内容类型: text/url/attachment/mixed |
+| content_data    | JSON         | NOT NULL                                         | 内容数据                            |
+| status          | TINYINT      | NOT NULL, DEFAULT 0                              | 状态: 0=draft, 1=published          |
+| current_version | VARCHAR(25)  | NOT NULL, DEFAULT ''                             | 当前发布版本                        |
+| order_index     | INT          | NOT NULL, DEFAULT 0                              | 排序索引                            |
+| creator_id      | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 创建者用户ID                        |
+| created_at      | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 创建时间                            |
+| updated_at      | DATETIME     | NOT NULL, ON UPDATE CURRENT_TIMESTAMP            | 更新时间                            |
+| is_active       | BOOLEAN      | NOT NULL, DEFAULT TRUE                           | 是否有效                            |
 
 #### 3.2.4 题目版本表 (wecode_eval_question_versions)
 
-| 字段          | 类型        | 约束                      | 说明         |
-| ------------- | ----------- | ------------------------- | ------------ |
-| id            | INT         | PK, AUTO_INCREMENT        | 主键         |
-| question_id   | INT         | NOT NULL, INDEX           | 关联题目ID   |
-| version       | VARCHAR(25) | NOT NULL                  | 版本号       |
-| content_data  | JSON        | NOT NULL                  | 内容数据     |
-| criteria_data | JSON        | NOT NULL                  | 评分标准数据 |
-| published_at  | DATETIME    | DEFAULT CURRENT_TIMESTAMP | 发布时间     |
-| published_by  | INT         | NOT NULL, DEFAULT 0       | 发布人用户ID |
+| 字段          | 类型        | 约束                                             | 说明         |
+| ------------- | ----------- | ------------------------------------------------ | ------------ |
+| id            | INT         | PK, AUTO_INCREMENT, **COMMENT 'Primary key ID'** | 主键         |
+| question_id   | INT         | NOT NULL, **DEFAULT 0**, INDEX                   | 关联题目ID   |
+| version       | VARCHAR(25) | NOT NULL, **DEFAULT ''**                         | 版本号       |
+| content_data  | JSON        | NOT NULL                                         | 内容数据     |
+| criteria_data | JSON        | NOT NULL                                         | 评分标准数据 |
+| published_at  | DATETIME    | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 发布时间     |
+| published_by  | INT         | NOT NULL, DEFAULT 0                              | 发布人用户ID |
 
 #### 3.2.5 权限白名单表 (wecode_eval_permissions)
 
-| 字段       | 类型        | 约束                           | 说明                    |
-| ---------- | ----------- | ------------------------------ | ----------------------- |
-| id         | INT         | PK, AUTO_INCREMENT             | 主键                    |
-| topic_id   | INT         | NOT NULL, INDEX                | 关联专题ID              |
-| user_id    | INT         | NOT NULL, INDEX                | 被授权用户ID            |
-| role       | VARCHAR(20) | NOT NULL, DEFAULT 'respondent' | 角色: respondent/grader |
-| granted_by | INT         | NOT NULL, DEFAULT 0            | 授权人用户ID            |
-| granted_at | DATETIME    | DEFAULT CURRENT_TIMESTAMP      | 授权时间                |
+| 字段       | 类型        | 约束                                             | 说明                    |
+| ---------- | ----------- | ------------------------------------------------ | ----------------------- |
+| id         | INT         | PK, AUTO_INCREMENT, **COMMENT 'Primary key ID'** | 主键                    |
+| topic_id   | INT         | NOT NULL, **DEFAULT 0**, INDEX                   | 关联专题ID              |
+| user_id    | INT         | NOT NULL, **DEFAULT 0**, INDEX                   | 被授权用户ID            |
+| role       | VARCHAR(20) | NOT NULL, DEFAULT 'respondent'                   | 角色: respondent/grader |
+| granted_by | INT         | NOT NULL, DEFAULT 0                              | 授权人用户ID            |
+| granted_at | DATETIME    | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 授权时间                |
 
 #### 3.2.6 作答表 (wecode_eval_answers)
 
-| 字段             | 类型        | 约束                     | 说明             |
-| ---------------- | ----------- | ------------------------ | ---------------- |
-| id               | INT         | PK, AUTO_INCREMENT       | 主键             |
-| question_id      | INT         | NOT NULL, INDEX          | 关联题目ID       |
-| question_version | VARCHAR(25) | NOT NULL                 | 作答时的题目版本 |
-| respondent_id    | INT         | NOT NULL, INDEX          | 答题人用户ID     |
-| content_type     | VARCHAR(20) | NOT NULL, DEFAULT 'text' | 内容类型         |
-| content_data     | JSON        | NOT NULL                 | 内容数据         |
-| submitted_at     | DATETIME    | NOT NULL                 | 提交时间         |
-| is_latest        | BOOLEAN     | NOT NULL, DEFAULT TRUE   | 是否为最新作答   |
+| 字段             | 类型        | 约束                                             | 说明             |
+| ---------------- | ----------- | ------------------------------------------------ | ---------------- |
+| id               | INT         | PK, AUTO_INCREMENT, **COMMENT 'Primary key ID'** | 主键             |
+| question_id      | INT         | NOT NULL, **DEFAULT 0**, INDEX                   | 关联题目ID       |
+| question_version | VARCHAR(25) | NOT NULL, **DEFAULT ''**                         | 作答时的题目版本 |
+| respondent_id    | INT         | NOT NULL, **DEFAULT 0**, INDEX                   | 答题人用户ID     |
+| content_type     | VARCHAR(20) | NOT NULL, DEFAULT 'text'                         | 内容类型         |
+| content_data     | JSON        | NOT NULL                                         | 内容数据         |
+| submitted_at     | DATETIME    | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 提交时间         |
+| is_latest        | BOOLEAN     | NOT NULL, DEFAULT TRUE                           | 是否为最新作答   |
 
 #### 3.2.7 评分任务表 (wecode_eval_grading_tasks)
 
-| 字段             | 类型         | 约束                      | 说明                                                           |
-| ---------------- | ------------ | ------------------------- | -------------------------------------------------------------- |
-| id               | INT          | PK, AUTO_INCREMENT        | 主键                                                           |
-| answer_id        | INT          | NOT NULL, INDEX           | 关联作答ID                                                     |
-| question_id      | INT          | NOT NULL, INDEX           | 关联题目ID                                                     |
-| question_version | VARCHAR(25)  | NOT NULL                  | 评分时的题目版本                                               |
-| respondent_id    | INT          | NOT NULL, INDEX           | 答题人用户ID                                                   |
-| grader_id        | INT          | NOT NULL, DEFAULT 0       | 评分人用户ID                                                   |
-| team_id          | INT          | NOT NULL, DEFAULT 0       | 执行评分的智能体Team ID                                        |
-| task_id          | INT          | NOT NULL, DEFAULT 0       | 关联的Wegent Task ID                                           |
-| status           | TINYINT      | NOT NULL, DEFAULT 0       | 状态: 0=pending, 1=running, 2=completed, 3=failed, 4=published |
-| report_data      | JSON         | NOT NULL                  | 评分报告数据                                                   |
-| report_s3_path   | VARCHAR(500) | NOT NULL, DEFAULT ''      | 评分报告S3路径                                                 |
-| created_at       | DATETIME     | DEFAULT CURRENT_TIMESTAMP | 创建时间                                                       |
-| started_at       | DATETIME     | DEFAULT '1970-01-01'      | 开始时间                                                       |
-| completed_at     | DATETIME     | DEFAULT '1970-01-01'      | 完成时间                                                       |
-| published_at     | DATETIME     | DEFAULT '1970-01-01'      | 发布时间                                                       |
+| 字段             | 类型         | 约束                                             | 说明                                                           |
+| ---------------- | ------------ | ------------------------------------------------ | -------------------------------------------------------------- |
+| id               | INT          | PK, AUTO_INCREMENT, **COMMENT 'Primary key ID'** | 主键                                                           |
+| answer_id        | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 关联作答ID                                                     |
+| question_id      | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 关联题目ID                                                     |
+| question_version | VARCHAR(25)  | NOT NULL, **DEFAULT ''**                         | 评分时的题目版本                                               |
+| respondent_id    | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 答题人用户ID                                                   |
+| grader_id        | INT          | NOT NULL, DEFAULT 0                              | 评分人用户ID                                                   |
+| team_id          | INT          | NOT NULL, DEFAULT 0                              | 执行评分的智能体Team ID                                        |
+| task_id          | INT          | NOT NULL, DEFAULT 0                              | 关联的Wegent Task ID                                           |
+| status           | TINYINT      | NOT NULL, DEFAULT 0                              | 状态: 0=pending, 1=running, 2=completed, 3=failed, 4=published |
+| report_data      | JSON         | NOT NULL                                         | 评分报告数据                                                   |
+| report_s3_path   | VARCHAR(500) | NOT NULL, DEFAULT ''                             | 评分报告S3路径                                                 |
+| created_at       | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 创建时间                                                       |
+| started_at       | DATETIME     | **NOT NULL**, DEFAULT '1970-01-01 00:00:00'      | 开始时间                                                       |
+| completed_at     | DATETIME     | **NOT NULL**, DEFAULT '1970-01-01 00:00:00'      | 完成时间                                                       |
+| published_at     | DATETIME     | **NOT NULL**, DEFAULT '1970-01-01 00:00:00'      | 发布时间                                                       |
 
 ### 3.3 版本号生成规则
 
@@ -417,34 +486,84 @@ sequenceDiagram
 
 ---
 
-## 7. API 设计
+## 7. API 设计（按业务领域组织）
 
-### 7.1 API 路由总览
+### 7.1 API 设计原则
 
-| 方法   | 路径                         | 说明             | 权限          |
-| ------ | ---------------------------- | ---------------- | ------------- |
-| POST   | /topics                      | 创建专题         | 登录用户      |
-| GET    | /topics                      | 获取专题列表     | 权限过滤      |
-| GET    | /topics/{id}                 | 获取专题详情     | 有权限用户    |
-| PUT    | /topics/{id}                 | 更新专题         | 出题人        |
-| DELETE | /topics/{id}                 | 删除专题         | 出题人        |
-| POST   | /topics/{id}/publish         | 发布专题         | 出题人        |
-| POST   | /topics/{topic_id}/questions | 创建题目         | 出题人        |
-| GET    | /topics/{topic_id}/questions | 获取题目列表     | 有权限用户    |
-| PUT    | /questions/{id}              | 更新题目         | 出题人        |
-| POST   | /questions/{id}/publish      | 发布题目         | 出题人        |
-| POST   | /questions/{id}/answers      | 提交作答         | 答题人        |
-| GET    | /questions/{id}/answers      | 获取作答列表     | 答题人/评分人 |
-| GET    | /topics/{id}/grading-tasks   | 获取评分任务列表 | 评分人        |
-| POST   | /grading-tasks/{id}/execute  | 执行评分任务     | 评分人        |
-| POST   | /grading-tasks/{id}/publish  | 发布评分报告     | 评分人        |
+**不按纯资源 CRUD 组织，而是按用户角色和业务领域划分：**
 
-### 7.2 核心接口示例
+- `/author/*` - 出题人专属 API
+- `/respondent/*` - 答题人专属 API
+- `/grader/*` - 评分人专属 API
+- `/shared/*` - 跨角色共享 API（如查看报告）
 
-**创建专题：**
+### 7.2 API 路由总览
+
+#### 出题人 API (`/api/v1/wecode/evaluation/author/*`)
+
+| 方法   | 路径                            | 说明                   |
+| ------ | ------------------------------- | ---------------------- |
+| GET    | /author/topics                  | 我创建的专题列表       |
+| POST   | /author/topics                  | 创建专题               |
+| GET    | /author/topics/{id}             | 专题详情               |
+| PUT    | /author/topics/{id}             | 更新专题基础信息       |
+| DELETE | /author/topics/{id}             | 删除专题               |
+| POST   | /author/topics/{id}/publish     | 发布专题               |
+| POST   | /author/topics/{id}/rollback    | 回滚到指定版本         |
+| GET    | /author/topics/{id}/versions    | 获取版本历史           |
+| GET    | /author/topics/{id}/statistics  | 统计数据（答题人数等） |
+| POST   | /author/topics/{id}/questions   | 添加题目               |
+| GET    | /author/topics/{id}/questions   | 题目列表               |
+| PUT    | /author/questions/{id}          | 更新题目               |
+| POST   | /author/questions/{id}/publish  | 发布题目               |
+| GET    | /author/questions/{id}/versions | 题目版本历史           |
+| PUT    | /author/topics/{id}/permissions | 设置权限白名单         |
+| GET    | /author/topics/{id}/graders     | 获取评分人列表         |
+
+#### 答题人 API (`/api/v1/wecode/evaluation/respondent/*`)
+
+| 方法 | 路径                               | 说明                   |
+| ---- | ---------------------------------- | ---------------------- |
+| GET  | /respondent/topics                 | 可参与的专题列表       |
+| GET  | /respondent/topics/{id}            | 专题详情               |
+| GET  | /respondent/topics/{id}/questions  | 题目列表（答题人视角） |
+| GET  | /respondent/questions/{id}         | 题目详情               |
+| POST | /respondent/questions/{id}/answers | 提交作答               |
+| GET  | /respondent/history                | 我的作答历史           |
+| GET  | /respondent/answers/{id}           | 作答详情               |
+| GET  | /respondent/reports                | 我的评分报告列表       |
+| GET  | /respondent/reports/{id}           | 评分报告详情           |
+
+#### 评分人 API (`/api/v1/wecode/evaluation/grader/*`)
+
+| 方法 | 路径                        | 说明                     |
+| ---- | --------------------------- | ------------------------ |
+| GET  | /grader/dashboard           | Dashboard 统计数据       |
+| GET  | /grader/tasks               | 评分任务列表             |
+| GET  | /grader/tasks/{id}          | 评分任务详情             |
+| POST | /grader/tasks/{id}/execute  | 执行评分（触发AI）       |
+| POST | /grader/tasks/{id}/retry    | 重新评分                 |
+| POST | /grader/tasks/{id}/publish  | 发布评分报告             |
+| GET  | /grader/answers             | 作答列表（可按专题筛选） |
+| GET  | /grader/answers/{id}        | 作答详情+关联任务        |
+| GET  | /grader/topics/{id}/answers | 专题下所有作答           |
+| GET  | /grader/reports             | 已发布报告列表           |
+| GET  | /grader/reports/{id}        | 评分报告详情             |
+
+#### 共享 API (`/api/v1/wecode/evaluation/shared/*`)
+
+| 方法 | 路径                   | 说明                       |
+| ---- | ---------------------- | -------------------------- |
+| GET  | /shared/reports/{id}   | 查看评分报告（需权限验证） |
+| POST | /shared/files/upload   | 文件上传（获取预签名URL）  |
+| GET  | /shared/files/download | 文件下载（生成预签名URL）  |
+
+### 7.3 核心接口示例
+
+**出题人创建专题：**
 
 ```http
-POST /api/v1/wecode/evaluation/topics
+POST /api/v1/wecode/evaluation/author/topics
 {
   "name": "Python 基础考核",
   "description": "Python 编程基础知识考核",
@@ -453,13 +572,35 @@ POST /api/v1/wecode/evaluation/topics
 }
 ```
 
-**提交作答：**
+**答题人提交作答：**
 
 ```http
-POST /api/v1/wecode/evaluation/questions/1/answers
+POST /api/v1/wecode/evaluation/respondent/questions/1/answers
 {
   "content_type": "text",
   "content_text": "这是我的作答内容..."
+}
+```
+
+**评分人执行评分：**
+
+```http
+POST /api/v1/wecode/evaluation/grader/tasks/100/execute
+{
+  "grading_config": {
+    "team_id": 123,
+    "prompt_template": "default"
+  }
+}
+```
+
+**评分人发布报告：**
+
+```http
+POST /api/v1/wecode/evaluation/grader/tasks/100/publish
+{
+  "report_version": "final",
+  "comments": "确认无误，正式发布"
 }
 ```
 
@@ -546,38 +687,195 @@ def can_grade(topic, user_id):
 
 ## 10. 前端设计
 
-### 10.1 目录结构
+### 10.1 目录结构（按角色组织）
 
 ```
 frontend/wecode/
 ├── components/
-│   ├── topic/           # 专题相关组件
-│   ├── question/        # 题目相关组件
-│   ├── answer/          # 作答相关组件
-│   ├── grading/         # 评分相关组件
-│   └── common/          # 通用组件
-├── pages/               # 页面组件
-├── hooks/               # 自定义 Hooks
-├── api/                 # API 调用
-├── types/               # TypeScript 类型
-└── i18n/                # 国际化
+│   ├── author/              # 出题人组件
+│   │   ├── TopicWizard/     # 创建专题 Wizard
+│   │   ├── QuestionEditor/  # 题目编辑器
+│   │   ├── PermissionPanel/ # 权限管理面板
+│   │   └── VersionHistory/  # 版本历史
+│   ├── respondent/          # 答题人组件
+│   │   ├── TopicCard/       # 专题卡片（带版本提示）
+│   │   ├── QuestionViewer/  # 题目展示
+│   │   ├── AnswerEditor/    # 作答编辑器
+│   │   └── HistoryList/     # 作答历史列表
+│   ├── grader/              # 评分人组件
+│   │   ├── DashboardStats/  # Dashboard 统计
+│   │   ├── TaskList/        # 评分任务列表
+│   │   ├── GradingWorkspace/# 评分工作区（核心）
+│   │   ├── ReportViewer/    # 报告查看器
+│   │   └── ReportEditor/    # 报告编辑器
+│   └── common/              # 跨角色通用组件
+│       ├── FileUploader/    # 文件上传
+│       ├── FileDownloader/  # 文件下载
+│       ├── VersionBadge/    # 版本标记
+│       └── StatusBadge/     # 状态标记
+├── app/
+│   └── (evaluation)/        # Next.js App Router
+│       ├── layout.tsx       # 考评模块布局
+│       ├── page.tsx         # 角色分流入口
+│       ├── author/          # 出题人路由组
+│       │   ├── page.tsx
+│       │   ├── topics/
+│       │   │   ├── new/
+│       │   │   └── [id]/
+│       │   └── ...
+│       ├── respondent/      # 答题人路由组
+│       │   ├── page.tsx
+│       │   ├── topics/
+│       │   └── history/
+│       ├── grader/          # 评分人路由组
+│       │   ├── page.tsx
+│       │   ├── tasks/
+│       │   ├── answers/
+│       │   └── reports/
+│       └── reports/         # 共享报告查看
+│           └── [id]/
+├── hooks/                   # 自定义 Hooks
+│   ├── useAuthorTopics.ts
+│   ├── useRespondentTopics.ts
+│   ├── useGradingTasks.ts
+│   └── useEvaluationAuth.ts
+├── api/                     # API 调用（按角色）
+│   ├── author.ts
+│   ├── respondent.ts
+│   ├── grader.ts
+│   └── shared.ts
+├── types/                   # TypeScript 类型
+│   ├── author.ts
+│   ├── respondent.ts
+│   ├── grader.ts
+│   └── common.ts
+└── i18n/                    # 国际化
+    ├── author/
+    ├── respondent/
+    └── grader/
 ```
 
-### 10.2 页面路由
+**关键改进：**
+
+1. **组件按角色隔离** - 避免不同角色的组件混在一起
+2. **路由按角色分组** - 清晰的三段式结构
+3. **API/Hooks 按角色隔离** - 便于维护和权限控制
+
+### 10.2 页面路由（按角色工作流组织）
+
+**设计理念：** 不按资源 CRUD 组织，而是按用户角色和工作流程设计
 
 ```
-/evaluation
-├── /topics                    # 专题列表
-├── /topics/new                # 创建专题
-├── /topics/{id}               # 专题详情
-│   ├── /questions             # 题目列表
-│   ├── /questions/new         # 创建题目
-│   ├── /questions/{qid}       # 题目详情/作答
-│   ├── /permissions           # 权限管理
-│   └── /grading               # 评分管理
-└── /my
-    ├── /answers               # 我的作答历史
-    └── /reports               # 我的评分报告
+/evaluation                          # 考评模块入口（根据角色重定向）
+
+  # ========== 出题人工作台 ==========
+  /author                            # 我创建的专题列表
+  /author/topics/new                 # 创建专题（Wizard 流程）
+  /author/topics/{id}                # 专题管理中心
+  /author/topics/{id}/edit           # 编辑专题基础信息
+  /author/topics/{id}/questions/new  # 添加/编辑题目
+  /author/topics/{id}/permissions    # 权限白名单管理
+  /author/topics/{id}/versions/{v}   # 历史版本查看
+
+  # ========== 答题人工作台 ==========
+  /respondent                        # 可参与的专题列表
+  /respondent/topics/{id}            # 专题详情（题目列表）
+  /respondent/topics/{id}/questions/{qid}  # 作答页面
+  /respondent/history                # 我的作答历史
+
+  # ========== 评分人工作台 ==========
+  /grader                            # 评分 Dashboard（待评分任务）
+  /grader/tasks                      # 所有评分任务列表
+  /grader/topics/{id}                # 按专题查看作答
+  /grader/answers/{id}               # 作答详情+评分操作（核心页面）
+  /grader/reports                    # 已发布评分报告
+
+  # ========== 共享查看 ==========
+  /reports/{id}                      # 评分报告查看（出题人/答题人只读访问）
+```
+
+### 10.3 各角色页面详细设计
+
+#### 出题人工作台 (`/evaluation/author/*`)
+
+| 页面                                | 核心功能         | 设计要点                                                        |
+| ----------------------------------- | ---------------- | --------------------------------------------------------------- |
+| `/author`                           | 我创建的专题列表 | 卡片式展示，显示状态（草稿/已发布）、题目数、答题人数、最新版本 |
+| `/author/topics/new`                | 创建专题 Wizard  | 步骤：①基础信息 ②添加题目 ③配置权限 ④预览发布                   |
+| `/author/topics/{id}`               | 专题管理中心     | Tab 切换：题目管理 / 权限白名单 / 发布历史 / 统计数据           |
+| `/author/topics/{id}/questions/new` | 添加/编辑题目    | 同页编辑题目内容和评分标准，支持多附件上传                      |
+| `/author/topics/{id}/versions/{v}`  | 版本详情         | 版本对比、一键回滚、查看该版本所有作答                          |
+
+**关键改进：** 创建专题采用 **Wizard 流程**，一站式完成，而非分页面跳转
+
+#### 答题人工作台 (`/evaluation/respondent/*`)
+
+| 页面                                      | 核心功能         | 设计要点                                               |
+| ----------------------------------------- | ---------------- | ------------------------------------------------------ |
+| `/respondent`                             | 可参与的专题列表 | 公开专题 + 被授权私有专题，显示是否有新版本提示        |
+| `/respondent/topics/{id}`                 | 专题详情         | 题目列表，已作答的显示"已完成"标记，有新版本的显示提示 |
+| `/respondent/topics/{id}/questions/{qid}` | 作答页面         | 左侧题目展示，右侧作答区，支持多次提交                 |
+| `/respondent/history`                     | 我的作答历史     | 按时间倒序，可查看每道题的作答内容和评分报告           |
+
+**关键改进：** 答题人有独立入口，不和出题人混在一起，体验更清晰
+
+#### 评分人工作台 (`/evaluation/grader/*`)
+
+| 页面                   | 核心功能       | 设计要点                                                            |
+| ---------------------- | -------------- | ------------------------------------------------------------------- |
+| `/grader`              | 评分 Dashboard | 待评分任务数、进行中的评分、最近完成、快捷入口                      |
+| `/grader/tasks`        | 评分任务列表   | 可按状态筛选（pending/running/completed/published）、按专题分组     |
+| `/grader/answers/{id}` | 作答详情+评分  | **核心页面**：左侧三栏（题目/评分标准/作答），右侧评分报告+操作按钮 |
+| `/grader/reports`      | 已发布报告列表 | 搜索、筛选、批量导出                                                |
+
+**关键改进：** 评分人在单页面完成所有评分工作（查看内容→触发AI评分→审核报告→发布），无需跳转
+
+### 10.4 角色权限路由守卫
+
+```typescript
+// /evaluation/layout.tsx 或中间件中实现
+function EvaluationRouteGuard() {
+  const { userRole } = useEvaluationContext()
+  const pathname = usePathname()
+
+  // 出题人只能访问 /author/*
+  if (pathname.startsWith('/evaluation/author') && !userRole.isAuthor) {
+    return <ForbiddenPage />
+  }
+
+  // 评分人只能访问 /grader/*
+  if (pathname.startsWith('/evaluation/grader') && !userRole.isGrader) {
+    return <ForbiddenPage />
+  }
+
+  // 答题人只能访问 /respondent/*
+  if (pathname.startsWith('/evaluation/respondent') && !userRole.isRespondent) {
+    return <ForbiddenPage />
+  }
+}
+```
+
+### 10.5 入口页面角色分流
+
+```typescript
+// /evaluation/page.tsx - 考评模块入口
+export default function EvaluationEntryPage() {
+  const { userRoles } = useUser()
+
+  // 如果用户只有一个角色，直接跳转到对应工作台
+  if (userRoles.isAuthor && !userRoles.isGrader && !userRoles.isRespondent) {
+    redirect('/evaluation/author')
+  }
+  if (userRoles.isGrader) {
+    redirect('/evaluation/grader')  // 评分人优先看 Dashboard
+  }
+  if (userRoles.isRespondent) {
+    redirect('/evaluation/respondent')
+  }
+
+  // 多个角色的用户，显示角色选择或综合 Dashboard
+  return <EvaluationRoleSelector />
+}
 ```
 
 ---
@@ -654,9 +952,17 @@ frontend/wecode/
 
 ## 附录
 
-### A. 数据库迁移脚本
+### A. 数据库迁移说明
 
-详见 `backend/alembic/versions/` 目录下的迁移文件。
+**⚠️ 考评模块数据表不由 Alembic 管理**
+
+由于考评模块是独立的内网功能，其数据表通过以下方式管理：
+
+- 数据表由 DBA 或运维人员独立创建和维护
+- **禁止在 `backend/alembic/versions/` 目录下创建任何与考评模块相关的迁移文件**
+- 数据表结构变更通过内部流程管理，不纳入开源项目的 Alembic 版本控制
+
+数据表定义仅供参考，实际建表操作请遵循内部运维流程。
 
 ### B. 环境配置
 
