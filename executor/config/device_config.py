@@ -209,34 +209,54 @@ def _create_default_config() -> DeviceConfig:
     )
 
 
-def _apply_env_overrides(config: DeviceConfig) -> DeviceConfig:
+def _apply_env_overrides(config: DeviceConfig) -> tuple[DeviceConfig, bool]:
     """Apply environment variable overrides to config.
 
     Environment variables take precedence over config file values.
+    If config value is empty and env var has value, mark as needing save.
 
     Args:
         config: Base configuration to override
 
     Returns:
-        Configuration with environment overrides applied
+        Tuple of (config with overrides applied, should_save flag)
+        should_save is True only when filling empty config values from env vars
     """
+    should_save = False
+
     # Connection overrides
     if os.environ.get("WEGENT_BACKEND_URL"):
-        config.connection.backend_url = os.environ["WEGENT_BACKEND_URL"]
+        env_value = os.environ["WEGENT_BACKEND_URL"]
+        if not config.connection.backend_url:
+            # Config is empty, save env value to config
+            should_save = True
+        config.connection.backend_url = env_value
+
     if os.environ.get("WEGENT_AUTH_TOKEN"):
-        config.connection.auth_token = os.environ["WEGENT_AUTH_TOKEN"]
+        env_value = os.environ["WEGENT_AUTH_TOKEN"]
+        if not config.connection.auth_token:
+            # Config is empty, save env value to config
+            should_save = True
+        config.connection.auth_token = env_value
 
     # Device overrides
     if os.environ.get("DEVICE_ID"):
-        config.device_id = os.environ["DEVICE_ID"]
-    if os.environ.get("DEVICE_NAME"):
-        config.device_name = os.environ["DEVICE_NAME"]
+        env_value = os.environ["DEVICE_ID"]
+        if not config.device_id:
+            should_save = True
+        config.device_id = env_value
 
-    # Logging overrides
+    if os.environ.get("DEVICE_NAME"):
+        env_value = os.environ["DEVICE_NAME"]
+        if not config.device_name:
+            should_save = True
+        config.device_name = env_value
+
+    # Logging overrides (don't save, just override)
     if os.environ.get("LOG_LEVEL"):
         config.logging.level = os.environ["LOG_LEVEL"].lower()
 
-    return config
+    return config, should_save
 
 
 def load_device_config(config_path: Optional[str] = None) -> DeviceConfig:
@@ -310,8 +330,13 @@ def load_device_config(config_path: Optional[str] = None) -> DeviceConfig:
                 "You can modify this file to customize your device settings.\n"
             )
 
-    # Apply environment variable overrides
-    config = _apply_env_overrides(config)
+    # Apply environment variable overrides (env vars take precedence)
+    config, should_save = _apply_env_overrides(config)
+
+    # Save config if empty values were filled from env vars
+    if should_save:
+        logger.info("Saving env var values to config file (filling empty fields)...")
+        _save_config(config, path)
 
     return config
 
