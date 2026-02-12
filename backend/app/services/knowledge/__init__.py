@@ -11,6 +11,7 @@ This module provides services for:
 - Knowledge base summary generation
 - RAG (Retrieval-Augmented Generation) integration
 - Task-knowledge base relationship management
+- Orchestration layer for unified REST API and MCP tool support
 """
 
 from app.services.knowledge.knowledge_base_qa_service import (
@@ -18,6 +19,10 @@ from app.services.knowledge.knowledge_base_qa_service import (
     knowledge_base_qa_service,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.orchestrator import (
+    KnowledgeOrchestrator,
+    knowledge_orchestrator,
+)
 from app.services.knowledge.summary_service import SummaryService, get_summary_service
 from app.services.knowledge.task_knowledge_base_service import TaskKnowledgeBaseService
 
@@ -28,4 +33,6 @@ __all__ = [
     "KnowledgeBaseQAService",
     "knowledge_base_qa_service",
     "TaskKnowledgeBaseService",
+    "KnowledgeOrchestrator",
+    "knowledge_orchestrator",
 ]
