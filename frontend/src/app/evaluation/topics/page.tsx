@@ -21,9 +21,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
-import { listTopics } from '../../../../wecode/api/evaluation'
-import type { Topic, TopicListResponse } from '../../../../wecode/types/evaluation'
-import { TopicStatus, TopicVisibility, getStatusLabel, getVisibilityLabel } from '../../../../wecode/types/evaluation'
+import { listTopics } from '@wecode/api/evaluation'
+import type { Topic, TopicListResponse } from '@wecode/types/evaluation'
+import { TopicStatus, TopicVisibility, getStatusLabel, getVisibilityLabel } from '@wecode/types/evaluation'
 
 export default function TopicsPage() {
   const router = useRouter()

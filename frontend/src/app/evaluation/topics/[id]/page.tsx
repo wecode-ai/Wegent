@@ -41,13 +41,13 @@ import {
   getTopicStatistics,
   listQuestions,
   getMyRole,
-} from '../../../../../../wecode/api/evaluation'
+} from '@wecode/api/evaluation'
 import type {
   Topic,
   Question,
   TopicStatistics,
   UserRole,
-} from '../../../../../../wecode/types/evaluation'
+} from '@wecode/types/evaluation'
 import {
   TopicStatus,
   TopicVisibility,

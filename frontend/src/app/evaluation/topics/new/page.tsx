@@ -20,8 +20,8 @@ import {
 } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
-import { createTopic } from '../../../../../wecode/api/evaluation'
-import { TopicVisibility } from '../../../../../wecode/types/evaluation'
+import { createTopic } from '@wecode/api/evaluation'
+import { TopicVisibility } from '@wecode/types/evaluation'
 
 export default function NewTopicPage() {
   const router = useRouter()
