@@ -12,9 +12,14 @@
     "resources": "Resources",
     "myRole": "My Role",
     "createdAt": "Created At",
+    "level": "Level",
     "private": "Private",
     "internal": "Internal",
     "public": "Public",
+    "levels": {
+      "group": "Group",
+      "organization": "Organization"
+    },
     "roles": {
       "Owner": "Owner",
       "Maintainer": "Maintainer",
@@ -78,7 +83,9 @@
     "finalNameWillBe": "Final group name will be: {{name}}",
     "visibilityPublicHint": "Public: Agents created in this group can be called via API by anyone.",
     "visibilityInternalHint": "Internal: Resources are only visible to group members.",
-    "visibilityPrivateHint": "Private: Only visible to the creator."
+    "visibilityPrivateHint": "Private: Only visible to the creator.",
+    "levelGroupHint": "Group: Regular group for team collaboration.",
+    "levelOrganizationHint": "Organization: Company-level group visible to all users."
   },
   "groupMembers": {
     "selectUser": "Select user...",
