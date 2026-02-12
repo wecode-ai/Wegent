@@ -155,21 +155,25 @@ class DeviceConfig:
         )
 
 
-def _get_default_device_name() -> str:
-    """Generate default device name based on OS type.
+def _get_default_device_name(device_id: str) -> str:
+    """Generate default device name based on OS type and device ID.
 
     Returns:
-        Device name in format '{OS}-Device' (e.g., 'macOS-Device')
+        Device name in format '{OS}-Device-{last12chars}' (e.g., 'macOS-Device-6296f3b9ccd8')
     """
     system = platform.system()
     if system == "Darwin":
-        return "macOS-Device"
+        os_name = "macOS"
     elif system == "Linux":
-        return "Linux-Device"
+        os_name = "Linux"
     elif system == "Windows":
-        return "Windows-Device"
+        os_name = "Windows"
     else:
-        return f"{system}-Device"
+        os_name = system
+
+    # Append last 12 characters of device_id
+    device_id_suffix = device_id[-12:] if len(device_id) >= 12 else device_id
+    return f"{os_name}-Device-{device_id_suffix}"
 
 
 def _get_default_config_path() -> Path:
@@ -190,11 +194,12 @@ def _create_default_config() -> DeviceConfig:
     Returns:
         DeviceConfig with default values
     """
+    device_id = str(uuid.uuid4())
     return DeviceConfig(
         mode="local",
         device_type="local",
-        device_id=str(uuid.uuid4()),
-        device_name=_get_default_device_name(),
+        device_id=device_id,
+        device_name=_get_default_device_name(device_id),
         capabilities=[],
         max_concurrent_tasks=5,
         connection=ConnectionConfig(
