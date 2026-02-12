@@ -316,6 +316,13 @@ mysql_collate="utf8mb4_unicode_ci"  # 禁止设置 collate
 | submitted_at     | DATETIME    | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 提交时间         |
 | is_latest        | BOOLEAN     | NOT NULL, DEFAULT TRUE                           | 是否为最新作答   |
 
+**唯一约束：** `UNIQUE KEY uk_respondent_question_latest (respondent_id, question_id, is_latest)`
+
+- 确保每个用户每道题只有一个最新作答
+- 旧作答自动更新 is_latest = FALSE
+
+**触发逻辑：** 当用户提交新作答时，将同一用户同一题目的旧作答 is_latest 设为 FALSE
+
 #### 3.2.7 评分任务表 (wecode_eval_grading_tasks)
 
 | 字段             | 类型         | 约束                                             | 说明                                                           |
@@ -325,16 +332,27 @@ mysql_collate="utf8mb4_unicode_ci"  # 禁止设置 collate
 | question_id      | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 关联题目ID                                                     |
 | question_version | VARCHAR(25)  | NOT NULL, **DEFAULT ''**                         | 评分时的题目版本                                               |
 | respondent_id    | INT          | NOT NULL, **DEFAULT 0**, INDEX                   | 答题人用户ID                                                   |
-| grader_id        | INT          | NOT NULL, DEFAULT 0                              | 评分人用户ID                                                   |
+| grader_id        | INT          | NOT NULL, DEFAULT 0, INDEX                       | 评分人用户ID（执行评分的人）                                   |
 | team_id          | INT          | NOT NULL, DEFAULT 0                              | 执行评分的智能体Team ID                                        |
 | task_id          | INT          | NOT NULL, DEFAULT 0                              | 关联的Wegent Task ID                                           |
 | status           | TINYINT      | NOT NULL, DEFAULT 0                              | 状态: 0=pending, 1=running, 2=completed, 3=failed, 4=published |
+| executor_id      | VARCHAR(64)  | NOT NULL, DEFAULT ''                             | 执行实例ID（防竞态）                                           |
 | report_data      | JSON         | NOT NULL                                         | 评分报告数据                                                   |
 | report_s3_path   | VARCHAR(500) | NOT NULL, DEFAULT ''                             | 评分报告S3路径                                                 |
+| attempt_count    | TINYINT      | NOT NULL, DEFAULT 0                              | 执行尝试次数（失败重试）                                       |
+| error_message    | TEXT         | NOT NULL                                         | 错误信息（失败时）                                             |
 | created_at       | DATETIME     | NOT NULL, DEFAULT CURRENT_TIMESTAMP              | 创建时间                                                       |
 | started_at       | DATETIME     | **NOT NULL**, DEFAULT '1970-01-01 00:00:00'      | 开始时间                                                       |
 | completed_at     | DATETIME     | **NOT NULL**, DEFAULT '1970-01-01 00:00:00'      | 完成时间                                                       |
 | published_at     | DATETIME     | **NOT NULL**, DEFAULT '1970-01-01 00:00:00'      | 发布时间                                                       |
+
+**唯一约束：** `UNIQUE KEY uk_answer_latest (answer_id, is_latest)` - 确保每个作答只有一个最新评分任务
+
+**索引：**
+
+- `idx_wecode_eval_grading_tasks_status` (status) - 按状态查询
+- `idx_wecode_eval_grading_tasks_grader` (grader_id) - 评分人查询
+- `idx_wecode_eval_grading_tasks_topic` (question_id) - 题目维度查询
 
 ### 3.3 版本号生成规则
 
@@ -612,7 +630,111 @@ POST /api/v1/wecode/evaluation/grader/tasks/100/publish
 
 复用现有 Wegent Team 系统，通过创建 Task 执行评分任务。
 
-### 8.2 评分 Prompt 模板
+### 8.2 智能体绑定机制
+
+#### 8.2.1 出题人配置评分智能体（专题级别）
+
+出题人在创建/编辑专题时配置默认评分智能体：
+
+```typescript
+// POST /api/v1/wecode/evaluation/author/topics/{id}/grading-config
+{
+  "team_id": 123,                    // 绑定的Team ID
+  "auto_trigger": true,              // 是否自动触发评分
+  "trigger_condition": "on_submit",  // 触发条件: on_submit(提交后)/manual(手动)
+  "prompt_template": "default",      // 评分Prompt模板
+  "grading_timeout": 3600            // 评分超时时间(秒)
+}
+```
+
+**配置存储：** 存储在 `Topic.grading_team_config` JSON字段中
+
+**约束条件：**
+
+- Team Shell 类型必须为 `ClaudeCode`
+- Team 必须属于专题创建者或为公共 Team
+- 每个专题只能配置一个默认评分智能体
+
+#### 8.2.2 评分人选择/切换智能体（任务级别）
+
+评分人在执行评分时可以选择：
+
+1. **使用专题默认智能体**（推荐）
+2. **选择其他可用智能体**（需有权限的Team）
+3. **手动评分**（不启用智能体）
+
+```typescript
+// POST /api/v1/wecode/evaluation/grader/tasks/{id}/execute
+{
+  "team_id": 123,           // 可选，不传则使用专题默认
+  "prompt_template": "custom",  // 可选，使用自定义Prompt
+  "custom_prompt": "..."    // 当prompt_template为custom时必填
+}
+```
+
+### 8.3 评分任务自动触发机制
+
+#### 8.3.1 触发条件配置
+
+| 触发模式           | 说明               | 适用场景             |
+| ------------------ | ------------------ | -------------------- |
+| `manual`           | 完全手动触发       | 需要人工审核后再评分 |
+| `on_submit`        | 答题提交后自动触发 | 实时考试、快速反馈   |
+| `scheduled`        | 定时批量触发       | 截止后统一评分       |
+| `auto_with_review` | 自动评分+人工复核  | 高 stakes 考核       |
+
+#### 8.3.2 自动触发流程
+
+```mermaid
+sequenceDiagram
+    participant A as AnswerService
+    participant GT as GradingTaskService
+    participant DB as MySQL
+    participant MQ as TaskQueue
+    participant GS as GradingService
+
+    A->>A: 答题提交完成
+    A->>DB: 保存Answer
+    A->>GT: 创建GradingTask(pending)
+
+    alt 配置为auto_trigger
+        GT->>DB: 查询Topic.grading_team_config
+        alt auto_trigger=true && trigger_condition=on_submit
+            GT->>GT: 检查是否已有running任务
+            GT->>MQ: 发送延迟消息(5s后执行)
+            MQ-->>GS: 消费消息
+            GS->>DB: CAS更新status: pending→running
+            alt CAS成功
+                GS->>GS: 执行评分任务
+            else CAS失败(已被其他实例抢占)
+                GS->>GS: 放弃执行
+            end
+        end
+    end
+```
+
+**关键设计：** 使用 **CAS(Compare-And-Swap)** 机制防止多实例竞态
+
+### 8.4 多实例竞态问题解决
+
+**核心策略：数据库CAS + 状态机**
+
+| 场景           | 防护策略                                           |
+| -------------- | -------------------------------------------------- |
+| 重复创建任务   | 唯一约束 `uk_answer_latest` + 先查后插             |
+| 多实例同时执行 | CAS更新 `status=pending→running` 带 `executor_id`  |
+| 重复写报告     | 幂等设计：先检查`status==completed`，失败回滚      |
+| 孤儿任务       | 定时任务检测`running>30min`的任务，重置为`pending` |
+
+**状态机：**
+
+```
+pending → running → completed → published
+   ↓         ↓          ↓
+ (可抢占) (带锁执行)  (不可修改)
+```
+
+### 8.5 评分 Prompt 模板
 
 ```markdown
 你是一个专业的评分助手。请根据以下信息进行评分：
@@ -642,7 +764,7 @@ POST /api/v1/wecode/evaluation/grader/tasks/100/publish
 4. **改进建议**
 ```
 
-### 8.3 Team 配置要求
+### 8.6 Team 配置要求
 
 - Shell 类型必须为 `ClaudeCode`
 - Team 必须属于专题创建者或为公共 Team
@@ -982,15 +1104,33 @@ GRADING_PRESIGNED_URL_EXPIRES=3600     # 预签名URL过期时间(秒)
 
 ### C. 错误码定义
 
-| 错误码   | 说明                 |
-| -------- | -------------------- |
-| EVAL_001 | 专题不存在           |
-| EVAL_002 | 题目不存在           |
-| EVAL_003 | 无权限访问           |
-| EVAL_004 | 专题未发布           |
-| EVAL_005 | 题目未发布           |
-| EVAL_006 | 评分智能体未配置     |
-| EVAL_007 | 评分智能体类型不支持 |
-| EVAL_008 | 评分任务执行失败     |
-| EVAL_009 | 文件上传失败         |
-| EVAL_010 | 版本冲突             |
+| 错误码   | 说明                       |
+| -------- | -------------------------- |
+| EVAL_001 | 专题不存在                 |
+| EVAL_002 | 题目不存在                 |
+| EVAL_003 | 无权限访问                 |
+| EVAL_004 | 专题未发布                 |
+| EVAL_005 | 题目未发布                 |
+| EVAL_006 | 评分智能体未配置           |
+| EVAL_007 | 评分智能体类型不支持       |
+| EVAL_008 | 评分任务执行失败           |
+| EVAL_009 | 文件上传失败               |
+| EVAL_010 | 版本冲突                   |
+| EVAL_011 | 评分任务已被其他实例执行   |
+| EVAL_012 | 评分任务状态非法           |
+| EVAL_013 | 作答已存在进行中的评分任务 |
+
+### D. 并发控制要点
+
+| 层级   | 策略     | 关键实现                                              |
+| ------ | -------- | ----------------------------------------------------- |
+| 数据库 | 唯一约束 | `uk_answer_latest` 防止重复创建任务                   |
+| 数据库 | CAS更新  | `UPDATE ... WHERE status='pending'` 实现抢占          |
+| 应用   | 状态机   | `pending→running→completed→published`，变更需满足条件 |
+| 前端   | 防抖     | 500ms防抖防止重复点击                                 |
+
+**核心接口行为：**
+
+- 创建任务：先查是否已存在 pending/running 任务，存在则返回现有任务
+- 执行任务：CAS更新 `status=pending→running` 并设置 `executor_id`，失败返回 EVAL_011
+- 孤儿任务：定时检测 running>30min 的任务，重置为 pending
