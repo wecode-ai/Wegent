@@ -382,7 +382,7 @@ class EvalStorageService:
         self, key: str, expires: Optional[int] = None
     ) -> Optional[str]:
         """
-        Generate presigned URL for file access.
+        Generate presigned URL for file access (GET).
 
         Args:
             key: Storage key
@@ -406,8 +406,100 @@ class EvalStorageService:
             return url
 
         except S3Error as e:
-            logger.error(f"Failed to generate presigned URL: {e}")
+            logger.error(f"Failed to generate presigned GET URL: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error generating presigned URL: {e}")
+            logger.error(f"Unexpected error generating presigned GET URL: {e}")
             return None
+
+    def get_presigned_put_url(
+        self, key: str, expires: Optional[int] = None
+    ) -> Optional[str]:
+        """
+        Generate presigned URL for file upload (PUT).
+
+        Args:
+            key: Storage key
+            expires: Expiration time in seconds (default from config)
+
+        Returns:
+            Presigned PUT URL if successful
+        """
+        if not self.client:
+            return None
+
+        if expires is None:
+            expires = self._presigned_expires
+
+        try:
+            url = self.client.presigned_put_object(
+                self._bucket,
+                key,
+                expires=timedelta(seconds=expires),
+            )
+            return url
+
+        except S3Error as e:
+            logger.error(f"Failed to generate presigned PUT URL: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error generating presigned PUT URL: {e}")
+            return None
+
+    def generate_upload_key(
+        self,
+        file_type: str,
+        user_id: int,
+        topic_id: int,
+        question_id: Optional[int] = None,
+        filename: str = "",
+    ) -> str:
+        """
+        Generate a storage key for file upload based on file type.
+
+        Args:
+            file_type: Type of file (question_content, question_criteria, answer_attachment)
+            user_id: User ID uploading the file
+            topic_id: Topic ID
+            question_id: Question ID (optional, depends on type)
+            filename: Original filename
+
+        Returns:
+            Generated storage key
+        """
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+
+        if file_type == "question_content":
+            return self._build_key(
+                "questions",
+                str(topic_id),
+                str(question_id or 0),
+                "draft",
+                "content",
+                f"{timestamp}_{filename}",
+            )
+        elif file_type == "question_criteria":
+            return self._build_key(
+                "criteria",
+                str(topic_id),
+                str(question_id or 0),
+                "draft",
+                f"{timestamp}_{filename}",
+            )
+        elif file_type == "answer_attachment":
+            return self._build_key(
+                "answers",
+                str(user_id),
+                str(topic_id),
+                str(question_id or 0),
+                timestamp,
+                filename,
+            )
+        else:
+            # Default fallback
+            return self._build_key(
+                "uploads",
+                str(user_id),
+                timestamp,
+                filename,
+            )
