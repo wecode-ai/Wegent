@@ -1,0 +1,398 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Evaluation module database models.
+
+This module defines all database tables for the evaluation system:
+- Topics: Examination topics/categories
+- Questions: Individual questions within topics
+- Answers: User submissions/responses
+- Grading Tasks: AI-powered grading tasks
+- Permissions: Access control for topics
+
+All tables use the 'wecode_eval_' prefix for isolation from core tables.
+"""
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, Text
+
+from app.db.base import Base
+
+
+class EvalTopic(Base):
+    """
+    Evaluation topic model.
+
+    A topic represents an examination subject or category that contains
+    multiple questions. Topics can be public or private, and support
+    versioning for content management.
+    """
+
+    __tablename__ = "wecode_eval_topics"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(200), nullable=False, comment="Topic name")
+    creator_id = Column(
+        Integer, nullable=False, index=True, comment="Creator user ID"
+    )
+    visibility = Column(
+        String(20), nullable=False, default="private", comment="Visibility: public/private"
+    )
+    status = Column(
+        Integer, nullable=False, default=0, comment="Status: 0=draft, 1=published"
+    )
+    current_version = Column(
+        String(25), nullable=False, default="", comment="Current published version"
+    )
+    extra_data = Column(
+        JSON, nullable=False, default=dict, comment="Extra data (description, etc.)"
+    )
+    grading_team_config = Column(
+        JSON, nullable=False, default=dict, comment="Grading team configuration"
+    )
+    created_at = Column(
+        DateTime, nullable=False, default=datetime.now, comment="Creation time"
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.now,
+        onupdate=datetime.now,
+        comment="Update time",
+    )
+    is_active = Column(
+        Boolean, nullable=False, default=True, comment="Active flag (soft delete)"
+    )
+
+    __table_args__ = (
+        Index("idx_wecode_eval_topics_creator", "creator_id"),
+        Index("idx_wecode_eval_topics_visibility", "visibility"),
+        Index("idx_wecode_eval_topics_status", "status"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+
+
+class EvalTopicVersion(Base):
+    """
+    Topic version model.
+
+    Records published versions of a topic, including snapshots
+    of all question versions at the time of publication.
+    """
+
+    __tablename__ = "wecode_eval_topic_versions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    topic_id = Column(Integer, nullable=False, index=True, comment="Related topic ID")
+    version = Column(String(25), nullable=False, comment="Version string")
+    question_snapshots = Column(
+        JSON, nullable=False, default=list, comment="Question version snapshots"
+    )
+    published_at = Column(
+        DateTime, nullable=False, default=datetime.now, comment="Publication time"
+    )
+    published_by = Column(
+        Integer, nullable=False, default=0, comment="Publisher user ID"
+    )
+
+    __table_args__ = (
+        Index("idx_wecode_eval_topic_versions_topic", "topic_id"),
+        Index("idx_wecode_eval_topic_versions_version", "topic_id", "version"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+
+
+class EvalQuestion(Base):
+    """
+    Evaluation question model.
+
+    A question belongs to a topic and supports multiple content types
+    including text, URL, attachments, or a combination (mixed).
+    """
+
+    __tablename__ = "wecode_eval_questions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    topic_id = Column(Integer, nullable=False, index=True, comment="Related topic ID")
+    title = Column(String(500), nullable=False, comment="Question title")
+    content_type = Column(
+        String(20),
+        nullable=False,
+        default="text",
+        comment="Content type: text/url/attachment/mixed",
+    )
+    content_data = Column(
+        JSON, nullable=False, default=dict, comment="Question content data"
+    )
+    status = Column(
+        Integer, nullable=False, default=0, comment="Status: 0=draft, 1=published"
+    )
+    current_version = Column(
+        String(25), nullable=False, default="", comment="Current published version"
+    )
+    order_index = Column(
+        Integer, nullable=False, default=0, comment="Sort order index"
+    )
+    creator_id = Column(
+        Integer, nullable=False, index=True, comment="Creator user ID"
+    )
+    created_at = Column(
+        DateTime, nullable=False, default=datetime.now, comment="Creation time"
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.now,
+        onupdate=datetime.now,
+        comment="Update time",
+    )
+    is_active = Column(
+        Boolean, nullable=False, default=True, comment="Active flag (soft delete)"
+    )
+
+    __table_args__ = (
+        Index("idx_wecode_eval_questions_topic", "topic_id"),
+        Index("idx_wecode_eval_questions_creator", "creator_id"),
+        Index("idx_wecode_eval_questions_order", "topic_id", "order_index"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+
+
+class EvalQuestionVersion(Base):
+    """
+    Question version model.
+
+    Records published versions of a question, including both
+    content data and grading criteria at the time of publication.
+    """
+
+    __tablename__ = "wecode_eval_question_versions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    question_id = Column(
+        Integer, nullable=False, index=True, comment="Related question ID"
+    )
+    version = Column(String(25), nullable=False, comment="Version string")
+    content_data = Column(
+        JSON, nullable=False, default=dict, comment="Question content snapshot"
+    )
+    criteria_data = Column(
+        JSON, nullable=False, default=dict, comment="Grading criteria data"
+    )
+    published_at = Column(
+        DateTime, nullable=False, default=datetime.now, comment="Publication time"
+    )
+    published_by = Column(
+        Integer, nullable=False, default=0, comment="Publisher user ID"
+    )
+
+    __table_args__ = (
+        Index("idx_wecode_eval_question_versions_question", "question_id"),
+        Index("idx_wecode_eval_question_versions_ver", "question_id", "version"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+
+
+class EvalPermission(Base):
+    """
+    Evaluation permission model.
+
+    Manages access control for private topics. Users can be granted
+    respondent (can answer) or grader (can grade) roles.
+    """
+
+    __tablename__ = "wecode_eval_permissions"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    topic_id = Column(Integer, nullable=False, index=True, comment="Related topic ID")
+    user_id = Column(Integer, nullable=False, index=True, comment="Authorized user ID")
+    role = Column(
+        String(20),
+        nullable=False,
+        default="respondent",
+        comment="Role: respondent/grader",
+    )
+    granted_by = Column(
+        Integer, nullable=False, default=0, comment="Granter user ID"
+    )
+    granted_at = Column(
+        DateTime, nullable=False, default=datetime.now, comment="Grant time"
+    )
+
+    __table_args__ = (
+        Index("idx_wecode_eval_permissions_topic", "topic_id"),
+        Index("idx_wecode_eval_permissions_user", "user_id"),
+        Index("idx_wecode_eval_permissions_topic_user", "topic_id", "user_id"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+
+
+class EvalAnswer(Base):
+    """
+    Evaluation answer model.
+
+    Records user submissions/responses to questions. Tracks which
+    question version was active when the answer was submitted.
+    """
+
+    __tablename__ = "wecode_eval_answers"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    question_id = Column(
+        Integer, nullable=False, index=True, comment="Related question ID"
+    )
+    question_version = Column(
+        String(25), nullable=False, comment="Question version at submission time"
+    )
+    respondent_id = Column(
+        Integer, nullable=False, index=True, comment="Respondent user ID"
+    )
+    content_type = Column(
+        String(20),
+        nullable=False,
+        default="text",
+        comment="Content type: text/url/attachment/mixed",
+    )
+    content_data = Column(
+        JSON, nullable=False, default=dict, comment="Answer content data"
+    )
+    submitted_at = Column(
+        DateTime, nullable=False, default=datetime.now, comment="Submission time"
+    )
+    is_latest = Column(
+        Boolean, nullable=False, default=True, comment="Is latest submission"
+    )
+
+    __table_args__ = (
+        Index("idx_wecode_eval_answers_question", "question_id"),
+        Index("idx_wecode_eval_answers_respondent", "respondent_id"),
+        Index("idx_wecode_eval_answers_question_respondent", "question_id", "respondent_id"),
+        Index("idx_wecode_eval_answers_latest", "question_id", "respondent_id", "is_latest"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+
+
+class EvalGradingTask(Base):
+    """
+    Evaluation grading task model.
+
+    Represents a grading task for a specific answer. Can be executed
+    by an AI team (via Wegent Task) or manually by a grader.
+
+    Status values:
+    - 0: pending (waiting to be processed)
+    - 1: running (AI grading in progress)
+    - 2: completed (grading finished, draft report ready)
+    - 3: failed (grading failed)
+    - 4: published (report published to respondent)
+    """
+
+    __tablename__ = "wecode_eval_grading_tasks"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    answer_id = Column(
+        Integer, nullable=False, index=True, comment="Related answer ID"
+    )
+    question_id = Column(
+        Integer, nullable=False, index=True, comment="Related question ID"
+    )
+    question_version = Column(
+        String(25), nullable=False, comment="Question version for grading"
+    )
+    respondent_id = Column(
+        Integer, nullable=False, index=True, comment="Respondent user ID"
+    )
+    grader_id = Column(
+        Integer, nullable=False, default=0, comment="Grader user ID"
+    )
+    team_id = Column(
+        Integer, nullable=False, default=0, comment="Wegent Team ID for AI grading"
+    )
+    task_id = Column(
+        Integer, nullable=False, default=0, comment="Wegent Task ID"
+    )
+    status = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        comment="Status: 0=pending, 1=running, 2=completed, 3=failed, 4=published",
+    )
+    report_data = Column(
+        JSON, nullable=False, default=dict, comment="Grading report data"
+    )
+    report_s3_path = Column(
+        String(500), nullable=False, default="", comment="Report S3 storage path"
+    )
+    created_at = Column(
+        DateTime, nullable=False, default=datetime.now, comment="Creation time"
+    )
+    started_at = Column(
+        DateTime, nullable=True, comment="Grading start time"
+    )
+    completed_at = Column(
+        DateTime, nullable=True, comment="Grading completion time"
+    )
+    published_at = Column(
+        DateTime, nullable=True, comment="Report publication time"
+    )
+
+    __table_args__ = (
+        Index("idx_wecode_eval_grading_tasks_answer", "answer_id"),
+        Index("idx_wecode_eval_grading_tasks_question", "question_id"),
+        Index("idx_wecode_eval_grading_tasks_respondent", "respondent_id"),
+        Index("idx_wecode_eval_grading_tasks_status", "status"),
+        Index("idx_wecode_eval_grading_tasks_task", "task_id"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+
+
+# Constants for status values
+class TopicStatus:
+    """Topic status constants."""
+
+    DRAFT = 0
+    PUBLISHED = 1
+
+
+class QuestionStatus:
+    """Question status constants."""
+
+    DRAFT = 0
+    PUBLISHED = 1
+
+
+class GradingTaskStatus:
+    """Grading task status constants."""
+
+    PENDING = 0
+    RUNNING = 1
+    COMPLETED = 2
+    FAILED = 3
+    PUBLISHED = 4
+
+
+class TopicVisibility:
+    """Topic visibility constants."""
+
+    PUBLIC = "public"
+    PRIVATE = "private"
+
+
+class PermissionRole:
+    """Permission role constants."""
+
+    RESPONDENT = "respondent"
+    GRADER = "grader"
+
+
+class ContentType:
+    """Content type constants."""
+
+    TEXT = "text"
+    URL = "url"
+    ATTACHMENT = "attachment"
+    MIXED = "mixed"

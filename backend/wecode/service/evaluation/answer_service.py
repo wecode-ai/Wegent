@@ -1,0 +1,367 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Answer service for evaluation module.
+
+Handles answer submission and history management.
+"""
+
+import logging
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from wecode.models.evaluation import (
+    EvalAnswer,
+    EvalGradingTask,
+    EvalQuestion,
+    GradingTaskStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class AnswerService:
+    """Service for managing evaluation answers."""
+
+    def submit(
+        self,
+        db: Session,
+        question_id: int,
+        user_id: int,
+        content_type: str = "text",
+        content_data: Optional[Dict] = None,
+        auto_create_grading: bool = True,
+    ) -> EvalAnswer:
+        """
+        Submit an answer to a question.
+
+        Marks any previous answers as not latest.
+
+        Args:
+            db: Database session
+            question_id: Question ID
+            user_id: Respondent user ID
+            content_type: Content type
+            content_data: Answer content
+            auto_create_grading: Whether to create a grading task
+
+        Returns:
+            Created answer
+        """
+        if content_data is None:
+            content_data = {}
+
+        # Get question to determine version
+        question = (
+            db.query(EvalQuestion)
+            .filter(EvalQuestion.id == question_id)
+            .first()
+        )
+
+        if not question:
+            raise ValueError(f"Question {question_id} not found")
+
+        if not question.current_version:
+            raise ValueError(f"Question {question_id} has not been published")
+
+        # Mark previous answers as not latest
+        db.query(EvalAnswer).filter(
+            EvalAnswer.question_id == question_id,
+            EvalAnswer.respondent_id == user_id,
+            EvalAnswer.is_latest == True,
+        ).update({"is_latest": False})
+
+        # Create new answer
+        answer = EvalAnswer(
+            question_id=question_id,
+            question_version=question.current_version,
+            respondent_id=user_id,
+            content_type=content_type,
+            content_data=content_data,
+            is_latest=True,
+        )
+        db.add(answer)
+        db.flush()
+
+        logger.info(
+            f"Submitted answer {answer.id} for question {question_id} by user {user_id}"
+        )
+
+        # Create grading task if requested
+        if auto_create_grading:
+            grading_task = EvalGradingTask(
+                answer_id=answer.id,
+                question_id=question_id,
+                question_version=question.current_version,
+                respondent_id=user_id,
+                status=GradingTaskStatus.PENDING,
+                report_data={},
+            )
+            db.add(grading_task)
+            db.flush()
+
+            logger.info(f"Created grading task {grading_task.id} for answer {answer.id}")
+
+        return answer
+
+    def get(self, db: Session, answer_id: int) -> Optional[EvalAnswer]:
+        """
+        Get an answer by ID.
+
+        Args:
+            db: Database session
+            answer_id: Answer ID
+
+        Returns:
+            Answer if found
+        """
+        return db.query(EvalAnswer).filter(EvalAnswer.id == answer_id).first()
+
+    def list_answers(
+        self,
+        db: Session,
+        question_id: int,
+        respondent_id: Optional[int] = None,
+        latest_only: bool = False,
+        page: int = 1,
+        limit: int = 50,
+    ) -> Tuple[List[EvalAnswer], int]:
+        """
+        List answers for a question.
+
+        Args:
+            db: Database session
+            question_id: Question ID
+            respondent_id: Filter by respondent (optional)
+            latest_only: Only include latest answers
+            page: Page number (1-indexed)
+            limit: Items per page
+
+        Returns:
+            Tuple of (answers list, total count)
+        """
+        query = db.query(EvalAnswer).filter(EvalAnswer.question_id == question_id)
+
+        if respondent_id is not None:
+            query = query.filter(EvalAnswer.respondent_id == respondent_id)
+
+        if latest_only:
+            query = query.filter(EvalAnswer.is_latest == True)
+
+        total = query.count()
+        answers = (
+            query.order_by(EvalAnswer.submitted_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+
+        return answers, total
+
+    def list_by_topic(
+        self,
+        db: Session,
+        topic_id: int,
+        respondent_id: Optional[int] = None,
+        latest_only: bool = True,
+        page: int = 1,
+        limit: int = 50,
+    ) -> Tuple[List[EvalAnswer], int]:
+        """
+        List answers for all questions in a topic.
+
+        Args:
+            db: Database session
+            topic_id: Topic ID
+            respondent_id: Filter by respondent (optional)
+            latest_only: Only include latest answers
+            page: Page number (1-indexed)
+            limit: Items per page
+
+        Returns:
+            Tuple of (answers list, total count)
+        """
+        # Get question IDs for this topic
+        question_ids = (
+            db.query(EvalQuestion.id)
+            .filter(
+                EvalQuestion.topic_id == topic_id,
+                EvalQuestion.is_active == True,
+            )
+            .subquery()
+        )
+
+        query = db.query(EvalAnswer).filter(
+            EvalAnswer.question_id.in_(question_ids)
+        )
+
+        if respondent_id is not None:
+            query = query.filter(EvalAnswer.respondent_id == respondent_id)
+
+        if latest_only:
+            query = query.filter(EvalAnswer.is_latest == True)
+
+        total = query.count()
+        answers = (
+            query.order_by(EvalAnswer.submitted_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+
+        return answers, total
+
+    def get_latest_answer(
+        self, db: Session, question_id: int, respondent_id: int
+    ) -> Optional[EvalAnswer]:
+        """
+        Get the latest answer for a question by a respondent.
+
+        Args:
+            db: Database session
+            question_id: Question ID
+            respondent_id: Respondent user ID
+
+        Returns:
+            Latest answer if exists
+        """
+        return (
+            db.query(EvalAnswer)
+            .filter(
+                EvalAnswer.question_id == question_id,
+                EvalAnswer.respondent_id == respondent_id,
+                EvalAnswer.is_latest == True,
+            )
+            .first()
+        )
+
+    def get_answer_history(
+        self, db: Session, question_id: int, respondent_id: int
+    ) -> List[EvalAnswer]:
+        """
+        Get all answers for a question by a respondent.
+
+        Args:
+            db: Database session
+            question_id: Question ID
+            respondent_id: Respondent user ID
+
+        Returns:
+            List of answers (newest first)
+        """
+        return (
+            db.query(EvalAnswer)
+            .filter(
+                EvalAnswer.question_id == question_id,
+                EvalAnswer.respondent_id == respondent_id,
+            )
+            .order_by(EvalAnswer.submitted_at.desc())
+            .all()
+        )
+
+    def check_version_update(
+        self, db: Session, question_id: int, respondent_id: int
+    ) -> Optional[str]:
+        """
+        Check if there's a newer question version since last answer.
+
+        Args:
+            db: Database session
+            question_id: Question ID
+            respondent_id: Respondent user ID
+
+        Returns:
+            New version string if available, None otherwise
+        """
+        # Get latest answer
+        answer = self.get_latest_answer(db, question_id, respondent_id)
+        if not answer:
+            return None
+
+        # Get current question version
+        question = (
+            db.query(EvalQuestion)
+            .filter(EvalQuestion.id == question_id)
+            .first()
+        )
+
+        if not question or not question.current_version:
+            return None
+
+        # Check if version differs
+        if answer.question_version != question.current_version:
+            return question.current_version
+
+        return None
+
+    def get_respondent_progress(
+        self, db: Session, topic_id: int, respondent_id: int
+    ) -> Dict:
+        """
+        Get respondent's progress on a topic.
+
+        Args:
+            db: Database session
+            topic_id: Topic ID
+            respondent_id: Respondent user ID
+
+        Returns:
+            Dictionary with progress info
+        """
+        # Get total published questions
+        total_questions = (
+            db.query(func.count(EvalQuestion.id))
+            .filter(
+                EvalQuestion.topic_id == topic_id,
+                EvalQuestion.is_active == True,
+                EvalQuestion.status == 1,  # Published
+            )
+            .scalar()
+        )
+
+        # Get question IDs for this topic
+        question_ids = (
+            db.query(EvalQuestion.id)
+            .filter(
+                EvalQuestion.topic_id == topic_id,
+                EvalQuestion.is_active == True,
+            )
+            .subquery()
+        )
+
+        # Get answered questions count
+        answered_questions = (
+            db.query(func.count(func.distinct(EvalAnswer.question_id)))
+            .filter(
+                EvalAnswer.question_id.in_(question_ids),
+                EvalAnswer.respondent_id == respondent_id,
+            )
+            .scalar()
+        )
+
+        # Get published reports count
+        published_reports = (
+            db.query(func.count(EvalGradingTask.id))
+            .filter(
+                EvalGradingTask.question_id.in_(question_ids),
+                EvalGradingTask.respondent_id == respondent_id,
+                EvalGradingTask.status == GradingTaskStatus.PUBLISHED,
+            )
+            .scalar()
+        )
+
+        return {
+            "total_questions": total_questions,
+            "answered_questions": answered_questions,
+            "published_reports": published_reports,
+            "completion_rate": (
+                answered_questions / total_questions * 100
+                if total_questions > 0
+                else 0
+            ),
+        }
