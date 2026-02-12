@@ -24,15 +24,11 @@ class DeviceStatusEnum(str, Enum):
 class DeviceType(str, Enum):
     """Device type enumeration.
 
-    Defines the type of device, supporting local devices and future cloud providers.
-    Currently only 'local' is implemented.
+    Defines the type of device, supporting local devices and cloud providers.
     """
 
     LOCAL = "local"
-    # Future cloud providers (not implemented yet):
-    # ALIBABA_CLOUD = "alibaba_cloud"
-    # HUAWEI_CLOUD = "huawei_cloud"
-    # TENCENT_CLOUD = "tencent_cloud"
+    CLOUD = "cloud"
 
 
 class DeviceConnectionMode(str, Enum):
@@ -73,7 +69,7 @@ class DeviceInfo(BaseModel):
     )
     # Device type and connection mode
     device_type: DeviceType = Field(
-        DeviceType.LOCAL, description="Device type (local, alibaba_cloud, etc.)"
+        DeviceType.LOCAL, description="Device type (local or cloud)"
     )
     connection_mode: DeviceConnectionMode = Field(
         DeviceConnectionMode.WEBSOCKET, description="How device connects to backend"

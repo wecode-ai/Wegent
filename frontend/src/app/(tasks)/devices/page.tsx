@@ -59,9 +59,7 @@ import { LocalExecutorGuide } from '@/features/devices/components/LocalExecutorG
 // Device type constants matching backend DeviceType enum
 const DEVICE_TYPE = {
   LOCAL: 'local',
-  // Future cloud providers (not implemented yet):
-  // ALIBABA_CLOUD: 'alibaba_cloud',
-  // HUAWEI_CLOUD: 'huawei_cloud',
+  CLOUD: 'cloud',
 } as const
 
 export default function DevicesPage() {

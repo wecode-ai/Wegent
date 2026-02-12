@@ -31,9 +31,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 // Device type constants matching backend DeviceType enum
 const DEVICE_TYPE = {
   LOCAL: 'local',
-  // Future cloud providers (not implemented yet):
-  // ALIBABA_CLOUD: 'alibaba_cloud',
-  // HUAWEI_CLOUD: 'huawei_cloud',
+  CLOUD: 'cloud',
 } as const
 
 type DeviceTypeValue = (typeof DEVICE_TYPE)[keyof typeof DEVICE_TYPE]

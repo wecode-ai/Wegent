@@ -14,7 +14,7 @@ import { apiClient } from './client'
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 
 // Device type enum matching backend DeviceType
-export type DeviceType = 'local' // Future: 'alibaba_cloud' | 'huawei_cloud' | etc.
+export type DeviceType = 'local' | 'cloud'
 
 // Device connection mode enum matching backend DeviceConnectionMode
 export type DeviceConnectionMode = 'websocket' // Future: 'api'

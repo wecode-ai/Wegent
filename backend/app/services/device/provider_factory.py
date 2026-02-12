@@ -29,8 +29,8 @@ class DeviceProviderFactory:
         # Get provider for a specific device type
         provider = DeviceProviderFactory.get_provider(DeviceType.LOCAL)
 
-        # Register a custom provider (for future extensibility)
-        DeviceProviderFactory.register_provider(DeviceType.ALIBABA_CLOUD, AliyunDeviceProvider)
+        # Register a custom provider (for extensibility)
+        DeviceProviderFactory.register_provider(DeviceType.CLOUD, CloudDeviceProvider)
     """
 
     # Registry of device type -> provider class mappings

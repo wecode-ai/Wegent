@@ -40,7 +40,7 @@ class DeviceType(str, Enum):
     """Device type enumeration."""
 
     LOCAL = "local"
-    # Future: ALIBABA_CLOUD, HUAWEI_CLOUD, etc.
+    CLOUD = "cloud"
 
 
 @dataclass
@@ -103,7 +103,7 @@ class DeviceConfig:
     # Executor mode: 'local' or 'docker'
     mode: str = "local"
 
-    # Device type: 'local' for now, future: 'alibaba_cloud', etc.
+    # Device type: 'local' or 'cloud'
     device_type: str = "local"
 
     # Unique device identifier (auto-generated UUID if not specified)
