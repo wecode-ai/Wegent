@@ -15,7 +15,7 @@ import i18next from 'i18next'
 const supportedLanguages = ['en', 'zh-CN']
 
 // Wecode-specific namespaces that have extension translations
-const wecodeNamespaces = ['devices']
+const wecodeNamespaces = ['devices', 'wecode']
 
 /**
  * Load and register wecode translations into i18next

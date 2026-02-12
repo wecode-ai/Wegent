@@ -1,0 +1,17 @@
+{
+  "cloud_device": {
+    "title": "云设备",
+    "create": "创建云设备",
+    "creating": "创建中...",
+    "starting": "启动中...",
+    "empty": "暂无云设备，点击上方按钮创建",
+    "not_configured": "云设备服务未配置",
+    "delete_confirm_title": "删除云设备",
+    "delete_confirm_message": "确定要删除此云设备吗？删除后虚拟机将被销毁，无法恢复。",
+    "limit_reached": "已达到云设备数量上限（最多 {{max}} 个）",
+    "create_success": "云设备创建成功，正在启动执行器...",
+    "create_error": "云设备创建失败",
+    "delete_success": "云设备已删除",
+    "delete_error": "删除云设备失败"
+  }
+}
