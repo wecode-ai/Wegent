@@ -81,7 +81,10 @@ class GroupBase(BaseModel):
 class GroupCreate(GroupBase):
     """Group creation model"""
 
-    level: Optional[GroupLevel] = Field(default=GroupLevel.group, description="Group level: 'group' or 'organization' (admin only)")
+    level: Optional[GroupLevel] = Field(
+        default=GroupLevel.group,
+        description="Group level: 'group' or 'organization' (admin only)",
+    )
 
 
 class GroupUpdate(BaseModel):
@@ -90,7 +93,9 @@ class GroupUpdate(BaseModel):
     display_name: Optional[str] = Field(None, max_length=100)
     visibility: Optional[GroupVisibility] = None
     description: Optional[str] = None
-    level: Optional[GroupLevel] = Field(default=None, description="Group level: 'group' or 'organization' (admin only)")
+    level: Optional[GroupLevel] = Field(
+        default=None, description="Group level: 'group' or 'organization' (admin only)"
+    )
 
 
 class GroupResponse(GroupBase):

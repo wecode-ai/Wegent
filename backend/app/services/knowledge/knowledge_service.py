@@ -424,6 +424,7 @@ class KnowledgeService:
 
             if conditions:
                 from sqlalchemy import or_
+
                 query = query.filter(or_(*conditions))
 
             all_kbs = query.all()
@@ -1149,9 +1150,8 @@ class KnowledgeService:
                             # Get the correct user_id for index naming
                             # For group knowledge bases, use the KB creator's user_id
                             # This ensures we delete from the same index where documents were stored
-                            if (
-                                kb.namespace == "default"
-                                or _is_organization_namespace(db, kb.namespace)
+                            if kb.namespace == "default" or _is_organization_namespace(
+                                db, kb.namespace
                             ):
                                 # Personal/Organization knowledge base - use current user's ID
                                 index_owner_user_id = user_id
