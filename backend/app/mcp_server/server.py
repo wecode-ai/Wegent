@@ -12,10 +12,14 @@ New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
 
 The MCP Server uses FastMCP with HTTP Streamable transport and integrates
 with the existing FastAPI application.
+
+The knowledge MCP server uses a decorator-based auto-registration system:
+- FastAPI endpoints marked with @mcp_tool decorator are automatically registered
+- Parameters and response schemas are extracted from endpoint signatures
+- This eliminates code duplication between REST API and MCP implementations
 """
 
 import contextvars
-import json
 import logging
 from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional
@@ -33,6 +37,11 @@ from app.mcp_server.auth import (
     TaskTokenInfo,
     extract_token_from_header,
     verify_task_token,
+)
+from app.mcp_server.context import (
+    MCPRequestContext,
+    reset_mcp_context,
+    set_mcp_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -159,6 +168,7 @@ def silent_exit(reason: str = "") -> str:
 # ============== Knowledge MCP Server ==============
 # Provides knowledge base management tools
 # Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
 
 knowledge_mcp_server = FastMCP(
     "wegent-knowledge-mcp",
@@ -168,212 +178,46 @@ knowledge_mcp_server = FastMCP(
     transport_security=_build_transport_security_settings(),
 )
 
-
-# Store for request context (using ContextVar for thread-safe concurrent request handling)
-_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
-    contextvars.ContextVar("_request_token_info", default=None)
+# Store for knowledge MCP request context (used by McpAppSpec)
+_knowledge_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_knowledge_request_token_info", default=None)
 )
 
-
-def _get_token_info_from_context() -> Optional[TaskTokenInfo]:
-    """Get token info from request context."""
-    return _request_token_info.get()
+# Flag to track if tools have been registered
+_knowledge_tools_registered = False
 
 
-@knowledge_mcp_server.tool()
-def list_knowledge_bases(
-    scope: str = "all",
-    group_name: str = "",
-) -> str:
-    """List all knowledge bases accessible to the current user.
+def _register_knowledge_tools() -> None:
+    """Register knowledge tools from @mcp_tool decorated endpoints.
 
-    Args:
-        scope: Scope filter - "personal", "group", or "all" (default)
-        group_name: Group name when scope="group"
-
-    Returns:
-        JSON string with list of knowledge bases
+    This function imports the knowledge tools module to trigger decorator
+    registration, then registers all collected tools to the knowledge MCP server.
     """
-    from app.mcp_server.tools.knowledge import (
-        list_knowledge_bases as impl_list_knowledge_bases,
+    global _knowledge_tools_registered
+    if _knowledge_tools_registered:
+        return
+
+    # Import MCP tools module to trigger @mcp_tool decorator registration
+    # The decorators will add tools to the global registry
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        knowledge,
     )
 
-    token_info = _get_token_info_from_context()
-    if not token_info:
-        return json.dumps({"error": "Authentication required"})
+    # Register all collected tools to the knowledge server
+    count = register_tools_to_server(knowledge_mcp_server, "knowledge")
+    logger.info(f"[MCP:Knowledge] Registered {count} tools from decorated endpoints")
 
-    result = impl_list_knowledge_bases(
-        token_info=token_info,
-        scope=scope,
-        group_name=group_name if group_name else None,
-    )
-    return json.dumps(result, ensure_ascii=False, default=str)
+    _knowledge_tools_registered = True
 
 
-@knowledge_mcp_server.tool()
-def list_documents(
-    knowledge_base_id: int,
-    status: str = "all",
-) -> str:
-    """List all documents in a knowledge base.
+def ensure_knowledge_tools_registered() -> None:
+    """Ensure knowledge MCP tools are registered.
 
-    Args:
-        knowledge_base_id: Knowledge base ID
-        status: Status filter - "enabled", "disabled", or "all" (default)
-
-    Returns:
-        JSON string with list of documents
+    This should be called during application startup to register
+    all @mcp_tool decorated endpoints as MCP tools.
     """
-    from app.mcp_server.tools.knowledge import list_documents as impl_list_documents
-
-    token_info = _get_token_info_from_context()
-    if not token_info:
-        return json.dumps({"error": "Authentication required"})
-
-    result = impl_list_documents(
-        token_info=token_info,
-        knowledge_base_id=knowledge_base_id,
-        status=status,
-    )
-    return json.dumps(result, ensure_ascii=False, default=str)
-
-
-@knowledge_mcp_server.tool()
-def create_knowledge_base(
-    name: str,
-    description: str = "",
-    namespace: str = "default",
-    kb_type: str = "notebook",
-    summary_enabled: bool = False,
-) -> str:
-    """Create a new knowledge base.
-
-    Args:
-        name: Knowledge base display name
-        description: Optional description
-        namespace: "default" for personal knowledge base, or group namespace
-        kb_type: Knowledge base type, e.g. "notebook" or "classic"
-        summary_enabled: Enable automatic summary generation
-
-    Returns:
-        JSON string with created knowledge base info
-    """
-    from app.mcp_server.tools.knowledge import (
-        create_knowledge_base as impl_create_knowledge_base,
-    )
-
-    token_info = _get_token_info_from_context()
-    if not token_info:
-        return json.dumps({"error": "Authentication required"})
-
-    result = impl_create_knowledge_base(
-        token_info=token_info,
-        name=name,
-        description=description if description else None,
-        namespace=namespace,
-        kb_type=kb_type,
-        summary_enabled=summary_enabled,
-    )
-    return json.dumps(result, ensure_ascii=False, default=str)
-
-
-@knowledge_mcp_server.tool()
-def create_document(
-    knowledge_base_id: int,
-    name: str,
-    source_type: str,
-    content: str = "",
-    file_base64: str = "",
-    file_extension: str = "",
-    url: str = "",
-) -> str:
-    """Create a new document in a knowledge base.
-
-    Args:
-        knowledge_base_id: Target knowledge base ID
-        name: Document name
-        source_type: Source type - "text", "file", or "web"
-        content: Document content when source_type="text"
-        file_base64: Base64 encoded file content when source_type="file"
-        file_extension: File extension when source_type="file"
-        url: URL to fetch when source_type="web"
-
-    Returns:
-        JSON string with created document info
-    """
-    from app.mcp_server.tools.knowledge import create_document as impl_create_document
-
-    token_info = _get_token_info_from_context()
-    if not token_info:
-        return json.dumps({"error": "Authentication required"})
-
-    result = impl_create_document(
-        token_info=token_info,
-        knowledge_base_id=knowledge_base_id,
-        name=name,
-        source_type=source_type,
-        content=content if content else None,
-        file_base64=file_base64 if file_base64 else None,
-        file_extension=file_extension if file_extension else None,
-        url=url if url else None,
-    )
-    return json.dumps(result, ensure_ascii=False, default=str)
-
-
-@knowledge_mcp_server.tool()
-def delete_document(
-    document_id: int,
-) -> str:
-    """Delete a document from a knowledge base.
-
-    Args:
-        document_id: Document ID to delete
-
-    Returns:
-        JSON string with deletion result
-    """
-    from app.mcp_server.tools.knowledge import delete_document as impl_delete_document
-
-    token_info = _get_token_info_from_context()
-    if not token_info:
-        return json.dumps({"error": "Authentication required"})
-
-    result = impl_delete_document(
-        token_info=token_info,
-        document_id=document_id,
-    )
-    return json.dumps(result, ensure_ascii=False, default=str)
-
-
-@knowledge_mcp_server.tool()
-def update_document(
-    document_id: int,
-    content: str,
-    mode: str = "replace",
-) -> str:
-    """Update a document's content.
-
-    Args:
-        document_id: Document ID to update
-        content: New content
-        mode: Update mode - "replace" (default) or "append"
-
-    Returns:
-        JSON string with updated document info
-    """
-    from app.mcp_server.tools.knowledge import update_document as impl_update_document
-
-    token_info = _get_token_info_from_context()
-    if not token_info:
-        return json.dumps({"error": "Authentication required"})
-
-    result = impl_update_document(
-        token_info=token_info,
-        document_id=document_id,
-        content=content,
-        mode=mode,
-    )
-    return json.dumps(result, ensure_ascii=False, default=str)
+    _register_knowledge_tools()
 
 
 # ============== Starlette App Factory ==============
@@ -395,7 +239,7 @@ _KNOWLEDGE_MCP_SPEC = McpAppSpec(
     mount_path=KNOWLEDGE_MCP_MOUNT_PATH,
     transport_path=KNOWLEDGE_MCP_TRANSPORT_PATH,
     server=knowledge_mcp_server,
-    token_context=_request_token_info,
+    token_context=_knowledge_request_token_info,
     log_prefix="Knowledge",
     include_root_metadata=True,
 )
@@ -416,6 +260,9 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
 
 def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     """Create a Starlette app for a streamable-http MCP server."""
+    # Ensure knowledge tools are registered before creating the app
+    if spec.name == "knowledge":
+        ensure_knowledge_tools_registered()
 
     async def health_check(request: Request) -> JSONResponse:
         return JSONResponse({"status": "healthy", "service": spec.service_name})
@@ -424,11 +271,17 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         return JSONResponse(_build_root_metadata(spec))
 
     async def auth_middleware(request: Request, call_next):
-        """Middleware to extract and validate task token."""
+        """Middleware to extract and validate task token.
+
+        Sets MCPRequestContext for the request scope, enabling decorator-based
+        tools to access authentication info via context accessors.
+        """
         auth_header = request.headers.get("authorization", "")
         token = extract_token_from_header(auth_header)
 
         token_info: Optional[TaskTokenInfo] = None
+        mcp_ctx_token = None
+
         if token:
             token_info = verify_task_token(token)
             if token_info:
@@ -439,15 +292,27 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     token_info.subtask_id,
                     token_info.user_name,
                 )
+                # Set MCPRequestContext for decorator-based tools (knowledge server)
+                if spec.name == "knowledge":
+                    mcp_ctx = MCPRequestContext(
+                        token_info=token_info,
+                        tool_name="",  # Will be set by tool invocation
+                        server_name="knowledge",
+                    )
+                    mcp_ctx_token = set_mcp_context(mcp_ctx)
             else:
                 logger.warning("[MCP:%s] Invalid task token", spec.log_prefix)
 
+        # Set token info in spec's context var
         ctx_token = spec.token_context.set(token_info)
         try:
             response = await call_next(request)
             return response
         finally:
             spec.token_context.reset(ctx_token)
+            # Reset MCPRequestContext after request completes
+            if mcp_ctx_token:
+                reset_mcp_context(mcp_ctx_token)
 
     routes = [
         Route("/health", health_check, methods=["GET"]),

@@ -34,7 +34,10 @@ MAX_GROUP_DEPTH = 5
 
 
 def create_group(
-    db: Session, group_data: GroupCreate, owner_user_id: int, user_role: str | None = None
+    db: Session,
+    group_data: GroupCreate,
+    owner_user_id: int,
+    user_role: str | None = None,
 ) -> GroupResponse:
     """
     Create a new group and add the creator as Owner.
@@ -105,7 +108,8 @@ def create_group(
 
         if (
             user_group_role is None
-            or role_hierarchy.get(user_group_role, 999) > role_hierarchy[GroupRole.Maintainer]
+            or role_hierarchy.get(user_group_role, 999)
+            > role_hierarchy[GroupRole.Maintainer]
         ):
             raise HTTPException(
                 status_code=403,
@@ -219,12 +223,7 @@ def list_user_groups(
             | (Namespace.level.is_(None))
         )
 
-    groups = (
-        query.order_by(Namespace.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
+    groups = query.order_by(Namespace.created_at.desc()).offset(skip).limit(limit).all()
 
     # Get member counts for all groups
     member_counts = {}
@@ -298,7 +297,10 @@ def update_group(
         current_level = group.level
 
         # Check if changing to or from organization level
-        if new_level == GroupLevel.organization.value or current_level == GroupLevel.organization.value:
+        if (
+            new_level == GroupLevel.organization.value
+            or current_level == GroupLevel.organization.value
+        ):
             if user_role != "admin":
                 raise HTTPException(
                     status_code=403,
