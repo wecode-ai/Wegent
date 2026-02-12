@@ -518,12 +518,6 @@ class ExecutionDispatcher:
                 event.model_dump() if hasattr(event, "model_dump") else vars(event)
             )
 
-            # Log raw event data
-            logger.info(
-                f"[ExecutionDispatcher] Raw SSE event: type={event_type}, "
-                f"data={json.dumps(event_data, ensure_ascii=False, default=str)}"
-            )
-
             # Parse event using shared parser
             parsed_event = self.event_parser.parse(
                 task_id=request.task_id,

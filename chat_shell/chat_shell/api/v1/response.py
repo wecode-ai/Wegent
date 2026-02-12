@@ -265,12 +265,6 @@ async def _stream_response(
 
         # Stream from ChatService
         async for event in chat_service.chat(execution_request):
-            # Log raw event data
-            logger.info(
-                "[RESPONSE] Raw event: type=%s, data=%s",
-                event.type,
-                json.dumps(event.to_dict(), ensure_ascii=False, default=str),
-            )
 
             # Check for cancellation
             if cancel_event.is_set():
