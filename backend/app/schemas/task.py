@@ -151,6 +151,7 @@ class TaskDetail(BaseModel):
     branch_name: str
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
+    task_type: str = "chat"  # Task type: 'chat', 'code', 'knowledge', 'task'
     progress: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
