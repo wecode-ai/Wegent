@@ -5,6 +5,7 @@
 """
 Retriever service for managing RAG retrieval configurations
 """
+
 import logging
 from typing import Any, Dict, List, Optional
 

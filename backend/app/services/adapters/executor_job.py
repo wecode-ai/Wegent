@@ -96,6 +96,20 @@ class JobService(BaseService[Kind, None, None]):
                 task_crd = Task.model_validate(task.json)
                 task_status = task_crd.status.status if task_crd.status else "PENDING"
 
+                # Check if task has preserveExecutor label set to "true"
+                # If so, skip this task's executor from cleanup
+                preserve_executor = (
+                    task_crd.metadata.labels
+                    and task_crd.metadata.labels.get("preserveExecutor") == "true"
+                )
+                if preserve_executor:
+                    logger.info(
+                        f"[executor_job] Skipping executor cleanup for task {subtask.task_id} "
+                        f"ns={subtask.executor_namespace} name={subtask.executor_name} "
+                        f"due to preserveExecutor label"
+                    )
+                    continue
+
                 task_type = (
                     task_crd.metadata.labels
                     and task_crd.metadata.labels.get("taskType")
