@@ -42,7 +42,8 @@ import type {
 } from '../types/evaluation'
 
 // Re-export from role-specific modules for backward compatibility
-export { GraderDashboardStats, getGraderDashboard } from './evaluation-grader'
+export type { GraderDashboardStats } from './evaluation-grader'
+export { getGraderDashboard } from './evaluation-grader'
 export {
   respondentListTopics,
   respondentGetTopic,
