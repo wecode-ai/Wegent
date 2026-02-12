@@ -886,3 +886,238 @@ class TestCreateSubscriptionToolMetadata:
 
         # Assert
         assert tool.args_schema == CreateSubscriptionInput
+
+
+class TestCreateSubscriptionToolWithPreviewId:
+    """Tests for CreateSubscriptionTool with preview_id support."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.tool = CreateSubscriptionTool(
+            user_id=1,
+            team_id=10,
+            team_name="test-team",
+            team_namespace="default",
+            timezone="Asia/Shanghai",
+        )
+        # Clear preview storage
+        from chat_shell.tools.builtin.preview_subscription import (
+            _preview_storage,
+            _preview_timestamps,
+        )
+
+        _preview_storage.clear()
+        _preview_timestamps.clear()
+
+    def teardown_method(self):
+        """Clean up after each test."""
+        from chat_shell.tools.builtin.preview_subscription import (
+            _preview_storage,
+            _preview_timestamps,
+        )
+
+        _preview_storage.clear()
+        _preview_timestamps.clear()
+
+    @pytest.mark.asyncio
+    async def test_arun_with_valid_preview_id(self):
+        """Test creating subscription with valid preview_id."""
+        # Arrange - Create a preview first
+        from chat_shell.tools.builtin.preview_subscription import (
+            PreviewSubscriptionTool,
+            _store_preview,
+        )
+
+        preview_id = "preview_test123"
+        preview_data = {
+            "preview_id": preview_id,
+            "display_name": "Preview Task",
+            "description": "Test description",
+            "trigger_type": "cron",
+            "trigger_config": {"expression": "0 10 * * *", "timezone": "Asia/Shanghai"},
+            "prompt_template": "Preview prompt",
+            "preserve_history": True,
+            "history_message_count": 25,
+            "retry_count": 2,
+            "timeout_seconds": 1200,
+            "user_id": 1,
+            "team_id": 10,
+            "team_namespace": "default",
+            "timezone": "Asia/Shanghai",
+        }
+        _store_preview(preview_id, preview_data)
+
+        # Mock the backend creation to avoid import issues
+        with patch.object(
+            self.tool, "_create_via_backend", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = json.dumps(
+                {
+                    "success": True,
+                    "subscription": {"id": 123, "name": "sub-preview-task-abc123"},
+                }
+            )
+
+            # Act - Call create_subscription with preview_id
+            result = await self.tool._arun(
+                display_name="Original Name",  # Should be overridden by preview
+                trigger_type="interval",  # Should be overridden by preview
+                prompt_template="Original Prompt",  # Should be overridden by preview
+                preview_id=preview_id,
+            )
+
+        # Assert
+        response = json.loads(result)
+        assert response["success"] is True
+
+        # Verify that _create_via_backend was called with preview data
+        mock_create.assert_called_once()
+        call_args = mock_create.call_args
+
+        # Verify preview data was used instead of original parameters
+        assert call_args.kwargs["display_name"] == "Preview Task"
+        assert call_args.kwargs["trigger_type"] == "cron"
+        assert call_args.kwargs["prompt_template"] == "Preview prompt"
+        assert call_args.kwargs["preserve_history"] is True
+        assert call_args.kwargs["history_message_count"] == 25
+        assert call_args.kwargs["retry_count"] == 2
+        assert call_args.kwargs["timeout_seconds"] == 1200
+
+    @pytest.mark.asyncio
+    async def test_arun_with_expired_preview_id(self):
+        """Test creating subscription with expired/invalid preview_id."""
+        # Act - Call create_subscription with non-existent preview_id
+        result = await self.tool._arun(
+            display_name="Test",
+            trigger_type="cron",
+            prompt_template="Test",
+            cron_expression="0 9 * * *",
+            preview_id="preview_nonexistent",
+        )
+
+        # Assert
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "过期" in response["error"] or "无效" in response["error"]
+
+    @pytest.mark.asyncio
+    async def test_arun_clears_preview_after_use(self):
+        """Test that preview is cleared after successful creation."""
+        # Arrange
+        from chat_shell.tools.builtin.preview_subscription import (
+            _get_preview,
+            _store_preview,
+        )
+
+        preview_id = "preview_clear_test"
+        preview_data = {
+            "preview_id": preview_id,
+            "display_name": "Clear Test",
+            "trigger_type": "cron",
+            "trigger_config": {"expression": "0 9 * * *"},
+            "prompt_template": "Test",
+            "preserve_history": False,
+            "history_message_count": 10,
+            "retry_count": 1,
+            "timeout_seconds": 600,
+            "user_id": 1,
+            "team_id": 10,
+            "team_namespace": "default",
+            "timezone": "Asia/Shanghai",
+        }
+        _store_preview(preview_id, preview_data)
+
+        # Verify preview exists
+        assert _get_preview(preview_id) is not None
+
+        # Mock the backend creation
+        with patch.object(
+            self.tool, "_create_via_backend", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = json.dumps(
+                {"success": True, "subscription": {"id": 123}}
+            )
+
+            # Act
+            await self.tool._arun(
+                display_name="Test",
+                trigger_type="cron",
+                prompt_template="Test",
+                preview_id=preview_id,
+            )
+
+        # Assert - Preview should be cleared after use
+        assert _get_preview(preview_id) is None
+
+    @pytest.mark.asyncio
+    async def test_arun_without_preview_id_validates_params(self):
+        """Test that parameters are validated when no preview_id is provided."""
+        # Act - Call without preview_id but with invalid cron
+        result = await self.tool._arun(
+            display_name="Test",
+            trigger_type="cron",
+            prompt_template="Test",
+            cron_expression="invalid",  # Invalid cron
+        )
+
+        # Assert
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "Invalid cron expression" in response["error"]
+
+    @pytest.mark.asyncio
+    async def test_arun_without_preview_id_uses_provided_params(self):
+        """Test that provided parameters are used when no preview_id."""
+        # Mock the backend creation
+        with patch.object(
+            self.tool, "_create_via_backend", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = json.dumps(
+                {"success": True, "subscription": {"id": 123}}
+            )
+
+            # Act - Call without preview_id
+            await self.tool._arun(
+                display_name="Direct Task",
+                trigger_type="interval",
+                prompt_template="Direct prompt",
+                interval_value=30,
+                interval_unit="minutes",
+                preserve_history=True,
+                history_message_count=15,
+            )
+
+            # Assert
+            mock_create.assert_called_once()
+            call_args = mock_create.call_args
+            assert call_args.kwargs["display_name"] == "Direct Task"
+            assert call_args.kwargs["trigger_type"] == "interval"
+            assert call_args.kwargs["preserve_history"] is True
+            assert call_args.kwargs["history_message_count"] == 15
+
+    def test_input_schema_has_preview_id_field(self):
+        """Test that CreateSubscriptionInput has preview_id field."""
+        # Arrange & Act
+        input_data = CreateSubscriptionInput(
+            display_name="Test",
+            trigger_type="cron",
+            cron_expression="0 9 * * *",
+            prompt_template="Test",
+            preview_id="preview_abc123",
+        )
+
+        # Assert
+        assert input_data.preview_id == "preview_abc123"
+
+    def test_input_schema_preview_id_optional(self):
+        """Test that preview_id is optional."""
+        # Arrange & Act - No preview_id provided
+        input_data = CreateSubscriptionInput(
+            display_name="Test",
+            trigger_type="cron",
+            cron_expression="0 9 * * *",
+            prompt_template="Test",
+        )
+
+        # Assert
+        assert input_data.preview_id is None
