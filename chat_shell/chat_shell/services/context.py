@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
 from chat_shell.core.database import get_db_context
+from chat_shell.tools.builtin import PreviewSubscriptionTool
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
@@ -746,7 +747,20 @@ class ChatContext:
             model_name=model_name,
             model_namespace=model_namespace,
         )
+
         extra_tools.append(create_subscription_tool)
+
+        preview_subscription_tool = PreviewSubscriptionTool(
+            user_id=self._request.user_id,
+            team_id=self._request.team_id,
+            team_name=self._request.team_name,
+            team_namespace=self._request.bot_namespace or "default",
+            timezone=self._request.timezone,
+            model_name=model_name,
+            model_namespace=model_namespace,
+        )
+
+        extra_tools.append(preview_subscription_tool)
         logger.debug(
             "[CHAT_CONTEXT] Added CreateSubscriptionTool: team_id=%d, team_name=%s, "
             "model_name=%s, model_namespace=%s, backend_url=%s",
