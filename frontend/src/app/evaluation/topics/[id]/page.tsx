@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -70,7 +70,7 @@ export default function TopicDetailPage() {
   const [publishing, setPublishing] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [topicData, questionsData, roleData] = await Promise.all([
@@ -87,7 +87,7 @@ export default function TopicDetailPage() {
         const statsData = await getTopicStatistics(topicId)
         setStatistics(statsData)
       }
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: 'Error',
         description: 'Failed to load topic',
@@ -97,13 +97,13 @@ export default function TopicDetailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [topicId, toast, router])
 
   useEffect(() => {
     if (topicId) {
       loadData()
     }
-  }, [topicId])
+  }, [topicId, loadData])
 
   const handlePublish = async () => {
     setPublishing(true)
@@ -114,7 +114,7 @@ export default function TopicDetailPage() {
         description: 'Topic published successfully',
       })
       loadData()
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: 'Error',
         description: 'Failed to publish topic',
@@ -134,7 +134,7 @@ export default function TopicDetailPage() {
         description: 'Topic deleted successfully',
       })
       router.push('/evaluation/topics')
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: 'Error',
         description: 'Failed to delete topic',

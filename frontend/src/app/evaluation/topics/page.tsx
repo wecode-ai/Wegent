@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Plus, Search, Eye, EyeOff, FileText } from 'lucide-react'
@@ -22,7 +22,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { listTopics } from '@wecode/api/evaluation'
-import type { Topic, TopicListResponse } from '@wecode/types/evaluation'
+import type { Topic } from '@wecode/types/evaluation'
 import { TopicStatus, TopicVisibility, getStatusLabel, getVisibilityLabel } from '@wecode/types/evaluation'
 
 export default function TopicsPage() {
@@ -36,7 +36,7 @@ export default function TopicsPage() {
   const [visibility, setVisibility] = useState<string>('')
   const [myOnly, setMyOnly] = useState(false)
 
-  const loadTopics = async () => {
+  const loadTopics = useCallback(async () => {
     setLoading(true)
     try {
       const response = await listTopics({
@@ -48,7 +48,7 @@ export default function TopicsPage() {
       })
       setTopics(response.items)
       setTotal(response.total)
-    } catch (error) {
+    } catch (_error) {
       toast({
         title: 'Error',
         description: 'Failed to load topics',
@@ -57,11 +57,11 @@ export default function TopicsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [page, search, visibility, myOnly, toast])
 
   useEffect(() => {
     loadTopics()
-  }, [page, visibility, myOnly])
+  }, [loadTopics])
 
   const handleSearch = () => {
     setPage(1)
