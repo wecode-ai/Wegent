@@ -248,7 +248,9 @@ function GradingContent() {
     }
   }
 
-  const getStatusBadgeVariant = (status: number) => {
+  const getStatusBadgeVariant = (
+    status: number
+  ): 'default' | 'success' | 'error' | 'info' | 'warning' | 'secondary' => {
     switch (status) {
       case GradingTaskStatus.PENDING:
         return 'secondary'
@@ -257,7 +259,7 @@ function GradingContent() {
       case GradingTaskStatus.COMPLETED:
         return 'default'
       case GradingTaskStatus.FAILED:
-        return 'destructive'
+        return 'error'
       case GradingTaskStatus.PUBLISHED:
         return 'success'
       default:
