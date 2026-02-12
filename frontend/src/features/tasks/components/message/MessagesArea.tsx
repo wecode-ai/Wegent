@@ -921,6 +921,13 @@ export default function MessagesArea({
     // Desktop: Show all buttons inline
     return (
       <div className="flex items-center gap-2">
+        {/* Preserve Executor Indicator - only show for code tasks when preserved */}
+        {selectedTaskDetail?.task_type === 'code' && (
+          <PreserveExecutorToggle
+            preserveExecutor={selectedTaskDetail.preserve_executor || false}
+          />
+        )}
+
         {showMembersButton && (
           <Button
             variant="outline"
@@ -945,13 +952,6 @@ export default function MessagesArea({
             <Share2 className="h-3.5 w-3.5" />
             {isSharing ? t('shared-task:sharing') : t('shared-task:share_link')}
           </Button>
-        )}
-
-        {/* Preserve Executor Indicator - only show for code tasks when preserved */}
-        {selectedTaskDetail?.task_type === 'code' && (
-          <PreserveExecutorToggle
-            preserveExecutor={selectedTaskDetail.preserve_executor || false}
-          />
         )}
 
         <DropdownMenu>
