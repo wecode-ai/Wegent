@@ -309,9 +309,7 @@ class TopicService:
             .first()
         )
 
-    def list_versions(
-        self, db: Session, topic_id: int
-    ) -> List[EvalTopicVersion]:
+    def list_versions(self, db: Session, topic_id: int) -> List[EvalTopicVersion]:
         """
         List all versions of a topic.
 

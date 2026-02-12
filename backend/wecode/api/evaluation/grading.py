@@ -39,7 +39,9 @@ def list_grading_tasks(
     topic_id: int,
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    status_filter: Optional[int] = Query(None, alias="status", description="Filter by status"),
+    status_filter: Optional[int] = Query(
+        None, alias="status", description="Filter by status"
+    ),
     respondent_id: Optional[int] = Query(None, description="Filter by respondent"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -429,7 +431,9 @@ def batch_execute_grading_tasks(
             detail="No grading team configured",
         )
 
-    tasks = grading_service.batch_execute(db, task_ids, effective_team_id, current_user.id)
+    tasks = grading_service.batch_execute(
+        db, task_ids, effective_team_id, current_user.id
+    )
     db.commit()
 
     return {"executed_count": len(tasks), "task_ids": [t.id for t in tasks]}

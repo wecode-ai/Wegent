@@ -3,6 +3,9 @@
  */
 
 import { getApiBaseUrl } from '@/lib/runtime-config'
+import { getToken, removeToken } from '@/apis/user'
+import { paths } from '@/config/paths'
+import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
 import type {
   Topic,
   TopicCreate,
@@ -38,14 +41,39 @@ function getUrl(path: string): string {
 }
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = getToken()
+
   const response = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
       ...options?.headers,
     },
-    credentials: 'include',
   })
+
+  // Handle authentication errors
+  if (response.status === 401) {
+    removeToken()
+    if (typeof window !== 'undefined') {
+      const loginPath = paths.auth.login.getHref()
+      if (window.location.pathname === loginPath) {
+        window.location.href = loginPath
+      } else {
+        const disallowedTargets = [loginPath, '/login/oidc']
+        const currentPathWithSearch = `${window.location.pathname}${window.location.search}`
+        const redirectTarget = sanitizeRedirectPath(currentPathWithSearch, disallowedTargets)
+        if (redirectTarget) {
+          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
+          window.location.href = `${loginPath}?redirect=${encodeURIComponent(redirectTarget)}`
+        } else {
+          sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+          window.location.href = loginPath
+        }
+      }
+    }
+    throw new Error('Authentication failed')
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }))
@@ -97,9 +125,12 @@ export async function updateTopic(topicId: number, data: TopicUpdate): Promise<T
 }
 
 export async function deleteTopic(topicId: number): Promise<void> {
+  const token = getToken()
   await fetch(getUrl(`/topics/${topicId}`), {
     method: 'DELETE',
-    credentials: 'include',
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
   })
 }
 
@@ -154,9 +185,12 @@ export async function updateQuestion(questionId: number, data: QuestionUpdate): 
 }
 
 export async function deleteQuestion(questionId: number): Promise<void> {
+  const token = getToken()
   await fetch(getUrl(`/questions/${questionId}`), {
     method: 'DELETE',
-    credentials: 'include',
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
   })
 }
 
@@ -203,9 +237,12 @@ export async function grantPermission(topicId: number, data: PermissionCreate): 
 }
 
 export async function revokePermission(topicId: number, userId: number): Promise<void> {
+  const token = getToken()
   await fetch(getUrl(`/topics/${topicId}/permissions/${userId}`), {
     method: 'DELETE',
-    credentials: 'include',
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
   })
 }
 

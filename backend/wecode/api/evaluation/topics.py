@@ -37,7 +37,9 @@ def list_topics(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     visibility: Optional[str] = Query(None, description="Filter by visibility"),
-    status_filter: Optional[int] = Query(None, alias="status", description="Filter by status"),
+    status_filter: Optional[int] = Query(
+        None, alias="status", description="Filter by status"
+    ),
     search: Optional[str] = Query(None, description="Search by name"),
     my_only: bool = Query(False, description="Only show my topics"),
     db: Session = Depends(get_db),

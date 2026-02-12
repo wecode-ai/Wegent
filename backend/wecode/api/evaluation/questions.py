@@ -37,7 +37,9 @@ def list_questions(
     topic_id: int,
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    status_filter: Optional[int] = Query(None, alias="status", description="Filter by status"),
+    status_filter: Optional[int] = Query(
+        None, alias="status", description="Filter by status"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -80,7 +82,9 @@ def list_questions(
             "topic_id": q.topic_id,
             "title": q.title,
             "content_type": q.content_type,
-            "content_data": {k: v for k, v in (q.content_data or {}).items() if k != "_criteria"},
+            "content_data": {
+                k: v for k, v in (q.content_data or {}).items() if k != "_criteria"
+            },
             "status": q.status,
             "current_version": q.current_version,
             "order_index": q.order_index,
@@ -146,7 +150,9 @@ def create_question(
         topic_id=question.topic_id,
         title=question.title,
         content_type=question.content_type,
-        content_data={k: v for k, v in (question.content_data or {}).items() if k != "_criteria"},
+        content_data={
+            k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
+        },
         status=question.status,
         current_version=question.current_version,
         order_index=question.order_index,
@@ -198,7 +204,9 @@ def get_question(
         "topic_id": question.topic_id,
         "title": question.title,
         "content_type": question.content_type,
-        "content_data": {k: v for k, v in (question.content_data or {}).items() if k != "_criteria"},
+        "content_data": {
+            k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
+        },
         "status": question.status,
         "current_version": question.current_version,
         "order_index": question.order_index,
@@ -264,7 +272,9 @@ def update_question(
         topic_id=question.topic_id,
         title=question.title,
         content_type=question.content_type,
-        content_data={k: v for k, v in (question.content_data or {}).items() if k != "_criteria"},
+        content_data={
+            k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
+        },
         status=question.status,
         current_version=question.current_version,
         order_index=question.order_index,

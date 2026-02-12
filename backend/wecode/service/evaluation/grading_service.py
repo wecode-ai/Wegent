@@ -110,15 +110,9 @@ class GradingService:
         Returns:
             Grading task if found
         """
-        return (
-            db.query(EvalGradingTask)
-            .filter(EvalGradingTask.id == task_id)
-            .first()
-        )
+        return db.query(EvalGradingTask).filter(EvalGradingTask.id == task_id).first()
 
-    def get_by_answer(
-        self, db: Session, answer_id: int
-    ) -> Optional[EvalGradingTask]:
+    def get_by_answer(self, db: Session, answer_id: int) -> Optional[EvalGradingTask]:
         """
         Get the latest grading task for an answer.
 
@@ -268,16 +262,10 @@ class GradingService:
         )
 
         if not question_version:
-            raise ValueError(
-                f"Question version {task.question_version} not found"
-            )
+            raise ValueError(f"Question version {task.question_version} not found")
 
         # Get answer
-        answer = (
-            db.query(EvalAnswer)
-            .filter(EvalAnswer.id == task.answer_id)
-            .first()
-        )
+        answer = db.query(EvalAnswer).filter(EvalAnswer.id == task.answer_id).first()
 
         if not answer:
             raise ValueError(f"Answer {task.answer_id} not found")
@@ -369,9 +357,7 @@ class GradingService:
         task.started_at = datetime.now()
         db.flush()
 
-        logger.info(
-            f"Started grading task {task.id} with team {team_id}"
-        )
+        logger.info(f"Started grading task {task.id} with team {team_id}")
 
         # Note: Actual Wegent Task creation would be done here
         # For now, we just update the status. The integration with
@@ -520,9 +506,7 @@ class GradingService:
 
         return tasks
 
-    def batch_publish(
-        self, db: Session, task_ids: List[int]
-    ) -> List[EvalGradingTask]:
+    def batch_publish(self, db: Session, task_ids: List[int]) -> List[EvalGradingTask]:
         """
         Publish multiple grading reports.
 

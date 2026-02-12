@@ -8,23 +8,24 @@ Unit tests for evaluation module services.
 These tests use mocking to avoid requiring an actual database.
 """
 
-import pytest
 from datetime import datetime
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
+
+import pytest
 
 from wecode.models.evaluation import (
-    EvalTopic,
-    EvalTopicVersion,
-    EvalQuestion,
-    EvalQuestionVersion,
-    EvalPermission,
     EvalAnswer,
     EvalGradingTask,
-    TopicStatus,
-    QuestionStatus,
+    EvalPermission,
+    EvalQuestion,
+    EvalQuestionVersion,
+    EvalTopic,
+    EvalTopicVersion,
     GradingTaskStatus,
-    TopicVisibility,
     PermissionRole,
+    QuestionStatus,
+    TopicStatus,
+    TopicVisibility,
 )
 
 
@@ -41,6 +42,7 @@ class TestTopicService:
     def topic_service(self):
         """Create a TopicService instance."""
         from wecode.service.evaluation.topic_service import TopicService
+
         return TopicService()
 
     def test_create_topic(self, topic_service, mock_db):
@@ -126,6 +128,7 @@ class TestQuestionService:
     def question_service(self):
         """Create a QuestionService instance."""
         from wecode.service.evaluation.question_service import QuestionService
+
         return QuestionService()
 
     def test_create_question(self, question_service, mock_db):
@@ -148,7 +151,9 @@ class TestQuestionService:
         mock_question = MagicMock()
         mock_question.id = 1
         mock_question.is_active = True
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_question
+        mock_db.query.return_value.filter.return_value.first.return_value = (
+            mock_question
+        )
 
         result = question_service.get(mock_db, 1)
         assert result == mock_question
@@ -157,9 +162,14 @@ class TestQuestionService:
         """Test publishing a question."""
         mock_question = MagicMock()
         mock_question.id = 1
-        mock_question.content_data = {"text": "Content", "_criteria": {"criteria": "Test"}}
+        mock_question.content_data = {
+            "text": "Content",
+            "_criteria": {"criteria": "Test"},
+        }
 
-        with patch("wecode.service.evaluation.question_service.generate_version") as mock_gen:
+        with patch(
+            "wecode.service.evaluation.question_service.generate_version"
+        ) as mock_gen:
             mock_gen.return_value = "20240115_120000_abcd"
             version = question_service.publish(mock_db, mock_question, 1)
 
@@ -180,6 +190,7 @@ class TestPermissionService:
     def permission_service(self):
         """Create a PermissionService instance."""
         from wecode.service.evaluation.permission_service import PermissionService
+
         return PermissionService()
 
     def test_can_view_public_topic(self, permission_service, mock_db):
@@ -226,7 +237,9 @@ class TestPermissionService:
         """Test updating an existing permission."""
         existing_permission = MagicMock()
         existing_permission.role = PermissionRole.RESPONDENT
-        mock_db.query.return_value.filter.return_value.first.return_value = existing_permission
+        mock_db.query.return_value.filter.return_value.first.return_value = (
+            existing_permission
+        )
 
         permission = permission_service.grant_permission(
             db=mock_db,
@@ -242,7 +255,9 @@ class TestPermissionService:
     def test_revoke_permission(self, permission_service, mock_db):
         """Test revoking permission from a user."""
         mock_permission = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_permission
+        mock_db.query.return_value.filter.return_value.first.return_value = (
+            mock_permission
+        )
 
         result = permission_service.revoke_permission(mock_db, 1, 2)
 
@@ -271,6 +286,7 @@ class TestAnswerService:
     def answer_service(self):
         """Create an AnswerService instance."""
         from wecode.service.evaluation.answer_service import AnswerService
+
         return AnswerService()
 
     def test_submit_answer(self, answer_service, mock_db):
@@ -278,7 +294,9 @@ class TestAnswerService:
         mock_question = MagicMock()
         mock_question.id = 1
         mock_question.current_version = "v1"
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_question
+        mock_db.query.return_value.filter.return_value.first.return_value = (
+            mock_question
+        )
 
         answer = answer_service.submit(
             db=mock_db,
@@ -297,7 +315,9 @@ class TestAnswerService:
         """Test that submitting to unpublished question raises error."""
         mock_question = MagicMock()
         mock_question.current_version = ""  # Not published
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_question
+        mock_db.query.return_value.filter.return_value.first.return_value = (
+            mock_question
+        )
 
         with pytest.raises(ValueError, match="not been published"):
             answer_service.submit(
@@ -329,6 +349,7 @@ class TestGradingService:
     def grading_service(self):
         """Create a GradingService instance."""
         from wecode.service.evaluation.grading_service import GradingService
+
         return GradingService()
 
     def test_create_grading_task(self, grading_service, mock_db):

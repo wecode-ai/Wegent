@@ -36,11 +36,12 @@ class EvalTopic(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(200), nullable=False, comment="Topic name")
-    creator_id = Column(
-        Integer, nullable=False, index=True, comment="Creator user ID"
-    )
+    creator_id = Column(Integer, nullable=False, index=True, comment="Creator user ID")
     visibility = Column(
-        String(20), nullable=False, default="private", comment="Visibility: public/private"
+        String(20),
+        nullable=False,
+        default="private",
+        comment="Visibility: public/private",
     )
     status = Column(
         Integer, nullable=False, default=0, comment="Status: 0=draft, 1=published"
@@ -134,12 +135,8 @@ class EvalQuestion(Base):
     current_version = Column(
         String(25), nullable=False, default="", comment="Current published version"
     )
-    order_index = Column(
-        Integer, nullable=False, default=0, comment="Sort order index"
-    )
-    creator_id = Column(
-        Integer, nullable=False, index=True, comment="Creator user ID"
-    )
+    order_index = Column(Integer, nullable=False, default=0, comment="Sort order index")
+    creator_id = Column(Integer, nullable=False, index=True, comment="Creator user ID")
     created_at = Column(
         DateTime, nullable=False, default=datetime.now, comment="Creation time"
     )
@@ -216,9 +213,7 @@ class EvalPermission(Base):
         default="respondent",
         comment="Role: respondent/grader",
     )
-    granted_by = Column(
-        Integer, nullable=False, default=0, comment="Granter user ID"
-    )
+    granted_by = Column(Integer, nullable=False, default=0, comment="Granter user ID")
     granted_at = Column(
         DateTime, nullable=False, default=datetime.now, comment="Grant time"
     )
@@ -270,8 +265,17 @@ class EvalAnswer(Base):
     __table_args__ = (
         Index("idx_wecode_eval_answers_question", "question_id"),
         Index("idx_wecode_eval_answers_respondent", "respondent_id"),
-        Index("idx_wecode_eval_answers_question_respondent", "question_id", "respondent_id"),
-        Index("idx_wecode_eval_answers_latest", "question_id", "respondent_id", "is_latest"),
+        Index(
+            "idx_wecode_eval_answers_question_respondent",
+            "question_id",
+            "respondent_id",
+        ),
+        Index(
+            "idx_wecode_eval_answers_latest",
+            "question_id",
+            "respondent_id",
+            "is_latest",
+        ),
         {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
     )
 
@@ -294,9 +298,7 @@ class EvalGradingTask(Base):
     __tablename__ = "wecode_eval_grading_tasks"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    answer_id = Column(
-        Integer, nullable=False, index=True, comment="Related answer ID"
-    )
+    answer_id = Column(Integer, nullable=False, index=True, comment="Related answer ID")
     question_id = Column(
         Integer, nullable=False, index=True, comment="Related question ID"
     )
@@ -306,15 +308,11 @@ class EvalGradingTask(Base):
     respondent_id = Column(
         Integer, nullable=False, index=True, comment="Respondent user ID"
     )
-    grader_id = Column(
-        Integer, nullable=False, default=0, comment="Grader user ID"
-    )
+    grader_id = Column(Integer, nullable=False, default=0, comment="Grader user ID")
     team_id = Column(
         Integer, nullable=False, default=0, comment="Wegent Team ID for AI grading"
     )
-    task_id = Column(
-        Integer, nullable=False, default=0, comment="Wegent Task ID"
-    )
+    task_id = Column(Integer, nullable=False, default=0, comment="Wegent Task ID")
     status = Column(
         Integer,
         nullable=False,
@@ -330,15 +328,9 @@ class EvalGradingTask(Base):
     created_at = Column(
         DateTime, nullable=False, default=datetime.now, comment="Creation time"
     )
-    started_at = Column(
-        DateTime, nullable=True, comment="Grading start time"
-    )
-    completed_at = Column(
-        DateTime, nullable=True, comment="Grading completion time"
-    )
-    published_at = Column(
-        DateTime, nullable=True, comment="Report publication time"
-    )
+    started_at = Column(DateTime, nullable=True, comment="Grading start time")
+    completed_at = Column(DateTime, nullable=True, comment="Grading completion time")
+    published_at = Column(DateTime, nullable=True, comment="Report publication time")
 
     __table_args__ = (
         Index("idx_wecode_eval_grading_tasks_answer", "answer_id"),

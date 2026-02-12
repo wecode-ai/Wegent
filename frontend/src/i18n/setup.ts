@@ -31,6 +31,7 @@ async function loadTranslations() {
     'projects',
     'pet',
     'devices',
+    'evaluation',
   ]
 
   for (const lng of supportedLanguages) {
@@ -85,8 +86,20 @@ export async function initI18n() {
       'projects',
       'pet',
       'devices',
+      'evaluation',
     ],
   })
+
+  // Load wecode extension translations after i18next is initialized
+  try {
+    const wecodeI18n = await import('@wecode/i18n')
+    // Manually call loadWecodeResources to ensure translations are loaded
+    if (wecodeI18n.loadWecodeResources) {
+      await wecodeI18n.loadWecodeResources()
+    }
+  } catch {
+    // Wecode i18n extension not available, skip silently
+  }
 
   return i18next
 }

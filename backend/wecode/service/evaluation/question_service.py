@@ -289,9 +289,7 @@ class QuestionService:
             .first()
         )
 
-    def list_versions(
-        self, db: Session, question_id: int
-    ) -> List[EvalQuestionVersion]:
+    def list_versions(self, db: Session, question_id: int) -> List[EvalQuestionVersion]:
         """
         List all versions of a question.
 
@@ -333,9 +331,7 @@ class QuestionService:
         logger.info(f"Reordered {len(question_ids)} questions in topic {topic_id}")
         return True
 
-    def get_criteria_data(
-        self, db: Session, question: EvalQuestion
-    ) -> Dict:
+    def get_criteria_data(self, db: Session, question: EvalQuestion) -> Dict:
         """
         Get grading criteria for a question.
 

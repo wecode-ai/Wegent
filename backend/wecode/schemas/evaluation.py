@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-
 # ============================================================================
 # Topic Schemas
 # ============================================================================
@@ -28,10 +27,10 @@ class TopicBase(BaseModel):
     """Base schema for topic data."""
 
     name: str = Field(..., min_length=1, max_length=200, description="Topic name")
-    description: Optional[str] = Field(None, max_length=2000, description="Topic description")
-    visibility: str = Field(
-        "private", description="Visibility: 'public' or 'private'"
+    description: Optional[str] = Field(
+        None, max_length=2000, description="Topic description"
     )
+    visibility: str = Field("private", description="Visibility: 'public' or 'private'")
 
 
 class TopicCreate(TopicBase):
@@ -249,7 +248,9 @@ class AnswerInDB(BaseModel):
     respondent_name: Optional[str] = Field(None, description="Respondent username")
 
     # Optional grading info
-    grading_status: Optional[int] = Field(None, description="Latest grading task status")
+    grading_status: Optional[int] = Field(
+        None, description="Latest grading task status"
+    )
     grading_task_id: Optional[int] = Field(None, description="Latest grading task ID")
 
     class Config:

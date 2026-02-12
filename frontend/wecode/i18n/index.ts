@@ -43,3 +43,6 @@ if (i18next.isInitialized) {
     loadWecodeResources()
   })
 }
+
+// Export the load function for manual invocation if needed
+export { loadWecodeResources }

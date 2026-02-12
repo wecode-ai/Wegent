@@ -57,11 +57,7 @@ class AnswerService:
             content_data = {}
 
         # Get question to determine version
-        question = (
-            db.query(EvalQuestion)
-            .filter(EvalQuestion.id == question_id)
-            .first()
-        )
+        question = db.query(EvalQuestion).filter(EvalQuestion.id == question_id).first()
 
         if not question:
             raise ValueError(f"Question {question_id} not found")
@@ -105,7 +101,9 @@ class AnswerService:
             db.add(grading_task)
             db.flush()
 
-            logger.info(f"Created grading task {grading_task.id} for answer {answer.id}")
+            logger.info(
+                f"Created grading task {grading_task.id} for answer {answer.id}"
+            )
 
         return answer
 
@@ -196,9 +194,7 @@ class AnswerService:
             .subquery()
         )
 
-        query = db.query(EvalAnswer).filter(
-            EvalAnswer.question_id.in_(question_ids)
-        )
+        query = db.query(EvalAnswer).filter(EvalAnswer.question_id.in_(question_ids))
 
         if respondent_id is not None:
             query = query.filter(EvalAnswer.respondent_id == respondent_id)
@@ -284,11 +280,7 @@ class AnswerService:
             return None
 
         # Get current question version
-        question = (
-            db.query(EvalQuestion)
-            .filter(EvalQuestion.id == question_id)
-            .first()
-        )
+        question = db.query(EvalQuestion).filter(EvalQuestion.id == question_id).first()
 
         if not question or not question.current_version:
             return None
@@ -360,8 +352,6 @@ class AnswerService:
             "answered_questions": answered_questions,
             "published_reports": published_reports,
             "completion_rate": (
-                answered_questions / total_questions * 100
-                if total_questions > 0
-                else 0
+                answered_questions / total_questions * 100 if total_questions > 0 else 0
             ),
         }

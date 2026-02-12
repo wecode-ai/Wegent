@@ -67,9 +67,7 @@ class PermissionService:
         """
         return topic.creator_id == user_id
 
-    def can_answer(
-        self, db: Session, topic: EvalTopic, user_id: int
-    ) -> bool:
+    def can_answer(self, db: Session, topic: EvalTopic, user_id: int) -> bool:
         """
         Check if user can submit answers for a topic.
 
@@ -114,9 +112,7 @@ class PermissionService:
 
         return self.has_permission(db, topic.id, user_id, PermissionRole.GRADER)
 
-    def can_view_criteria(
-        self, db: Session, topic: EvalTopic, user_id: int
-    ) -> bool:
+    def can_view_criteria(self, db: Session, topic: EvalTopic, user_id: int) -> bool:
         """
         Check if user can view grading criteria.
 
@@ -135,9 +131,7 @@ class PermissionService:
 
         return self.has_permission(db, topic.id, user_id, PermissionRole.GRADER)
 
-    def can_view_all_answers(
-        self, db: Session, topic: EvalTopic, user_id: int
-    ) -> bool:
+    def can_view_all_answers(self, db: Session, topic: EvalTopic, user_id: int) -> bool:
         """
         Check if user can view all answers for a topic.
 
@@ -214,9 +208,7 @@ class PermissionService:
         Returns:
             Tuple of (permissions list, total count)
         """
-        query = db.query(EvalPermission).filter(
-            EvalPermission.topic_id == topic_id
-        )
+        query = db.query(EvalPermission).filter(EvalPermission.topic_id == topic_id)
 
         if role:
             query = query.filter(EvalPermission.role == role)
@@ -284,9 +276,7 @@ class PermissionService:
         db.add(permission)
         db.flush()
 
-        logger.info(
-            f"Granted {role} permission to user {user_id} on topic {topic_id}"
-        )
+        logger.info(f"Granted {role} permission to user {user_id} on topic {topic_id}")
         return permission
 
     def revoke_permission(
@@ -347,9 +337,7 @@ class PermissionService:
         """
         permissions = []
         for user_id in user_ids:
-            permission = self.grant_permission(
-                db, topic_id, user_id, role, granted_by
-            )
+            permission = self.grant_permission(db, topic_id, user_id, role, granted_by)
             permissions.append(permission)
 
         return permissions
