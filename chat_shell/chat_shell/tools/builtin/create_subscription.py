@@ -34,6 +34,10 @@ class CreateSubscriptionInput(BaseModel):
     description: Optional[str] = Field(
         default=None, description="Description of the subscription task"
     )
+    preview_id: Optional[str] = Field(
+        default=None,
+        description="Preview ID from preview_subscription tool. Required if user confirmed a preview.",
+    )
 
     # Trigger configuration
     trigger_type: Literal["cron", "interval", "one_time"] = Field(
@@ -117,19 +121,22 @@ class CreateSubscriptionTool(BaseTool):
     name: str = "create_subscription"
     display_name: str = "创建订阅任务"
     description: str = (
-        "Schedule tasks to run at a FUTURE time - NOT for immediate execution. "
-        "This tool creates subscriptions that will execute automatically at scheduled times.\n\n"
+        "⚠️ IMPORTANT: ONLY call this tool AFTER calling preview_subscription "
+        "AND receiving explicit user confirmation (e.g., '执行', '确认', '是的').\n\n"
+        "This tool ACTUALLY CREATES the subscription task. "
+        "It will start executing at scheduled times.\n\n"
         "Use cases:\n"
         "- Recurring tasks: 'Remind me every Monday at 9am', 'Send daily report at 6pm'\n"
         "- One-time future tasks: 'Remind me tomorrow at 3pm', 'Check status next Friday'\n"
         "- Periodic tasks: 'Check every 2 hours', 'Monitor every 30 minutes'\n\n"
-        "DO NOT use this tool when user wants immediate action. Only use when user explicitly "
-        "mentions future time, scheduling, recurring, periodic, or reminder-type requests.\n\n"
-        "Guidelines:\n"
-        "- For vague time descriptions, ask for clarification with specific options\n"
-        "- Set preserve_history=True for tasks needing context (reports, monitoring)\n"
-        "- Set preserve_history=False for independent tasks (reminders, checks)\n"
-        "- Use cron for complex schedules, interval for simple repeats, one_time for single runs"
+        "Workflow:\n"
+        "1. User: 'remind me every morning' / '每天早上9点提醒我喝水'\n"
+        "2. AI: Call preview_subscription tool\n"
+        "3. AI: Show preview table to user\n"
+        "4. AI: Ask for confirmation\n"
+        "5. User: '执行' / '确认' / '是的'\n"
+        "6. AI: Call create_subscription with preview_id from preview_subscription\n\n"
+        "DO NOT call this tool directly without preview and confirmation."
     )
     args_schema: type[BaseModel] = CreateSubscriptionInput
 
@@ -174,6 +181,7 @@ class CreateSubscriptionTool(BaseTool):
         trigger_type: Literal["cron", "interval", "one_time"],
         prompt_template: str,
         description: Optional[str] = None,
+        preview_id: Optional[str] = None,
         cron_expression: Optional[str] = None,
         interval_value: Optional[int] = None,
         interval_unit: Optional[Literal["minutes", "hours", "days"]] = None,
@@ -191,6 +199,7 @@ class CreateSubscriptionTool(BaseTool):
             trigger_type: Trigger type (cron, interval, one_time)
             prompt_template: Prompt template for execution
             description: Optional description
+            preview_id: Preview ID from preview_subscription tool (optional but recommended)
             cron_expression: Cron expression (for cron type)
             interval_value: Interval value (for interval type)
             interval_unit: Interval unit (for interval type)
@@ -204,27 +213,63 @@ class CreateSubscriptionTool(BaseTool):
         Returns:
             JSON string with creation result
         """
-        # Validate trigger configuration
-        validation_error = self._validate_trigger_config(
-            trigger_type=trigger_type,
-            cron_expression=cron_expression,
-            interval_value=interval_value,
-            interval_unit=interval_unit,
-            execute_at=execute_at,
-        )
-        if validation_error:
-            return json.dumps(
-                {"success": False, "error": validation_error}, ensure_ascii=False
-            )
+        # If preview_id is provided, load configuration from preview storage
+        if preview_id:
+            from .preview_subscription import clear_preview, get_preview_data
 
-        # Build trigger config dict
-        trigger_config = self._build_trigger_config(
-            trigger_type=trigger_type,
-            cron_expression=cron_expression,
-            interval_value=interval_value,
-            interval_unit=interval_unit,
-            execute_at=execute_at,
-        )
+            preview_data = get_preview_data(preview_id)
+            if preview_data:
+                # Use preview configuration
+                display_name = preview_data.get("display_name", display_name)
+                description = preview_data.get("description", description)
+                trigger_type = preview_data.get("trigger_type", trigger_type)
+                trigger_config = preview_data.get("trigger_config", {})
+                prompt_template = preview_data.get("prompt_template", prompt_template)
+                preserve_history = preview_data.get(
+                    "preserve_history", preserve_history
+                )
+                history_message_count = preview_data.get(
+                    "history_message_count", history_message_count
+                )
+                retry_count = preview_data.get("retry_count", retry_count)
+                timeout_seconds = preview_data.get("timeout_seconds", timeout_seconds)
+
+                # Clear preview after using it
+                clear_preview(preview_id)
+                logger.info(
+                    f"[CreateSubscriptionTool] Using preview {preview_id} to create subscription"
+                )
+            else:
+                # Preview expired or invalid
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": "预览已过期或无效，请重新创建预览。",
+                    },
+                    ensure_ascii=False,
+                )
+        else:
+            # No preview_id, validate parameters directly
+            validation_error = self._validate_trigger_config(
+                trigger_type=trigger_type,
+                cron_expression=cron_expression,
+                interval_value=interval_value,
+                interval_unit=interval_unit,
+                execute_at=execute_at,
+            )
+            if validation_error:
+                return json.dumps(
+                    {"success": False, "error": validation_error}, ensure_ascii=False
+                )
+
+            # Build trigger config dict
+            trigger_config = self._build_trigger_config(
+                trigger_type=trigger_type,
+                cron_expression=cron_expression,
+                interval_value=interval_value,
+                interval_unit=interval_unit,
+                execute_at=execute_at,
+            )
 
         # Generate unique subscription name
         subscription_name = self._generate_unique_name(display_name)
