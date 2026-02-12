@@ -111,7 +111,16 @@ interface WorkbenchProps {
   taskNumber?: string
   blocks?: MessageBlock[] | null
   app?: TaskApp | null
-  taskStatus?: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'CANCELLING' | null
+  taskStatus?:
+    | 'PENDING'
+    | 'RUNNING'
+    | 'COMPLETED'
+    | 'FAILED'
+    | 'CANCELLED'
+    | 'CANCELLING'
+    | 'DELETE'
+    | 'PENDING_CONFIRMATION'
+    | null
 }
 
 function classNames(...classes: string[]) {
