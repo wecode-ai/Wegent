@@ -42,7 +42,7 @@ function TopicsContent() {
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
-  const [visibility, setVisibility] = useState<string>('')
+  const [visibility, setVisibility] = useState<string>('all')
   const [myOnly, setMyOnly] = useState(false)
 
   const loadTopics = useCallback(async () => {
@@ -52,7 +52,7 @@ function TopicsContent() {
         page,
         limit: 20,
         search: search || undefined,
-        visibility: visibility || undefined,
+        visibility: visibility === 'all' ? undefined : visibility,
         my_only: myOnly,
       })
       setTopics(response.items)
@@ -114,7 +114,7 @@ function TopicsContent() {
             <SelectValue placeholder="Visibility" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All</SelectItem>
+            <SelectItem value="all">All</SelectItem>
             <SelectItem value="public">Public</SelectItem>
             <SelectItem value="private">Private</SelectItem>
           </SelectContent>

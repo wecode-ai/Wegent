@@ -1,8 +1,36 @@
 {
-  "title": "考评",
+  "title": "AI考评",
+  "description": "创建和管理考评专题，支持 AI 辅助评分",
+  "roles": {
+    "creator": "出题人",
+    "respondent": "答题人",
+    "grader": "评分人"
+  },
+  "creator": {
+    "my_topics": "我的专题",
+    "my_topics_description": "管理您创建的考评专题，编辑题目和设置。",
+    "statistics": "统计数据",
+    "statistics_description": "查看答题人数、完成率等统计信息。"
+  },
+  "respondent": {
+    "my_answers_description": "查看您的作答历史和提交记录。",
+    "my_reports_description": "查看您收到的评分报告和反馈。",
+    "progress_description": "查看您的答题进度和完成情况。"
+  },
+  "grader": {
+    "tasks_description": "查看待评分的任务列表，执行 AI 辅助评分。",
+    "pending_tasks": "待处理任务",
+    "pending_tasks_description": "查看需要您评分或审核的任务。",
+    "completed_tasks": "已完成评分",
+    "completed_tasks_description": "查看您已完成的评分任务和报告。",
+    "publish_description": "发布评分报告，让答题人查看结果。"
+  },
   "topics": {
     "title": "专题",
+    "browse": "浏览专题",
+    "browse_description": "查看和搜索考评专题，答题并查看结果。",
     "create": "创建专题",
+    "create_description": "创建新的考评专题，设置题目和评分标准。",
     "edit": "编辑专题",
     "delete": "删除专题",
     "publish": "发布",
@@ -47,6 +75,7 @@
   },
   "permissions": {
     "title": "权限管理",
+    "description": "管理谁可以查看、答题和评分你的专题。",
     "add": "添加权限",
     "remove": "移除",
     "user": "用户",
@@ -84,6 +113,7 @@
   },
   "grading": {
     "title": "评分",
+    "description": "查看 AI 生成的评分报告并发布结果。",
     "tasks": "评分任务",
     "execute": "执行评分",
     "publish": "发布报告",

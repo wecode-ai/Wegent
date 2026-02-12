@@ -1,8 +1,36 @@
 {
-  "title": "Evaluation",
+  "title": "AI Evaluation",
+  "description": "Create and manage evaluation topics for AI-assisted grading",
+  "roles": {
+    "creator": "Creator",
+    "respondent": "Respondent",
+    "grader": "Grader"
+  },
+  "creator": {
+    "my_topics": "My Topics",
+    "my_topics_description": "Manage your evaluation topics, edit questions and settings.",
+    "statistics": "Statistics",
+    "statistics_description": "View respondent counts, completion rates, and other statistics."
+  },
+  "respondent": {
+    "my_answers_description": "View your answer history and submission records.",
+    "my_reports_description": "View grading reports and feedback you received.",
+    "progress_description": "View your answering progress and completion status."
+  },
+  "grader": {
+    "tasks_description": "View pending grading tasks and execute AI-assisted grading.",
+    "pending_tasks": "Pending Tasks",
+    "pending_tasks_description": "View tasks that need your grading or review.",
+    "completed_tasks": "Completed Tasks",
+    "completed_tasks_description": "View your completed grading tasks and reports.",
+    "publish_description": "Publish grading reports for respondents to view."
+  },
   "topics": {
     "title": "Topics",
+    "browse": "Browse Topics",
+    "browse_description": "View and search evaluation topics, answer questions, and check your results.",
     "create": "Create Topic",
+    "create_description": "Create a new evaluation topic with questions and grading criteria.",
     "edit": "Edit Topic",
     "delete": "Delete Topic",
     "publish": "Publish",
@@ -47,6 +75,7 @@
   },
   "permissions": {
     "title": "Permissions",
+    "description": "Manage who can view, answer, and grade your topics.",
     "add": "Add Permission",
     "remove": "Remove",
     "user": "User",
@@ -84,6 +113,7 @@
   },
   "grading": {
     "title": "Grading",
+    "description": "Review AI-generated grading reports and publish results.",
     "tasks": "Grading Tasks",
     "execute": "Execute",
     "publish": "Publish Report",
