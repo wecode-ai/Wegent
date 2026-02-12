@@ -54,7 +54,7 @@ import {
   QuestionStatus,
   getStatusLabel,
   getVisibilityLabel,
-} from '../../../../../../wecode/types/evaluation'
+} from '@wecode/types/evaluation'
 
 export default function TopicDetailPage() {
   const router = useRouter()
