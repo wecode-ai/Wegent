@@ -154,12 +154,6 @@ function ChatAreaContent({
     const result = teamsWithValidBindMode.filter(team => {
       if (!team.bind_mode) return true
       const included = team.bind_mode.includes(taskType as 'chat' | 'code' | 'knowledge' | 'task')
-      console.log('[ChatArea] Team filter:', {
-        name: team.name,
-        bind_mode: team.bind_mode,
-        taskType,
-        included,
-      })
       return included
     })
     console.log(
