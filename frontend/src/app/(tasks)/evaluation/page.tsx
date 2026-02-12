@@ -72,7 +72,7 @@ function EvaluationContent() {
           <div className="grid gap-6 md:grid-cols-2">
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics/new')}
+              onClick={() => router.push('/evaluation/author/topics/new')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -92,7 +92,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=creator')}
+              onClick={() => router.push('/evaluation/author')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -109,7 +109,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=creator&tab=permissions')}
+              onClick={() => router.push('/evaluation/author?tab=permissions')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -129,7 +129,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=creator&tab=statistics')}
+              onClick={() => router.push('/evaluation/author?tab=statistics')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -151,7 +151,7 @@ function EvaluationContent() {
           <div className="grid gap-6 md:grid-cols-2">
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=respondent')}
+              onClick={() => router.push('/evaluation/respondent')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -171,7 +171,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=respondent&tab=answers')}
+              onClick={() => router.push('/evaluation/respondent/history')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -188,7 +188,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=respondent&tab=reports')}
+              onClick={() => router.push('/evaluation/respondent/history?tab=reports')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -205,7 +205,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=respondent&tab=progress')}
+              onClick={() => router.push('/evaluation/respondent/history?tab=progress')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -227,7 +227,7 @@ function EvaluationContent() {
           <div className="grid gap-6 md:grid-cols-2">
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=grader')}
+              onClick={() => router.push('/evaluation/grader')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -244,7 +244,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=grader&status=pending')}
+              onClick={() => router.push('/evaluation/grader/tasks?status=pending')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -261,7 +261,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=grader&status=completed')}
+              onClick={() => router.push('/evaluation/grader/reports')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -278,7 +278,7 @@ function EvaluationContent() {
 
             <Card
               className="cursor-pointer transition-colors hover:border-primary"
-              onClick={() => router.push('/evaluation/topics?role=grader&action=publish')}
+              onClick={() => router.push('/evaluation/grader/tasks?action=publish')}
             >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

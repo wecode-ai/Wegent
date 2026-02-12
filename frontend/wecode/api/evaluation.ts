@@ -229,7 +229,10 @@ export async function listPermissions(
   )
 }
 
-export async function grantPermission(topicId: number, data: PermissionCreate): Promise<Permission> {
+export async function grantPermission(
+  topicId: number,
+  data: PermissionCreate
+): Promise<Permission> {
   return fetchJson<Permission>(getUrl(`/topics/${topicId}/permissions`), {
     method: 'POST',
     body: JSON.stringify(data),
@@ -249,7 +252,7 @@ export async function revokePermission(topicId: number, userId: number): Promise
 export async function batchGrantPermissions(
   topicId: number,
   userIds: number[],
-  role: string
+  _role: string
 ): Promise<{ granted_count: number }> {
   return fetchJson(getUrl(`/topics/${topicId}/permissions/batch`), {
     method: 'POST',
@@ -402,4 +405,238 @@ export async function listMyGradingReports(params: {
   return fetchJson<GradingTaskListResponse>(
     getUrl(`/my/grading-reports?${searchParams.toString()}`)
   )
+}
+
+// ============================================================================
+// Respondent API (role-based endpoints for answer submission)
+// ============================================================================
+
+export async function respondentListTopics(params: {
+  page?: number
+  limit?: number
+  search?: string
+}): Promise<TopicListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.search) searchParams.set('search', params.search)
+
+  return fetchJson<TopicListResponse>(getUrl(`/respondent/topics?${searchParams.toString()}`))
+}
+
+export async function respondentGetTopic(topicId: number): Promise<Topic> {
+  return fetchJson<Topic>(getUrl(`/respondent/topics/${topicId}`))
+}
+
+export async function respondentListQuestions(
+  topicId: number,
+  params: {
+    page?: number
+    limit?: number
+  }
+): Promise<QuestionListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+
+  return fetchJson<QuestionListResponse>(
+    getUrl(`/respondent/topics/${topicId}/questions?${searchParams.toString()}`)
+  )
+}
+
+export async function respondentGetQuestion(questionId: number): Promise<Question> {
+  return fetchJson<Question>(getUrl(`/respondent/questions/${questionId}`))
+}
+
+export async function respondentSubmitAnswer(
+  questionId: number,
+  data: AnswerCreate
+): Promise<Answer> {
+  return fetchJson<Answer>(getUrl(`/respondent/questions/${questionId}/answers`), {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function respondentListAnswerHistory(params: {
+  page?: number
+  limit?: number
+  topic_id?: number
+  latest_only?: boolean
+}): Promise<AnswerListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.topic_id) searchParams.set('topic_id', params.topic_id.toString())
+  if (params.latest_only !== undefined)
+    searchParams.set('latest_only', params.latest_only.toString())
+
+  return fetchJson<AnswerListResponse>(getUrl(`/respondent/history?${searchParams.toString()}`))
+}
+
+export async function respondentGetAnswer(answerId: number): Promise<Answer> {
+  return fetchJson<Answer>(getUrl(`/respondent/answers/${answerId}`))
+}
+
+export async function respondentListGradingReports(params: {
+  page?: number
+  limit?: number
+  topic_id?: number
+}): Promise<GradingTaskListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.topic_id) searchParams.set('topic_id', params.topic_id.toString())
+
+  return fetchJson<GradingTaskListResponse>(
+    getUrl(`/respondent/reports?${searchParams.toString()}`)
+  )
+}
+
+export async function respondentGetGradingReport(reportId: number): Promise<GradingTask> {
+  return fetchJson<GradingTask>(getUrl(`/respondent/reports/${reportId}`))
+}
+
+// ============================================================================
+// Grader Role API (role-based endpoints under /grader/*)
+// ============================================================================
+
+const GRADER_API_PREFIX = '/wecode/evaluation/grader'
+
+function getGraderUrl(path: string): string {
+  return `${getApiBaseUrl()}${GRADER_API_PREFIX}${path}`
+}
+
+export interface GraderDashboardStats {
+  pending_count: number
+  running_count: number
+  completed_count: number
+  failed_count: number
+  published_count: number
+  total_topics: number
+}
+
+export async function getGraderDashboard(): Promise<GraderDashboardStats> {
+  return fetchJson<GraderDashboardStats>(getGraderUrl('/dashboard'))
+}
+
+export async function listGraderTopics(params: {
+  page?: number
+  limit?: number
+  search?: string
+}): Promise<TopicListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.search) searchParams.set('search', params.search)
+
+  return fetchJson<TopicListResponse>(getGraderUrl(`/topics?${searchParams.toString()}`))
+}
+
+export async function getGraderTopic(topicId: number): Promise<Topic> {
+  return fetchJson<Topic>(getGraderUrl(`/topics/${topicId}`))
+}
+
+export async function getGraderTopicStatistics(topicId: number): Promise<TopicStatistics> {
+  return fetchJson<TopicStatistics>(getGraderUrl(`/topics/${topicId}/statistics`))
+}
+
+export async function listGraderTasks(params: {
+  page?: number
+  limit?: number
+  status?: number
+  topic_id?: number
+  respondent_id?: number
+}): Promise<GradingTaskListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.status !== undefined) searchParams.set('status', params.status.toString())
+  if (params.topic_id) searchParams.set('topic_id', params.topic_id.toString())
+  if (params.respondent_id) searchParams.set('respondent_id', params.respondent_id.toString())
+
+  return fetchJson<GradingTaskListResponse>(getGraderUrl(`/tasks?${searchParams.toString()}`))
+}
+
+export async function getGraderTask(taskId: number): Promise<GradingTask> {
+  return fetchJson<GradingTask>(getGraderUrl(`/tasks/${taskId}`))
+}
+
+export async function executeGraderTask(
+  taskId: number,
+  data?: GradingTaskExecuteRequest
+): Promise<GradingTask> {
+  return fetchJson<GradingTask>(getGraderUrl(`/tasks/${taskId}/execute`), {
+    method: 'POST',
+    body: data ? JSON.stringify(data) : undefined,
+  })
+}
+
+export async function retryGraderTask(taskId: number): Promise<GradingTask> {
+  return fetchJson<GradingTask>(getGraderUrl(`/tasks/${taskId}/retry`), {
+    method: 'POST',
+  })
+}
+
+export async function updateGraderReport(
+  taskId: number,
+  data: GradingTaskUpdateReportRequest
+): Promise<GradingTask> {
+  return fetchJson<GradingTask>(getGraderUrl(`/tasks/${taskId}/report`), {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function publishGraderTask(
+  taskId: number,
+  data?: GradingTaskPublishRequest
+): Promise<GradingTask> {
+  return fetchJson<GradingTask>(getGraderUrl(`/tasks/${taskId}/publish`), {
+    method: 'POST',
+    body: data ? JSON.stringify(data) : undefined,
+  })
+}
+
+export async function batchExecuteGraderTasks(
+  taskIds: number[],
+  teamId?: number
+): Promise<{ executed_count: number; task_ids: number[] }> {
+  const searchParams = teamId ? `?team_id=${teamId}` : ''
+  return fetchJson(getGraderUrl(`/tasks/batch-execute${searchParams}`), {
+    method: 'POST',
+    body: JSON.stringify(taskIds),
+  })
+}
+
+export async function batchPublishGraderTasks(
+  taskIds: number[]
+): Promise<{ published_count: number; task_ids: number[] }> {
+  return fetchJson(getGraderUrl('/tasks/batch-publish'), {
+    method: 'POST',
+    body: JSON.stringify(taskIds),
+  })
+}
+
+export async function listGraderReports(params: {
+  page?: number
+  limit?: number
+  status?: number
+  topic_id?: number
+}): Promise<GradingTaskListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.status !== undefined) searchParams.set('status', params.status.toString())
+  if (params.topic_id) searchParams.set('topic_id', params.topic_id.toString())
+
+  return fetchJson<GradingTaskListResponse>(getGraderUrl(`/reports?${searchParams.toString()}`))
+}
+
+export async function getGraderAnswer(answerId: number): Promise<Answer> {
+  return fetchJson<Answer>(getGraderUrl(`/answers/${answerId}`))
+}
+
+export async function getGraderQuestion(questionId: number): Promise<Question> {
+  return fetchJson<Question>(getGraderUrl(`/questions/${questionId}`))
 }
