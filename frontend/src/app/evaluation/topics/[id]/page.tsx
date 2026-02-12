@@ -227,7 +227,7 @@ export default function TopicDetailPage() {
             {getVisibilityLabel(topic.visibility)}
           </Badge>
           <Badge
-            variant={topic.status === TopicStatus.PUBLISHED ? 'default' : 'outline'}
+            variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}
           >
             {getStatusLabel(topic.status, 'topic')}
           </Badge>

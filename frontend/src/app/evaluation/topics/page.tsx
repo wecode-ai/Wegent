@@ -179,8 +179,8 @@ export default function TopicsPage() {
                     <Badge
                       variant={
                         topic.status === TopicStatus.PUBLISHED
-                          ? 'default'
-                          : 'outline'
+                          ? 'success'
+                          : 'info'
                       }
                     >
                       {getStatusLabel(topic.status, 'topic')}
