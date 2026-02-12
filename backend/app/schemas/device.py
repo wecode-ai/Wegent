@@ -21,6 +21,31 @@ class DeviceStatusEnum(str, Enum):
     BUSY = "busy"
 
 
+class DeviceType(str, Enum):
+    """Device type enumeration.
+
+    Defines the type of device, supporting local devices and future cloud providers.
+    Currently only 'local' is implemented.
+    """
+
+    LOCAL = "local"
+    # Future cloud providers (not implemented yet):
+    # ALIBABA_CLOUD = "alibaba_cloud"
+    # HUAWEI_CLOUD = "huawei_cloud"
+    # TENCENT_CLOUD = "tencent_cloud"
+
+
+class DeviceConnectionMode(str, Enum):
+    """Device connection mode enumeration.
+
+    Defines how the device connects to the backend.
+    """
+
+    WEBSOCKET = "websocket"
+    # Future connection modes (not implemented yet):
+    # API = "api"  # For cloud provider API-based connections
+
+
 # Maximum concurrent tasks per device
 MAX_DEVICE_SLOTS = 5
 
@@ -46,8 +71,15 @@ class DeviceInfo(BaseModel):
     last_heartbeat: Optional[datetime] = Field(
         None, description="Last heartbeat timestamp"
     )
+    # Device type and connection mode
+    device_type: DeviceType = Field(
+        DeviceType.LOCAL, description="Device type (local, alibaba_cloud, etc.)"
+    )
+    connection_mode: DeviceConnectionMode = Field(
+        DeviceConnectionMode.WEBSOCKET, description="How device connects to backend"
+    )
     capabilities: Optional[List[str]] = Field(
-        None, description="Device capabilities/tags"
+        None, description="Device capabilities/tags (e.g., 'gpu', 'high-memory')"
     )
     slot_used: int = Field(0, description="Number of slots currently in use")
     slot_max: int = Field(MAX_DEVICE_SLOTS, description="Maximum concurrent task slots")
@@ -88,6 +120,14 @@ class DeviceRegisterPayload(BaseModel):
         min_length=1,
         max_length=100,
         description="Device name (self-provided)",
+    )
+    device_type: DeviceType = Field(
+        DeviceType.LOCAL,
+        description="Device type (default: local)",
+    )
+    capabilities: Optional[List[str]] = Field(
+        None,
+        description="Device capabilities/tags (e.g., 'gpu', 'high-memory')",
     )
     executor_version: Optional[str] = Field(
         None,

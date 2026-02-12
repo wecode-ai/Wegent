@@ -103,5 +103,9 @@
   "apikey_name_placeholder": "My Device",
   "cancel": "Cancel",
   "create": "Create",
-  "creating": "Creating..."
+  "creating": "Creating...",
+  "local_devices_section": "Local Devices",
+  "cloud_devices_section": "Cloud Devices",
+  "no_local_devices": "No local devices connected. Add a device using the guide above.",
+  "cloud_devices_coming_soon": "Cloud device support coming soon. Stay tuned for Alibaba Cloud ECS, Huawei Cloud, and more."
 }

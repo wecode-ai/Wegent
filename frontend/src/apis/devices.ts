@@ -13,6 +13,12 @@ import { apiClient } from './client'
 
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 
+// Device type enum matching backend DeviceType
+export type DeviceType = 'local' // Future: 'alibaba_cloud' | 'huawei_cloud' | etc.
+
+// Device connection mode enum matching backend DeviceConnectionMode
+export type DeviceConnectionMode = 'websocket' // Future: 'api'
+
 export interface DeviceRunningTask {
   task_id: number
   subtask_id: number
@@ -28,6 +34,9 @@ export interface DeviceInfo {
   status: DeviceStatus
   is_default: boolean
   last_heartbeat?: string
+  // Device type and connection mode
+  device_type: DeviceType
+  connection_mode: DeviceConnectionMode
   capabilities?: string[]
   slot_used: number
   slot_max: number

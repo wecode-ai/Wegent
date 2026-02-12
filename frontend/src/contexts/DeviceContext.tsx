@@ -151,6 +151,8 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
             name: data.name,
             status: data.status as DeviceInfo['status'],
             is_default: false,
+            device_type: 'local' as const,
+            connection_mode: 'websocket' as const,
             slot_used: 0,
             slot_max: 5,
             running_tasks: [],

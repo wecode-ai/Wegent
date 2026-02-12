@@ -9,9 +9,10 @@
  * in the chat input area.
  *
  * Shows all devices (including offline) with visual status indicators.
- * Supports default device marking.
+ * Supports default device marking and device type filtering.
  */
 
+import { useMemo } from 'react'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -27,21 +28,42 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
+// Device type constants matching backend DeviceType enum
+const DEVICE_TYPE = {
+  LOCAL: 'local',
+  // Future cloud providers (not implemented yet):
+  // ALIBABA_CLOUD: 'alibaba_cloud',
+  // HUAWEI_CLOUD: 'huawei_cloud',
+} as const
+
+type DeviceTypeValue = (typeof DEVICE_TYPE)[keyof typeof DEVICE_TYPE]
+
 interface DeviceSelectorProps {
   /** Additional className */
   className?: string
   /** Disabled state */
   disabled?: boolean
+  /** Filter devices by type (optional, shows all types if not specified) */
+  filterType?: DeviceTypeValue
 }
 
-export function DeviceSelector({ className, disabled }: DeviceSelectorProps) {
+export function DeviceSelector({ className, disabled, filterType }: DeviceSelectorProps) {
   const { t } = useTranslation('devices')
   const { devices, selectedDeviceId, setSelectedDeviceId, setDefaultDevice, isLoading } =
     useDevices()
 
+  // Filter devices by type if filterType is specified
+  const filteredDevices = useMemo(() => {
+    if (!filterType) return devices
+    return devices.filter(d => {
+      const deviceType = (d as typeof d & { device_type?: string }).device_type || DEVICE_TYPE.LOCAL
+      return deviceType === filterType
+    })
+  }, [devices, filterType])
+
   // Group devices by online/offline
-  const onlineDevices = devices.filter(d => d.status !== 'offline')
-  const offlineDevices = devices.filter(d => d.status === 'offline')
+  const onlineDevices = filteredDevices.filter(d => d.status !== 'offline')
+  const offlineDevices = filteredDevices.filter(d => d.status === 'offline')
 
   // Get selected device info
   const selectedDevice = selectedDeviceId
@@ -74,7 +96,7 @@ export function DeviceSelector({ className, disabled }: DeviceSelectorProps) {
   }
 
   // Don't render if no devices available
-  if (devices.length === 0 && !isLoading) {
+  if (filteredDevices.length === 0 && !isLoading) {
     return null
   }
 
