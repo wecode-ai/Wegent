@@ -41,7 +41,9 @@ def _get_backend_url(request: Request) -> str:
     Returns:
         Backend URL for executor to connect
     """
-    # Try to get from settings first
+    # Try NEVIS_CALLBACK_URL first, then BACKEND_URL
+    if settings.NEVIS_CALLBACK_URL:
+        return settings.NEVIS_CALLBACK_URL
     if settings.BACKEND_URL:
         return settings.BACKEND_URL
 
@@ -84,15 +86,15 @@ async def create_cloud_device(
         # Get user's API key for executor authentication
         from app.services.api_key_service import api_key_service
 
-        api_key = await api_key_service.get_or_create_default_key(
-            db, current_user.id, current_user.username
+        api_key, auth_token = await api_key_service.get_or_create_default_key(
+            db, current_user.id, current_user.user_name
         )
 
         result = await cloud_device_provider.create_device(
             db=db,
             user_id=current_user.id,
-            user_name=current_user.username,
-            auth_token=api_key.key,
+            user_name=current_user.user_name,
+            auth_token=auth_token,
             backend_url=backend_url,
         )
 
