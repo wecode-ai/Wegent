@@ -81,6 +81,8 @@ dependencies = [
     "chardet>=5.0.0",
     "pillow>=12.0.0",
     "python-magic>=0.4.27",
+    # Pandoc wrapper for Office document conversion (DOC, DOCX, PPT, PPTX to Markdown)
+    "pypandoc>=1.13",
     # OCR support for scanned PDFs
     "pytesseract>=0.3.10",
     "pdf2image>=1.16.0",

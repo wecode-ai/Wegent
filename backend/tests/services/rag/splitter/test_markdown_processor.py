@@ -6,7 +6,7 @@
 Comprehensive tests for MarkdownProcessor.
 
 Tests cover:
-1. Table conversion to key-value format
+1. Table protection (tables are never split)
 2. Noise removal (horizontal rules, empty links, HTML comments, whitespace)
 3. Code block protection
 4. Code block never-split guarantee
@@ -25,30 +25,123 @@ from app.services.rag.splitter.markdown_processor import (
 )
 
 
-class TestTableConversion:
-    """Tests for table to key-value conversion."""
+class TestTableProtection:
+    """Tests for table protection - tables are never split."""
 
-    def test_simple_table_conversion(self):
-        """Test basic table conversion to key-value format."""
+    def test_table_protection_and_restoration(self):
+        """Test that tables are protected and restored correctly."""
         processor = MarkdownProcessor()
 
-        markdown = """| Name | Price | Quantity |
+        markdown = """# Header
+
+Some text.
+
+| Name | Price | Quantity |
 |------|-------|----------|
 | Apple | $5 | 10 |
-| Banana | $3 | 20 |"""
+| Banana | $3 | 20 |
 
-        result = processor._convert_tables_to_keyvalue(markdown)
+More text."""
 
-        assert "Name: Apple" in result
-        assert "Price: $5" in result
-        assert "Quantity: 10" in result
-        assert "Name: Banana" in result
-        assert "Price: $3" in result
-        assert "Quantity: 20" in result
-        # Table syntax should be removed
-        assert "|---" not in result
+        # Protect tables
+        text, placeholders = processor._protect_tables(markdown)
 
-    def test_table_with_alignment(self):
+        # Table should be replaced with placeholder
+        assert "___TABLE_" in text
+        assert "| Name |" not in text
+        assert len(placeholders) > 0
+
+        # Restore tables
+        restored = processor._restore_tables(text, placeholders)
+
+        # Table should be intact
+        assert "| Name |" in restored
+        assert "| Apple | $5 | 10 |" in restored
+        assert "More text" in restored
+
+    def test_large_table_not_split(self):
+        """Test that large tables are kept intact (never split)."""
+        processor = MarkdownProcessor(chunk_size=100)  # Small chunk size
+
+        # Create a large table (much larger than chunk_size)
+        rows = [f"| Key{i} | Value{i} |" for i in range(50)]
+        separator = "|" + "------|" * 2
+        large_table = "\n".join(["| Key | Value |", separator] + rows)
+
+        markdown = f"""# Header
+
+{large_table}
+
+End text."""
+
+        documents = processor.process(markdown, "test_doc")
+
+        # Find chunk containing table
+        table_chunk = None
+        for doc in documents:
+            if "Key0" in doc.text and "Key49" in doc.text:
+                table_chunk = doc
+                break
+
+        assert table_chunk is not None, "Table should be in a single chunk"
+        # Table should contain all rows
+        assert "Key25" in table_chunk.text
+
+    def test_table_not_merged_with_adjacent(self):
+        """Test that tables are not merged with adjacent chunks."""
+        processor = MarkdownProcessor(min_chunk_size=500)
+
+        markdown = """# Header
+
+Short intro.
+
+| Name | Value |
+|------|-------|
+| Key1 | val1 |
+
+# Another
+
+Short text."""
+
+        documents = processor.process(markdown, "Table Merge Test")
+
+        # Table should remain separate
+        for doc in documents:
+            if "| Name |" in doc.text:
+                # Table chunk should be identifiable
+                assert "| Key1 | val1 |" in doc.text
+
+    def test_multiple_tables_separate_chunks(self):
+        """Test that multiple tables become separate chunks."""
+        processor = MarkdownProcessor(chunk_size=100)
+
+        markdown = """# Section 1
+
+| Col1 | Col2 |
+|------|------|
+| A1 | B1 |
+
+# Section 2
+
+| Col1 | Col2 |
+|------|------|
+| A2 | B2 |"""
+
+        documents = processor.process(markdown, "test_doc")
+
+        # Each table should be preserved
+        tables_found = 0
+        for doc in documents:
+            if "| A1 | B1 |" in doc.text:
+                tables_found += 1
+                assert "| Col1 | Col2 |" in doc.text
+            if "| A2 | B2 |" in doc.text:
+                tables_found += 1
+                assert "| Col1 | Col2 |" in doc.text
+
+        assert tables_found >= 2, "Both tables should be preserved"
+
+    def test_table_with_alignment_markers(self):
         """Test table with alignment markers in separator."""
         processor = MarkdownProcessor()
 
@@ -56,11 +149,13 @@ class TestTableConversion:
 |:-----|:------:|------:|
 | a | b | c |"""
 
-        result = processor._convert_tables_to_keyvalue(markdown)
+        text, placeholders = processor._protect_tables(markdown)
+        restored = processor._restore_tables(text, placeholders)
 
-        assert "Left: a" in result
-        assert "Center: b" in result
-        assert "Right: c" in result
+        # Table should be intact with alignment markers
+        assert "| Left |" in restored
+        assert "|:-----|:------:|------:|" in restored
+        assert "| a |" in restored
 
     def test_table_with_empty_cells(self):
         """Test table with some empty cells."""
@@ -71,26 +166,12 @@ class TestTableConversion:
 | Key1 | val1 |
 | Key2 |  |"""
 
-        result = processor._convert_tables_to_keyvalue(markdown)
+        text, placeholders = processor._protect_tables(markdown)
+        restored = processor._restore_tables(text, placeholders)
 
-        assert "Name: Key1" in result
-        assert "Value: val1" in result
-        assert "Name: Key2" in result
-
-    def test_no_table_unchanged(self):
-        """Test that non-table content is unchanged."""
-        processor = MarkdownProcessor()
-
-        markdown = """# Header
-
-Some paragraph text.
-
-- List item 1
-- List item 2"""
-
-        result = processor._convert_tables_to_keyvalue(markdown)
-
-        assert result == markdown
+        assert "| Name |" in restored
+        assert "| Key1 | val1 |" in restored
+        assert "| Key2 |  |" in restored
 
 
 class TestNoiseRemoval:
@@ -527,6 +608,62 @@ Short text."""
                 # Code block chunk should be identifiable
                 assert "code()" in doc.text
 
+    def test_tables_not_merged(self):
+        """Test that tables are not merged with adjacent chunks."""
+        processor = MarkdownProcessor(min_chunk_size=500)
+
+        markdown = """# Header
+
+Short intro.
+
+| Name | Value |
+|------|-------|
+| Key1 | val1 |
+
+# Another
+
+Short text."""
+
+        documents = processor.process(markdown, "Table Merge Test")
+
+        # Table should remain separate
+        for doc in documents:
+            if "| Name |" in doc.text:
+                # Table chunk should be identifiable
+                assert "| Key1 | val1 |" in doc.text
+
+    def test_small_text_chunks_merged_around_table(self):
+        """Test that small text chunks are merged around a table."""
+        processor = MarkdownProcessor(chunk_size=1024, min_chunk_size=256)
+
+        markdown = """# Section 1
+
+This is a short intro paragraph that should be merged with other small chunks.
+
+| Name | Value |
+|------|-------|
+| Key1 | val1 |
+
+This is another short paragraph that should be merged with the intro.
+
+# Section 2
+
+Another section with content."""
+
+        documents = processor.process(markdown, "Merge Around Table")
+
+        # The intro and outro text should be merged (they're small and not table/code)
+        # Table should remain separate
+        text_chunks = [doc for doc in documents if "| Name |" not in doc.text]
+        table_chunks = [doc for doc in documents if "| Name |" in doc.text]
+
+        # Should have at least one table chunk
+        assert len(table_chunks) >= 1
+
+        # Small text chunks should be merged together
+        # (not with) table, but with each other)
+        assert len(text_chunks) <= 2  # Should be merged
+
 
 class TestLargeChunkSplitting:
     """Tests for large chunk splitting."""
@@ -568,6 +705,28 @@ class TestLargeChunkSplitting:
 
         assert code_doc is not None
         assert "print(49)" in code_doc.text
+
+    def test_table_not_split_even_when_large(self):
+        """Test that tables are never split even when exceeding chunk_size."""
+        processor = MarkdownProcessor(chunk_size=100)
+
+        # Create large table
+        rows = [f"| Key{i} | Value{i} |" for i in range(50)]
+        separator = "|" + "------|" * 2
+        large_table = "\n".join(["| Key | Value |", separator] + rows)
+        markdown = f"""{large_table}"""
+
+        documents = processor.process(markdown, "Large Table")
+
+        # Table should be in single chunk
+        table_doc = None
+        for doc in documents:
+            if "| Key0 |" in doc.text:
+                table_doc = doc
+                break
+
+        assert table_doc is not None
+        assert "| Key49 |" in table_doc.text
 
 
 class TestContextPrefixInjection:
@@ -640,6 +799,8 @@ Content."""
         for doc in documents:
             assert "header_hierarchy" in doc.metadata
             assert "header_level" in doc.metadata
+            assert "is_code_block" in doc.metadata
+            assert "is_table" in doc.metadata
 
 
 class TestEndToEnd:
@@ -711,9 +872,9 @@ MIT License."""
         # Combine all text for verification
         all_text = "\n".join([doc.text for doc in documents])
 
-        # Tables should be converted
-        assert "Component: Python" in all_text
-        assert "Version: 3.8+" in all_text
+        # Tables should be preserved (not converted)
+        assert "| Component |" in all_text
+        assert "| Python | 3.8+ |" in all_text
 
         # Code blocks should be preserved
         assert "from product import Client" in all_text
@@ -776,8 +937,9 @@ MIT License."""
         # Chinese content should be preserved
         assert "欢迎使用本产品" in all_text
         assert "系统要求" in all_text
-        # Table converted
-        assert "组件: Python" in all_text
+        # Table preserved (not converted)
+        assert "| 组件 |" in all_text
+        assert "| Python | 3.8以上 |" in all_text
         # Code preserved
         assert "`pip install product`" in all_text
         # Link text extracted
@@ -833,13 +995,29 @@ Content at deepest level."""
         """Test handling of malformed tables."""
         processor = MarkdownProcessor()
 
-        # Table without proper separator
+        # Table without proper separator - should not be protected
         markdown = """| Header |
 | Data |"""
 
         # Should not crash
         documents = processor.process(markdown, "Malformed")
         assert len(documents) >= 1
+
+    def test_table_with_code_block(self):
+        """Test handling of table with code block inside."""
+        processor = MarkdownProcessor()
+
+        markdown = """| Column |
+|--------|
+| `code` |
+| more |"""
+
+        documents = processor.process(markdown, "Table with Code")
+
+        # Table should be preserved
+        all_text = "\n".join([doc.text for doc in documents])
+        assert "| Column |" in all_text
+        assert "| `code` |" in all_text
 
     def test_special_characters_in_headers(self):
         """Test headers with special characters."""

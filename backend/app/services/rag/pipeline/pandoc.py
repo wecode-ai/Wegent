@@ -5,14 +5,16 @@
 """
 Pandoc document processing pipeline.
 
-This pipeline uses Pandoc (via subprocess) to convert Office documents
+This pipeline uses pypandoc (Python wrapper for Pandoc) to convert Office documents
 (DOC, DOCX, PPT, PPTX) to Markdown, then uses the MarkdownProcessor
 for intelligent Markdown-aware chunking with preprocessing and context injection.
+
+pypandoc can automatically download Pandoc if it's not installed on the system,
+making deployment easier without requiring system-level Pandoc installation.
 """
 
 import logging
-import shutil
-import subprocess
+import os
 import tempfile
 from pathlib import Path
 from typing import List, Optional
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class PandocNotFoundError(Exception):
-    """Raised when Pandoc is not installed or not found in PATH."""
+    """Raised when Pandoc is not installed or not found."""
 
     pass
 
@@ -38,15 +40,16 @@ class PandocConversionError(Exception):
 
 class PandocPipeline(BaseDocumentPipeline):
     """
-    Document pipeline using Pandoc for Office document conversion.
+    Document pipeline using pypandoc for Office document conversion.
 
     This pipeline converts DOC, DOCX, PPT, and PPTX files to Markdown
-    using Pandoc's command-line interface, then applies Markdown-aware
+    using pypandoc (Python wrapper for Pandoc), then applies Markdown-aware
     splitting for optimal chunking.
 
-    Prerequisites:
-    - Pandoc must be installed and available in PATH
-    - For PPT/PPTX, Pandoc 2.x or higher is recommended
+    pypandoc advantages:
+    - Pure Python interface (no subprocess calls)
+    - Can automatically download Pandoc binary if not installed
+    - Easier deployment in containerized environments
 
     Suitable for:
     - DOC/DOCX files (Word documents)
@@ -64,6 +67,9 @@ class PandocPipeline(BaseDocumentPipeline):
         ".pptx": "pptx",
     }
 
+    # Flag to track if we've already tried to ensure Pandoc is available
+    _pandoc_ensured = False
+
     def __init__(
         self,
         chunk_size: int = BaseDocumentPipeline.DEFAULT_CHUNK_SIZE,
@@ -77,15 +83,56 @@ class PandocPipeline(BaseDocumentPipeline):
             chunk_overlap: Number of characters to overlap between chunks
 
         Raises:
-            PandocNotFoundError: If Pandoc is not installed
+            PandocNotFoundError: If Pandoc cannot be found or downloaded
         """
         super().__init__(chunk_size, chunk_overlap)
-        self._verify_pandoc_installed()
+        self._ensure_pandoc_available()
 
     @classmethod
     def get_supported_extensions(cls) -> set:
         """Get supported file extensions."""
         return cls.SUPPORTED_EXTENSIONS
+
+    @classmethod
+    def _ensure_pandoc_available(cls) -> None:
+        """
+        Ensure Pandoc is available, downloading if necessary.
+
+        This method checks if Pandoc is installed. If not, it attempts
+        to download it using pypandoc's download functionality.
+        """
+        if cls._pandoc_ensured:
+            return
+
+        try:
+            import pypandoc
+
+            # Try to get Pandoc version to check if it's available
+            try:
+                version = pypandoc.get_pandoc_version()
+                logger.info(f"Pandoc version {version} is available")
+                cls._pandoc_ensured = True
+                return
+            except OSError:
+                # Pandoc not found, try to download it
+                logger.warning("Pandoc not found, attempting to download...")
+
+            # Download Pandoc binary
+            try:
+                pypandoc.download_pandoc()
+                version = pypandoc.get_pandoc_version()
+                logger.info(f"Successfully downloaded Pandoc version {version}")
+                cls._pandoc_ensured = True
+            except Exception as e:
+                raise PandocNotFoundError(
+                    f"Failed to download Pandoc: {e}. "
+                    "Please install Pandoc manually: https://pandoc.org/installing.html"
+                ) from e
+
+        except ImportError as e:
+            raise PandocNotFoundError(
+                "pypandoc is not installed. Please install it: pip install pypandoc"
+            ) from e
 
     @classmethod
     def is_pandoc_available(cls) -> bool:
@@ -95,20 +142,13 @@ class PandocPipeline(BaseDocumentPipeline):
         Returns:
             True if Pandoc is installed and accessible
         """
-        return shutil.which("pandoc") is not None
+        try:
+            import pypandoc
 
-    def _verify_pandoc_installed(self) -> None:
-        """
-        Verify that Pandoc is installed and accessible.
-
-        Raises:
-            PandocNotFoundError: If Pandoc is not found
-        """
-        if not self.is_pandoc_available():
-            raise PandocNotFoundError(
-                "Pandoc is not installed or not found in PATH. "
-                "Please install Pandoc: https://pandoc.org/installing.html"
-            )
+            pypandoc.get_pandoc_version()
+            return True
+        except (ImportError, OSError):
+            return False
 
     def _get_pandoc_version(self) -> Optional[str]:
         """
@@ -118,19 +158,12 @@ class PandocPipeline(BaseDocumentPipeline):
             Version string or None if unable to determine
         """
         try:
-            result = subprocess.run(
-                ["pandoc", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                # First line contains version info
-                first_line = result.stdout.split("\n")[0]
-                return first_line
+            import pypandoc
+
+            return pypandoc.get_pandoc_version()
         except Exception as e:
             logger.warning(f"Failed to get Pandoc version: {e}")
-        return None
+            return None
 
     def read(self, binary_data: bytes, file_extension: str) -> bytes:
         """
@@ -149,11 +182,13 @@ class PandocPipeline(BaseDocumentPipeline):
 
     def convert(self, content: bytes, file_extension: str) -> str:
         """
-        Convert Office document to Markdown using Pandoc.
+        Convert Office document to Markdown using pypandoc.
 
         This method writes the binary data to a temporary file,
-        invokes Pandoc to convert it to Markdown, and returns
+        uses pypandoc to convert it to Markdown, and returns
         the converted text.
+
+        For PPT/PPTX files, also removes Pandoc-generated "Slide X" headers.
 
         Args:
             content: Binary file content
@@ -165,6 +200,13 @@ class PandocPipeline(BaseDocumentPipeline):
         Raises:
             PandocConversionError: If conversion fails
         """
+        try:
+            import pypandoc
+        except ImportError as e:
+            raise PandocConversionError(
+                "pypandoc is not installed. Please install it: pip install pypandoc"
+            ) from e
+
         ext = file_extension.lower()
         input_format = self.INPUT_FORMAT_MAP.get(ext)
 
@@ -173,47 +215,30 @@ class PandocPipeline(BaseDocumentPipeline):
                 f"Unsupported file extension for Pandoc: {file_extension}"
             )
 
-        # Create temporary files for input and output
-        with tempfile.NamedTemporaryFile(
-            suffix=file_extension, delete=False
-        ) as input_file:
-            input_file.write(content)
-            input_path = input_file.name
-
-        output_path = input_path + ".md"
+        input_path = None
 
         try:
-            # Build Pandoc command
-            cmd = [
-                "pandoc",
-                "-f",
-                input_format,
-                "-t",
-                "markdown",
+            # Create temporary file for input
+            with tempfile.NamedTemporaryFile(
+                suffix=file_extension, delete=False
+            ) as input_file:
+                input_file.write(content)
+                input_path = input_file.name
+
+            # Convert using pypandoc
+            # extra_args: --wrap=none disables line wrapping for better splitting
+            markdown_content = pypandoc.convert_file(
                 input_path,
-                "-o",
-                output_path,
-                "--wrap=none",  # Disable line wrapping for better splitting
-            ]
-
-            logger.debug(f"Running Pandoc command: {' '.join(cmd)}")
-
-            # Execute Pandoc
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,  # 2 minute timeout
+                to="markdown",
+                format=input_format,
+                extra_args=["--wrap=none"],
             )
 
-            if result.returncode != 0:
-                error_msg = result.stderr or result.stdout or "Unknown error"
-                raise PandocConversionError(
-                    f"Pandoc conversion failed (exit code {result.returncode}): {error_msg}"
-                )
+            # Note: Preserve Pandoc-generated slide headers (e.g., "## Slide 1")
+            # These headers serve as natural splitting points for RAG chunking
+            # and help maintain slide structure in the processed content
+            # They will be used by MarkdownProcessor for header-based splitting
 
-            # Read converted Markdown
-            markdown_content = Path(output_path).read_text(encoding="utf-8")
             logger.info(
                 f"Pandoc conversion successful: {len(content)} bytes -> "
                 f"{len(markdown_content)} characters"
@@ -221,24 +246,26 @@ class PandocPipeline(BaseDocumentPipeline):
 
             return markdown_content
 
-        except subprocess.TimeoutExpired:
-            raise PandocConversionError("Pandoc conversion timed out after 120 seconds")
-        except FileNotFoundError:
-            raise PandocConversionError(f"Pandoc output file not found: {output_path}")
+        except RuntimeError as e:
+            raise PandocConversionError(f"Pandoc conversion failed: {e}") from e
+        except Exception as e:
+            raise PandocConversionError(
+                f"Unexpected error during Pandoc conversion: {e}"
+            ) from e
         finally:
-            # Clean up temporary files
-            for path in [input_path, output_path]:
+            # Clean up temporary file
+            if input_path:
                 try:
-                    Path(path).unlink(missing_ok=True)
+                    Path(input_path).unlink(missing_ok=True)
                 except Exception as e:
-                    logger.warning(f"Failed to delete temporary file {path}: {e}")
+                    logger.warning(f"Failed to delete temporary file {input_path}: {e}")
 
-    def split(self, text_content: str) -> List[Document]:
+    def split(self, text_content: str, document_title: str = "") -> List[Document]:
         """
         Split Markdown content into Document chunks.
 
         Uses MarkdownProcessor for intelligent markdown chunking with:
-        - Table conversion to key-value format
+        - Table protection (tables are preserved, not converted)
         - Noise removal (horizontal rules, empty links, HTML comments)
         - Code block protection (never split code blocks)
         - Header-based splitting (H1-H3)
@@ -248,6 +275,7 @@ class PandocPipeline(BaseDocumentPipeline):
 
         Args:
             text_content: Markdown text content
+            document_title: Optional document title for context prefix
 
         Returns:
             List of Document objects
@@ -263,7 +291,7 @@ class PandocPipeline(BaseDocumentPipeline):
             chunk_overlap=self.chunk_overlap,
         )
 
-        documents = processor.process(text_content, document_title="")
+        documents = processor.process(text_content, document_title=document_title)
 
         logger.info(f"Pandoc split created {len(documents)} chunks")
 

@@ -428,15 +428,6 @@ class Settings(BaseSettings):
     # When enabled, chunk content is also saved to knowledge_documents.chunks column
     CHUNK_STORAGE_ENABLED: bool = False
 
-    # Docling document conversion service configuration
-    # Docling provides advanced document conversion for Office files (DOC, DOCX, PPT, PPTX, PDF)
-    # When configured, Docling takes priority over Pandoc for document conversion
-    # If Docling is unavailable, the system falls back to Pandoc (for Office files) or LlamaIndex (for PDF)
-    DOCLING_URL: Optional[str] = (
-        None  # Docling service URL, e.g., "http://localhost:8080"
-    )
-    DOCLING_TIMEOUT: int = 120  # Request timeout in seconds for Docling API calls
-
     # Long-term memory configuration (mem0)
     # Enable/disable long-term memory feature
     MEMORY_ENABLED: bool = False

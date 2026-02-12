@@ -38,7 +38,7 @@ class SmartSplitter:
     All strategies use unified chunk_size=1024 and chunk_overlap=50.
 
     Note: For Office documents (DOC, DOCX, PPT, PPTX), the DocumentIndexer
-    may use the pipeline architecture (Docling or Pandoc) to convert them
+    may use the pipeline architecture (Pandoc) to convert them
     to Markdown first, which provides better structure preservation.
     """
 
