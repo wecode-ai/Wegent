@@ -83,8 +83,14 @@ def apply_patch() -> None:
 
     try:
         # Wrap the static methods
-        original_get_all = DeviceService.get_all_devices.__func__
-        original_get_online = DeviceService.get_online_devices.__func__
+        # Access the underlying function from staticmethod descriptor
+        original_get_all = DeviceService.__dict__.get('get_all_devices')
+        if isinstance(original_get_all, staticmethod):
+            original_get_all = original_get_all.__func__
+
+        original_get_online = DeviceService.__dict__.get('get_online_devices')
+        if isinstance(original_get_online, staticmethod):
+            original_get_online = original_get_online.__func__
 
         DeviceService.get_all_devices = staticmethod(
             _wrap_get_all_devices(original_get_all)
