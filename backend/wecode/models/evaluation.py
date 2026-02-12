@@ -16,9 +16,8 @@ All tables use the 'wecode_eval_' prefix for isolation from core tables.
 """
 
 from datetime import datetime
-from typing import Optional
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, text
 
 from app.db.base import Base
 
@@ -34,20 +33,38 @@ class EvalTopic(Base):
 
     __tablename__ = "wecode_eval_topics"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(200), nullable=False, comment="Topic name")
-    creator_id = Column(Integer, nullable=False, index=True, comment="Creator user ID")
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        comment="Primary key ID",
+    )
+    name = Column(String(200), nullable=False, server_default="", comment="Topic name")
+    creator_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Creator user ID",
+    )
     visibility = Column(
         String(20),
         nullable=False,
-        default="private",
+        server_default="private",
         comment="Visibility: public/private",
     )
     status = Column(
-        Integer, nullable=False, default=0, comment="Status: 0=draft, 1=published"
+        Integer,
+        nullable=False,
+        server_default="0",
+        comment="Status: 0=draft, 1=published",
     )
     current_version = Column(
-        String(25), nullable=False, default="", comment="Current published version"
+        String(25),
+        nullable=False,
+        server_default="",
+        comment="Current published version",
     )
     extra_data = Column(
         JSON, nullable=False, default=dict, comment="Extra data (description, etc.)"
@@ -56,24 +73,30 @@ class EvalTopic(Base):
         JSON, nullable=False, default=dict, comment="Grading team configuration"
     )
     created_at = Column(
-        DateTime, nullable=False, default=datetime.now, comment="Creation time"
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="Creation time",
     )
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.now,
+        server_default=text("CURRENT_TIMESTAMP"),
         onupdate=datetime.now,
         comment="Update time",
     )
     is_active = Column(
-        Boolean, nullable=False, default=True, comment="Active flag (soft delete)"
+        Boolean,
+        nullable=False,
+        server_default="1",
+        comment="Active flag (soft delete)",
     )
 
     __table_args__ = (
         Index("idx_wecode_eval_topics_creator", "creator_id"),
         Index("idx_wecode_eval_topics_visibility", "visibility"),
         Index("idx_wecode_eval_topics_status", "status"),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {"mysql_charset": "utf8mb4"},
     )
 
 
@@ -87,23 +110,40 @@ class EvalTopicVersion(Base):
 
     __tablename__ = "wecode_eval_topic_versions"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    topic_id = Column(Integer, nullable=False, index=True, comment="Related topic ID")
-    version = Column(String(25), nullable=False, comment="Version string")
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        comment="Primary key ID",
+    )
+    topic_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Related topic ID",
+    )
+    version = Column(
+        String(25), nullable=False, server_default="", comment="Version string"
+    )
     question_snapshots = Column(
         JSON, nullable=False, default=list, comment="Question version snapshots"
     )
     published_at = Column(
-        DateTime, nullable=False, default=datetime.now, comment="Publication time"
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="Publication time",
     )
     published_by = Column(
-        Integer, nullable=False, default=0, comment="Publisher user ID"
+        Integer, nullable=False, server_default="0", comment="Publisher user ID"
     )
 
     __table_args__ = (
         Index("idx_wecode_eval_topic_versions_topic", "topic_id"),
         Index("idx_wecode_eval_topic_versions_version", "topic_id", "version"),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {"mysql_charset": "utf8mb4"},
     )
 
 
@@ -117,45 +157,79 @@ class EvalQuestion(Base):
 
     __tablename__ = "wecode_eval_questions"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    topic_id = Column(Integer, nullable=False, index=True, comment="Related topic ID")
-    title = Column(String(500), nullable=False, comment="Question title")
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        comment="Primary key ID",
+    )
+    topic_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Related topic ID",
+    )
+    title = Column(
+        String(500), nullable=False, server_default="", comment="Question title"
+    )
     content_type = Column(
         String(20),
         nullable=False,
-        default="text",
+        server_default="text",
         comment="Content type: text/url/attachment/mixed",
     )
     content_data = Column(
         JSON, nullable=False, default=dict, comment="Question content data"
     )
     status = Column(
-        Integer, nullable=False, default=0, comment="Status: 0=draft, 1=published"
+        Integer,
+        nullable=False,
+        server_default="0",
+        comment="Status: 0=draft, 1=published",
     )
     current_version = Column(
-        String(25), nullable=False, default="", comment="Current published version"
+        String(25),
+        nullable=False,
+        server_default="",
+        comment="Current published version",
     )
-    order_index = Column(Integer, nullable=False, default=0, comment="Sort order index")
-    creator_id = Column(Integer, nullable=False, index=True, comment="Creator user ID")
+    order_index = Column(
+        Integer, nullable=False, server_default="0", comment="Sort order index"
+    )
+    creator_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Creator user ID",
+    )
     created_at = Column(
-        DateTime, nullable=False, default=datetime.now, comment="Creation time"
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="Creation time",
     )
     updated_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.now,
+        server_default=text("CURRENT_TIMESTAMP"),
         onupdate=datetime.now,
         comment="Update time",
     )
     is_active = Column(
-        Boolean, nullable=False, default=True, comment="Active flag (soft delete)"
+        Boolean,
+        nullable=False,
+        server_default="1",
+        comment="Active flag (soft delete)",
     )
 
     __table_args__ = (
         Index("idx_wecode_eval_questions_topic", "topic_id"),
         Index("idx_wecode_eval_questions_creator", "creator_id"),
         Index("idx_wecode_eval_questions_order", "topic_id", "order_index"),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {"mysql_charset": "utf8mb4"},
     )
 
 
@@ -169,11 +243,23 @@ class EvalQuestionVersion(Base):
 
     __tablename__ = "wecode_eval_question_versions"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    question_id = Column(
-        Integer, nullable=False, index=True, comment="Related question ID"
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        comment="Primary key ID",
     )
-    version = Column(String(25), nullable=False, comment="Version string")
+    question_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Related question ID",
+    )
+    version = Column(
+        String(25), nullable=False, server_default="", comment="Version string"
+    )
     content_data = Column(
         JSON, nullable=False, default=dict, comment="Question content snapshot"
     )
@@ -181,16 +267,19 @@ class EvalQuestionVersion(Base):
         JSON, nullable=False, default=dict, comment="Grading criteria data"
     )
     published_at = Column(
-        DateTime, nullable=False, default=datetime.now, comment="Publication time"
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="Publication time",
     )
     published_by = Column(
-        Integer, nullable=False, default=0, comment="Publisher user ID"
+        Integer, nullable=False, server_default="0", comment="Publisher user ID"
     )
 
     __table_args__ = (
         Index("idx_wecode_eval_question_versions_question", "question_id"),
         Index("idx_wecode_eval_question_versions_ver", "question_id", "version"),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {"mysql_charset": "utf8mb4"},
     )
 
 
@@ -204,25 +293,48 @@ class EvalPermission(Base):
 
     __tablename__ = "wecode_eval_permissions"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    topic_id = Column(Integer, nullable=False, index=True, comment="Related topic ID")
-    user_id = Column(Integer, nullable=False, index=True, comment="Authorized user ID")
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        comment="Primary key ID",
+    )
+    topic_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Related topic ID",
+    )
+    user_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Authorized user ID",
+    )
     role = Column(
         String(20),
         nullable=False,
-        default="respondent",
+        server_default="respondent",
         comment="Role: respondent/grader",
     )
-    granted_by = Column(Integer, nullable=False, default=0, comment="Granter user ID")
+    granted_by = Column(
+        Integer, nullable=False, server_default="0", comment="Granter user ID"
+    )
     granted_at = Column(
-        DateTime, nullable=False, default=datetime.now, comment="Grant time"
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="Grant time",
     )
 
     __table_args__ = (
         Index("idx_wecode_eval_permissions_topic", "topic_id"),
         Index("idx_wecode_eval_permissions_user", "user_id"),
         Index("idx_wecode_eval_permissions_topic_user", "topic_id", "user_id"),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {"mysql_charset": "utf8mb4"},
     )
 
 
@@ -236,30 +348,53 @@ class EvalAnswer(Base):
 
     __tablename__ = "wecode_eval_answers"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        comment="Primary key ID",
+    )
     question_id = Column(
-        Integer, nullable=False, index=True, comment="Related question ID"
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Related question ID",
     )
     question_version = Column(
-        String(25), nullable=False, comment="Question version at submission time"
+        String(25),
+        nullable=False,
+        server_default="",
+        comment="Question version at submission time",
     )
     respondent_id = Column(
-        Integer, nullable=False, index=True, comment="Respondent user ID"
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Respondent user ID",
     )
     content_type = Column(
         String(20),
         nullable=False,
-        default="text",
+        server_default="text",
         comment="Content type: text/url/attachment/mixed",
     )
     content_data = Column(
         JSON, nullable=False, default=dict, comment="Answer content data"
     )
     submitted_at = Column(
-        DateTime, nullable=False, default=datetime.now, comment="Submission time"
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="Submission time",
     )
     is_latest = Column(
-        Boolean, nullable=False, default=True, comment="Is latest submission"
+        Boolean,
+        nullable=False,
+        server_default="1",
+        comment="Is latest submission",
     )
 
     __table_args__ = (
@@ -276,7 +411,7 @@ class EvalAnswer(Base):
             "respondent_id",
             "is_latest",
         ),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {"mysql_charset": "utf8mb4"},
     )
 
 
@@ -297,40 +432,91 @@ class EvalGradingTask(Base):
 
     __tablename__ = "wecode_eval_grading_tasks"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    answer_id = Column(Integer, nullable=False, index=True, comment="Related answer ID")
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True,
+        comment="Primary key ID",
+    )
+    answer_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Related answer ID",
+    )
     question_id = Column(
-        Integer, nullable=False, index=True, comment="Related question ID"
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Related question ID",
     )
     question_version = Column(
-        String(25), nullable=False, comment="Question version for grading"
+        String(25),
+        nullable=False,
+        server_default="",
+        comment="Question version for grading",
     )
     respondent_id = Column(
-        Integer, nullable=False, index=True, comment="Respondent user ID"
+        Integer,
+        nullable=False,
+        server_default="0",
+        index=True,
+        comment="Respondent user ID",
     )
-    grader_id = Column(Integer, nullable=False, default=0, comment="Grader user ID")
+    grader_id = Column(
+        Integer, nullable=False, server_default="0", comment="Grader user ID"
+    )
     team_id = Column(
-        Integer, nullable=False, default=0, comment="Wegent Team ID for AI grading"
+        Integer,
+        nullable=False,
+        server_default="0",
+        comment="Wegent Team ID for AI grading",
     )
-    task_id = Column(Integer, nullable=False, default=0, comment="Wegent Task ID")
+    task_id = Column(
+        Integer, nullable=False, server_default="0", comment="Wegent Task ID"
+    )
     status = Column(
         Integer,
         nullable=False,
-        default=0,
+        server_default="0",
         comment="Status: 0=pending, 1=running, 2=completed, 3=failed, 4=published",
     )
     report_data = Column(
         JSON, nullable=False, default=dict, comment="Grading report data"
     )
     report_s3_path = Column(
-        String(500), nullable=False, default="", comment="Report S3 storage path"
+        String(500),
+        nullable=False,
+        server_default="",
+        comment="Report S3 storage path",
     )
     created_at = Column(
-        DateTime, nullable=False, default=datetime.now, comment="Creation time"
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="Creation time",
     )
-    started_at = Column(DateTime, nullable=True, comment="Grading start time")
-    completed_at = Column(DateTime, nullable=True, comment="Grading completion time")
-    published_at = Column(DateTime, nullable=True, comment="Report publication time")
+    started_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("'1970-01-01 00:00:00'"),
+        comment="Grading start time",
+    )
+    completed_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("'1970-01-01 00:00:00'"),
+        comment="Grading completion time",
+    )
+    published_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("'1970-01-01 00:00:00'"),
+        comment="Report publication time",
+    )
 
     __table_args__ = (
         Index("idx_wecode_eval_grading_tasks_answer", "answer_id"),
@@ -338,7 +524,7 @@ class EvalGradingTask(Base):
         Index("idx_wecode_eval_grading_tasks_respondent", "respondent_id"),
         Index("idx_wecode_eval_grading_tasks_status", "status"),
         Index("idx_wecode_eval_grading_tasks_task", "task_id"),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {"mysql_charset": "utf8mb4"},
     )
 
 

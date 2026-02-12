@@ -7,7 +7,7 @@ Utility functions for the evaluation module.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def generate_version() -> str:
@@ -21,6 +21,6 @@ def generate_version() -> str:
     Returns:
         Version string like "20240115_143000_a1b2"
     """
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     unique_id = uuid.uuid4().hex[:4]
     return f"{timestamp}_{unique_id}"
