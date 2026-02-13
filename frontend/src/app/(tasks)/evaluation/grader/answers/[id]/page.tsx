@@ -90,7 +90,7 @@ function GraderAnswerContent() {
         description: t('errors.not_found'),
         variant: 'destructive',
       })
-      router.push('/evaluation/grader/tasks')
+      router.push('/evaluation/grader')
     } finally {
       setLoading(false)
     }
