@@ -1584,20 +1584,27 @@ def get_grader_question(
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
 
-    # For graders, include criteria data
+    # For graders, include criteria data from content_data["_criteria"]
+    criteria = (question.content_data or {}).get("_criteria", {})
+    criteria_type = criteria.get("type")
+    criteria_data = {k: v for k, v in criteria.items() if k != "type"} if criteria else {}
+
+    # Get content data without criteria
+    content_data = {k: v for k, v in (question.content_data or {}).items() if k != "_criteria"}
+
     return QuestionInDB(
         id=question.id,
         topic_id=question.topic_id,
         title=question.title,
         content_type=question.content_type,
-        content_data=question.content_data or {},
+        content_data=content_data,
         order_index=question.order_index,
         status=question.status,
         current_version=question.current_version,
         created_at=question.created_at,
         updated_at=question.updated_at,
-        criteria_type=question.criteria_type,
-        criteria_data=question.criteria_data or {},
+        criteria_type=criteria_type,
+        criteria_data=criteria_data,
     )
 
 
