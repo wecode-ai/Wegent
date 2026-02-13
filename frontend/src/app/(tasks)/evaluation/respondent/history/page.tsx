@@ -6,33 +6,36 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, FileText, CheckCircle, Clock, Link, ExternalLink } from 'lucide-react'
+import { ArrowLeft, FileText, Clock, Link } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { respondentListAnswerHistory, respondentListGradingReports } from '@wecode/api/evaluation'
-import type { Answer, GradingTask } from '@wecode/types/evaluation'
-import { getStatusLabel } from '@wecode/types/evaluation'
+import { respondentListAnswerHistory } from '@wecode/api/evaluation'
+import type { Answer } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
+/**
+ * Respondent Answer History Page
+ *
+ * Shows only the user's submitted answers.
+ * NOTE: Respondents CANNOT view any grading status or results.
+ * This is a business security requirement to ensure evaluation fairness.
+ */
 function RespondentHistoryContent() {
   const router = useRouter()
   const { toast } = useToast()
   const { t } = useTranslation('evaluation')
 
   const [answers, setAnswers] = useState<Answer[]>([])
-  const [reports, setReports] = useState<GradingTask[]>([])
   const [answersTotal, setAnswersTotal] = useState(0)
-  const [reportsTotal, setReportsTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [answersPage, setAnswersPage] = useState(1)
-  const [reportsPage, setReportsPage] = useState(1)
 
   const loadAnswers = useCallback(async () => {
+    setLoading(true)
     try {
       const response = await respondentListAnswerHistory({
         page: answersPage,
@@ -47,43 +50,14 @@ function RespondentHistoryContent() {
         description: '',
         variant: 'destructive',
       })
+    } finally {
+      setLoading(false)
     }
   }, [answersPage, toast, t])
-
-  const loadReports = useCallback(async () => {
-    try {
-      const response = await respondentListGradingReports({
-        page: reportsPage,
-        limit: 20,
-      })
-      setReports(response.items)
-      setReportsTotal(response.total)
-    } catch (_error) {
-      toast({
-        title: t('errors.load_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    }
-  }, [reportsPage, toast, t])
-
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    await Promise.all([loadAnswers(), loadReports()])
-    setLoading(false)
-  }, [loadAnswers, loadReports])
-
-  useEffect(() => {
-    loadData()
-  }, [loadData])
 
   useEffect(() => {
     loadAnswers()
   }, [loadAnswers])
-
-  useEffect(() => {
-    loadReports()
-  }, [loadReports])
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8">
@@ -102,200 +76,100 @@ function RespondentHistoryContent() {
         <p className="text-sm text-text-secondary">{t('respondent.my_answers_description')}</p>
       </div>
 
-      <Tabs defaultValue="answers">
-        <TabsList>
-          <TabsTrigger value="answers">
-            <FileText className="mr-2 h-4 w-4" />
-            {t('answers.my_answers')} ({answersTotal})
-          </TabsTrigger>
-          <TabsTrigger value="reports">
-            <CheckCircle className="mr-2 h-4 w-4" />
-            {t('grading.my_reports')} ({reportsTotal})
-          </TabsTrigger>
-        </TabsList>
+      <div className="mb-4">
+        <h2 className="flex items-center gap-2 text-lg font-medium text-text-primary">
+          <FileText className="h-5 w-5" />
+          {t('answers.my_answers')} ({answersTotal})
+        </h2>
+      </div>
 
-        <TabsContent value="answers" className="mt-6">
-          {loading ? (
-            <div className="space-y-4">
-              {[...Array(3)].map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <Skeleton className="mb-2 h-6 w-1/2" />
-                    <Skeleton className="h-4 w-3/4" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : answers.length === 0 ? (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />
-                <h3 className="mb-2 text-lg font-medium">{t('answers.no_answers')}</h3>
-                <p className="mb-4 text-sm text-text-secondary">{t('topics.browse_description')}</p>
-                <Button variant="primary" onClick={() => router.push('/evaluation/respondent')}>
-                  {t('topics.browse')}
-                </Button>
+      {loading ? (
+        <div className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <Card key={i}>
+              <CardContent className="p-4">
+                <Skeleton className="mb-2 h-6 w-1/2" />
+                <Skeleton className="h-4 w-3/4" />
               </CardContent>
             </Card>
-          ) : (
-            <div className="space-y-4">
-              {answers.map(answer => (
-                <Card key={answer.id} className="transition-shadow hover:shadow-md">
-                  <CardContent className="p-4">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-text-muted" />
-                        <span className="text-sm text-text-secondary">
-                          {new Date(answer.submitted_at).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex gap-2">
-                        {answer.is_latest && <Badge variant="success">{t('answers.latest')}</Badge>}
-                        <Badge variant="info">
-                          {t('answers.version')}: {answer.question_version}
-                        </Badge>
-                      </div>
-                    </div>
-                    {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
-                      <p className="line-clamp-3 whitespace-pre-wrap text-text-primary">
-                        {answer.content_data.text}
-                      </p>
-                    )}
-                    {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
-                      <div className="flex items-center gap-2">
-                        <Link className="h-4 w-4 text-primary" />
-                        <a
-                          href={answer.content_data.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="line-clamp-1 text-primary hover:underline"
-                        >
-                          {answer.content_data.url}
-                        </a>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-
-              {/* Pagination */}
-              {answersTotal > 20 && (
-                <div className="mt-6 flex justify-center gap-2">
-                  <Button
-                    variant="outline"
-                    disabled={answersPage === 1}
-                    onClick={() => setAnswersPage(answersPage - 1)}
-                  >
-                    Previous
-                  </Button>
-                  <span className="flex items-center px-4 text-sm text-text-secondary">
-                    Page {answersPage} of {Math.ceil(answersTotal / 20)}
-                  </span>
-                  <Button
-                    variant="outline"
-                    disabled={answersPage >= Math.ceil(answersTotal / 20)}
-                    onClick={() => setAnswersPage(answersPage + 1)}
-                  >
-                    Next
-                  </Button>
+          ))}
+        </div>
+      ) : answers.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />
+            <h3 className="mb-2 text-lg font-medium">{t('answers.no_answers')}</h3>
+            <p className="mb-4 text-sm text-text-secondary">{t('topics.browse_description')}</p>
+            <Button variant="primary" onClick={() => router.push('/evaluation/respondent')}>
+              {t('topics.browse')}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {answers.map(answer => (
+            <Card key={answer.id} className="transition-shadow hover:shadow-md">
+              <CardContent className="p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-text-muted" />
+                    <span className="text-sm text-text-secondary">
+                      {new Date(answer.submitted_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    {answer.is_latest && <Badge variant="success">{t('answers.latest')}</Badge>}
+                    <Badge variant="info">
+                      {t('answers.version')}: {answer.question_version}
+                    </Badge>
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="reports" className="mt-6">
-          {loading ? (
-            <div className="space-y-4">
-              {[...Array(3)].map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <Skeleton className="mb-2 h-6 w-1/2" />
-                    <Skeleton className="h-4 w-3/4" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : reports.length === 0 ? (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <CheckCircle className="mx-auto mb-4 h-12 w-12 text-text-muted" />
-                <h3 className="mb-2 text-lg font-medium">{t('grading.no_tasks')}</h3>
-                <p className="text-sm text-text-secondary">
-                  {t('respondent.my_reports_description')}
-                </p>
+                {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
+                  <p className="line-clamp-3 whitespace-pre-wrap text-text-primary">
+                    {answer.content_data.text}
+                  </p>
+                )}
+                {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
+                  <div className="flex items-center gap-2">
+                    <Link className="h-4 w-4 text-primary" />
+                    <a
+                      href={answer.content_data.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="line-clamp-1 text-primary hover:underline"
+                    >
+                      {answer.content_data.url}
+                    </a>
+                  </div>
+                )}
               </CardContent>
             </Card>
-          ) : (
-            <div className="space-y-4">
-              {reports.map(report => (
-                <Card key={report.id} className="transition-shadow hover:shadow-md">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base">
-                        {report.question_title || `Question #${report.question_id}`}
-                      </CardTitle>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="success">{getStatusLabel(report.status, 'grading')}</Badge>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => router.push(`/evaluation/reports/${report.id}`)}
-                        >
-                          <ExternalLink className="mr-1 h-4 w-4" />
-                          {t('actions.view')}
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="mb-2 flex items-center gap-4 text-sm text-text-secondary">
-                      {report.topic_name && <span>{report.topic_name}</span>}
-                      {report.published_at && (
-                        <span>Published: {new Date(report.published_at).toLocaleString()}</span>
-                      )}
-                    </div>
-                    {report.report_data && typeof report.report_data === 'object' && (
-                      <div className="rounded-lg bg-surface p-4">
-                        <h4 className="mb-2 font-medium">{t('grading.report')}</h4>
-                        <p className="line-clamp-4 whitespace-pre-wrap text-sm text-text-secondary">
-                          {typeof (report.report_data as Record<string, unknown>).content ===
-                          'string'
-                            ? String((report.report_data as Record<string, unknown>).content)
-                            : JSON.stringify(report.report_data, null, 2)}
-                        </p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+          ))}
 
-              {/* Pagination */}
-              {reportsTotal > 20 && (
-                <div className="mt-6 flex justify-center gap-2">
-                  <Button
-                    variant="outline"
-                    disabled={reportsPage === 1}
-                    onClick={() => setReportsPage(reportsPage - 1)}
-                  >
-                    Previous
-                  </Button>
-                  <span className="flex items-center px-4 text-sm text-text-secondary">
-                    Page {reportsPage} of {Math.ceil(reportsTotal / 20)}
-                  </span>
-                  <Button
-                    variant="outline"
-                    disabled={reportsPage >= Math.ceil(reportsTotal / 20)}
-                    onClick={() => setReportsPage(reportsPage + 1)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              )}
+          {/* Pagination */}
+          {answersTotal > 20 && (
+            <div className="mt-6 flex justify-center gap-2">
+              <Button
+                variant="outline"
+                disabled={answersPage === 1}
+                onClick={() => setAnswersPage(answersPage - 1)}
+              >
+                {t('common:previous')}
+              </Button>
+              <span className="flex items-center px-4 text-sm text-text-secondary">
+                {t('common:page')} {answersPage} / {Math.ceil(answersTotal / 20)}
+              </span>
+              <Button
+                variant="outline"
+                disabled={answersPage >= Math.ceil(answersTotal / 20)}
+                onClick={() => setAnswersPage(answersPage + 1)}
+              >
+                {t('common:next')}
+              </Button>
             </div>
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
     </div>
   )
 }

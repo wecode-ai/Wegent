@@ -52,8 +52,8 @@ export {
   respondentSubmitAnswer,
   respondentListAnswerHistory,
   respondentGetAnswer,
-  respondentListGradingReports,
-  respondentGetGradingReport,
+  // NOTE: respondentListGradingReports and respondentGetGradingReport have been REMOVED
+  // Respondents cannot view any grading status or results
 } from './evaluation-respondent'
 
 // Re-export grader functions with legacy names

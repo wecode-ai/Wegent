@@ -4,7 +4,10 @@
 
 /**
  * API client functions for the evaluation respondent module.
- * These APIs are for users who answer questions and view their grading reports.
+ * These APIs are for users who answer questions.
+ *
+ * NOTE: Respondents CANNOT view any grading status or results.
+ * This is a business security requirement to ensure evaluation fairness.
  */
 
 import { fetchJson, getRespondentUrl } from './evaluation-client'
@@ -16,8 +19,6 @@ import type {
   Answer,
   AnswerCreate,
   AnswerListResponse,
-  GradingTask,
-  GradingTaskListResponse,
   RespondentProgress,
 } from '../types/evaluation'
 
@@ -106,35 +107,7 @@ export async function respondentListAnswerHistory(params: {
   return fetchJson<AnswerListResponse>(getRespondentUrl(`/history?${searchParams.toString()}`))
 }
 
-// ============================================================================
-// Grading Report API (Respondent)
-// ============================================================================
-
-export async function respondentListGradingReports(params: {
-  page?: number
-  limit?: number
-  topic_id?: number
-}): Promise<GradingTaskListResponse> {
-  const searchParams = new URLSearchParams()
-  if (params.page) searchParams.set('page', params.page.toString())
-  if (params.limit) searchParams.set('limit', params.limit.toString())
-  if (params.topic_id) searchParams.set('topic_id', params.topic_id.toString())
-
-  return fetchJson<GradingTaskListResponse>(getRespondentUrl(`/reports?${searchParams.toString()}`))
-}
-
-export async function respondentGetGradingReport(reportId: number): Promise<GradingTask> {
-  return fetchJson<GradingTask>(getRespondentUrl(`/reports/${reportId}`))
-}
-
-/**
- * Get a presigned URL for downloading a published grading report.
- * Respondents can only download their own published reports.
- */
-export async function respondentGetReportDownloadUrl(
-  reportId: number
-): Promise<{ download_url: string; filename: string }> {
-  return fetchJson<{ download_url: string; filename: string }>(
-    getRespondentUrl(`/reports/${reportId}/download-url`)
-  )
-}
+// NOTE: Grading Report APIs have been REMOVED for respondents.
+// Respondents cannot view any grading status or results.
+// This is a business security requirement to ensure evaluation fairness.
+// Grading reports are only visible to Authors and Graders.

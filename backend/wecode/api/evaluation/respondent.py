@@ -10,7 +10,9 @@ This module provides endpoints for the respondent role (答题人):
 - View questions (without grading criteria)
 - Submit answers
 - View answer history
-- View published grading reports
+
+NOTE: Respondents CANNOT view any grading status or results.
+This is a business security requirement to ensure evaluation fairness.
 """
 
 import logging
@@ -23,17 +25,13 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from wecode.models.evaluation import (
-    GradingTaskStatus,
     QuestionStatus,
     TopicStatus,
-    TopicVisibility,
 )
 from wecode.schemas.evaluation import (
     AnswerCreate,
     AnswerInDB,
     AnswerListResponse,
-    GradingTaskInDB,
-    GradingTaskListResponse,
     QuestionInDB,
     QuestionListResponse,
     RespondentProgress,
@@ -42,7 +40,6 @@ from wecode.schemas.evaluation import (
 )
 from wecode.service.evaluation import (
     get_answer_service,
-    get_grading_service,
     get_permission_service,
     get_question_service,
     get_topic_service,
@@ -194,13 +191,12 @@ def get_my_progress(
     Returns:
     - Total questions in the topic
     - Number of questions answered by user
-    - Number of published grading reports for user
     - Completion rate (0-1)
+
+    NOTE: Does NOT return any grading-related information.
     """
     topic_service = get_topic_service()
     question_service = get_question_service()
-    answer_service = get_answer_service()
-    grading_service = get_grading_service()
     permission_service = get_permission_service()
 
     topic = topic_service.get(db, topic_id)
@@ -242,24 +238,15 @@ def get_my_progress(
             .count()
         )
 
-    # Count published reports for this user
-    published_reports, _ = grading_service.list_by_respondent(
-        db=db,
-        respondent_id=current_user.id,
-        topic_id=topic_id,
-        status=GradingTaskStatus.PUBLISHED,
-        page=1,
-        limit=1000,
-    )
-    published_count = len(published_reports)
-
     # Calculate completion rate
     completion_rate = answered_count / total_questions if total_questions > 0 else 0.0
 
+    # NOTE: published_reports is always 0 for respondents
+    # Respondents cannot see any grading information
     return RespondentProgress(
         total_questions=total_questions,
         answered_questions=answered_count,
-        published_reports=published_count,
+        published_reports=0,  # Always 0 - respondents cannot see grading info
         completion_rate=completion_rate,
     )
 
@@ -602,181 +589,7 @@ def get_answer_detail(
     )
 
 
-# ============================================================================
-# Grading Report Endpoints
-# ============================================================================
-
-
-@router.get("/reports", response_model=GradingTaskListResponse)
-def list_my_grading_reports(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    topic_id: Optional[int] = Query(None, description="Filter by topic"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    List current user's grading reports (published only).
-
-    Respondents can only see reports that have been published by graders.
-    """
-    grading_service = get_grading_service()
-
-    # Only show PUBLISHED reports for respondents
-    tasks, total = grading_service.list_by_respondent(
-        db=db,
-        respondent_id=current_user.id,
-        topic_id=topic_id,
-        status=GradingTaskStatus.PUBLISHED,
-        page=page,
-        limit=limit,
-    )
-
-    items = []
-    for task in tasks:
-        items.append(
-            GradingTaskInDB(
-                id=task.id,
-                answer_id=task.answer_id,
-                question_id=task.question_id,
-                question_version=task.question_version,
-                respondent_id=task.respondent_id,
-                grader_id=task.grader_id,
-                team_id=task.team_id,
-                task_id=task.task_id,
-                status=task.status,
-                report_data=task.report_data or {},
-                report_s3_path=task.report_s3_path,
-                created_at=task.created_at,
-                started_at=task.started_at,
-                completed_at=task.completed_at,
-                published_at=task.published_at,
-            )
-        )
-
-    return GradingTaskListResponse(total=total, items=items)
-
-
-@router.get("/reports/{report_id}", response_model=GradingTaskInDB)
-def get_grading_report_detail(
-    report_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get grading report detail.
-
-    Respondents can only view their own published reports.
-    """
-    grading_service = get_grading_service()
-
-    task = grading_service.get(db, report_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Grading report not found",
-        )
-
-    # Respondents can only view their own reports
-    if task.respondent_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only view your own grading reports",
-        )
-
-    # Respondents can only view published reports
-    if task.status != GradingTaskStatus.PUBLISHED:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This report has not been published yet",
-        )
-
-    return GradingTaskInDB(
-        id=task.id,
-        answer_id=task.answer_id,
-        question_id=task.question_id,
-        question_version=task.question_version,
-        respondent_id=task.respondent_id,
-        grader_id=task.grader_id,
-        team_id=task.team_id,
-        task_id=task.task_id,
-        status=task.status,
-        report_data=task.report_data or {},
-        report_s3_path=task.report_s3_path,
-        created_at=task.created_at,
-        started_at=task.started_at,
-        completed_at=task.completed_at,
-        published_at=task.published_at,
-    )
-
-
-@router.get("/reports/{report_id}/download-url")
-def get_report_download_url(
-    report_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get a presigned URL for downloading a published grading report.
-
-    Respondents can only download their own published reports.
-    """
-    from wecode.service.evaluation.storage_service import EvalStorageService
-
-    grading_service = get_grading_service()
-
-    task = grading_service.get(db, report_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Grading report not found",
-        )
-
-    # Respondents can only download their own reports
-    if task.respondent_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only download your own grading reports",
-        )
-
-    # Respondents can only download published reports
-    if task.status != GradingTaskStatus.PUBLISHED:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This report has not been published yet",
-        )
-
-    report_data = task.report_data or {}
-
-    # Get final report S3 path
-    s3_path = None
-    filename = "report.md"
-
-    # Try to get final report first, then fallback to report_s3_path
-    final_report = report_data.get("final_report", {})
-    if final_report.get("s3_path"):
-        s3_path = final_report["s3_path"]
-        attachment = final_report.get("attachment")
-        if attachment:
-            filename = attachment.get("filename", "report")
-    else:
-        s3_path = task.report_s3_path
-
-    if not s3_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report file not available for download",
-        )
-
-    storage_service = EvalStorageService()
-    download_url = storage_service.get_presigned_url(s3_path)
-    if not download_url:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate download URL",
-        )
-
-    return {
-        "download_url": download_url,
-        "filename": filename,
-    }
+# NOTE: Grading Report Endpoints have been REMOVED for respondents.
+# Respondents cannot view any grading status or results.
+# This is a business security requirement to ensure evaluation fairness.
+# Grading reports are only visible to Authors and Graders.
