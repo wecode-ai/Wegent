@@ -31,7 +31,6 @@ class ExecutionTarget:
     mode: CommunicationMode
     # For SSE/HTTP mode
     url: Optional[str] = None
-    endpoint: str = "/v1/execute"
     # For WebSocket mode
     namespace: Optional[str] = None
     event: str = "task:execute"
@@ -61,17 +60,14 @@ class ExecutionRouter:
         "ClaudeCode": {
             "mode": "http_callback",
             "url": None,  # Will be set from settings
-            "endpoint": "/v1/execute",
         },
         "Agno": {
             "mode": "http_callback",
             "url": None,
-            "endpoint": "/v1/execute",
         },
         "Dify": {
             "mode": "http_callback",
             "url": None,
-            "endpoint": "/v1/execute",
         },
     }
 
@@ -84,13 +80,19 @@ class ExecutionRouter:
         """Initialize service URLs from settings."""
         chat_shell_url = getattr(settings, "CHAT_SHELL_URL", "http://127.0.0.1:8100")
         executor_manager_url = getattr(
-            settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001/executor-manager"
+            settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001"
         )
 
         self.EXECUTION_SERVICES["Chat"]["url"] = chat_shell_url
-        self.EXECUTION_SERVICES["ClaudeCode"]["url"] = executor_manager_url
-        self.EXECUTION_SERVICES["Agno"]["url"] = executor_manager_url
-        self.EXECUTION_SERVICES["Dify"]["url"] = executor_manager_url
+        self.EXECUTION_SERVICES["ClaudeCode"]["url"] = (
+            executor_manager_url + "/executor-manager"
+        )
+        self.EXECUTION_SERVICES["Agno"]["url"] = (
+            executor_manager_url + "/executor-manager"
+        )
+        self.EXECUTION_SERVICES["Dify"]["url"] = (
+            executor_manager_url + "/executor-manager"
+        )
 
     def route(
         self,
@@ -139,15 +141,16 @@ class ExecutionRouter:
                 return ExecutionTarget(
                     mode=mode,
                     url=service_config["url"],
-                    endpoint=service_config.get("endpoint", "/v1/execute"),
                 )
 
         # Priority 3: Default configuration
-        default_url = getattr(settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001")
+        default_url = (
+            getattr(settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001")
+            + "/executor-manager"
+        )
         return ExecutionTarget(
             mode=CommunicationMode.HTTP_CALLBACK,
             url=default_url,
-            endpoint="/v1/execute",
         )
 
     def _get_shell_type(self, request: ExecutionRequest) -> str:
