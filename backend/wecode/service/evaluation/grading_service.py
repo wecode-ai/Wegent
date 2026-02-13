@@ -57,6 +57,10 @@ logger = logging.getLogger(__name__)
 # - Language preferences
 GRADING_PROMPT_TEMPLATE = """请根据以下信息进行评分：
 
+## 答题人信息
+
+**答题人：** {respondent_name}
+
 ## 题目
 
 {question_content}
@@ -83,7 +87,7 @@ GRADING_PROMPT_TEMPLATE = """请根据以下信息进行评分：
 
 ---
 
-请根据评分标准对学生作答进行评分，并生成 Markdown 格式的评分报告。
+请根据评分标准对学生作答进行评分，并生成 Markdown 格式的评分报告。报告中请注明答题人姓名。
 """
 
 
@@ -267,6 +271,7 @@ class GradingService:
         Build the grading prompt for a task.
 
         The prompt includes:
+        - Respondent info (name)
         - Question content (text, URL, attachments)
         - Grading criteria (text, URL, attachments)
         - Student answer (text, URL, attachments)
@@ -279,6 +284,8 @@ class GradingService:
         Returns:
             Formatted prompt string
         """
+        from app.models.user import User
+
         # Get question version
         question_version = (
             db.query(EvalQuestionVersion)
@@ -297,6 +304,10 @@ class GradingService:
 
         if not answer:
             raise ValueError(f"Answer {task.answer_id} not found")
+
+        # Get respondent user info
+        respondent = db.query(User).filter(User.id == task.respondent_id).first()
+        respondent_name = respondent.username if respondent else f"User #{task.respondent_id}"
 
         # Format question content
         question_content = question_version.content_data.get("text", "") or ""
@@ -323,6 +334,7 @@ class GradingService:
         )
 
         return GRADING_PROMPT_TEMPLATE.format(
+            respondent_name=respondent_name,
             question_content=question_content,
             question_url=question_url,
             question_attachments=question_attachments,
