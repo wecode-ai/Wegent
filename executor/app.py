@@ -127,21 +127,39 @@ async def lifespan(app: FastAPI):
     # This allows sandbox containers to download skills at startup
     try:
         # Use env_reader to support both env vars and file-based config
-        from executor.config.env_reader import get_auth_token, get_task_id
+        from executor.config.env_reader import (
+            get_auth_token,
+            get_task_id,
+            get_task_info,
+        )
 
         auth_token = get_auth_token()
         task_id = get_task_id()
+
+        # If AUTH_TOKEN env var is not set, try to extract from TASK_INFO
+        # This handles non-sandbox tasks where auth_token is in the task data
+        if not auth_token:
+            task_info = get_task_info()
+            if task_info:
+                # Support both OpenAI format (metadata.auth_token) and legacy format (auth_token)
+                metadata = task_info.get("metadata", {})
+                auth_token = metadata.get("auth_token") or task_info.get("auth_token")
+                if not task_id:
+                    task_id = str(
+                        metadata.get("task_id") or task_info.get("task_id", "")
+                    )
+
         if auth_token and task_id:
             logger.info(
-                f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}..."
+                f"AUTH_TOKEN found, initializing Claude Code for task {task_id}..."
             )
             _initialize_sandbox_claude(auth_token, task_id)
 
             # Pre-download all attachments for the task
-            logger.info(f"Pre-downloading attachments for sandbox {task_id}...")
+            logger.info(f"Pre-downloading attachments for task {task_id}...")
             _predownload_task_attachments(auth_token, task_id)
     except Exception as e:
-        logger.warning(f"Failed to initialize Claude Code for sandbox: {e}")
+        logger.warning(f"Failed to initialize Claude Code for task: {e}")
 
     yield  # Application runs here
 
@@ -274,8 +292,8 @@ async def _maybe_initialize_skills_from_env() -> None:
     """Initialize skills on first HTTP request (for preload sandbox mode).
 
     This function is called by HTTP middleware when the first request arrives.
-    It reads auth_token and task_id from environment variables or Downward API files,
-    then downloads and deploys skills.
+    It reads auth_token and task_id from environment variables, Downward API files,
+    or TASK_INFO, then downloads and deploys skills.
 
     Only applies to sandbox mode. For non-sandbox tasks, skills are downloaded
     automatically during agent initialization.
@@ -293,11 +311,21 @@ async def _maybe_initialize_skills_from_env() -> None:
         _skills_initialized = True  # Preload mode not enabled, skip
         return
 
-    # Read auth_token and task_id from env vars or Downward API files
-    from executor.config.env_reader import get_auth_token, get_task_id
+    # Read auth_token and task_id from env vars, Downward API files, or TASK_INFO
+    from executor.config.env_reader import get_auth_token, get_task_id, get_task_info
 
     auth_token = get_auth_token()
     task_id = get_task_id()
+
+    # If AUTH_TOKEN env var is not set, try to extract from TASK_INFO
+    if not auth_token:
+        task_info = get_task_info()
+        if task_info:
+            # Support both OpenAI format (metadata.auth_token) and legacy format (auth_token)
+            metadata = task_info.get("metadata", {})
+            auth_token = metadata.get("auth_token") or task_info.get("auth_token")
+            if not task_id:
+                task_id = str(metadata.get("task_id") or task_info.get("task_id", ""))
 
     if not auth_token or not task_id:
         logger.debug(
