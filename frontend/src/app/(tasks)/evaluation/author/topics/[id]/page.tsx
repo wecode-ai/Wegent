@@ -8,7 +8,6 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import {
   ArrowLeft,
-  Trash2,
   Plus,
   Users,
   FileCheck,
@@ -22,22 +21,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
 import {
   getAuthorTopic,
-  deleteAuthorTopic,
   publishAuthorTopic,
   getAuthorTopicStatistics,
   listAuthorQuestions,
@@ -47,8 +34,6 @@ import {
   TopicStatus,
   TopicVisibility,
   QuestionStatus,
-  getStatusLabel,
-  getVisibilityLabel,
 } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -64,7 +49,6 @@ function TopicDetailContent() {
   const [statistics, setStatistics] = useState<TopicStatistics | null>(null)
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState(false)
-  const [deleting, setDeleting] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -100,7 +84,7 @@ function TopicDetailContent() {
     try {
       await publishAuthorTopic(topicId)
       toast({
-        title: t('topics.published_success', 'Topic published successfully'),
+        title: t('topics.published_success'),
         description: '',
       })
       loadData()
@@ -115,24 +99,23 @@ function TopicDetailContent() {
     }
   }
 
-  const handleDelete = async () => {
-    setDeleting(true)
-    try {
-      await deleteAuthorTopic(topicId)
-      toast({
-        title: t('topics.deleted_success', 'Topic deleted successfully'),
-        description: '',
-      })
-      router.push('/evaluation/author')
-    } catch (_error) {
-      toast({
-        title: t('errors.delete_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setDeleting(false)
+  // Helper function to get visibility label with i18n
+  const getVisibilityText = (visibility: string) => {
+    if (visibility === TopicVisibility.PUBLIC) {
+      return t('topics.public')
     }
+    return t('topics.private')
+  }
+
+  // Helper function to get status label with i18n
+  const getStatusText = (status: number, type: 'topic' | 'question') => {
+    if (type === 'topic' || type === 'question') {
+      if (status === TopicStatus.DRAFT) {
+        return t('common.draft')
+      }
+      return t('topics.published')
+    }
+    return ''
   }
 
   if (loading) {
@@ -162,7 +145,7 @@ function TopicDetailContent() {
       <div className="mb-6 flex items-center justify-between">
         <Button variant="ghost" onClick={() => router.push('/evaluation/author')}>
           <ArrowLeft className="mr-2 h-4 w-4" />
-          {t('actions.back', 'Back to Topics')}
+          {t('actions.back')}
         </Button>
         <div className="flex gap-2">
           <Button
@@ -170,37 +153,8 @@ function TopicDetailContent() {
             onClick={() => router.push(`/evaluation/author/topics/${topicId}/edit`)}
           >
             <Edit className="mr-2 h-4 w-4" />
-            {t('actions.edit', 'Edit')}
+            {t('actions.edit')}
           </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" className="text-destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                {t('actions.delete', 'Delete')}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t('topics.delete_title', 'Delete Topic')}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t(
-                    'topics.delete_description',
-                    'Are you sure you want to delete this topic? This action cannot be undone.'
-                  )}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t('actions.cancel', 'Cancel')}</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  {deleting ? '...' : t('actions.delete', 'Delete')}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
         </div>
       </div>
 
@@ -209,17 +163,17 @@ function TopicDetailContent() {
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-2xl font-semibold text-text-primary">{topic.name}</h1>
           <Badge variant={topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'}>
-            {getVisibilityLabel(topic.visibility)}
+            {getVisibilityText(topic.visibility)}
           </Badge>
           <Badge variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}>
-            {getStatusLabel(topic.status, 'topic')}
+            {getStatusText(topic.status, 'topic')}
           </Badge>
         </div>
         {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
         {publishedQuestions.length > 0 && (
           <Button variant="primary" onClick={handlePublish} disabled={publishing}>
             <Send className="mr-2 h-4 w-4" />
-            {publishing ? '...' : t('topics.publish', 'Publish Topic')}
+            {publishing ? '...' : t('topics.publish')}
           </Button>
         )}
       </div>
@@ -229,7 +183,7 @@ function TopicDetailContent() {
         <div className="mb-8 grid gap-4 md:grid-cols-4">
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-text-secondary">{t('questions.title', 'Questions')}</div>
+              <div className="text-sm text-text-secondary">{t('questions.title')}</div>
               <div className="text-2xl font-semibold">
                 {statistics.published_questions} / {statistics.total_questions}
               </div>
@@ -238,20 +192,20 @@ function TopicDetailContent() {
           <Card>
             <CardContent className="p-4">
               <div className="text-sm text-text-secondary">
-                {t('answers.respondents', 'Respondents')}
+                {t('answers.respondents')}
               </div>
               <div className="text-2xl font-semibold">{statistics.total_respondents}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-text-secondary">{t('answers.title', 'Answers')}</div>
+              <div className="text-sm text-text-secondary">{t('answers.title')}</div>
               <div className="text-2xl font-semibold">{statistics.total_answers}</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-text-secondary">{t('grading.title', 'Grading')}</div>
+              <div className="text-sm text-text-secondary">{t('grading.title')}</div>
               <div className="text-2xl font-semibold">
                 {statistics.grading_published} / {statistics.grading_completed}
               </div>
@@ -265,31 +219,31 @@ function TopicDetailContent() {
         <TabsList>
           <TabsTrigger value="questions">
             <FileCheck className="mr-2 h-4 w-4" />
-            {t('questions.title', 'Questions')} ({questions.length})
+            {t('questions.title')} ({questions.length})
           </TabsTrigger>
           <TabsTrigger value="permissions">
             <Users className="mr-2 h-4 w-4" />
-            {t('permissions.title', 'Permissions')}
+            {t('permissions.title')}
           </TabsTrigger>
           <TabsTrigger value="grading">
             <BarChart3 className="mr-2 h-4 w-4" />
-            {t('grading.title', 'Grading')}
+            {t('grading.title')}
           </TabsTrigger>
           <TabsTrigger value="versions">
             <History className="mr-2 h-4 w-4" />
-            {t('topics.versions', 'Versions')}
+            {t('topics.versions')}
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="questions" className="mt-6">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-medium">{t('questions.title', 'Questions')}</h2>
+            <h2 className="text-lg font-medium">{t('questions.title')}</h2>
             <Button
               variant="outline"
               onClick={() => router.push(`/evaluation/author/topics/${topicId}/questions/new`)}
             >
               <Plus className="mr-2 h-4 w-4" />
-              {t('questions.add', 'Add Question')}
+              {t('questions.add')}
             </Button>
           </div>
 
@@ -297,7 +251,7 @@ function TopicDetailContent() {
             <Card>
               <CardContent className="py-8 text-center">
                 <p className="text-text-secondary">
-                  {t('questions.no_questions', 'No questions yet')}
+                  {t('questions.no_questions')}
                 </p>
                 <Button
                   variant="outline"
@@ -305,7 +259,7 @@ function TopicDetailContent() {
                   onClick={() => router.push(`/evaluation/author/topics/${topicId}/questions/new`)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  {t('questions.create_first', 'Create First Question')}
+                  {t('questions.create_first')}
                 </Button>
               </CardContent>
             </Card>
@@ -326,13 +280,15 @@ function TopicDetailContent() {
                       </span>
                       <div>
                         <h3 className="font-medium">{question.title}</h3>
-                        <span className="text-xs text-text-muted">{question.content_type}</span>
+                        <span className="text-xs text-text-muted">
+                          {t(`questions.content_types.${question.content_type}`)}
+                        </span>
                       </div>
                     </div>
                     <Badge
                       variant={question.status === QuestionStatus.PUBLISHED ? 'success' : 'info'}
                     >
-                      {getStatusLabel(question.status, 'question')}
+                      {getStatusText(question.status, 'question')}
                     </Badge>
                   </CardContent>
                 </Card>
@@ -344,18 +300,18 @@ function TopicDetailContent() {
         <TabsContent value="permissions" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>{t('permissions.management', 'Permission Management')}</CardTitle>
+              <CardTitle>{t('permissions.management')}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="mb-4 text-text-secondary">
-                {t('permissions.description', 'Manage who can view, answer, and grade your topic.')}
+                {t('permissions.description')}
               </p>
               <Button
                 variant="primary"
                 onClick={() => router.push(`/evaluation/author/topics/${topicId}/permissions`)}
               >
                 <Users className="mr-2 h-4 w-4" />
-                {t('permissions.manage', 'Manage Permissions')}
+                {t('permissions.manage')}
               </Button>
             </CardContent>
           </Card>
@@ -364,18 +320,18 @@ function TopicDetailContent() {
         <TabsContent value="grading" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>{t('grading.tasks', 'Grading Tasks')}</CardTitle>
+              <CardTitle>{t('grading.tasks')}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="mb-4 text-text-secondary">
-                {t('grading.description', 'View and manage AI grading tasks for this topic.')}
+                {t('grading.description')}
               </p>
               <Button
                 variant="primary"
-                onClick={() => router.push(`/evaluation/topics/${topicId}/grading`)}
+                onClick={() => router.push(`/evaluation/grader/topics/${topicId}`)}
               >
                 <BarChart3 className="mr-2 h-4 w-4" />
-                {t('grading.view_tasks', 'View Grading Tasks')}
+                {t('grading.view_tasks')}
               </Button>
             </CardContent>
           </Card>
@@ -384,21 +340,18 @@ function TopicDetailContent() {
         <TabsContent value="versions" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>{t('topics.version_history', 'Version History')}</CardTitle>
+              <CardTitle>{t('topics.version_history')}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="mb-4 text-text-secondary">
-                {t(
-                  'topics.version_description',
-                  'View published versions of this topic and their question snapshots.'
-                )}
+                {t('topics.version_description')}
               </p>
               <Button
                 variant="primary"
                 onClick={() => router.push(`/evaluation/author/topics/${topicId}/versions`)}
               >
                 <History className="mr-2 h-4 w-4" />
-                {t('topics.view_versions', 'View Versions')}
+                {t('topics.view_versions')}
               </Button>
             </CardContent>
           </Card>
