@@ -796,9 +796,10 @@ def retry_grader_task(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Retry a failed grading task.
+    Retry a failed or stuck grading task.
 
-    The task must be in FAILED status.
+    The task must be in FAILED or RUNNING (stuck) status.
+    For RUNNING tasks, this will reset and re-execute.
     """
     topic_service = get_topic_service()
     question_service = get_question_service()
@@ -812,10 +813,11 @@ def retry_grader_task(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.FAILED:
+    # Allow retry for both FAILED and RUNNING (stuck) tasks
+    if task.status not in [GradingTaskStatus.FAILED, GradingTaskStatus.RUNNING]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only failed tasks can be retried",
+            detail="Only failed or running (stuck) tasks can be retried",
         )
 
     question = question_service.get(db, task.question_id)

@@ -509,7 +509,8 @@ function GraderTasksContent() {
                             <Play className="h-4 w-4" />
                           </Button>
                         )}
-                        {task.status === GradingTaskStatus.FAILED && (
+                        {(task.status === GradingTaskStatus.FAILED ||
+                          task.status === GradingTaskStatus.RUNNING) && (
                           <Button
                             variant="outline"
                             size="sm"
