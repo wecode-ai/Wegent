@@ -276,8 +276,11 @@ export async function checkVersionUpdate(questionId: number): Promise<VersionChe
   return fetchJson<VersionCheck>(getEvaluationUrl(`/questions/${questionId}/version-check`))
 }
 
+/**
+ * @deprecated Use respondentGetProgress from evaluation-respondent.ts instead
+ */
 export async function getMyProgress(topicId: number): Promise<RespondentProgress> {
-  return fetchJson<RespondentProgress>(getEvaluationUrl(`/topics/${topicId}/my-progress`))
+  return fetchJson<RespondentProgress>(getEvaluationUrl(`/respondent/topics/${topicId}/progress`))
 }
 
 // ============================================================================

@@ -32,7 +32,7 @@ import {
 import type { Topic, GradingConfig } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { teamApis } from '@/apis/team'
-import type { Team } from '@/types/task'
+import type { Team } from '@/types/api'
 
 const TRIGGER_CONDITIONS = {
   ON_SUBMIT: 'on_submit',

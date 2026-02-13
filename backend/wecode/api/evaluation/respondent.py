@@ -36,6 +36,7 @@ from wecode.schemas.evaluation import (
     GradingTaskListResponse,
     QuestionInDB,
     QuestionListResponse,
+    RespondentProgress,
     TopicInDB,
     TopicListResponse,
 )
@@ -154,6 +155,88 @@ def get_topic_detail(
         updated_at=topic.updated_at,
         is_active=topic.is_active,
         description=(topic.extra_data or {}).get("description"),
+    )
+
+
+@router.get("/topics/{topic_id}/progress", response_model=RespondentProgress)
+def get_my_progress(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get current user's progress for a topic.
+
+    Returns:
+    - Total questions in the topic
+    - Number of questions answered by user
+    - Number of published grading reports for user
+    - Completion rate (0-1)
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    answer_service = get_answer_service()
+    grading_service = get_grading_service()
+    permission_service = get_permission_service()
+
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    if not permission_service.can_view_topic(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this topic",
+        )
+
+    # Get total published questions
+    questions, total_questions = question_service.list_questions(
+        db=db,
+        topic_id=topic_id,
+        page=1,
+        limit=1000,  # Get all questions
+        status=QuestionStatus.PUBLISHED,
+    )
+    question_ids = [q.id for q in questions]
+
+    # Count answered questions
+    from wecode.models.evaluation import EvalAnswer
+
+    answered_count = 0
+    if question_ids:
+        answered_count = (
+            db.query(EvalAnswer.question_id)
+            .filter(
+                EvalAnswer.question_id.in_(question_ids),
+                EvalAnswer.respondent_id == current_user.id,
+                EvalAnswer.is_latest == True,
+            )
+            .distinct()
+            .count()
+        )
+
+    # Count published reports for this user
+    published_reports, _ = grading_service.list_by_respondent(
+        db=db,
+        respondent_id=current_user.id,
+        topic_id=topic_id,
+        status=GradingTaskStatus.PUBLISHED,
+        page=1,
+        limit=1000,
+    )
+    published_count = len(published_reports)
+
+    # Calculate completion rate
+    completion_rate = answered_count / total_questions if total_questions > 0 else 0.0
+
+    return RespondentProgress(
+        total_questions=total_questions,
+        answered_questions=answered_count,
+        published_reports=published_count,
+        completion_rate=completion_rate,
     )
 
 

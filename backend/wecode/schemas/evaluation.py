@@ -443,3 +443,12 @@ class TopicStatistics(BaseModel):
     grading_pending: int = 0
     grading_completed: int = 0
     grading_published: int = 0
+
+
+class RespondentProgress(BaseModel):
+    """Progress statistics for a respondent in a topic."""
+
+    total_questions: int = Field(0, description="Total number of published questions")
+    answered_questions: int = Field(0, description="Number of questions answered")
+    published_reports: int = Field(0, description="Number of published grading reports")
+    completion_rate: float = Field(0.0, description="Completion rate (0-1)")

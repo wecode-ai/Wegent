@@ -14,7 +14,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Progress } from '@/components/ui/progress'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
-import { respondentGetTopic, respondentListQuestions, getMyProgress } from '@wecode/api/evaluation'
+import { respondentGetTopic, respondentListQuestions } from '@wecode/api/evaluation'
+import { respondentGetProgress } from '@wecode/api/evaluation-respondent'
 import type { Topic, Question, RespondentProgress } from '@wecode/types/evaluation'
 import { TopicVisibility, getVisibilityLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -37,7 +38,7 @@ function RespondentTopicDetailContent() {
       const [topicData, questionsData, progressData] = await Promise.all([
         respondentGetTopic(topicId),
         respondentListQuestions(topicId, { limit: 100 }),
-        getMyProgress(topicId),
+        respondentGetProgress(topicId),
       ])
       setTopic(topicData)
       setQuestions(questionsData.items)

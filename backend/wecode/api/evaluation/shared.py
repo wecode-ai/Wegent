@@ -11,6 +11,7 @@ Provides endpoints accessible to all roles:
 """
 
 import logging
+import os
 import re
 from enum import Enum
 from typing import Optional
@@ -266,16 +267,20 @@ def upload_file(
 # ============================================================================
 
 
-# Path patterns for permission verification
+# Get the S3 prefix from environment (same as storage service)
+_EVAL_S3_PREFIX = os.getenv("EVAL_S3_PREFIX", "evaluation")
+
+# Path patterns for permission verification (prefix can vary, e.g., evaluation, evaluation_dev)
+# Pattern format: {prefix}/questions/{topic_id}/{question_id}/...
 PATH_PATTERNS = {
-    # evaluation/questions/{topic_id}/{question_id}/...
-    "question": re.compile(r"^evaluation/questions/(\d+)/(\d+)/"),
-    # evaluation/criteria/{topic_id}/{question_id}/...
-    "criteria": re.compile(r"^evaluation/criteria/(\d+)/(\d+)/"),
-    # evaluation/answers/{user_id}/{topic_id}/{question_id}/...
-    "answer": re.compile(r"^evaluation/answers/(\d+)/(\d+)/(\d+)/"),
-    # evaluation/reports/{user_id}/{topic_id}/{question_id}/...
-    "report": re.compile(r"^evaluation/reports/(\d+)/(\d+)/(\d+)/"),
+    # {prefix}/questions/{topic_id}/{question_id}/...
+    "question": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/questions/(\d+)/(\d+)/"),
+    # {prefix}/criteria/{topic_id}/{question_id}/...
+    "criteria": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/criteria/(\d+)/(\d+)/"),
+    # {prefix}/answers/{user_id}/{topic_id}/{question_id}/...
+    "answer": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/answers/(\d+)/(\d+)/(\d+)/"),
+    # {prefix}/reports/{user_id}/{topic_id}/{question_id}/...
+    "report": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/reports/(\d+)/(\d+)/(\d+)/"),
 }
 
 
@@ -289,8 +294,8 @@ def download_file(
     Get a presigned URL for file download.
 
     Permission is verified based on the S3 path pattern:
-    - Question content: Topic creator or grader can download
-    - Criteria: Topic creator or grader can download
+    - Question content: Anyone who can view the topic can download
+    - Criteria: Topic creator or grader can download (not respondents)
     - Answer: Topic creator, grader, or the answer owner can download
     - Report: Topic creator, grader, or the respondent can download
     """
@@ -308,8 +313,9 @@ def download_file(
         topic_id = int(match.group(1))
         topic = topic_service.get(db, topic_id)
         if topic:
-            # Question content: creator or grader can download
-            allowed = permission_service.can_grade(db, topic, current_user.id)
+            # Question content: anyone who can view the topic can download
+            # (creators, graders, and respondents all need to see question content)
+            allowed = permission_service.can_view_topic(db, topic, current_user.id)
 
     # Check criteria pattern
     if not allowed:
@@ -318,8 +324,8 @@ def download_file(
             topic_id = int(match.group(1))
             topic = topic_service.get(db, topic_id)
             if topic:
-                # Criteria: only creator or grader can download
-                allowed = permission_service.can_grade(db, topic, current_user.id)
+                # Criteria: only creator or grader can download (not respondents)
+                allowed = permission_service.can_view_criteria(db, topic, current_user.id)
 
     # Check answer pattern
     if not allowed:
