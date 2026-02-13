@@ -6,9 +6,10 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Send, AlertCircle, File, Download } from 'lucide-react'
+import { ArrowLeft, Send, AlertCircle, File, Download, Link } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -52,6 +53,7 @@ function RespondentQuestionDetailContent() {
   // Answer form state
   const [answerType, setAnswerType] = useState<string>(ContentType.TEXT)
   const [answerText, setAnswerText] = useState('')
+  const [answerUrl, setAnswerUrl] = useState('')
   const [answerAttachments, setAnswerAttachments] = useState<EvalAttachment[]>([])
 
   const loadData = useCallback(async () => {
@@ -86,12 +88,22 @@ function RespondentQuestionDetailContent() {
   const handleSubmitAnswer = async () => {
     // Validate content based on answer type
     const hasText = answerText.trim().length > 0
+    const hasUrl = answerUrl.trim().length > 0
     const hasAttachments = answerAttachments.length > 0
 
     if (answerType === ContentType.TEXT && !hasText) {
       toast({
         title: t('errors.save_failed'),
         description: `${t('answers.content')} is required`,
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (answerType === ContentType.URL && !hasUrl) {
+      toast({
+        title: t('errors.save_failed'),
+        description: `URL is required`,
         variant: 'destructive',
       })
       return
@@ -114,6 +126,9 @@ function RespondentQuestionDetailContent() {
           contentData.text = answerText.trim()
         }
       }
+      if (answerType === ContentType.URL) {
+        contentData.url = answerUrl.trim()
+      }
       if ((answerType === ContentType.ATTACHMENT || answerType === ContentType.MIXED) && hasAttachments) {
         contentData.attachments = answerAttachments
       }
@@ -128,6 +143,7 @@ function RespondentQuestionDetailContent() {
         description: '',
       })
       setAnswerText('')
+      setAnswerUrl('')
       setAnswerAttachments([])
       loadData()
     } catch (_error) {
@@ -274,6 +290,7 @@ function RespondentQuestionDetailContent() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="text">{t('questions.content_types.text')}</SelectItem>
+                <SelectItem value="url">{t('questions.content_types.url')}</SelectItem>
                 <SelectItem value="attachment">{t('questions.content_types.attachment')}</SelectItem>
                 <SelectItem value="mixed">{t('questions.content_types.mixed')}</SelectItem>
               </SelectContent>
@@ -289,6 +306,22 @@ function RespondentQuestionDetailContent() {
                 onChange={e => setAnswerText(e.target.value)}
                 placeholder={t('answers.content_placeholder')}
                 rows={8}
+              />
+            </div>
+          )}
+
+          {answerType === ContentType.URL && (
+            <div className="space-y-2">
+              <Label htmlFor="answerUrl" className="flex items-center gap-2">
+                <Link className="h-4 w-4" />
+                {t('questions.content_types.url')}
+              </Label>
+              <Input
+                id="answerUrl"
+                type="url"
+                value={answerUrl}
+                onChange={e => setAnswerUrl(e.target.value)}
+                placeholder="https://..."
               />
             </div>
           )}
@@ -338,6 +371,19 @@ function RespondentQuestionDetailContent() {
                   </div>
                   {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
                     <p className="whitespace-pre-wrap">{answer.content_data.text}</p>
+                  )}
+                  {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
+                    <div className="flex items-center gap-2">
+                      <Link className="h-4 w-4 text-primary" />
+                      <a
+                        href={answer.content_data.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        {answer.content_data.url}
+                      </a>
+                    </div>
                   )}
                   {renderAttachmentList(answer.content_data?.attachments as EvalAttachment[])}
                 </div>

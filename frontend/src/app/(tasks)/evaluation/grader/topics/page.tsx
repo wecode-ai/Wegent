@@ -14,8 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
-import { listGraderTopics } from '@wecode/api/evaluation'
-import type { Topic } from '@wecode/types/evaluation'
+import { graderListTopics, type GraderTopicItem } from '@wecode/api/evaluation-grader'
 import { TopicVisibility, getVisibilityLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -23,7 +22,7 @@ function GraderTopicsContent() {
   const router = useRouter()
   const { toast } = useToast()
   const { t } = useTranslation('evaluation')
-  const [topics, setTopics] = useState<Topic[]>([])
+  const [topics, setTopics] = useState<GraderTopicItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
@@ -32,7 +31,7 @@ function GraderTopicsContent() {
   const loadTopics = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await listGraderTopics({
+      const response = await graderListTopics({
         page,
         limit: 20,
         search: search || undefined,

@@ -44,6 +44,7 @@ export async function getGraderDashboard(): Promise<GraderDashboardStats> {
 export interface GraderTopicItem {
   id: number
   name: string
+  description?: string
   creator_id: number
   visibility: string
   status: number
@@ -51,6 +52,7 @@ export interface GraderTopicItem {
   created_at: string
   updated_at: string
   // Statistics
+  question_count?: number
   total_answers: number
   pending_tasks: number
   completed_tasks: number
