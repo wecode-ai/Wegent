@@ -418,15 +418,6 @@ class TaskOperationsMixin:
         db.commit()
         db.refresh(task)
 
-        # Handle evaluation grading task callback when Task completes
-        if "status" in update_data and update_data["status"] in [
-            "COMPLETED",
-            "FAILED",
-        ]:
-            self._handle_evaluation_task_completion(
-                db, task_id, task_crd, update_data["status"]
-            )
-
         return convert_to_task_dict(task, db, user_id)
 
     def _update_task_status(
@@ -508,108 +499,6 @@ class TaskOperationsMixin:
 
             workspace.json = workspace_crd.model_dump()
             flag_modified(workspace, "json")
-
-    def _handle_evaluation_task_completion(
-        self,
-        db: Session,
-        task_id: int,
-        task_crd: Task,
-        new_status: str,
-    ) -> None:
-        """
-        Handle evaluation grading task completion callback.
-
-        When a Wegent Task completes or fails, check if it's an evaluation grading task
-        and update the associated EvalGradingTask accordingly.
-
-        Args:
-            db: Database session
-            task_id: Wegent Task ID
-            task_crd: Parsed Task CRD
-            new_status: New task status (COMPLETED or FAILED)
-        """
-        # Check if this is an evaluation task by checking the source label
-        task_labels = task_crd.metadata.labels or {}
-        if task_labels.get("source") != "evaluation":
-            return
-
-        try:
-            # Import evaluation models and service (lazy import to avoid circular dependency)
-            from wecode.models.evaluation import EvalGradingTask, GradingTaskStatus
-            from wecode.service.evaluation import get_grading_service
-
-            # Find the associated grading task
-            grading_task = (
-                db.query(EvalGradingTask)
-                .filter(EvalGradingTask.task_id == task_id)
-                .first()
-            )
-
-            if not grading_task:
-                logger.warning(
-                    f"[Evaluation] No grading task found for Wegent Task {task_id}"
-                )
-                return
-
-            # Skip if grading task is already in a final state
-            if grading_task.status in [
-                GradingTaskStatus.COMPLETED,
-                GradingTaskStatus.FAILED,
-                GradingTaskStatus.PUBLISHED,
-            ]:
-                logger.info(
-                    f"[Evaluation] Grading task {grading_task.id} already in final state "
-                    f"{grading_task.status}, skipping callback"
-                )
-                return
-
-            grading_service = get_grading_service()
-
-            if new_status == "COMPLETED":
-                # Extract report content from task result
-                result = task_crd.status.result if task_crd.status else {}
-                report_content = ""
-                if result:
-                    # Result structure: {"value": "report content..."}
-                    report_content = result.get("value", "")
-
-                if report_content:
-                    grading_service.complete(db, grading_task, report_content)
-                    logger.info(
-                        f"[Evaluation] Completed grading task {grading_task.id} from "
-                        f"Wegent Task {task_id}"
-                    )
-                else:
-                    # Task completed but no report content - treat as failed
-                    grading_service.fail(
-                        db, grading_task, "Grading completed but no report content generated"
-                    )
-                    logger.warning(
-                        f"[Evaluation] Grading task {grading_task.id} completed without "
-                        f"report content, marked as failed"
-                    )
-
-            elif new_status == "FAILED":
-                error_message = (
-                    task_crd.status.errorMessage
-                    if task_crd.status and task_crd.status.errorMessage
-                    else "Wegent Task execution failed"
-                )
-                grading_service.fail(db, grading_task, error_message)
-                logger.info(
-                    f"[Evaluation] Failed grading task {grading_task.id} from "
-                    f"Wegent Task {task_id}: {error_message}"
-                )
-
-            db.commit()
-
-        except Exception as e:
-            logger.error(
-                f"[Evaluation] Error handling evaluation task completion for "
-                f"Wegent Task {task_id}: {e}",
-                exc_info=True,
-            )
-            # Don't re-raise - we don't want to break the main task update flow
 
     def delete_task(self, db: Session, *, task_id: int, user_id: int) -> None:
         """
@@ -1353,3 +1242,81 @@ class TaskOperationsMixin:
                     )
             except Exception as e:
                 logger.warning("[delete_task] Failed to schedule close-session: %s", e)
+
+    def set_preserve_executor(
+        self, db: Session, *, task_id: int, user_id: int, preserve: bool
+    ) -> Dict[str, Any]:
+        """
+        Set or cancel the preserve executor flag for a task.
+
+        When preserve=True, the executor pod for this task will not be cleaned up
+        by the cleanup_stale_executors job even after the task is completed.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID requesting the change
+            preserve: True to preserve executor, False to allow normal cleanup
+
+        Returns:
+            Dict with task_id and preserve_executor status
+
+        Raises:
+            HTTPException: If task not found or user doesn't have permission
+        """
+        from app.services.task_member_service import task_member_service
+
+        # Check if user is a member of this task (owner or group member)
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(
+                status_code=404, detail="Task not found or no permission"
+            )
+
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        task_crd = Task.model_validate(task.json)
+
+        # Initialize labels if not exists
+        if task_crd.metadata.labels is None:
+            task_crd.metadata.labels = {}
+
+        # Set the preserveExecutor label (use "true"/"false" for consistency with autoDeleteExecutor)
+        if preserve:
+            task_crd.metadata.labels["preserveExecutor"] = "true"
+            logger.info(
+                f"[set_preserve_executor] User {user_id} set preserveExecutor=true for task {task_id}"
+            )
+        else:
+            task_crd.metadata.labels["preserveExecutor"] = "false"
+            logger.info(
+                f"[set_preserve_executor] User {user_id} set preserveExecutor=false for task {task_id}"
+            )
+
+        # Save changes
+        task.json = task_crd.model_dump(mode="json", exclude_none=True)
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
+
+        db.commit()
+        db.refresh(task)
+
+        return {
+            "task_id": task_id,
+            "preserve_executor": preserve,
+            "message": (
+                "Executor will be preserved for this task"
+                if preserve
+                else "Executor cleanup enabled for this task"
+            ),
+        }
