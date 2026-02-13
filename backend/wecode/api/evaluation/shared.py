@@ -267,21 +267,28 @@ def upload_file(
 # ============================================================================
 
 
-# Get the S3 prefix from environment (same as storage service)
-_EVAL_S3_PREFIX = os.getenv("EVAL_S3_PREFIX", "evaluation")
+def _get_path_patterns() -> dict:
+    """
+    Get path patterns for permission verification.
 
-# Path patterns for permission verification (prefix can vary, e.g., evaluation, evaluation_dev)
-# Pattern format: {prefix}/questions/{topic_id}/{question_id}/...
-PATH_PATTERNS = {
-    # {prefix}/questions/{topic_id}/{question_id}/...
-    "question": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/questions/(\d+)/(\d+)/"),
-    # {prefix}/criteria/{topic_id}/{question_id}/...
-    "criteria": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/criteria/(\d+)/(\d+)/"),
-    # {prefix}/answers/{user_id}/{topic_id}/{question_id}/...
-    "answer": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/answers/(\d+)/(\d+)/(\d+)/"),
-    # {prefix}/reports/{user_id}/{topic_id}/{question_id}/...
-    "report": re.compile(rf"^{re.escape(_EVAL_S3_PREFIX)}/reports/(\d+)/(\d+)/(\d+)/"),
-}
+    This function is called at runtime to ensure the correct S3 prefix is used,
+    even if the environment variable is set after module load.
+
+    Pattern format: {prefix}/questions/{topic_id}/{question_id}/...
+    """
+    # Get the S3 prefix from environment (same as storage service)
+    prefix = os.getenv("EVAL_S3_PREFIX", "evaluation")
+    escaped_prefix = re.escape(prefix)
+    return {
+        # {prefix}/questions/{topic_id}/{question_id}/...
+        "question": re.compile(rf"^{escaped_prefix}/questions/(\d+)/(\d+)/"),
+        # {prefix}/criteria/{topic_id}/{question_id}/...
+        "criteria": re.compile(rf"^{escaped_prefix}/criteria/(\d+)/(\d+)/"),
+        # {prefix}/answers/{user_id}/{topic_id}/{question_id}/...
+        "answer": re.compile(rf"^{escaped_prefix}/answers/(\d+)/(\d+)/(\d+)/"),
+        # {prefix}/reports/{user_id}/{topic_id}/{question_id}/...
+        "report": re.compile(rf"^{escaped_prefix}/reports/(\d+)/(\d+)/(\d+)/"),
+    }
 
 
 @router.get("/files/download", response_model=FileDownloadResponse)
@@ -303,23 +310,35 @@ def download_file(
     permission_service = get_permission_service()
     storage_service = get_storage_service()
 
+    # Get path patterns at runtime to ensure correct S3 prefix
+    path_patterns = _get_path_patterns()
+    logger.debug(f"Download file request: s3_path={s3_path}, user_id={current_user.id}")
+    logger.debug(f"S3 prefix from env: {os.getenv('EVAL_S3_PREFIX', 'evaluation')}")
+
     # Parse path to determine type and extract IDs
     topic_id = None
     allowed = False
 
     # Check question content pattern
-    match = PATH_PATTERNS["question"].match(s3_path)
+    match = path_patterns["question"].match(s3_path)
     if match:
         topic_id = int(match.group(1))
+        logger.debug(f"Matched question pattern: topic_id={topic_id}")
         topic = topic_service.get(db, topic_id)
         if topic:
             # Question content: anyone who can view the topic can download
             # (creators, graders, and respondents all need to see question content)
             allowed = permission_service.can_view_topic(db, topic, current_user.id)
+            logger.debug(
+                f"can_view_topic check: topic.creator_id={topic.creator_id}, "
+                f"user_id={current_user.id}, allowed={allowed}"
+            )
+        else:
+            logger.debug(f"Topic not found: topic_id={topic_id}")
 
     # Check criteria pattern
     if not allowed:
-        match = PATH_PATTERNS["criteria"].match(s3_path)
+        match = path_patterns["criteria"].match(s3_path)
         if match:
             topic_id = int(match.group(1))
             topic = topic_service.get(db, topic_id)
@@ -329,7 +348,7 @@ def download_file(
 
     # Check answer pattern
     if not allowed:
-        match = PATH_PATTERNS["answer"].match(s3_path)
+        match = path_patterns["answer"].match(s3_path)
         if match:
             user_id = int(match.group(1))
             topic_id = int(match.group(2))
@@ -343,7 +362,7 @@ def download_file(
 
     # Check report pattern
     if not allowed:
-        match = PATH_PATTERNS["report"].match(s3_path)
+        match = path_patterns["report"].match(s3_path)
         if match:
             respondent_id = int(match.group(1))
             topic_id = int(match.group(2))
