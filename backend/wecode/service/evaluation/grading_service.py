@@ -27,7 +27,7 @@ The report_data JSON field stores versioned report content:
         "attachment": {...},     # Optional: uploaded attachment info
         "published_at": "..."    # Timestamp
     },
-    "content": "..."             # Legacy field for backward compatibility
+    "content": "..."             # Convenience field for quick access
 }
 """
 
@@ -548,7 +548,7 @@ class GradingService:
                 "s3_path": ai_s3_path or "",
                 "created_at": now.isoformat(),
             },
-            # Legacy field for backward compatibility
+            # Convenience field for quick access
             "content": report_content,
         }
 
@@ -644,7 +644,7 @@ class GradingService:
             "attachment": attachment,
             "published_at": now.isoformat(),
         }
-        # Update legacy field
+        # Update convenience field
         report_data["content"] = final_content
 
         task.report_data = report_data
@@ -712,7 +712,7 @@ class GradingService:
             "updated_at": now.isoformat(),
             "reviewer_id": reviewer_id,
         }
-        # Update legacy content field to human-reviewed version
+        # Update convenience content field to human-reviewed version
         report_data["content"] = report_content
 
         task.report_data = report_data

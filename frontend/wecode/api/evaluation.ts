@@ -41,7 +41,7 @@ import type {
   GradingTaskListResponse,
 } from '../types/evaluation'
 
-// Re-export from role-specific modules for backward compatibility
+// Re-export from role-specific modules
 export type { GraderDashboardStats } from './evaluation-grader'
 export { getGraderDashboard } from './evaluation-grader'
 export {
@@ -56,7 +56,7 @@ export {
   // Respondents cannot view any grading status or results
 } from './evaluation-respondent'
 
-// Re-export grader functions with legacy names
+// Re-export grader functions with convenient aliases
 export {
   graderListTopics as listGraderTopics,
   graderGetTopic as getGraderTopic,
@@ -75,7 +75,7 @@ export {
 } from './evaluation-grader'
 
 // ============================================================================
-// Topic API (Shared/Legacy)
+// Topic API (Shared)
 // ============================================================================
 
 export async function listTopics(params: {
@@ -130,7 +130,7 @@ export async function getTopicStatistics(topicId: number): Promise<TopicStatisti
 }
 
 // ============================================================================
-// Question API (Shared/Legacy)
+// Question API (Shared)
 // ============================================================================
 
 export async function listQuestions(
@@ -187,7 +187,7 @@ export async function reorderQuestions(topicId: number, questionIds: number[]): 
 }
 
 // ============================================================================
-// Permission API (Shared/Legacy)
+// Permission API (Shared)
 // ============================================================================
 
 export async function listPermissions(
@@ -238,7 +238,7 @@ export async function getMyRole(topicId: number): Promise<UserRole> {
 }
 
 // ============================================================================
-// Answer API (Shared/Legacy)
+// Answer API (Shared)
 // ============================================================================
 
 export async function submitAnswer(questionId: number, data: AnswerCreate): Promise<Answer> {
@@ -284,7 +284,7 @@ export async function getMyProgress(topicId: number): Promise<RespondentProgress
 }
 
 // ============================================================================
-// Grading Task API (Shared/Legacy)
+// Grading Task API (Shared)
 // ============================================================================
 
 export async function listGradingTasks(

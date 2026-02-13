@@ -193,19 +193,10 @@ class QuestionService:
                 question.content_data = {}
 
             existing_criteria = question.content_data.get("_criteria", {})
-            # Support both old format (dict directly) and new format ({"type": ..., "data": ...})
-            if isinstance(existing_criteria, dict) and "type" in existing_criteria:
-                # New format
-                new_criteria = {
-                    "type": criteria_type if criteria_type is not None else existing_criteria.get("type", "text"),
-                    "data": criteria_data if criteria_data is not None else existing_criteria.get("data", {}),
-                }
-            else:
-                # Old format or empty - migrate to new format
-                new_criteria = {
-                    "type": criteria_type or "text",
-                    "data": criteria_data if criteria_data is not None else existing_criteria,
-                }
+            new_criteria = {
+                "type": criteria_type if criteria_type is not None else existing_criteria.get("type", "text"),
+                "data": criteria_data if criteria_data is not None else existing_criteria.get("data", {}),
+            }
             question.content_data["_criteria"] = new_criteria
 
         if order_index is not None:
@@ -247,15 +238,7 @@ class QuestionService:
         """
         # Extract criteria from content_data
         content_data = dict(question.content_data)
-        raw_criteria = content_data.pop("_criteria", {})
-
-        # Handle both old format (dict directly) and new format ({"type": ..., "data": ...})
-        if isinstance(raw_criteria, dict) and "type" in raw_criteria:
-            # New format - extract data
-            criteria_data = raw_criteria
-        else:
-            # Old format - wrap in new format
-            criteria_data = {"type": "text", "data": raw_criteria}
+        criteria_data = content_data.pop("_criteria", {"type": "text", "data": {}})
 
         # Generate new version
         version = generate_version()

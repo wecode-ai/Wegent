@@ -149,14 +149,8 @@ def _question_to_response(question, include_criteria: bool = True) -> QuestionIn
 
     if include_criteria:
         raw_criteria = (question.content_data or {}).get("_criteria", {})
-        # Handle both old format (dict directly) and new format ({"type": ..., "data": ...})
-        if isinstance(raw_criteria, dict) and "type" in raw_criteria:
-            q_dict["criteria_type"] = raw_criteria.get("type", "text")
-            q_dict["criteria_data"] = raw_criteria.get("data", {})
-        else:
-            # Old format - treat as text type
-            q_dict["criteria_type"] = "text"
-            q_dict["criteria_data"] = raw_criteria
+        q_dict["criteria_type"] = raw_criteria.get("type", "text")
+        q_dict["criteria_data"] = raw_criteria.get("data", {})
 
     return QuestionInDB(**q_dict)
 
@@ -753,17 +747,28 @@ def get_permissions(
         limit=limit,
     )
 
-    items = [
-        PermissionInDB(
-            id=perm.id,
-            topic_id=perm.topic_id,
-            user_id=perm.user_id,
-            role=perm.role,
-            granted_by=perm.granted_by,
-            granted_at=perm.granted_at,
+    # Get user info for all permissions
+    user_ids = [perm.user_id for perm in permissions]
+    users_map = {}
+    if user_ids:
+        users = db.query(User).filter(User.id.in_(user_ids)).all()
+        users_map = {u.id: u for u in users}
+
+    items = []
+    for perm in permissions:
+        user = users_map.get(perm.user_id)
+        items.append(
+            PermissionInDB(
+                id=perm.id,
+                topic_id=perm.topic_id,
+                user_id=perm.user_id,
+                role=perm.role,
+                granted_by=perm.granted_by,
+                granted_at=perm.granted_at,
+                user_name=user.username if user else None,
+                user_email=user.email if user else None,
+            )
         )
-        for perm in permissions
-    ]
 
     return PermissionListResponse(total=total, items=items)
 
@@ -830,17 +835,28 @@ def get_graders(
         limit=limit,
     )
 
-    items = [
-        PermissionInDB(
-            id=perm.id,
-            topic_id=perm.topic_id,
-            user_id=perm.user_id,
-            role=perm.role,
-            granted_by=perm.granted_by,
-            granted_at=perm.granted_at,
+    # Get user info for all permissions
+    user_ids = [perm.user_id for perm in permissions]
+    users_map = {}
+    if user_ids:
+        users = db.query(User).filter(User.id.in_(user_ids)).all()
+        users_map = {u.id: u for u in users}
+
+    items = []
+    for perm in permissions:
+        user = users_map.get(perm.user_id)
+        items.append(
+            PermissionInDB(
+                id=perm.id,
+                topic_id=perm.topic_id,
+                user_id=perm.user_id,
+                role=perm.role,
+                granted_by=perm.granted_by,
+                granted_at=perm.granted_at,
+                user_name=user.username if user else None,
+                user_email=user.email if user else None,
+            )
         )
-        for perm in permissions
-    ]
 
     return PermissionListResponse(total=total, items=items)
 
