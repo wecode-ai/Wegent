@@ -232,6 +232,9 @@ export interface GradingTask {
   team_id: number
   task_id: number
   status: number
+  executor_id?: string
+  attempt_count?: number
+  error_message?: string
   report_data: Record<string, unknown>
   report_s3_path: string
   created_at: string

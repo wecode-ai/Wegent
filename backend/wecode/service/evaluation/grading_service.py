@@ -421,8 +421,10 @@ class GradingService:
             Updated grading task
         """
         task.status = GradingTaskStatus.FAILED
+        task.error_message = error_message[:2000]  # Truncate to field limit
         task.report_data = {"error": error_message}
         task.completed_at = datetime.now()
+        task.attempt_count = task.attempt_count + 1
         db.flush()
 
         logger.info(f"Failed grading task {task.id}: {error_message}")

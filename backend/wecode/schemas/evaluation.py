@@ -327,6 +327,9 @@ class GradingTaskInDB(BaseModel):
     status: int = Field(
         description="Status: 0=pending, 1=running, 2=completed, 3=failed, 4=published"
     )
+    executor_id: Optional[str] = Field(None, description="Executor instance ID")
+    attempt_count: Optional[int] = Field(0, description="Execution attempt count")
+    error_message: Optional[str] = Field(None, description="Error message when failed")
     report_data: Dict[str, Any]
     report_s3_path: str
     created_at: datetime

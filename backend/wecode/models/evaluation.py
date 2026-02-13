@@ -484,6 +484,24 @@ class EvalGradingTask(Base):
         server_default="0",
         comment="Status: 0=pending, 1=running, 2=completed, 3=failed, 4=published",
     )
+    executor_id = Column(
+        String(64),
+        nullable=False,
+        server_default="",
+        comment="Executor instance ID for CAS protection",
+    )
+    attempt_count = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        comment="Execution attempt count for retry logic",
+    )
+    error_message = Column(
+        String(2000),
+        nullable=False,
+        server_default="",
+        comment="Error message when failed",
+    )
     report_data = Column(
         JSON, nullable=False, default=dict, comment="Grading report data"
     )
@@ -524,6 +542,7 @@ class EvalGradingTask(Base):
         Index("idx_wecode_eval_grading_tasks_respondent", "respondent_id"),
         Index("idx_wecode_eval_grading_tasks_status", "status"),
         Index("idx_wecode_eval_grading_tasks_task", "task_id"),
+        Index("idx_wecode_eval_grading_tasks_grader", "grader_id"),
         {"mysql_charset": "utf8mb4"},
     )
 
