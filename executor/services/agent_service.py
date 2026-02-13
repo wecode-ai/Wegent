@@ -7,6 +7,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -292,11 +293,12 @@ class AgentService:
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Sending cancel event asynchronously"
             )
-
             # Send CANCELLED event using unified ExecutionEvent format
             result = send_cancelled_event(
                 task_id=task_id,
                 subtask_id=subtask_id,
+                executor_name=os.getenv("EXECUTOR_NAME"),
+                executor_namespace=os.getenv("EXECUTOR_NAMESPACE"),
             )
 
             if result and result.get("status") == TaskStatus.SUCCESS.value:

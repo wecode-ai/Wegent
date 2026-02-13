@@ -46,6 +46,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         wrapped: ResultEmitter,
         task_id: int,
         subtask_id: int,
+        executor_name: Optional[str] = None,
+        executor_namespace: Optional[str] = None,
     ):
         """Initialize the status updating emitter.
 
@@ -53,10 +55,14 @@ class StatusUpdatingEmitter(ResultEmitter):
             wrapped: The emitter to wrap
             task_id: Task ID for status updates
             subtask_id: Subtask ID for status updates
+            executor_name: Optional executor name for container reuse
+            executor_namespace: Optional executor namespace
         """
         self._wrapped = wrapped
         self._task_id = task_id
         self._subtask_id = subtask_id
+        self._executor_name = executor_name
+        self._executor_namespace = executor_namespace
         self._status_updated = False
 
     async def emit(self, event: ExecutionEvent) -> None:
@@ -265,11 +271,13 @@ class StatusUpdatingEmitter(ResultEmitter):
                         f"for subtask {self._subtask_id}"
                     )
 
-            # Update subtask status to COMPLETED
+            # Update subtask status to COMPLETED with executor info for container reuse
             await db_handler.update_subtask_status(
                 self._subtask_id,
                 "COMPLETED",
                 result=final_result,
+                executor_name=self._executor_name,
+                executor_namespace=self._executor_namespace,
             )
 
             self._status_updated = True
@@ -298,11 +306,13 @@ class StatusUpdatingEmitter(ResultEmitter):
         from app.services.chat.storage.db import db_handler
 
         try:
-            # Update subtask status to FAILED
+            # Update subtask status to FAILED with executor info for container reuse
             await db_handler.update_subtask_status(
                 self._subtask_id,
                 "FAILED",
                 error=error_message,
+                executor_name=self._executor_name,
+                executor_namespace=self._executor_namespace,
             )
 
             self._status_updated = True
@@ -349,10 +359,13 @@ class StatusUpdatingEmitter(ResultEmitter):
                     f"for subtask {self._subtask_id}"
                 )
 
+            # Update subtask status to CANCELLED with executor info for container reuse
             await db_handler.update_subtask_status(
                 self._subtask_id,
                 "CANCELLED",
                 result=result,
+                executor_name=self._executor_name,
+                executor_namespace=self._executor_namespace,
             )
 
             self._status_updated = True

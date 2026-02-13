@@ -84,10 +84,18 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        executor_name: str | None = None,
+        executor_namespace: str | None = None,
     ) -> None:
         """Update subtask status asynchronously."""
         await self._run_in_executor(
-            self._update_subtask_sync, subtask_id, status, result, error
+            self._update_subtask_sync,
+            subtask_id,
+            status,
+            result,
+            error,
+            executor_name,
+            executor_namespace,
         )
 
     def _update_subtask_sync(
@@ -96,6 +104,8 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        executor_name: str | None = None,
+        executor_namespace: str | None = None,
     ) -> None:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import Subtask, SubtaskStatus
@@ -159,6 +169,19 @@ class DatabaseHandler:
                     subtask.error_message = error
                 if status in _TERMINAL_STATUSES:
                     subtask.completed_at = datetime.now()
+
+                # Save executor info for container reuse in follow-up tasks
+                # Only update if provided and subtask doesn't already have executor_name
+                if executor_name and not subtask.executor_name:
+                    subtask.executor_name = executor_name
+                    subtask.executor_namespace = executor_namespace or ""
+                    logger.info(
+                        "[DB] Saved executor info for subtask %s: "
+                        "executor_name=%s, executor_namespace=%s",
+                        subtask_id,
+                        executor_name,
+                        executor_namespace,
+                    )
 
                 task_id = subtask.task_id
             # Context manager commits here, then update task status

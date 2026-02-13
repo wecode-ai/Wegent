@@ -114,7 +114,8 @@ async def handle_callback(
 
         # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
         # StatusUpdatingEmitter intercepts terminal events (DONE, ERROR, CANCELLED)
-        # and updates the database status accordingly
+        # and updates the database status accordingly, including executor_name
+        # for container reuse in follow-up tasks
         ws_emitter = WebSocketResultEmitter(
             task_id=request.task_id,
             subtask_id=request.subtask_id,
@@ -123,6 +124,8 @@ async def handle_callback(
             wrapped=ws_emitter,
             task_id=request.task_id,
             subtask_id=request.subtask_id,
+            executor_name=request.executor_name,
+            executor_namespace=request.executor_namespace,
         )
         await emitter.emit(event)
         await emitter.close()
@@ -261,6 +264,7 @@ async def handle_batch_callback(
                 continue
 
             # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
+            # Include executor_name for container reuse in follow-up tasks
             ws_emitter = WebSocketResultEmitter(
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
@@ -269,6 +273,8 @@ async def handle_batch_callback(
                 wrapped=ws_emitter,
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
+                executor_name=request.executor_name,
+                executor_namespace=request.executor_namespace,
             )
             await emitter.emit(event)
             await emitter.close()
