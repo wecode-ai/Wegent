@@ -27,19 +27,14 @@ from wecode.models.evaluation import (
 logger = logging.getLogger(__name__)
 
 
-# Grading prompt template
-GRADING_PROMPT_TEMPLATE = """You are a professional grading assistant. Please evaluate the following submission.
+# Minimal grading prompt template - only provides the essential content
+# The AI bot's system prompt (Ghost.systemPrompt) should define:
+# - How to evaluate submissions
+# - Output format requirements
+# - Language preferences
+GRADING_PROMPT_TEMPLATE = """请根据以下信息进行评分：
 
-## Important Instructions
-
-1. **For URL content**: Please visit the URLs provided and read the content before grading.
-2. **For attachments**: Click the provided download links to download and review any attached files.
-3. **Be thorough**: Read all provided materials carefully before making your evaluation.
-4. **Be fair**: Evaluate based solely on the grading criteria provided.
-
----
-
-## Question
+## 题目
 
 {question_content}
 
@@ -47,9 +42,7 @@ GRADING_PROMPT_TEMPLATE = """You are a professional grading assistant. Please ev
 
 {question_attachments}
 
----
-
-## Grading Criteria
+## 评分标准
 
 {criteria_content}
 
@@ -57,9 +50,7 @@ GRADING_PROMPT_TEMPLATE = """You are a professional grading assistant. Please ev
 
 {criteria_attachments}
 
----
-
-## Student Submission
+## 学生作答
 
 {answer_content}
 
@@ -69,21 +60,7 @@ GRADING_PROMPT_TEMPLATE = """You are a professional grading assistant. Please ev
 
 ---
 
-## Output Requirements
-
-Please generate a comprehensive Markdown-formatted grading report including:
-
-1. **Overall Score** - Total score and grade summary (e.g., 85/100 - B+)
-2. **Detailed Analysis** - Evaluation based on each criterion from the grading criteria
-3. **Strengths** - What the student did well (with specific examples)
-4. **Areas for Improvement** - What needs work (with specific examples)
-5. **Suggestions** - Actionable recommendations for improvement
-
-**Formatting Guidelines:**
-- Clearly state points earned vs possible points
-- Provide specific examples from the submission to support your evaluation
-- Use bullet points for clarity
-- Be constructive in your feedback
+请根据评分标准对学生作答进行评分，并生成 Markdown 格式的评分报告。
 """
 
 
@@ -262,14 +239,24 @@ class GradingService:
         db: Session,
         task: EvalGradingTask,
         storage_service: Optional["EvalStorageService"] = None,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Build the grading prompt for a task.
+
+        The prompt includes:
+        - Question content (text, URL, attachments)
+        - Grading criteria (text, URL, attachments)
+        - Student answer (text, URL, attachments)
+
+        If custom_prompt is provided, it will be appended after the content.
+        Otherwise, a simple default instruction is used.
 
         Args:
             db: Database session
             task: Grading task
             storage_service: Storage service for presigned URLs
+            custom_prompt: Optional custom prompt from topic config
 
         Returns:
             Formatted prompt string
@@ -317,7 +304,13 @@ class GradingService:
             storage_service,
         )
 
-        return GRADING_PROMPT_TEMPLATE.format(
+        # Use custom prompt template if provided
+        if custom_prompt:
+            prompt_template = custom_prompt
+        else:
+            prompt_template = GRADING_PROMPT_TEMPLATE
+
+        return prompt_template.format(
             question_content=question_content,
             question_url=question_url,
             question_attachments=question_attachments,
@@ -405,13 +398,31 @@ class GradingService:
 
         logger.info(f"Started grading task {task.id} with team {team_id}")
 
+        # Get custom prompt from topic's grading config
+        custom_prompt = None
+        question = (
+            db.query(EvalQuestion)
+            .filter(EvalQuestion.id == task.question_id)
+            .first()
+        )
+        if question:
+            topic = (
+                db.query(EvalTopic)
+                .filter(EvalTopic.id == question.topic_id)
+                .first()
+            )
+            if topic and topic.grading_team_config:
+                config = topic.grading_team_config
+                if config.get("prompt_template") == "custom" and config.get("custom_prompt"):
+                    custom_prompt = config.get("custom_prompt")
+
         # Build the grading prompt with presigned URLs
         try:
             storage_service = EvalStorageService()
-            prompt = self.build_grading_prompt(db, task, storage_service)
+            prompt = self.build_grading_prompt(db, task, storage_service, custom_prompt)
             logger.info(
                 f"Built grading prompt for task {task.id} "
-                f"(length: {len(prompt)} chars)"
+                f"(length: {len(prompt)} chars, custom: {custom_prompt is not None})"
             )
         except Exception as e:
             logger.error(f"Failed to build grading prompt for task {task.id}: {e}")
