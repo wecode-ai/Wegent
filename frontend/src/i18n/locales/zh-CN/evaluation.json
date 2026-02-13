@@ -101,6 +101,8 @@
     "attachments": "附件",
     "content_attachments": "内容附件",
     "criteria_attachments": "评分标准附件",
+    "no_content": "暂无内容",
+    "no_criteria": "暂无评分标准",
     "content_types": {
       "text": "文本",
       "url": "链接",
@@ -161,9 +163,12 @@
     "tasks": "评分任务",
     "view_tasks": "查看评分任务",
     "execute": "执行评分",
+    "retry": "重试",
+    "retry_hint": "点击重试以重新执行评分任务",
     "publish": "发布报告",
     "report": "评分报告",
     "report_content": "报告内容",
+    "view_report": "查看报告",
     "edit_report": "编辑报告",
     "completed_at": "完成时间",
     "published_at": "发布时间",
@@ -233,6 +238,7 @@
     "load_failed": "加载数据失败",
     "save_failed": "保存失败",
     "delete_failed": "删除失败",
+    "download_failed": "下载失败",
     "permission_denied": "没有权限",
     "not_found": "未找到"
   }

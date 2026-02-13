@@ -6,7 +6,19 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Play, Send, Edit, RotateCcw, Save, Link } from 'lucide-react'
+import {
+  ArrowLeft,
+  Play,
+  Send,
+  Edit,
+  RotateCcw,
+  Save,
+  Link,
+  File,
+  Download,
+  FileText,
+  ClipboardList,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -25,9 +37,11 @@ import {
   updateGraderReport,
   publishGraderTask,
 } from '@wecode/api/evaluation'
-import type { Answer, Question, GradingTask } from '@wecode/types/evaluation'
+import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
+import type { Answer, Question, GradingTask, EvalAttachment } from '@wecode/types/evaluation'
 import { GradingTaskStatus, getStatusLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatFileSize } from '@/apis/attachments'
 
 function GraderAnswerContent() {
   const router = useRouter()
@@ -62,25 +76,29 @@ function GraderAnswerContent() {
         setGradingTask(taskData)
         // Initialize report content for editing
         if (taskData.report_data) {
-          setEditedReport(
+          const reportContent =
             typeof taskData.report_data === 'string'
               ? taskData.report_data
-              : JSON.stringify(taskData.report_data, null, 2)
-          )
+              : typeof taskData.report_data.content === 'string'
+                ? taskData.report_data.content
+                : JSON.stringify(taskData.report_data, null, 2)
+          setEditedReport(reportContent)
         }
       } else {
         // Try to find grading task by answer_id
-        const tasksData = await listGraderTasks({ limit: 1 })
+        const tasksData = await listGraderTasks({ limit: 100 })
         const task = tasksData.items.find(t => t.answer_id === answerId)
         if (task) {
           const fullTask = await getGraderTask(task.id)
           setGradingTask(fullTask)
           if (fullTask.report_data) {
-            setEditedReport(
+            const reportContent =
               typeof fullTask.report_data === 'string'
                 ? fullTask.report_data
-                : JSON.stringify(fullTask.report_data, null, 2)
-            )
+                : typeof fullTask.report_data.content === 'string'
+                  ? fullTask.report_data.content
+                  : JSON.stringify(fullTask.report_data, null, 2)
+            setEditedReport(reportContent)
           }
         }
       }
@@ -101,6 +119,116 @@ function GraderAnswerContent() {
       loadData()
     }
   }, [answerId, loadData])
+
+  // Handle attachment download
+  const handleDownload = async (attachment: EvalAttachment) => {
+    try {
+      await downloadEvaluationFile(attachment.key, attachment.filename)
+    } catch (_error) {
+      toast({
+        title: t('errors.download_failed'),
+        description: '',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Render attachment list
+  const renderAttachmentList = (attachments: EvalAttachment[] | undefined) => {
+    if (!attachments || attachments.length === 0) return null
+    return (
+      <div className="space-y-2">
+        {attachments.map((attachment, index) => (
+          <div
+            key={attachment.key || index}
+            className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2"
+          >
+            <File className="h-4 w-4 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate text-sm">{attachment.filename}</span>
+            {attachment.file_size && (
+              <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => handleDownload(attachment)}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  // Render content data (text, url, attachments)
+  const renderContentData = (
+    contentData: Record<string, unknown> | undefined,
+    showEmpty: boolean = true
+  ) => {
+    if (!contentData || Object.keys(contentData).length === 0) {
+      return showEmpty ? <p className="text-text-secondary">{t('answers.no_answers')}</p> : null
+    }
+
+    const elements: React.ReactNode[] = []
+
+    // Handle text content
+    if (typeof contentData.text === 'string' && contentData.text) {
+      elements.push(
+        <div key="text">
+          <p className="whitespace-pre-wrap">{contentData.text}</p>
+        </div>
+      )
+    }
+
+    // Handle URL content
+    if (typeof contentData.url === 'string' && contentData.url) {
+      elements.push(
+        <div key="url" className="flex items-center gap-2">
+          <Link className="h-4 w-4 text-primary" />
+          <a
+            href={contentData.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline"
+          >
+            {contentData.url}
+          </a>
+        </div>
+      )
+    }
+
+    // Handle attachments
+    const attachments = contentData.attachments as EvalAttachment[] | undefined
+    if (attachments && attachments.length > 0) {
+      elements.push(
+        <div key="attachments">
+          <h4 className="mb-2 text-sm font-medium text-text-secondary">
+            {t('questions.attachments')}
+          </h4>
+          {renderAttachmentList(attachments)}
+        </div>
+      )
+    }
+
+    // Handle other unknown data by showing JSON
+    const knownKeys = ['text', 'url', 'attachments']
+    const otherKeys = Object.keys(contentData).filter(k => !knownKeys.includes(k))
+    if (otherKeys.length > 0 && elements.length === 0) {
+      elements.push(
+        <pre key="json" className="whitespace-pre-wrap text-sm">
+          {JSON.stringify(contentData, null, 2)}
+        </pre>
+      )
+    }
+
+    if (elements.length === 0) {
+      return showEmpty ? <p className="text-text-secondary">{t('answers.no_answers')}</p> : null
+    }
+
+    return <div className="space-y-4">{elements}</div>
+  }
 
   const handleExecute = async () => {
     if (!gradingTask) return
@@ -151,7 +279,7 @@ function GraderAnswerContent() {
       await updateGraderReport(gradingTask.id, { report_content: editedReport.trim() })
       toast({
         title: t('grading.edit_report'),
-        description: 'Report saved successfully',
+        description: t('actions.save') + ' ' + t('grading.report'),
       })
       setIsEditing(false)
       loadData()
@@ -206,63 +334,39 @@ function GraderAnswerContent() {
     }
   }
 
-  // Render answer content based on content_data structure
-  const renderAnswerContent = (contentData: Record<string, unknown>) => {
-    if (!contentData || Object.keys(contentData).length === 0) {
-      return <p className="text-text-secondary">{t('answers.no_answers')}</p>
+  // Render report content
+  const renderReportContent = (reportData: Record<string, unknown>) => {
+    if (!reportData || Object.keys(reportData).length === 0) {
+      return <p className="text-text-secondary">{t('grading.no_report_data')}</p>
     }
 
-    const elements: React.ReactNode[] = []
-
-    // Handle text content
-    if (typeof contentData.text === 'string' && contentData.text) {
-      elements.push(
-        <p key="text" className="whitespace-pre-wrap">
-          {contentData.text}
-        </p>
+    // Handle different report_data structures
+    if (typeof reportData === 'string') {
+      return (
+        <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">{reportData}</pre>
       )
     }
 
-    // Handle URL content
-    if (typeof contentData.url === 'string' && contentData.url) {
-      elements.push(
-        <div key="url" className="flex items-center gap-2">
-          <Link className="h-4 w-4 text-primary" />
-          <a
-            href={contentData.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary hover:underline"
-          >
-            {contentData.url}
-          </a>
-        </div>
-      )
-    }
-
-    // Handle other unknown data by showing JSON
-    const knownKeys = ['text', 'url', 'attachments']
-    const otherKeys = Object.keys(contentData).filter(k => !knownKeys.includes(k))
-    if (otherKeys.length > 0 && elements.length === 0) {
-      // If no text or url but has other data, show as JSON
-      elements.push(
-        <pre key="json" className="whitespace-pre-wrap text-sm">
-          {JSON.stringify(contentData, null, 2)}
+    if (typeof reportData.content === 'string') {
+      return (
+        <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
+          {reportData.content}
         </pre>
       )
     }
 
-    if (elements.length === 0) {
-      return <p className="text-text-secondary">{t('answers.no_answers')}</p>
-    }
-
-    return <div className="space-y-4">{elements}</div>
+    return (
+      <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
+        {JSON.stringify(reportData, null, 2)}
+      </pre>
+    )
   }
 
   if (loading) {
     return (
       <div className="container mx-auto max-w-4xl px-4 py-8">
         <Skeleton className="mb-6 h-10 w-32" />
+        <Skeleton className="mb-4 h-48 w-full" />
         <Skeleton className="mb-4 h-48 w-full" />
         <Skeleton className="h-48 w-full" />
       </div>
@@ -293,39 +397,40 @@ function GraderAnswerContent() {
       {/* Question Card */}
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>{question.title}</CardTitle>
+          <div className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-primary" />
+            <CardTitle>{question.title}</CardTitle>
+          </div>
           <CardDescription>
             {t('questions.content_type')}: {t(`questions.content_types.${question.content_type}`)}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {typeof question.content_data?.text === 'string' && question.content_data.text && (
-            <div>
-              <h3 className="mb-2 font-medium">{t('questions.content')}</h3>
-              <p className="whitespace-pre-wrap text-text-secondary">
-                {question.content_data.text}
-              </p>
+          {/* Question Content */}
+          <div>
+            <h3 className="mb-2 flex items-center gap-2 font-medium">
+              <FileText className="h-4 w-4" />
+              {t('questions.content')}
+            </h3>
+            <div className="rounded-lg bg-surface p-4">
+              {renderContentData(question.content_data, false) || (
+                <p className="text-text-secondary">{t('questions.no_content')}</p>
+              )}
             </div>
-          )}
-          {typeof question.content_data?.url === 'string' && question.content_data.url && (
+          </div>
+
+          {/* Grading Criteria - Important for graders */}
+          {question.criteria_data && Object.keys(question.criteria_data).length > 0 && (
             <div>
-              <h3 className="mb-2 font-medium">URL</h3>
-              <a
-                href={question.content_data.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                {question.content_data.url}
-              </a>
-            </div>
-          )}
-          {typeof question.criteria_data?.text === 'string' && question.criteria_data.text && (
-            <div>
-              <h3 className="mb-2 font-medium">{t('questions.criteria')}</h3>
-              <p className="whitespace-pre-wrap text-text-secondary">
-                {question.criteria_data.text}
-              </p>
+              <h3 className="mb-2 flex items-center gap-2 font-medium">
+                <ClipboardList className="h-4 w-4" />
+                {t('questions.criteria')}
+              </h3>
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                {renderContentData(question.criteria_data, false) || (
+                  <p className="text-text-secondary">{t('questions.no_criteria')}</p>
+                )}
+              </div>
             </div>
           )}
         </CardContent>
@@ -342,7 +447,7 @@ function GraderAnswerContent() {
         </CardHeader>
         <CardContent>
           <div className="rounded-lg bg-surface p-4">
-            {renderAnswerContent(answer.content_data)}
+            {renderContentData(answer.content_data)}
           </div>
         </CardContent>
       </Card>
@@ -363,7 +468,7 @@ function GraderAnswerContent() {
                 {gradingTask.status === GradingTaskStatus.FAILED && (
                   <Button variant="outline" onClick={handleRetry} disabled={executing}>
                     <RotateCcw className="mr-2 h-4 w-4" />
-                    Retry
+                    {t('grading.retry')}
                   </Button>
                 )}
                 {gradingTask.status === GradingTaskStatus.COMPLETED && (
@@ -399,9 +504,10 @@ function GraderAnswerContent() {
             {gradingTask.status === GradingTaskStatus.FAILED && (
               <div className="py-8 text-center">
                 <p className="text-red-500">{t('grading.status.failed')}</p>
-                <p className="mt-2 text-sm text-text-secondary">
-                  Click retry to re-execute the grading task
-                </p>
+                {gradingTask.error_message && (
+                  <p className="mt-2 text-sm text-text-secondary">{gradingTask.error_message}</p>
+                )}
+                <p className="mt-2 text-sm text-text-secondary">{t('grading.retry_hint')}</p>
               </div>
             )}
             {(gradingTask.status === GradingTaskStatus.COMPLETED ||
@@ -430,11 +536,7 @@ function GraderAnswerContent() {
                     </div>
                   </div>
                 ) : (
-                  <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
-                    {typeof gradingTask.report_data === 'string'
-                      ? gradingTask.report_data
-                      : JSON.stringify(gradingTask.report_data, null, 2)}
-                  </pre>
+                  renderReportContent(gradingTask.report_data)
                 )}
               </>
             )}

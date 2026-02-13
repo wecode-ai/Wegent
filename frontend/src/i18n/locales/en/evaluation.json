@@ -101,6 +101,8 @@
     "attachments": "Attachments",
     "content_attachments": "Content Attachments",
     "criteria_attachments": "Criteria Attachments",
+    "no_content": "No content",
+    "no_criteria": "No grading criteria",
     "content_types": {
       "text": "Text",
       "url": "URL",
@@ -161,9 +163,12 @@
     "tasks": "Grading Tasks",
     "view_tasks": "View Grading Tasks",
     "execute": "Execute",
+    "retry": "Retry",
+    "retry_hint": "Click retry to re-execute the grading task",
     "publish": "Publish Report",
     "report": "Grading Report",
     "report_content": "Report Content",
+    "view_report": "View Report",
     "edit_report": "Edit Report",
     "completed_at": "Completed At",
     "published_at": "Published At",
@@ -233,6 +238,7 @@
     "load_failed": "Failed to load data",
     "save_failed": "Failed to save",
     "delete_failed": "Failed to delete",
+    "download_failed": "Failed to download",
     "permission_denied": "Permission denied",
     "not_found": "Not found"
   }
