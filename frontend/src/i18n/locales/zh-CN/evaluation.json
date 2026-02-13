@@ -51,6 +51,7 @@
     "visibility": "可见性",
     "grading_team": "评分智能体",
     "no_topics": "暂无专题",
+    "all_topics": "全部专题",
     "no_search_results": "请尝试调整搜索条件",
     "create_first": "创建您的第一个专题",
     "search_placeholder": "搜索专题...",
