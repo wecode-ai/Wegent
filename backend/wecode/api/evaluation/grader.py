@@ -185,6 +185,8 @@ def _convert_task_to_schema(
     task: EvalGradingTask,
     question_title: Optional[str] = None,
     respondent_name: Optional[str] = None,
+    topic_id: Optional[int] = None,
+    topic_name: Optional[str] = None,
 ) -> GradingTaskInDB:
     """Convert a grading task model to schema."""
     return GradingTaskInDB(
@@ -205,6 +207,8 @@ def _convert_task_to_schema(
         published_at=task.published_at,
         question_title=question_title,
         respondent_name=respondent_name,
+        topic_id=topic_id,
+        topic_name=topic_name,
     )
 
 
@@ -627,16 +631,25 @@ def list_grader_tasks(
         .all()
     )
 
-    # Get question titles and respondent names
+    # Get question titles, topic info, and respondent names
     question_ids = list(set(t.question_id for t in tasks))
     respondent_ids = list(set(t.respondent_id for t in tasks))
 
     questions_map = {}
+    question_topic_map = {}
     if question_ids:
         questions = (
             db.query(EvalQuestion).filter(EvalQuestion.id.in_(question_ids)).all()
         )
         questions_map = {q.id: q.title for q in questions}
+        question_topic_map = {q.id: q.topic_id for q in questions}
+
+    # Get topic names
+    topic_ids = list(set(question_topic_map.values()))
+    topics_map = {}
+    if topic_ids:
+        topics = db.query(EvalTopic).filter(EvalTopic.id.in_(topic_ids)).all()
+        topics_map = {t.id: t.name for t in topics}
 
     users_map = {}
     if respondent_ids:
@@ -650,6 +663,8 @@ def list_grader_tasks(
                 t,
                 question_title=questions_map.get(t.question_id),
                 respondent_name=users_map.get(t.respondent_id),
+                topic_id=question_topic_map.get(t.question_id),
+                topic_name=topics_map.get(question_topic_map.get(t.question_id, 0)),
             )
             for t in tasks
         ],
@@ -700,7 +715,11 @@ def get_grader_task(
     respondent_name = respondent.user_name if respondent else None
 
     return _convert_task_to_schema(
-        task, question_title=question.title, respondent_name=respondent_name
+        task,
+        question_title=question.title,
+        respondent_name=respondent_name,
+        topic_id=topic.id,
+        topic_name=topic.name,
     )
 
 

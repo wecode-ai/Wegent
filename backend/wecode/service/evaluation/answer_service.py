@@ -18,6 +18,7 @@ from wecode.models.evaluation import (
     EvalAnswer,
     EvalGradingTask,
     EvalQuestion,
+    EvalTopic,
     GradingTaskStatus,
 )
 
@@ -40,6 +41,8 @@ class AnswerService:
         Submit an answer to a question.
 
         Marks any previous answers as not latest.
+        If the topic has auto_trigger grading configured, will automatically
+        trigger the grading task execution.
 
         Args:
             db: Database session
@@ -64,6 +67,9 @@ class AnswerService:
         if not question.current_version:
             raise ValueError(f"Question {question_id} has not been published")
 
+        # Get topic to check grading config
+        topic = db.query(EvalTopic).filter(EvalTopic.id == question.topic_id).first()
+
         # Mark previous answers as not latest
         db.query(EvalAnswer).filter(
             EvalAnswer.question_id == question_id,
@@ -84,10 +90,11 @@ class AnswerService:
         db.flush()
 
         logger.info(
-            f"Submitted answer {answer.id} for question {question_id} by user {user_id}"
+            f"[Evaluation] Submitted answer {answer.id} for question {question_id} by user {user_id}"
         )
 
         # Create grading task if requested
+        grading_task = None
         if auto_create_grading:
             grading_task = EvalGradingTask(
                 answer_id=answer.id,
@@ -101,8 +108,54 @@ class AnswerService:
             db.flush()
 
             logger.info(
-                f"Created grading task {grading_task.id} for answer {answer.id}"
+                f"[Evaluation] Created grading task {grading_task.id} for answer {answer.id}"
             )
+
+            # Check if auto_trigger is enabled for this topic
+            if topic and topic.grading_team_config:
+                grading_config = topic.grading_team_config
+                auto_trigger = grading_config.get("auto_trigger", False)
+                trigger_condition = grading_config.get("trigger_condition", "manual")
+                team_id = grading_config.get("team_id")
+
+                logger.info(
+                    f"[Evaluation] Topic {topic.id} grading config: "
+                    f"auto_trigger={auto_trigger}, trigger_condition={trigger_condition}, team_id={team_id}"
+                )
+
+                # Auto-trigger grading if configured
+                if auto_trigger and trigger_condition == "on_submit" and team_id:
+                    logger.info(
+                        f"[Evaluation] Auto-triggering grading task {grading_task.id} "
+                        f"with team {team_id} for answer {answer.id}"
+                    )
+                    try:
+                        from wecode.service.evaluation.grading_service import GradingService
+
+                        grading_service = GradingService()
+                        grading_service.execute(
+                            db=db,
+                            task=grading_task,
+                            team_id=team_id,
+                            user_id=user_id,
+                        )
+                        logger.info(
+                            f"[Evaluation] Successfully triggered grading task {grading_task.id}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[Evaluation] Failed to auto-trigger grading task {grading_task.id}: {e}"
+                        )
+                        # Don't fail the answer submission if auto-grading fails
+                        # The task remains in PENDING status and can be manually triggered
+                else:
+                    logger.info(
+                        f"[Evaluation] Auto-trigger not enabled or conditions not met for task {grading_task.id}"
+                    )
+            else:
+                logger.info(
+                    f"[Evaluation] No grading config found for topic {topic.id if topic else 'N/A'}"
+                )
 
         return answer
 

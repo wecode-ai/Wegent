@@ -243,6 +243,8 @@ export interface GradingTask {
   published_at?: string
   respondent_name?: string
   question_title?: string
+  topic_id?: number
+  topic_name?: string
 }
 
 export interface GradingTaskExecuteRequest {

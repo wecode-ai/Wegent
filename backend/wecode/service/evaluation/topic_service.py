@@ -73,7 +73,7 @@ class TopicService:
         db.add(topic)
         db.flush()
 
-        logger.info(f"Created topic {topic.id}: {name}")
+        logger.info(f"[Evaluation] Created topic {topic.id}: {name}")
         return topic
 
     def get(self, db: Session, topic_id: int) -> Optional[EvalTopic]:
@@ -218,7 +218,7 @@ class TopicService:
             topic.grading_team_config["team_id"] = grading_team_id
 
         db.flush()
-        logger.info(f"Updated topic {topic.id}")
+        logger.info(f"[Evaluation] Updated topic {topic.id}")
         return topic
 
     def delete(self, db: Session, topic: EvalTopic) -> bool:
@@ -234,7 +234,7 @@ class TopicService:
         """
         topic.is_active = False
         db.flush()
-        logger.info(f"Deleted topic {topic.id}")
+        logger.info(f"[Evaluation] Deleted topic {topic.id}")
         return True
 
     def publish(self, db: Session, topic: EvalTopic, user_id: int) -> EvalTopicVersion:
@@ -293,7 +293,7 @@ class TopicService:
         db.flush()
 
         logger.info(
-            f"Published topic {topic.id} version {version} with {len(questions)} questions"
+            f"[Evaluation] Published topic {topic.id} version {version} with {len(questions)} questions"
         )
         return topic_version
 

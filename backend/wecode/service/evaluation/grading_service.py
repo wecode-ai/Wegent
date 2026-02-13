@@ -124,7 +124,7 @@ class GradingService:
         db.add(task)
         db.flush()
 
-        logger.info(f"Created grading task {task.id} for answer {answer.id}")
+        logger.info(f"[Evaluation] Created grading task {task.id} for answer {answer.id}")
         return task
 
     def get(self, db: Session, task_id: int) -> Optional[EvalGradingTask]:
@@ -423,18 +423,18 @@ class GradingService:
         task.attempt_count = task.attempt_count + 1
         db.flush()
 
-        logger.info(f"Started grading task {task.id} with team {team_id}")
+        logger.info(f"[Evaluation] Started grading task {task.id} with team {team_id}")
 
         # Build the grading prompt with presigned URLs
         try:
             storage_service = EvalStorageService()
             prompt = self.build_grading_prompt(db, task, storage_service)
             logger.info(
-                f"Built grading prompt for task {task.id} "
+                f"[Evaluation] Built grading prompt for task {task.id} "
                 f"(length: {len(prompt)} chars)"
             )
         except Exception as e:
-            logger.error(f"Failed to build grading prompt for task {task.id}: {e}")
+            logger.error(f"[Evaluation] Failed to build grading prompt for task {task.id}: {e}")
             task.status = GradingTaskStatus.FAILED
             task.error_message = f"Failed to build grading prompt: {str(e)[:200]}"
             task.completed_at = datetime.now()
@@ -487,7 +487,7 @@ class GradingService:
             task.task_id = wegent_task_id
 
             logger.info(
-                f"Created Wegent Task {wegent_task_id} for grading task {task.id}"
+                f"[Evaluation] Created Wegent Task {wegent_task_id} for grading task {task.id}"
             )
 
             # Note: The grading task completion will be handled by:
@@ -498,7 +498,7 @@ class GradingService:
 
         except Exception as e:
             logger.error(
-                f"Failed to create Wegent Task for grading task {task.id}: {e}"
+                f"[Evaluation] Failed to create Wegent Task for grading task {task.id}: {e}"
             )
             task.status = GradingTaskStatus.FAILED
             task.error_message = f"Failed to create execution task: {str(e)[:200]}"
@@ -552,9 +552,9 @@ class GradingService:
                     content=report_content,
                     is_draft=True,  # AI report is draft
                 )
-                logger.info(f"Saved AI report to S3: {ai_s3_path}")
+                logger.info(f"[Evaluation] Saved AI report to S3: {ai_s3_path}")
             except Exception as e:
-                logger.warning(f"Failed to save AI report to S3: {e}")
+                logger.warning(f"[Evaluation] Failed to save AI report to S3: {e}")
 
         # Build report_data with versioned structure
         report_data: Dict[str, Any] = {
@@ -573,7 +573,7 @@ class GradingService:
         task.completed_at = now
         db.flush()
 
-        logger.info(f"Completed grading task {task.id}")
+        logger.info(f"[Evaluation] Completed grading task {task.id}")
         return task
 
     def fail(
@@ -600,7 +600,7 @@ class GradingService:
         task.attempt_count = task.attempt_count + 1
         db.flush()
 
-        logger.info(f"Failed grading task {task.id}: {error_message}")
+        logger.info(f"[Evaluation] Failed grading task {task.id}: {error_message}")
         return task
 
     def publish(
@@ -668,7 +668,7 @@ class GradingService:
         task.published_at = now
         db.flush()
 
-        logger.info(f"Published grading task {task.id}")
+        logger.info(f"[Evaluation] Published grading task {task.id}")
         return task
 
     def update_report(
@@ -715,9 +715,9 @@ class GradingService:
                 content=report_content,
                 is_draft=False,  # Human-reviewed is not draft
             )
-            logger.info(f"Saved human-reviewed report to S3: {human_s3_path}")
+            logger.info(f"[Evaluation] Saved human-reviewed report to S3: {human_s3_path}")
         except Exception as e:
-            logger.warning(f"Failed to save human-reviewed report to S3: {e}")
+            logger.warning(f"[Evaluation] Failed to save human-reviewed report to S3: {e}")
 
         # Update report_data while preserving AI report
         report_data = task.report_data or {}
@@ -737,7 +737,7 @@ class GradingService:
         db.flush()
 
         logger.info(
-            f"Updated report for grading task {task.id} (reviewer: {reviewer_id})"
+            f"[Evaluation] Updated report for grading task {task.id} (reviewer: {reviewer_id})"
         )
         return task
 

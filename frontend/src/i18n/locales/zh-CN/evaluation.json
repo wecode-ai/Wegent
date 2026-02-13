@@ -30,6 +30,7 @@
   },
   "topics": {
     "title": "专题",
+    "topic_name": "专题",
     "browse": "浏览专题",
     "browse_description": "查看和搜索考评专题，答题并查看结果。",
     "create": "创建专题",

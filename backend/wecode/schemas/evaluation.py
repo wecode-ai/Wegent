@@ -356,6 +356,8 @@ class GradingTaskInDB(BaseModel):
     # Optional related info
     respondent_name: Optional[str] = Field(None)
     question_title: Optional[str] = Field(None)
+    topic_id: Optional[int] = Field(None, description="Topic ID")
+    topic_name: Optional[str] = Field(None, description="Topic name")
 
     class Config:
         from_attributes = True

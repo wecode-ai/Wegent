@@ -30,6 +30,7 @@
   },
   "topics": {
     "title": "Topics",
+    "topic_name": "Topic",
     "browse": "Browse Topics",
     "browse_description": "View and search evaluation topics, answer questions, and check your results.",
     "create": "Create Topic",

@@ -51,11 +51,11 @@ class EvalStorageService:
 
         # Check if MinIO/S3 is configured
         if settings.ATTACHMENT_STORAGE_BACKEND not in ("minio", "s3"):
-            logger.warning("MinIO/S3 storage not configured for evaluation module")
+            logger.warning("[Evaluation] MinIO/S3 storage not configured for evaluation module")
             return None
 
         if not settings.ATTACHMENT_S3_ENDPOINT:
-            logger.warning("ATTACHMENT_S3_ENDPOINT not configured")
+            logger.warning("[Evaluation] ATTACHMENT_S3_ENDPOINT not configured")
             return None
 
         try:
@@ -83,12 +83,12 @@ class EvalStorageService:
                 self._client.make_bucket(
                     self._bucket, location=settings.ATTACHMENT_S3_REGION
                 )
-                logger.info(f"Created bucket: {self._bucket}")
+                logger.info(f"[Evaluation] Created bucket: {self._bucket}")
 
             return self._client
 
         except Exception as e:
-            logger.error(f"Failed to initialize MinIO client: {e}")
+            logger.error(f"[Evaluation] Failed to initialize MinIO client: {e}")
             return None
 
     def _build_key(self, category: str, *parts: str) -> str:
@@ -285,14 +285,14 @@ class EvalStorageService:
                 metadata={"filename": encoded_filename},
             )
 
-            logger.debug(f"Uploaded file to S3: {key}")
+            logger.info(f"[Evaluation] Uploaded file to S3: {key}")
             return key
 
         except S3Error as e:
-            logger.error(f"Failed to upload to S3: {e}")
+            logger.error(f"[Evaluation] Failed to upload to S3: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error uploading to S3: {e}")
+            logger.error(f"[Evaluation] Unexpected error uploading to S3: {e}")
             return None
 
     def get(self, key: str) -> Optional[bytes]:
@@ -317,12 +317,12 @@ class EvalStorageService:
 
         except S3Error as e:
             if e.code == "NoSuchKey":
-                logger.debug(f"Object not found: {key}")
+                logger.info(f"[Evaluation] Object not found: {key}")
             else:
-                logger.error(f"Failed to get from S3: {e}")
+                logger.error(f"[Evaluation] Failed to get from S3: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error getting from S3: {e}")
+            logger.error(f"[Evaluation] Unexpected error getting from S3: {e}")
             return None
 
     def delete(self, key: str) -> bool:
@@ -340,16 +340,16 @@ class EvalStorageService:
 
         try:
             self.client.remove_object(self._bucket, key)
-            logger.debug(f"Deleted file from S3: {key}")
+            logger.info(f"[Evaluation] Deleted file from S3: {key}")
             return True
 
         except S3Error as e:
             if e.code == "NoSuchKey":
                 return True
-            logger.error(f"Failed to delete from S3: {e}")
+            logger.error(f"[Evaluation] Failed to delete from S3: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error deleting from S3: {e}")
+            logger.error(f"[Evaluation] Unexpected error deleting from S3: {e}")
             return False
 
     def exists(self, key: str) -> bool:
@@ -372,10 +372,10 @@ class EvalStorageService:
         except S3Error as e:
             if e.code == "NoSuchKey":
                 return False
-            logger.error(f"Failed to check existence in S3: {e}")
+            logger.error(f"[Evaluation] Failed to check existence in S3: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error checking existence in S3: {e}")
+            logger.error(f"[Evaluation] Unexpected error checking existence in S3: {e}")
             return False
 
     def get_presigned_url(
@@ -421,10 +421,10 @@ class EvalStorageService:
             return url
 
         except S3Error as e:
-            logger.error(f"Failed to generate presigned GET URL: {e}")
+            logger.error(f"[Evaluation] Failed to generate presigned GET URL: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error generating presigned GET URL: {e}")
+            logger.error(f"[Evaluation] Unexpected error generating presigned GET URL: {e}")
             return None
 
     def get_presigned_put_url(
@@ -455,10 +455,10 @@ class EvalStorageService:
             return url
 
         except S3Error as e:
-            logger.error(f"Failed to generate presigned PUT URL: {e}")
+            logger.error(f"[Evaluation] Failed to generate presigned PUT URL: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error generating presigned PUT URL: {e}")
+            logger.error(f"[Evaluation] Unexpected error generating presigned PUT URL: {e}")
             return None
 
     def generate_upload_key(

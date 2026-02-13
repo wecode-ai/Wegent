@@ -529,6 +529,7 @@ function GraderDashboardContent() {
                       onCheckedChange={handleSelectAll}
                     />
                   </TableHead>
+                  <TableHead>{t('topics.topic_name')}</TableHead>
                   <TableHead>{t('questions.question_title')}</TableHead>
                   <TableHead>{t('permissions.user')}</TableHead>
                   <TableHead>{t('common.status')}</TableHead>
@@ -543,6 +544,9 @@ function GraderDashboardContent() {
                         checked={selectedTasks.has(task.id)}
                         onCheckedChange={checked => handleSelectTask(task.id, checked as boolean)}
                       />
+                    </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {task.topic_name || '-'}
                     </TableCell>
                     <TableCell>{task.question_title || `Question #${task.question_id}`}</TableCell>
                     <TableCell>{task.respondent_name || `User #${task.respondent_id}`}</TableCell>
@@ -641,18 +645,21 @@ function GraderDashboardContent() {
           <DialogHeader>
             <DialogTitle>{t('grading.report')}</DialogTitle>
             <DialogDescription>
+              {selectedTask?.topic_name && `[${selectedTask.topic_name}] `}
               {selectedTask?.question_title || ''} - {selectedTask?.respondent_name || ''}
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data ? (
+            ) : selectedTask?.report_data &&
+              Object.keys(selectedTask.report_data).length > 0 ? (
               <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
                 {typeof selectedTask.report_data === 'string'
                   ? selectedTask.report_data
-                  : selectedTask.report_data.content ||
-                    JSON.stringify(selectedTask.report_data, null, 2)}
+                  : typeof selectedTask.report_data.content === 'string'
+                    ? selectedTask.report_data.content
+                    : JSON.stringify(selectedTask.report_data, null, 2)}
               </pre>
             ) : (
               <p className="text-text-secondary">{t('grading.no_report_data')}</p>

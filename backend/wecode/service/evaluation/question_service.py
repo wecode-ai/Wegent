@@ -78,7 +78,7 @@ class QuestionService:
         db.add(question)
         db.flush()
 
-        logger.info(f"Created question {question.id} for topic {topic_id}")
+        logger.info(f"[Evaluation] Created question {question.id} for topic {topic_id}")
         return question
 
     def get(self, db: Session, question_id: int) -> Optional[EvalQuestion]:
@@ -209,7 +209,7 @@ class QuestionService:
             question.order_index = order_index
 
         db.flush()
-        logger.info(f"Updated question {question.id}")
+        logger.info(f"[Evaluation] Updated question {question.id}")
         return question
 
     def delete(self, db: Session, question: EvalQuestion) -> bool:
@@ -225,7 +225,7 @@ class QuestionService:
         """
         question.is_active = False
         db.flush()
-        logger.info(f"Deleted question {question.id}")
+        logger.info(f"[Evaluation] Deleted question {question.id}")
         return True
 
     def publish(
@@ -264,7 +264,7 @@ class QuestionService:
         question.current_version = version
         db.flush()
 
-        logger.info(f"Published question {question.id} version {version}")
+        logger.info(f"[Evaluation] Published question {question.id} version {version}")
         return question_version
 
     def get_version(
@@ -349,7 +349,7 @@ class QuestionService:
             ).update({"order_index": index})
 
         db.flush()
-        logger.info(f"Reordered {len(question_ids)} questions in topic {topic_id}")
+        logger.info(f"[Evaluation] Reordered {len(question_ids)} questions in topic {topic_id}")
         return True
 
     def get_criteria_data(self, db: Session, question: EvalQuestion) -> Dict:
