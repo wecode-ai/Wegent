@@ -30,19 +30,19 @@ export function EvaluationPageLayout({ children }: EvaluationPageLayoutProps) {
 
   if (isMobile) {
     return (
-      <div className="flex h-dvh flex-col">
+      <div className="flex h-dvh flex-col bg-base text-text-primary">
         <TaskSidebar
           isMobileSidebarOpen={isMobileSidebarOpen}
           setIsMobileSidebarOpen={setIsMobileSidebarOpen}
           pageType="evaluation"
         />
-        {children}
+        <div className="flex-1 overflow-auto">{children}</div>
       </div>
     )
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="flex h-dvh overflow-hidden bg-base text-text-primary">
       {isSidebarCollapsed ? (
         <CollapsedSidebarButtons
           onExpand={() => setIsSidebarCollapsed(false)}
@@ -64,7 +64,7 @@ export function EvaluationPageLayout({ children }: EvaluationPageLayoutProps) {
           />
         </ResizableSidebar>
       )}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col">
         <TopNavigation activePage="evaluation" />
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
