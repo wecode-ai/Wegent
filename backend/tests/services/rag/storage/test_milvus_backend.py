@@ -46,7 +46,7 @@ class TestMilvusBackendInit:
         assert backend.username is None
         assert backend.password is None
         assert backend.token == ""
-        assert backend.dim == 1536  # Default dimension
+        assert backend.dim == 1024  # Default dimension (DEFAULT_EMBEDDING_DIM)
 
     def test_init_with_partial_auth(self):
         """Test initialization with only username (no password)."""
@@ -60,13 +60,13 @@ class TestMilvusBackendInit:
         assert backend.token == ""  # Should be empty if password is missing
 
     def test_init_default_dim(self):
-        """Test that default dimension is 1536 when not specified."""
+        """Test that default dimension is 1024 when not specified."""
         config = {
             "url": "http://localhost:19530/default",
             "indexStrategy": {"mode": "per_dataset"},
         }
         backend = MilvusBackend(config)
-        assert backend.dim == 1536
+        assert backend.dim == 1024
 
     def test_init_db_name_from_url_path(self):
         """Test that db_name is extracted from URL path."""
@@ -150,7 +150,7 @@ class TestCreateVectorStore:
             token="user:pass",
             db_name="mydb",  # db_name as separate parameter
             collection_name="test_collection",
-            dim=1536,
+            dim=1024,  # DEFAULT_EMBEDDING_DIM
             upsert_mode=True,
             overwrite=False,
             enable_sparse=True,
@@ -461,6 +461,8 @@ class TestListDocuments:
         assert result["documents"][0]["chunk_count"] == 1
         assert result["documents"][1]["doc_ref"] == "doc_1"
         assert result["documents"][1]["chunk_count"] == 2
+        # Verify client.close() is called to prevent resource leaks
+        mock_client.close.assert_called_once()
 
     @patch("app.services.rag.storage.milvus_backend.MilvusClient")
     def test_list_documents_empty_collection(self, mock_client_class):
@@ -479,6 +481,8 @@ class TestListDocuments:
 
         assert result["total"] == 0
         assert result["documents"] == []
+        # Verify client.close() is called to prevent resource leaks
+        mock_client.close.assert_called_once()
 
 
 class TestTestConnection:
@@ -498,6 +502,8 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is True
+        # Verify client.close() is called to prevent resource leaks
+        mock_client.close.assert_called_once()
 
     @patch("app.services.rag.storage.milvus_backend.MilvusClient")
     def test_connection_failure(self, mock_client_class):
@@ -513,6 +519,8 @@ class TestTestConnection:
         backend = MilvusBackend(config)
 
         assert backend.test_connection() is False
+        # Verify client.close() is called even on failure to prevent resource leaks
+        mock_client.close.assert_called_once()
 
 
 class TestGetAllChunks:
@@ -552,6 +560,8 @@ class TestGetAllChunks:
         # Verify sorted by doc_ref and chunk_index
         assert result[0]["chunk_id"] == 0
         assert result[1]["chunk_id"] == 1
+        # Verify client.close() is called to prevent resource leaks
+        mock_client.close.assert_called_once()
 
     @patch("app.services.rag.storage.milvus_backend.MilvusClient")
     def test_get_all_chunks_collection_not_exists(self, mock_client_class):
@@ -569,6 +579,8 @@ class TestGetAllChunks:
         result = backend.get_all_chunks(knowledge_id="kb_1", max_chunks=100)
 
         assert result == []
+        # Verify client.close() is called to prevent resource leaks
+        mock_client.close.assert_called_once()
 
 
 class TestIndexWithMetadata:
