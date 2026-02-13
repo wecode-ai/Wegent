@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from executor.services.agent_service import AgentService
 from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
-from executor.tasks import process, run_task, run_task_async
+from executor.tasks import process, process_async, run_task, run_task_async
 
 # Import the shared logger
 from shared.logger import setup_logger
@@ -613,8 +613,13 @@ async def openai_responses(request: Request):
         execution_request = OpenAIRequestConverter.to_execution_request(openai_request)
         task_data = execution_request.to_dict()
 
-        # Use process function to handle task uniformly
-        status = process(task_data)
+        # Use async process function to handle task uniformly
+        # IMPORTANT: Must use await process_async() instead of sync process()
+        # because this endpoint is async and runs in FastAPI's event loop.
+        # Using sync process() would cause _run_async() to create a new thread
+        # with a temporary event loop, and any background tasks created in
+        # execute() would be abandoned when that temporary loop closes.
+        status = await process_async(task_data)
 
         logger.info(f"[v1/responses] Task {task_id} submitted, status={status.value}")
 

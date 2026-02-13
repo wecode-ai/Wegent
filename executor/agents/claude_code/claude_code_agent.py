@@ -177,6 +177,9 @@ class ClaudeCodeAgent(Agent):
         # Initialize execution mode strategy
         self._mode_strategy: ExecutionModeStrategy = ModeStrategyFactory.create()
 
+        # Note: emitter is created in base class Agent.__init__()
+        # using EmitterBuilder with CallbackTransport
+
     def add_thinking_step(
         self,
         title: str,
@@ -709,6 +712,7 @@ class ClaudeCodeAgent(Agent):
             result = await process_response(
                 self.client,
                 self.state_manager,
+                self.get_emitter(),
                 self.thinking_manager,
                 self.task_state_manager,
                 session_id=self.session_id,

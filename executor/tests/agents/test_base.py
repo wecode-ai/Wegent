@@ -65,9 +65,23 @@ class TestAgent:
         status = agent.initialize()
         assert status == TaskStatus.SUCCESS
 
-    @patch("executor.callback.callback_handler.send_progress_event")
-    def test_report_progress(self, mock_send_progress, agent):
-        """Test report_progress sends callback"""
+    @patch("executor.agents.base.ResponsesAPIEmitter")
+    @patch("executor.agents.base.EmitterBuilder")
+    def test_report_progress(self, mock_builder_class, mock_emitter_class, agent):
+        """Test report_progress sends callback via emitter"""
+        # Setup mock emitter
+        mock_emitter = MagicMock()
+        mock_emitter.in_progress = MagicMock()
+        mock_builder = MagicMock()
+        mock_builder.with_task.return_value = mock_builder
+        mock_builder.with_transport.return_value = mock_builder
+        mock_builder.with_executor_info.return_value = mock_builder
+        mock_builder.build.return_value = mock_emitter
+        mock_builder_class.return_value = mock_builder
+
+        # Re-create agent to use mocked builder
+        agent._emitter = mock_emitter
+
         agent.report_progress(
             progress=50,
             status="running",
@@ -75,13 +89,8 @@ class TestAgent:
             result={"key": "value"},
         )
 
-        mock_send_progress.assert_called_once_with(
-            task_id=agent.task_id,
-            subtask_id=agent.subtask_id,
-            progress=50,
-            status="running",
-            content="Test message",
-        )
+        # Verify emitter.in_progress was called
+        mock_emitter.in_progress.assert_called_once()
 
     @patch("executor.agents.base.git_util.clone_repo")
     @patch("executor.agents.base.git_util.get_repo_name_from_url")

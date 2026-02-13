@@ -170,6 +170,10 @@ class AgnoAgent(Agent):
         self.is_silent_exit: bool = False
         self.silent_exit_reason: str = ""
 
+        # Note: emitter is created in base class Agent.__init__()
+        # using EmitterBuilder with CallbackTransport
+        # Access via self.get_emitter()
+
     def add_thinking_step(
         self,
         title: str,
@@ -576,11 +580,11 @@ class AgnoAgent(Agent):
 
         return result_content
 
-    def _handle_execution_result(
+    async def _handle_execution_result(
         self, result_content: str, execution_type: str = "execution", reasoning=None
     ) -> TaskStatus:
         """
-        Handle the execution result and report progress
+        Handle the execution result and send done event via emitter
 
         Args:
             result_content: The content to handle
@@ -596,53 +600,39 @@ class AgnoAgent(Agent):
             logger.info(
                 f"{execution_type} completed with content length: {len(result_content)}"
             )
-            # Include accumulated reasoning content in the final result
-            reasoning_content = (
-                self.accumulated_reasoning_content
-                if self.accumulated_reasoning_content
-                else None
-            )
 
-            # Build execution result
-            exec_result = ExecutionResult(
-                value=result_content,
-                thinking=self.thinking_manager.get_thinking_steps(),
-                reasoning_content=reasoning_content,
-            ).dict()
-
-            # Add silent_exit flag if silent exit was detected
-            if self.is_silent_exit:
-                exec_result["silent_exit"] = True
-                if self.silent_exit_reason:
-                    exec_result["silent_exit_reason"] = self.silent_exit_reason
-                logger.info(
-                    f"🔇 Adding silent_exit flag to result: reason={self.silent_exit_reason}"
+            # Send done event via emitter
+            try:
+                await self.get_emitter().done(
+                    content=result_content,
+                    silent_exit=self.is_silent_exit if self.is_silent_exit else None,
+                    silent_exit_reason=(
+                        self.silent_exit_reason if self.silent_exit_reason else None
+                    ),
                 )
+                logger.info(f"Sent done event for task {self.task_id}")
+            except Exception as e:
+                logger.error(f"Failed to send done event: {e}")
 
-            self.report_progress(
-                100,
-                TaskStatus.COMPLETED.value,
-                f"${{thinking.execution_completed}} {execution_type}",
-                result=exec_result,
-            )
             return TaskStatus.COMPLETED
         else:
             logger.warning(f"No content received from {execution_type}")
-            self.report_progress(
-                100,
-                TaskStatus.FAILED.value,
-                f"${{thinking.failed_no_content}} {execution_type}",
-                result=ExecutionResult(
-                    thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
-            )
+            # Send error event via emitter
+            try:
+                await self.get_emitter().error(
+                    f"No content received from {execution_type}"
+                )
+                logger.info(f"Sent error event for task {self.task_id}")
+            except Exception as e:
+                logger.error(f"Failed to send error event: {e}")
+
             return TaskStatus.FAILED
 
-    def _handle_execution_error(
+    async def _handle_execution_error_async(
         self, error: Exception, execution_type: str = "execution"
     ) -> TaskStatus:
         """
-        Handle execution error and report progress
+        Handle execution error and send error event via emitter (async version)
 
         Args:
             error: The exception to handle
@@ -661,6 +651,41 @@ class AgnoAgent(Agent):
             details={"error_message": error_message, "execution_type": execution_type},
         )
 
+        # Send error event via emitter
+        try:
+            await self.get_emitter().error(f"{execution_type}: {error_message}")
+            logger.info(f"Sent error event for task {self.task_id}")
+        except Exception as e:
+            logger.error(f"Failed to send error event: {e}")
+
+        return TaskStatus.FAILED
+
+    def _handle_execution_error(
+        self, error: Exception, execution_type: str = "execution"
+    ) -> TaskStatus:
+        """
+        Handle execution error (sync wrapper for backward compatibility)
+
+        Args:
+            error: The exception to handle
+            execution_type: Type of execution for logging
+
+        Returns:
+            TaskStatus: Failed status
+        """
+        import os
+
+        error_message = str(error)
+        logger.exception(f"Error in {execution_type}: {error_message}")
+
+        # Add thinking step for execution failure
+        self.add_thinking_step_by_key(
+            title_key="thinking.execution_failed",
+            report_immediately=False,
+            details={"error_message": error_message, "execution_type": execution_type},
+        )
+
+        # For sync context, use the legacy report_progress
         self.report_progress(
             100,
             TaskStatus.FAILED.value,
@@ -676,7 +701,7 @@ class AgnoAgent(Agent):
         self, run_response_event, result_content: str
     ) -> Tuple[str, bool]:
         """
-        Handle agent streaming events
+        Handle agent streaming events using emitter directly
 
         Args:
             run_response_event: The streaming event
@@ -686,6 +711,8 @@ class AgnoAgent(Agent):
             Tuple[str, bool]: (Updated result content, should_break flag)
                 - should_break is True when silent_exit is detected and execution should stop
         """
+        import uuid
+
         # Handle agent run events
         if run_response_event.event in [RunEvent.run_started]:
             logger.info(f"🚀 AGENT RUN STARTED: {run_response_event.agent_id}")
@@ -693,25 +720,41 @@ class AgnoAgent(Agent):
             if hasattr(run_response_event, "run_id"):
                 self.current_run_id = run_response_event.run_id
                 logger.info(f"Stored run_id: {self.current_run_id}")
-            self.report_progress(
-                75,
-                TaskStatus.RUNNING.value,
-                "${{thinking.agent_execution_started}}",
-                result=ExecutionResult(
-                    thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
-            )
+
+            # Send start event via emitter
+            try:
+                await self.get_emitter().start()
+                logger.info(f"Sent start event for task {self.task_id}")
+            except Exception as e:
+                logger.error(f"Failed to send start event: {e}")
 
         # Handle agent run completion
         if run_response_event.event in [RunEvent.run_completed]:
             logger.info(f"✅ AGENT RUN COMPLETED: {run_response_event.agent_id}")
 
-        # Handle tool call events
+        # Handle tool call events - send tool_start event via emitter
         if run_response_event.event in [RunEvent.tool_call_started]:
-            logger.info(f"🔧 AGENT TOOL STARTED: {run_response_event.tool.tool_name}")
-            logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            tool_name = run_response_event.tool.tool_name
+            tool_args = run_response_event.tool.tool_args
+            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
+                uuid.uuid4()
+            )
 
-            # Build tool call details in target format
+            logger.info(f"🔧 AGENT TOOL STARTED: {tool_name}")
+            logger.info(f"   Args: {tool_args}")
+
+            # Send tool_start event via emitter
+            try:
+                await self.get_emitter().tool_start(
+                    call_id=tool_use_id,
+                    name=tool_name,
+                    arguments=tool_args,
+                )
+                logger.info(f"Sent tool_start event for tool {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to send tool_start event: {e}")
+
+            # Also add thinking step for local tracking
             tool_details = {
                 "type": "assistant",
                 "message": {
@@ -721,32 +764,27 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_use",
-                            "id": getattr(run_response_event.tool, "id", ""),
-                            "name": run_response_event.tool.tool_name,
-                            "input": run_response_event.tool.tool_args,
+                            "id": tool_use_id,
+                            "name": tool_name,
+                            "input": tool_args,
                         }
                     ],
                 },
             }
-
             self.add_thinking_step_by_key(
                 title_key="thinking.tool_use",
-                report_immediately=True,
+                report_immediately=False,  # Don't use legacy report, we use emitter
                 details=tool_details,
             )
 
-            self.report_progress(
-                80,
-                TaskStatus.RUNNING.value,
-                f"${{thinking.using_tool}} {run_response_event.tool.tool_name}",
-                result=ExecutionResult(
-                    thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
-            )
-
+        # Handle tool call completed - send tool_done event via emitter
         if run_response_event.event in [RunEvent.tool_call_completed]:
             tool_name = run_response_event.tool.tool_name
             tool_result = run_response_event.tool.result
+            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
+                uuid.uuid4()
+            )
+
             logger.info(f"✅ AGENT TOOL COMPLETED: {tool_name}")
             logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
@@ -762,7 +800,18 @@ class AgnoAgent(Agent):
                     # Return immediately to break out of the streaming loop
                     return result_content, True
 
-            # Build tool result details in target format
+            # Send tool_done event via emitter
+            try:
+                await self.get_emitter().tool_done(
+                    call_id=tool_use_id,
+                    name=tool_name,
+                    output=tool_result or "",
+                )
+                logger.info(f"Sent tool_done event for tool {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to send tool_done event: {e}")
+
+            # Also add thinking step for local tracking
             tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -772,133 +821,81 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": getattr(run_response_event.tool, "id", ""),
-                            "content": run_response_event.tool.result,
+                            "tool_use_id": tool_use_id,
+                            "content": tool_result,
                             "is_error": False,
                         }
                     ],
                 },
             }
-
             self.add_thinking_step_by_key(
                 title_key="thinking.tool_result",
-                report_immediately=True,
+                report_immediately=False,  # Don't use legacy report, we use emitter
                 details=tool_result_details,
             )
 
-        # Handle content generation
+        # Handle content generation - send text_delta event via emitter
         if run_response_event.event in [RunEvent.run_content]:
             content_chunk = run_response_event.content
             if content_chunk:
                 result_content += str(content_chunk)
-                # Throttled report progress - only send if enough time has passed
-                current_time = time.time()
-                time_since_last = current_time - self._last_content_report_time
-                logger.info(
-                    f"Content chunk received, length={len(content_chunk)}, "
-                    f"total_length={len(result_content)}, time_since_last={time_since_last:.3f}s"
-                )
-                if time_since_last >= self._content_report_interval:
-                    self._last_content_report_time = current_time
-                    logger.info(
-                        f"Sending streaming update, content_length={len(result_content)}"
-                    )
-                    # Include accumulated reasoning_content in streaming updates
-                    reasoning_content = (
-                        self.accumulated_reasoning_content
-                        if self.accumulated_reasoning_content
-                        else None
-                    )
-                    self.report_progress(
-                        85,
-                        TaskStatus.RUNNING.value,
-                        "${{thinking.generating_content}}",
-                        result=ExecutionResult(
-                            value=result_content,
-                            thinking=self.thinking_manager.get_thinking_steps(),
-                            reasoning_content=reasoning_content,
-                        ).dict(),
-                    )
+                # Send all chunks to emitter - ThrottledTransport handles throttling and aggregation
+                # Send text_delta event via emitter
+                try:
+                    await self.get_emitter().text_delta(str(content_chunk))
+                except Exception as e:
+                    logger.error(f"Failed to send text_delta event: {e}")
 
             # Check for reasoning_content (DeepSeek R1 and similar models)
             # RunContentEvent has reasoning_content field directly
             reasoning_content = getattr(run_response_event, "reasoning_content", None)
 
             if reasoning_content:
-                logger.info(
-                    f"Found reasoning_content in run_content event: {reasoning_content[:100] if len(reasoning_content) > 100 else reasoning_content}..."
-                )
                 # Accumulate reasoning content for final result
                 self.accumulated_reasoning_content += reasoning_content
-                # Add reasoning as a thinking step with special type for frontend display
+
+                # Send all reasoning chunks to emitter - ThrottledTransport handles throttling and aggregation
+                # Send reasoning event via emitter
+                try:
+                    await self.get_emitter().reasoning(reasoning_content)
+                except Exception as e:
+                    logger.error(f"Failed to send reasoning event: {e}")
+
+                # Also add reasoning as a thinking step for local tracking
                 reasoning_details = {
                     "type": "reasoning",
                     "content": reasoning_content,
                 }
                 self.add_thinking_step_by_key(
                     title_key="thinking.model_reasoning",
-                    report_immediately=False,  # Don't report immediately, use throttle below
+                    report_immediately=False,
                     details=reasoning_details,
                 )
-                # Throttled report progress - only send if enough time has passed
-                current_time = time.time()
-                time_since_last_thinking = (
-                    current_time - self._last_thinking_report_time
-                )
-                if time_since_last_thinking >= self._thinking_report_interval:
-                    self._last_thinking_report_time = current_time
-                    logger.info(
-                        f"Sending thinking update, thinking_count={len(self.thinking_manager.get_thinking_steps())}"
-                    )
-                    self.report_progress(
-                        70,  # Keep progress at 70 during reasoning phase
-                        TaskStatus.RUNNING.value,
-                        "${{thinking.model_reasoning}}",
-                        result=ExecutionResult(
-                            value=result_content,  # May be empty during reasoning phase
-                            thinking=self.thinking_manager.get_thinking_steps(),
-                            reasoning_content=self.accumulated_reasoning_content,
-                        ).dict(),
-                    )
 
         # Handle reasoning step events (for models that support structured reasoning)
         if run_response_event.event in [RunEvent.reasoning_step]:
             reasoning_content = getattr(run_response_event, "reasoning_content", None)
             if reasoning_content:
-                logger.info(
-                    f"Found reasoning_step event: {reasoning_content[:100] if len(reasoning_content) > 100 else reasoning_content}..."
-                )
                 # Accumulate reasoning content for final result
                 self.accumulated_reasoning_content += reasoning_content
+
+                # Send all reasoning chunks to emitter - ThrottledTransport handles throttling and aggregation
+                # Send reasoning event via emitter
+                try:
+                    await self.get_emitter().reasoning(reasoning_content)
+                except Exception as e:
+                    logger.error(f"Failed to send reasoning event: {e}")
+
+                # Also add reasoning as a thinking step for local tracking
                 reasoning_details = {
                     "type": "reasoning",
                     "content": reasoning_content,
                 }
                 self.add_thinking_step_by_key(
                     title_key="thinking.model_reasoning",
-                    report_immediately=False,  # Don't report immediately, use throttle below
+                    report_immediately=False,
                     details=reasoning_details,
                 )
-                # Throttled report progress - only send if enough time has passed
-                current_time = time.time()
-                time_since_last_thinking = (
-                    current_time - self._last_thinking_report_time
-                )
-                if time_since_last_thinking >= self._thinking_report_interval:
-                    self._last_thinking_report_time = current_time
-                    logger.info(
-                        f"Sending thinking update (reasoning_step), thinking_count={len(self.thinking_manager.get_thinking_steps())}"
-                    )
-                    self.report_progress(
-                        70,  # Keep progress at 70 during reasoning phase
-                        TaskStatus.RUNNING.value,
-                        "${{thinking.model_reasoning}}",
-                        result=ExecutionResult(
-                            value=result_content,  # May be empty during reasoning phase
-                            thinking=self.thinking_manager.get_thinking_steps(),
-                            reasoning_content=self.accumulated_reasoning_content,
-                        ).dict(),
-                    )
 
         # Return tuple: (result_content, should_break)
         # should_break is False by default, only True when silent_exit is detected
@@ -978,7 +975,9 @@ class AgnoAgent(Agent):
                 f"agent run success. result:{_safe_json_dumps(result.to_dict())}"
             )
             result_content = self._normalize_result_content(result)
-            return self._handle_execution_result(result_content, "agent execution")
+            return await self._handle_execution_result(
+                result_content, "agent execution"
+            )
 
         except Exception as e:
             return self._handle_execution_error(e, "agent execution (non-streaming)")
@@ -1052,7 +1051,7 @@ class AgnoAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 return TaskStatus.COMPLETED
 
-            return self._handle_execution_result(
+            return await self._handle_execution_result(
                 result_content, "agent streaming execution"
             )
 
@@ -1112,7 +1111,7 @@ class AgnoAgent(Agent):
                 f"team run success. result:{_safe_json_dumps(result.to_dict())}"
             )
             result_content = self._normalize_result_content(result)
-            return self._handle_execution_result(result_content, "team execution")
+            return await self._handle_execution_result(result_content, "team execution")
 
         except Exception as e:
             return self._handle_execution_error(e, "team execution (non-streaming)")
@@ -1191,7 +1190,7 @@ class AgnoAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 return TaskStatus.COMPLETED
 
-            return self._handle_execution_result(
+            return await self._handle_execution_result(
                 result_content, "team streaming execution"
             )
 
@@ -1202,7 +1201,7 @@ class AgnoAgent(Agent):
         self, run_response_event, result_content: str
     ) -> Tuple[str, Optional[Any], bool]:
         """
-        Handle team streaming events
+        Handle team streaming events using emitter directly
 
         Args:
             run_response_event: The streaming event
@@ -1212,6 +1211,8 @@ class AgnoAgent(Agent):
             Tuple[str, Optional[Any], bool]: (Updated result content, reasoning, should_break flag)
                 - should_break is True when silent_exit is detected and execution should stop
         """
+        import uuid
+
         reasoning = None
 
         if (
@@ -1274,21 +1275,37 @@ class AgnoAgent(Agent):
                 if hasattr(run_response_event, "run_id"):
                     self.current_run_id = run_response_event.run_id
                     logger.info(f"Stored run_id: {self.current_run_id}")
-                self.report_progress(
-                    75,
-                    TaskStatus.RUNNING.value,
-                    "${{thinking.team_execution_started}}",
-                    result=ExecutionResult(
-                        thinking=self.thinking_manager.get_thinking_steps()
-                    ).dict(),
-                )
 
-        # Handle team tool call events
+                # Send start event via emitter
+                try:
+                    await self.get_emitter().start()
+                    logger.info(f"Sent start event for team task {self.task_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send start event: {e}")
+
+        # Handle team tool call events - send tool_start event via emitter
         if run_response_event.event in [TeamRunEvent.tool_call_started]:
-            logger.info(f"\n🔧 TEAM TOOL STARTED: {run_response_event.tool.tool_name}")
-            logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            tool_name = run_response_event.tool.tool_name
+            tool_args = run_response_event.tool.tool_args
+            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
+                uuid.uuid4()
+            )
 
-            # Build team tool call details in target format
+            logger.info(f"\n🔧 TEAM TOOL STARTED: {tool_name}")
+            logger.info(f"   Args: {tool_args}")
+
+            # Send tool_start event via emitter
+            try:
+                await self.get_emitter().tool_start(
+                    call_id=tool_use_id,
+                    name=tool_name,
+                    arguments=tool_args,
+                )
+                logger.info(f"Sent tool_start event for team tool {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to send tool_start event: {e}")
+
+            # Also add thinking step for local tracking
             team_tool_details = {
                 "type": "assistant",
                 "message": {
@@ -1298,31 +1315,27 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_use",
-                            "id": getattr(run_response_event.tool, "id", ""),
-                            "name": run_response_event.tool.tool_name,
-                            "input": run_response_event.tool.tool_args,
+                            "id": tool_use_id,
+                            "name": tool_name,
+                            "input": tool_args,
                         }
                     ],
                 },
             }
-
             self.add_thinking_step_by_key(
                 title_key="thinking.tool_use",
                 report_immediately=False,
                 details=team_tool_details,
             )
-            self.report_progress(
-                80,
-                TaskStatus.RUNNING.value,
-                f"${{thinking.team_using_tool}} {run_response_event.tool.tool_name}",
-                result=ExecutionResult(
-                    thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
-            )
 
+        # Handle team tool call completed - send tool_done event via emitter
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
             tool_name = run_response_event.tool.tool_name
             tool_result = run_response_event.tool.result
+            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
+                uuid.uuid4()
+            )
+
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {tool_name}")
 
             # Check for silent exit marker in tool result
@@ -1337,7 +1350,18 @@ class AgnoAgent(Agent):
                     # Return immediately to break out of the streaming loop
                     return result_content, reasoning, True
 
-            # Build team tool result details in target format
+            # Send tool_done event via emitter
+            try:
+                await self.get_emitter().tool_done(
+                    call_id=tool_use_id,
+                    name=tool_name,
+                    output=tool_result or "",
+                )
+                logger.info(f"Sent tool_done event for team tool {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to send tool_done event: {e}")
+
+            # Also add thinking step for local tracking
             team_tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -1347,14 +1371,13 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": getattr(run_response_event.tool, "id", ""),
+                            "tool_use_id": tool_use_id,
                             "content": tool_result,
                             "is_error": False,
                         }
                     ],
                 },
             }
-
             self.add_thinking_step_by_key(
                 title_key="thinking.tool_result",
                 report_immediately=False,
@@ -1362,13 +1385,30 @@ class AgnoAgent(Agent):
             )
             logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
-        # Handle member-level events
+        # Handle member-level events - send tool_start event via emitter
         if run_response_event.event in [RunEvent.tool_call_started]:
-            logger.info(f"\n🤖 MEMBER TOOL STARTED: {run_response_event.agent_id}")
-            logger.info(f"   Tool: {run_response_event.tool.tool_name}")
-            logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            tool_name = run_response_event.tool.tool_name
+            tool_args = run_response_event.tool.tool_args
+            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
+                uuid.uuid4()
+            )
 
-            # Build member tool call details in target format
+            logger.info(f"\n🤖 MEMBER TOOL STARTED: {run_response_event.agent_id}")
+            logger.info(f"   Tool: {tool_name}")
+            logger.info(f"   Args: {tool_args}")
+
+            # Send tool_start event via emitter
+            try:
+                await self.get_emitter().tool_start(
+                    call_id=tool_use_id,
+                    name=tool_name,
+                    arguments=tool_args,
+                )
+                logger.info(f"Sent tool_start event for member tool {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to send tool_start event: {e}")
+
+            # Also add thinking step for local tracking
             member_tool_details = {
                 "type": "assistant",
                 "message": {
@@ -1378,28 +1418,43 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_use",
-                            "id": getattr(run_response_event.tool, "id", ""),
-                            "name": run_response_event.tool.tool_name,
-                            "input": run_response_event.tool.tool_args,
+                            "id": tool_use_id,
+                            "name": tool_name,
+                            "input": tool_args,
                         }
                     ],
                 },
             }
-
             self.add_thinking_step_by_key(
                 title_key="thinking.tool_use",
                 report_immediately=False,
                 details=member_tool_details,
             )
 
+        # Handle member tool call completed - send tool_done event via emitter
         if run_response_event.event in [RunEvent.tool_call_completed]:
             tool_name = run_response_event.tool.tool_name
             tool_result = run_response_event.tool.result
+            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
+                uuid.uuid4()
+            )
+
             logger.info(f"\n✅ MEMBER TOOL COMPLETED: {run_response_event.agent_id}")
             logger.info(f"   Tool: {tool_name}")
             logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
-            # Build member tool result details in target format
+            # Send tool_done event via emitter
+            try:
+                await self.get_emitter().tool_done(
+                    call_id=tool_use_id,
+                    name=tool_name,
+                    output=tool_result or "",
+                )
+                logger.info(f"Sent tool_done event for member tool {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to send tool_done event: {e}")
+
+            # Also add thinking step for local tracking
             member_tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -1409,94 +1464,56 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": getattr(run_response_event.tool, "id", ""),
+                            "tool_use_id": tool_use_id,
                             "content": tool_result,
                             "is_error": False,
                         }
                     ],
                 },
             }
-
             self.add_thinking_step_by_key(
                 title_key="thinking.tool_result",
                 report_immediately=False,
                 details=member_tool_result_details,
             )
 
-        # Handle content generation
+        # Handle content generation - send text_delta event via emitter
         if run_response_event.event in [TeamRunEvent.run_content]:
             content_chunk = run_response_event.content
             if content_chunk:
                 result_content += str(content_chunk)
-                # Throttled report progress - only send if enough time has passed
-                current_time = time.time()
-                time_since_last = current_time - self._last_content_report_time
-                logger.info(
-                    f"[Team] Content chunk received, length={len(content_chunk)}, "
-                    f"total_length={len(result_content)}, time_since_last={time_since_last:.3f}s"
-                )
-                if time_since_last >= self._content_report_interval:
-                    self._last_content_report_time = current_time
-                    logger.info(
-                        f"[Team] Sending streaming update, content_length={len(result_content)}"
-                    )
-                    # Include accumulated reasoning_content in streaming updates
-                    reasoning_content_update = (
-                        self.accumulated_reasoning_content
-                        if self.accumulated_reasoning_content
-                        else None
-                    )
-                    self.report_progress(
-                        85,
-                        TaskStatus.RUNNING.value,
-                        "${{thinking.generating_content}}",
-                        result=ExecutionResult(
-                            value=result_content,
-                            thinking=self.thinking_manager.get_thinking_steps(),
-                            reasoning_content=reasoning_content_update,
-                        ).dict(),
-                    )
+                # Send all chunks to emitter - ThrottledTransport handles throttling and aggregation
+                # Send text_delta event via emitter
+                try:
+                    await self.get_emitter().text_delta(str(content_chunk))
+                except Exception as e:
+                    logger.error(f"Failed to send text_delta event: {e}")
 
             # Check for reasoning_content (DeepSeek R1 and similar models)
             # TeamRunEvent.run_content also has reasoning_content field
             reasoning_content = getattr(run_response_event, "reasoning_content", None)
 
             if reasoning_content:
-                logger.info(
-                    f"Found reasoning_content in team run_content event: {reasoning_content[:100] if len(reasoning_content) > 100 else reasoning_content}..."
-                )
                 # Accumulate reasoning content for final result
                 self.accumulated_reasoning_content += reasoning_content
-                # Add reasoning as a thinking step with special type for frontend display
+
+                # Send all reasoning chunks to emitter - ThrottledTransport handles throttling and aggregation
+                # Send reasoning event via emitter
+                try:
+                    await self.get_emitter().reasoning(reasoning_content)
+                except Exception as e:
+                    logger.error(f"Failed to send reasoning event: {e}")
+
+                # Also add reasoning as a thinking step for local tracking
                 reasoning_details = {
                     "type": "reasoning",
                     "content": reasoning_content,
                 }
                 self.add_thinking_step_by_key(
                     title_key="thinking.model_reasoning",
-                    report_immediately=False,  # Don't report immediately, use throttle
+                    report_immediately=False,
                     details=reasoning_details,
                 )
-                # Throttled report progress - only send if enough time has passed
-                current_time = time.time()
-                time_since_last_thinking = (
-                    current_time - self._last_thinking_report_time
-                )
-                if time_since_last_thinking >= self._thinking_report_interval:
-                    self._last_thinking_report_time = current_time
-                    logger.info(
-                        f"[Team] Sending thinking update, thinking_count={len(self.thinking_manager.get_thinking_steps())}"
-                    )
-                    self.report_progress(
-                        70,  # Keep progress at 70 during reasoning phase
-                        TaskStatus.RUNNING.value,
-                        "${{thinking.model_reasoning}}",
-                        result=ExecutionResult(
-                            value=result_content,
-                            thinking=self.thinking_manager.get_thinking_steps(),
-                            reasoning_content=self.accumulated_reasoning_content,
-                        ).dict(),
-                    )
 
         # Return tuple: (result_content, reasoning, should_break)
         # should_break is False by default, only True when silent_exit is detected

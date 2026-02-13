@@ -373,14 +373,11 @@ class LocalRunner:
         logger.info(f"Executing task: task_id={task_id}, subtask_id={subtask_id}")
 
         from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
-        from executor.callback.callback_handler import clear_transport, set_transport
         from executor.modes.local.progress_reporter import EVENT_MAPPING
-        from shared.models import WebSocketTransport
+        from shared.models import EmitterBuilder, TransportFactory, WebSocketTransport
 
-        # Inject WebSocket transport so that callback_handler.get_emitter()
-        # sends events via WebSocket instead of HTTP callback (which has no URL in local mode).
+        # Create WebSocket transport for local mode
         ws_transport = WebSocketTransport(self.websocket_client, EVENT_MAPPING)
-        set_transport(ws_transport)
 
         # Create progress reporter
         progress_reporter = WebSocketProgressReporter(
@@ -394,87 +391,88 @@ class LocalRunner:
         # Create and initialize agent
         self.current_agent = ClaudeCodeAgent(task_data)
 
-        try:
-            self.current_agent.on_client_created_callback = (
-                lambda: self._on_client_created(task_id)
+        # Override the agent's emitter to use WebSocket transport for local mode
+        self.current_agent.emitter = (
+            EmitterBuilder()
+            .with_task(task_id, subtask_id)
+            .with_transport(ws_transport)
+            .build()
+        )
+
+        self.current_agent.on_client_created_callback = lambda: self._on_client_created(
+            task_id
+        )
+        self.current_agent.report_progress = self._make_ws_report_progress(
+            progress_reporter
+        )
+
+        # Report task started
+        await progress_reporter.report_progress(
+            progress=10,
+            status=TaskStatus.RUNNING.value,
+            message="${{thinking.task_started}}",
+        )
+
+        # Initialize agent
+        init_status = self.current_agent.initialize()
+        if init_status != TaskStatus.SUCCESS:
+            logger.error(f"Agent initialization failed: {init_status}")
+            await progress_reporter.report_result(
+                status=TaskStatus.FAILED.value,
+                result={"error": "Agent initialization failed"},
+                message="Agent initialization failed",
             )
-            self.current_agent.report_progress = self._make_ws_report_progress(
-                progress_reporter
+            return
+
+        # Pre-execute
+        pre_status = self.current_agent.pre_execute()
+        if pre_status != TaskStatus.SUCCESS:
+            logger.error(f"Agent pre-execution failed: {pre_status}")
+            await progress_reporter.report_result(
+                status=TaskStatus.FAILED.value,
+                result={"error": "Agent pre-execution failed"},
+                message="Agent pre-execution failed",
             )
+            return
 
-            # Report task started
-            await progress_reporter.report_progress(
-                progress=10,
-                status=TaskStatus.RUNNING.value,
-                message="${{thinking.task_started}}",
+        # Execute the task (Claude client will be created inside, triggering heartbeat callback)
+        result = await self.current_agent.execute_async()
+        logger.info(f"Task execution completed: task_id={task_id}")
+
+        # Get execution result for logging
+        execution_result = {}
+        if (
+            hasattr(self.current_agent, "state_manager")
+            and self.current_agent.state_manager
+        ):
+            execution_result = (
+                self.current_agent.state_manager.get_current_state() or {}
             )
+            # Truncate execution_result to 20 characters for logging
+            result_str = str(execution_result)
+            truncated_result = (
+                result_str[:20] + "..." if len(result_str) > 20 else result_str
+            )
+            logger.info(f"Execution result for task_id={task_id}: {truncated_result}")
 
-            # Initialize agent
-            init_status = self.current_agent.initialize()
-            if init_status != TaskStatus.SUCCESS:
-                logger.error(f"Agent initialization failed: {init_status}")
-                await progress_reporter.report_result(
-                    status=TaskStatus.FAILED.value,
-                    result={"error": "Agent initialization failed"},
-                    message="Agent initialization failed",
-                )
-                return
-
-            # Pre-execute
-            pre_status = self.current_agent.pre_execute()
-            if pre_status != TaskStatus.SUCCESS:
-                logger.error(f"Agent pre-execution failed: {pre_status}")
-                await progress_reporter.report_result(
-                    status=TaskStatus.FAILED.value,
-                    result={"error": "Agent pre-execution failed"},
-                    message="Agent pre-execution failed",
-                )
-                return
-
-            # Execute the task (Claude client will be created inside, triggering heartbeat callback)
-            result = await self.current_agent.execute_async()
-            logger.info(f"Task execution completed: task_id={task_id}")
-
-            # Get execution result for logging
-            execution_result = {}
-            if (
-                hasattr(self.current_agent, "state_manager")
-                and self.current_agent.state_manager
-            ):
-                execution_result = (
-                    self.current_agent.state_manager.get_current_state() or {}
-                )
-                # Truncate execution_result to 20 characters for logging
-                result_str = str(execution_result)
-                truncated_result = (
-                    result_str[:20] + "..." if len(result_str) > 20 else result_str
-                )
+            # Log workbench status if present
+            if "workbench" in execution_result:
+                workbench_status = execution_result["workbench"].get("status", "N/A")
                 logger.info(
-                    f"Execution result for task_id={task_id}: {truncated_result}"
+                    f"Workbench status for task_id={task_id}: {workbench_status}"
                 )
 
-                # Log workbench status if present
-                if "workbench" in execution_result:
-                    workbench_status = execution_result["workbench"].get(
-                        "status", "N/A"
-                    )
-                    logger.info(
-                        f"Workbench status for task_id={task_id}: {workbench_status}"
-                    )
-
-            # Only report final result for non-success cases.
-            # For success, response_processor.py already sends the response.completed
-            # event with correct content via callback_handler -> WebSocket transport.
-            # Sending another response.completed here would overwrite the DB with
-            # empty content (since get_current_state() doesn't include "value").
-            if result != TaskStatus.COMPLETED:
-                await progress_reporter.report_result(
-                    status=result.value,
-                    result=execution_result,
-                    message=f"Task completed with status: {result.value}",
-                )
-        finally:
-            clear_transport()
+        # Only report final result for non-success cases.
+        # For success, response_processor.py already sends the response.completed
+        # event with correct content via emitter -> WebSocket transport.
+        # Sending another response.completed here would overwrite the DB with
+        # empty content (since get_current_state() doesn't include "value").
+        if result != TaskStatus.COMPLETED:
+            await progress_reporter.report_result(
+                status=result.value,
+                result=execution_result,
+                message=f"Task completed with status: {result.value}",
+            )
 
     async def _report_task_failure(
         self, task_data: Dict[str, Any], error_message: str

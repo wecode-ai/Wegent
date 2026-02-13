@@ -11,12 +11,13 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
-from executor.callback.callback_client import CallbackClient
 from executor.config import config
 from shared.logger import setup_logger
+from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
 from shared.models.execution import EventType, ExecutionEvent
 from shared.status import TaskStatus
 from shared.utils import git_util
+from shared.utils.callback_client import CallbackClient
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 
 logger = setup_logger("agent_base")
@@ -45,7 +46,7 @@ class Agent:
             task_data: The task data dictionary
         """
         self.task_data = task_data
-        self.callback_client = CallbackClient()
+        self.callback_client = CallbackClient(callback_url=config.CALLBACK_URL)
         self.task_id = task_data.get("task_id", -1)
         self.subtask_id = task_data.get("subtask_id", -1)
         self.task_title = task_data.get("task_title", "")
@@ -55,6 +56,43 @@ class Agent:
         )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
+
+        # Create emitter for the task lifecycle - shared across all operations
+        # Use private attribute, access via get_emitter() method
+        self._emitter: ResponsesAPIEmitter = self._create_emitter()
+
+    def _create_emitter(self) -> ResponsesAPIEmitter:
+        """
+        Template method for creating the emitter.
+        Subclasses can override this to customize emitter creation.
+
+        Returns:
+            ResponsesAPIEmitter: The emitter instance for this agent
+        """
+        return (
+            EmitterBuilder()
+            .with_task(self.task_id, self.subtask_id)
+            .with_transport(
+                TransportFactory.create_callback_throttled(
+                    callback_url=config.CALLBACK_URL
+                )
+            )
+            .with_executor_info(
+                name=os.getenv("EXECUTOR_NAME"),
+                namespace=os.getenv("EXECUTOR_NAMESPACE"),
+            )
+            .build()
+        )
+
+    def get_emitter(self) -> ResponsesAPIEmitter:
+        """
+        Get the emitter instance for this agent.
+        Use this method instead of accessing _emitter directly.
+
+        Returns:
+            ResponsesAPIEmitter: The emitter instance
+        """
+        return self._emitter
 
     def handle(
         self, pre_executed: Optional[TaskStatus] = None
@@ -119,25 +157,37 @@ class Agent:
         """
         Report progress to the executor_manager using OpenAI Responses API format.
 
+        Uses the emitter created during agent initialization.
+
         Args:
             progress: The progress percentage (0-100)
             status: Optional status string
             message: Optional message string
             result: Optional result data dictionary
         """
-        from executor.callback.callback_handler import send_progress_event
+        import asyncio
 
         logger.info(
             f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}"
         )
         try:
-            send_progress_event(
-                task_id=self.task_id,
-                subtask_id=self.subtask_id,
-                progress=progress,
-                status=status or "",
-                content=message or "",
-            )
+
+            async def _send_progress():
+                await self.get_emitter().in_progress()
+
+            # Run async in sync context
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(_send_progress())
+                return
+
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _send_progress())
+                future.result()
         except Exception as e:
             logger.critical(
                 f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "
