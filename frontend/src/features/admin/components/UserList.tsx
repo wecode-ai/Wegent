@@ -134,6 +134,14 @@ const UserList: React.FC = () => {
       return
     }
 
+    if (!formData.email?.trim()) {
+      toast({
+        variant: 'destructive',
+        title: t('admin:users.errors.email_required'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
       await adminApis.createUser(formData)
@@ -514,7 +522,7 @@ const UserList: React.FC = () => {
               </div>
             )}
             <div className="space-y-2">
-              <Label htmlFor="email">{t('admin:users.form.email')}</Label>
+              <Label htmlFor="email">{t('admin:users.form.email')} *</Label>
               <Input
                 id="email"
                 type="email"
