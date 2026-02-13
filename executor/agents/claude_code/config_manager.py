@@ -223,6 +223,55 @@ def create_claude_model_config(
     return final_claude_code_config
 
 
+def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
+    """Convert MCP servers from list format to dict format.
+
+    Claude Code SDK expects mcp_servers in dict format:
+    {
+        "serverName": {
+            "type": "http",
+            "url": "...",
+            "headers": {...}
+        }
+    }
+
+    But some configurations provide list format:
+    [
+        {"name": "serverName", "url": "...", "type": "http", "headers": {...}}
+    ]
+
+    This function converts list format to dict format.
+
+    Args:
+        mcp_servers: MCP servers configuration (list or dict)
+
+    Returns:
+        Dict format MCP servers configuration
+    """
+    if mcp_servers is None:
+        return {}
+
+    if isinstance(mcp_servers, dict):
+        return mcp_servers
+
+    if isinstance(mcp_servers, list):
+        result = {}
+        for item in mcp_servers:
+            if isinstance(item, dict) and "name" in item:
+                server_name = item["name"]
+                # Create a copy without the "name" key for the server config
+                server_config = {k: v for k, v in item.items() if k != "name"}
+                # Rename "headers" to "auth" if present (for Claude Code SDK compatibility)
+                # Note: Claude Code SDK uses different key names
+                result[server_name] = server_config
+        return result
+
+    logger.warning(
+        f"Unexpected mcp_servers type: {type(mcp_servers)}, returning empty dict"
+    )
+    return {}
+
+
 def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
@@ -274,6 +323,8 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         if mcp_servers:
             # Replace placeholders in MCP servers config with actual values
             mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
+            # Convert list format to dict format for Claude Code SDK
+            mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
             bot_config["mcp_servers"] = mcp_servers
 
         # Add wegent MCP server for subscription tasks
@@ -293,13 +344,9 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
                 mcp_servers.update(wegent_mcp)
             elif isinstance(mcp_servers, list):
                 # Convert list to dict format
-                mcp_dict = {
-                    item["name"]: item
-                    for item in mcp_servers
-                    if isinstance(item, dict) and "name" in item
-                }
-                mcp_dict.update(wegent_mcp)
-                bot_config["mcp_servers"] = mcp_dict
+                mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
+                mcp_servers.update(wegent_mcp)
+                bot_config["mcp_servers"] = mcp_servers
             logger.info(
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
             )
