@@ -157,6 +157,27 @@ export async function publishAuthorQuestion(questionId: number): Promise<Questio
   })
 }
 
+export interface QuestionVersionListResponse {
+  total: number
+  items: QuestionVersion[]
+}
+
+export async function listAuthorQuestionVersions(
+  questionId: number,
+  params: {
+    page?: number
+    limit?: number
+  }
+): Promise<QuestionVersionListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+
+  return fetchJson<QuestionVersionListResponse>(
+    getAuthorUrl(`/questions/${questionId}/versions?${searchParams.toString()}`)
+  )
+}
+
 export async function reorderAuthorQuestions(
   topicId: number,
   questionIds: number[]

@@ -150,10 +150,9 @@ export async function graderBatchExecuteTasks(
   taskIds: number[],
   teamId?: number
 ): Promise<{ executed_count: number; task_ids: number[] }> {
-  const searchParams = teamId ? `?team_id=${teamId}` : ''
-  return fetchJson(getGraderUrl(`/tasks/batch-execute${searchParams}`), {
+  return fetchJson(getGraderUrl('/tasks/batch-execute'), {
     method: 'POST',
-    body: JSON.stringify(taskIds),
+    body: JSON.stringify({ task_ids: taskIds, team_id: teamId }),
   })
 }
 
