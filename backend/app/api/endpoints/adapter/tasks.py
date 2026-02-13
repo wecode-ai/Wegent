@@ -217,12 +217,17 @@ def get_task(
 @router.get("/{task_id}/skills", response_model=TaskSkillsResponse)
 def get_task_skills(
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
     """Get all skills associated with a task.
 
     Follows the chain: task → team → bots → ghosts → skills
+
+    Supports multiple authentication methods:
+    - JWT Token (standard user authentication)
+    - API Key (for executor/service authentication)
+    - Task Token (for executor task-based authentication)
 
     Returns:
         TaskSkillsResponse with task_id, team_id, team_namespace,
