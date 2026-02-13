@@ -35,6 +35,7 @@ from wecode.schemas.evaluation import (
     GradingTaskListResponse,
     GradingTaskPublishRequest,
     GradingTaskUpdateReportRequest,
+    TopicStatistics,
 )
 from wecode.service.evaluation import (
     get_answer_service,
@@ -443,6 +444,35 @@ def get_grader_topic(
         completed_tasks=completed,
         published_tasks=published,
     )
+
+
+@router.get("/topics/{topic_id}/statistics", response_model=TopicStatistics)
+def get_grader_topic_statistics(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get statistics for a topic (grader view).
+
+    Requires grader permission for the topic.
+    """
+    permission_service = get_permission_service()
+    topic_service = get_topic_service()
+
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    # Reuse the topic service statistics method
+    stats = topic_service.get_statistics(db, topic_id)
+
+    return TopicStatistics(**stats)
 
 
 # ============================================================================

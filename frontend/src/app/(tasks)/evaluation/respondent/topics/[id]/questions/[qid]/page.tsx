@@ -126,8 +126,10 @@ function RespondentQuestionDetailContent() {
           contentData.text = answerText.trim()
         }
       }
-      if (answerType === ContentType.URL) {
-        contentData.url = answerUrl.trim()
+      if (answerType === ContentType.URL || answerType === ContentType.MIXED) {
+        if (hasUrl) {
+          contentData.url = answerUrl.trim()
+        }
       }
       if ((answerType === ContentType.ATTACHMENT || answerType === ContentType.MIXED) && hasAttachments) {
         contentData.attachments = answerAttachments
@@ -310,7 +312,7 @@ function RespondentQuestionDetailContent() {
             </div>
           )}
 
-          {answerType === ContentType.URL && (
+          {(answerType === ContentType.URL || answerType === ContentType.MIXED) && (
             <div className="space-y-2">
               <Label htmlFor="answerUrl" className="flex items-center gap-2">
                 <Link className="h-4 w-4" />
