@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import json
+import os
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -806,10 +807,13 @@ async def _process_result_message(
                 state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
                 # Send done event (response.completed) via callback
+                # Include executor_name for container reuse in follow-up tasks
                 await send_done_event_async(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     result=result_dict,
+                    executor_name=os.getenv("EXECUTOR_NAME"),
+                    executor_namespace=os.getenv("EXECUTOR_NAMESPACE"),
                     message_id=message_id,
                     usage=msg.usage,
                     silent_exit=silent_exit_detected if silent_exit_detected else None,
@@ -831,22 +835,28 @@ async def _process_result_message(
                 state_manager.set_task_status(TaskStatus.FAILED.value)
 
                 # Send error event via callback
+                # Include executor_name for container reuse in follow-up tasks
                 from executor.callback.callback_handler import send_error_event_async
 
                 await send_error_event_async(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     error=str(e),
+                    executor_name=os.getenv("EXECUTOR_NAME"),
+                    executor_namespace=os.getenv("EXECUTOR_NAMESPACE"),
                 )
         else:
             # Update task status to completed
             state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
             # Send done event (response.completed) via callback
+            # Include executor_name for container reuse in follow-up tasks
             await send_done_event_async(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 result={"value": result_str},
+                executor_name=os.getenv("EXECUTOR_NAME"),
+                executor_namespace=os.getenv("EXECUTOR_NAMESPACE"),
                 message_id=message_id,
                 usage=msg.usage,
             )
