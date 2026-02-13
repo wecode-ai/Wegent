@@ -14,8 +14,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { respondentListAnswerHistory, getDownloadUrl } from '@wecode/api/evaluation'
-import type { Answer, ContentAttachment } from '@wecode/types/evaluation'
+import type { Answer } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+
+// Attachment type from content_data
+interface ContentDataAttachment {
+  s3_key: string
+  filename: string
+  size?: number
+  content_type?: string
+}
 
 /**
  * Respondent Answer History Page
@@ -76,7 +84,7 @@ function RespondentHistoryContent() {
     }
   }
 
-  const renderAttachments = (attachments: ContentAttachment[] | undefined) => {
+  const renderAttachments = (attachments: ContentDataAttachment[] | undefined) => {
     if (!attachments || attachments.length === 0) return null
 
     return (
@@ -193,7 +201,7 @@ function RespondentHistoryContent() {
                     </a>
                   </div>
                 )}
-                {renderAttachments(answer.content_data?.attachments)}
+                {renderAttachments(answer.content_data?.attachments as ContentDataAttachment[] | undefined)}
               </CardContent>
             </Card>
           ))}
