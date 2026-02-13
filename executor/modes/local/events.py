@@ -5,9 +5,14 @@
 """
 Event type definitions for local executor mode.
 
-Keep this module dependency-light because it is imported during local-mode
-bootstrap in the PyInstaller binary.
+Uses OpenAI Responses API event types from shared.models.responses_api.
+This ensures consistency across all execution modes (SSE, callback, device).
+
+Socket.IO event names are now based on OpenAI Responses API event types.
 """
+
+# Re-export OpenAI Responses API event types from shared module
+from shared.models.responses_api import ResponsesAPIStreamEvents
 
 
 class DeviceEvents:
@@ -30,31 +35,35 @@ class TaskEvents:
 
 
 class ChatEvents:
-    """Chat streaming events (Socket.IO event names)."""
+    """Chat streaming events using OpenAI Responses API event types.
+
+    These event names are used as Socket.IO event names and match
+    the OpenAI Responses API event types for consistency.
+    """
 
     # Wegent-specific incoming events
     MESSAGE = "chat:message"
 
     # Lifecycle events
-    START = "response.created"
-    IN_PROGRESS = "response.in_progress"
-    DONE = "response.completed"
-    INCOMPLETE = "response.incomplete"
-    ERROR = "error"
+    START = ResponsesAPIStreamEvents.RESPONSE_CREATED.value
+    IN_PROGRESS = ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value
+    DONE = ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value
+    INCOMPLETE = ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value
+    ERROR = ResponsesAPIStreamEvents.ERROR.value
 
     # Content streaming events
-    CHUNK = "response.output_text.delta"
-    TEXT_DONE = "response.output_text.done"
+    CHUNK = ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value
+    TEXT_DONE = ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value
 
     # Tool events
-    TOOL_START = "response.function_call_arguments.delta"
-    TOOL_DONE = "response.function_call_arguments.done"
+    TOOL_START = ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value
+    TOOL_DONE = ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value
 
     # Reasoning events
-    THINKING = "response.reasoning_summary_part.added"
+    THINKING = ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value
 
     # Output item events
-    OUTPUT_ITEM_ADDED = "response.output_item.added"
-    OUTPUT_ITEM_DONE = "response.output_item.done"
-    CONTENT_PART_ADDED = "response.content_part.added"
-    CONTENT_PART_DONE = "response.content_part.done"
+    OUTPUT_ITEM_ADDED = ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value
+    OUTPUT_ITEM_DONE = ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value
+    CONTENT_PART_ADDED = ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value
+    CONTENT_PART_DONE = ResponsesAPIStreamEvents.CONTENT_PART_DONE.value
