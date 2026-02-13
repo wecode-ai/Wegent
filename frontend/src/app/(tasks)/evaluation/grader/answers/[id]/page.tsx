@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Play, Send, Edit, RotateCcw, Save } from 'lucide-react'
+import { ArrowLeft, Play, Send, Edit, RotateCcw, Save, Link } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -289,9 +289,25 @@ function GraderAnswerContent() {
         </CardHeader>
         <CardContent>
           <div className="rounded-lg bg-surface p-4">
-            <p className="whitespace-pre-wrap">
-              {typeof answer.content_data?.text === 'string' ? answer.content_data.text : ''}
-            </p>
+            {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
+              <p className="whitespace-pre-wrap">{answer.content_data.text}</p>
+            )}
+            {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
+              <div className="flex items-center gap-2">
+                <Link className="h-4 w-4 text-primary" />
+                <a
+                  href={answer.content_data.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  {answer.content_data.url}
+                </a>
+              </div>
+            )}
+            {!answer.content_data?.text && !answer.content_data?.url && (
+              <p className="text-text-secondary">{t('answers.no_answers')}</p>
+            )}
           </div>
         </CardContent>
       </Card>

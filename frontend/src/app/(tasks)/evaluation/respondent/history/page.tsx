@@ -6,7 +6,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, FileText, CheckCircle, Clock } from 'lucide-react'
+import { ArrowLeft, FileText, CheckCircle, Clock, Link } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -156,11 +156,24 @@ function RespondentHistoryContent() {
                         </Badge>
                       </div>
                     </div>
-                    <p className="line-clamp-3 whitespace-pre-wrap text-text-primary">
-                      {typeof answer.content_data?.text === 'string'
-                        ? answer.content_data.text
-                        : ''}
-                    </p>
+                    {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
+                      <p className="line-clamp-3 whitespace-pre-wrap text-text-primary">
+                        {answer.content_data.text}
+                      </p>
+                    )}
+                    {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
+                      <div className="flex items-center gap-2">
+                        <Link className="h-4 w-4 text-primary" />
+                        <a
+                          href={answer.content_data.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="line-clamp-1 text-primary hover:underline"
+                        >
+                          {answer.content_data.url}
+                        </a>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}
