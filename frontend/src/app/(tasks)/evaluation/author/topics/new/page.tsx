@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
-import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
+import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { createAuthorTopic } from '@wecode/api/evaluation-author'
 import { TopicVisibility } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'

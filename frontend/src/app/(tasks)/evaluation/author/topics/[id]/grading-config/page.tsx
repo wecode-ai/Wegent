@@ -23,7 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useToast } from '@/hooks/use-toast'
-import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
+import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import {
   getAuthorTopic,
   getAuthorGradingConfig,

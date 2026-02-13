@@ -21,7 +21,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
-import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
+import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { getAuthorTopic, updateAuthorTopic } from '@wecode/api/evaluation-author'
 import { TopicVisibility, type Topic } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'

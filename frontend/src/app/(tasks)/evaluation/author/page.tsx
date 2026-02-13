@@ -21,7 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
-import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
+import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { listMyTopics } from '@wecode/api/evaluation-author'
 import type { Topic } from '@wecode/types/evaluation'
 import {

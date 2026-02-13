@@ -33,8 +33,8 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
-import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
-import { EvaluationFileUpload } from '@/features/evaluation/components/common/EvaluationFileUpload'
+import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
 import {
   getAuthorQuestion,
   updateAuthorQuestion,

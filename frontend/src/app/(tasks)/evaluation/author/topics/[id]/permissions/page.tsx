@@ -48,7 +48,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
-import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
+import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import {
   getAuthorTopic,
