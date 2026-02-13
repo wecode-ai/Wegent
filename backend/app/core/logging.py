@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import logging.config
+import os
 import sys
 
 
@@ -40,7 +42,11 @@ class RequestIdFilter(logging.Filter):
 
 
 def setup_logging() -> None:
-    """Configure logging format with request_id support"""
+    """Configure logging format with request_id support."""
+    # Get log level from environment variable
+    # LOG_LEVEL can be set to DEBUG, INFO, WARNING, ERROR, CRITICAL
+    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
 
     # Create a custom formatter that includes request_id
     log_format = (
@@ -51,15 +57,19 @@ def setup_logging() -> None:
     # Create handler
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S"))
-
-    # Add the RequestIdFilter to the handler
+    handler.setLevel(logging.DEBUG)
     handler.addFilter(RequestIdFilter())
 
     # Configure root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(log_level)
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
+
+    # IMPORTANT: Also set level for 'app' logger hierarchy
+    # This ensures all app.* loggers inherit the correct level
+    app_logger = logging.getLogger("app")
+    app_logger.setLevel(log_level)
 
     # Set third-party library log levels
     for name in ["uvicorn", "uvicorn.error", "fastapi"]:
@@ -69,3 +79,6 @@ def setup_logging() -> None:
 
     logging.getLogger("uvicorn.access").handlers.clear()
     logging.getLogger("uvicorn.access").propagate = False
+
+    # Log the configured level for debugging
+    root_logger.info(f"Logging configured with level: {log_level_str} ({log_level})")

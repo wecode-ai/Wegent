@@ -1544,10 +1544,15 @@ const MessageBubble = memo(
                 />
               ) : (
                 <>
-                  {/* Show recovered content if available, otherwise show normal content */}
-                  {msg.recoveredContent &&
-                  msg.subtaskStatus === 'RUNNING' &&
-                  !msg.result?.blocks ? (
+                  {/* Show recovered content if available during streaming */}
+                  {/* CRITICAL FIX: When page refreshes during streaming, we should ALWAYS use */}
+                  {/* recoveredContent (from Redis cached_content) instead of blocks (from DB). */}
+                  {/* This is because: */}
+                  {/* 1. cached_content contains the complete streamed content from the beginning */}
+                  {/* 2. blocks from DB may only contain partial/stale content */}
+                  {/* 3. The two data sources are not synchronized during streaming */}
+                  {/* So when recoveredContent exists and status is RUNNING, prioritize it. */}
+                  {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' ? (
                     renderRecoveredContent()
                   ) : !isUserTypeMessage &&
                     msg.result?.blocks &&

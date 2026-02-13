@@ -5,27 +5,45 @@
 """
 WebSocket-based progress reporter for local executor mode.
 
-This module implements a progress reporter that sends task progress
-and results via WebSocket, replacing the HTTP-based CallbackClient
-used in Docker mode.
+Uses ResponsesAPIEmitter with WebSocketTransport for sending events
+via WebSocket to backend.
+
+All events follow OpenAI's official Responses API specification.
 """
 
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from executor.modes.local.events import ChatEvents, TaskEvents
+from executor.modes.local.events import ChatEvents
 from shared.logger import setup_logger
+from shared.models import ResponsesAPIEmitter, WebSocketTransport
 
 if TYPE_CHECKING:
     from executor.modes.local.websocket_client import WebSocketClient
 
 logger = setup_logger("websocket_progress_reporter")
 
+# Event type to socket event mapping
+EVENT_MAPPING = {
+    "response.created": ChatEvents.START,
+    "response.in_progress": ChatEvents.IN_PROGRESS,
+    "response.output_text.delta": ChatEvents.CHUNK,
+    "response.output_text.done": ChatEvents.CHUNK,
+    "response.output_item.added": ChatEvents.CHUNK,
+    "response.output_item.done": ChatEvents.CHUNK,
+    "response.function_call_arguments.delta": ChatEvents.CHUNK,
+    "response.function_call_arguments.done": ChatEvents.CHUNK,
+    "response.reasoning_summary_part.added": ChatEvents.CHUNK,
+    "response.completed": ChatEvents.DONE,
+    "response.incomplete": ChatEvents.INCOMPLETE,
+    "error": ChatEvents.ERROR,
+}
+
 
 class WebSocketProgressReporter:
     """Progress reporter that sends updates via WebSocket.
 
-    This class replaces the HTTP CallbackClient for local mode,
-    sending progress updates and results through the WebSocket connection.
+    This class wraps ResponsesAPIEmitter with WebSocketTransport
+    for local executor mode.
     """
 
     def __init__(
@@ -33,8 +51,6 @@ class WebSocketProgressReporter:
         websocket_client: "WebSocketClient",
         task_id: int,
         subtask_id: int,
-        task_title: str = "",
-        subtask_title: str = "",
     ):
         """Initialize the progress reporter.
 
@@ -42,14 +58,140 @@ class WebSocketProgressReporter:
             websocket_client: WebSocket client for sending events.
             task_id: Task ID.
             subtask_id: Subtask ID.
-            task_title: Task title.
-            subtask_title: Subtask title.
         """
         self.client = websocket_client
         self.task_id = task_id
         self.subtask_id = subtask_id
-        self.task_title = task_title
-        self.subtask_title = subtask_title
+
+        # Create emitter with WebSocket transport
+        transport = WebSocketTransport(websocket_client, EVENT_MAPPING)
+        self.emitter = ResponsesAPIEmitter(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            transport=transport,
+        )
+
+    # ============================================================
+    # Response Lifecycle Events
+    # ============================================================
+
+    async def send_start_event(
+        self,
+        model: str = "",
+        message_id: Optional[int] = None,
+        shell_type: Optional[str] = None,
+    ) -> None:
+        """Send start event (response.created)."""
+        self.emitter.message_id = message_id
+        await self.emitter.start(shell_type)
+
+    async def send_chunk_event(
+        self,
+        content: str,
+        offset: int = 0,
+        message_id: Optional[int] = None,
+        result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
+    ) -> None:
+        """Send chunk event (response.output_text.delta)."""
+        self.emitter.message_id = message_id
+        await self.emitter.text_delta(content)
+
+    async def send_thinking_event(
+        self,
+        content: str,
+        message_id: Optional[int] = None,
+    ) -> None:
+        """Send thinking event (response.reasoning_summary_part.added)."""
+        self.emitter.message_id = message_id
+        await self.emitter.reasoning(content)
+
+    async def send_tool_start_event(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: Optional[dict] = None,
+        message_id: Optional[int] = None,
+        output_index: int = 1,
+    ) -> None:
+        """Send tool start event."""
+        self.emitter.message_id = message_id
+        await self.emitter.tool_start(tool_use_id, tool_name, tool_input)
+
+    async def send_tool_result_event(
+        self,
+        tool_use_id: str,
+        tool_name: str = "",
+        tool_input: Optional[dict] = None,
+        tool_output: Any = None,
+        message_id: Optional[int] = None,
+        error: Optional[str] = None,
+        output_index: int = 1,
+    ) -> None:
+        """Send tool result event."""
+        self.emitter.message_id = message_id
+        await self.emitter.tool_done(tool_use_id, tool_name, tool_input)
+
+    async def send_done_event(
+        self,
+        content: str = "",
+        result: Optional[Dict[str, Any]] = None,
+        message_id: Optional[int] = None,
+        usage: Optional[Dict[str, Any]] = None,
+        sources: Optional[list] = None,
+        blocks: Optional[list] = None,
+        stop_reason: str = "end_turn",
+        silent_exit: Optional[bool] = None,
+        silent_exit_reason: Optional[str] = None,
+        **extra_fields,
+    ) -> None:
+        """Send done event (response.completed)."""
+        self.emitter.message_id = message_id
+        if not content and result:
+            content = result.get("value", "") or ""
+        await self.emitter.done(
+            content=content,
+            usage=usage,
+            stop_reason=stop_reason,
+            sources=sources,
+            silent_exit=silent_exit,
+            silent_exit_reason=silent_exit_reason,
+            **extra_fields,
+        )
+
+    async def send_error_event(
+        self,
+        error: str,
+        error_code: Optional[str] = None,
+        message_id: Optional[int] = None,
+    ) -> None:
+        """Send error event."""
+        self.emitter.message_id = message_id
+        await self.emitter.error(error, error_code or "internal_error")
+
+    async def send_progress_event(
+        self,
+        progress: int,
+        status: str,
+        content: str = "",
+        result: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Send progress event (response.in_progress)."""
+        await self.emitter.in_progress()
+
+    async def send_cancelled_event(
+        self,
+        message_id: Optional[int] = None,
+        content: str = "",
+    ) -> None:
+        """Send cancelled event (response.incomplete)."""
+        self.emitter.message_id = message_id
+        await self.emitter.incomplete(reason="cancelled", content=content)
+
+    # ============================================================
+    # Legacy Methods (for backward compatibility)
+    # ============================================================
 
     async def report_progress(
         self,
@@ -58,33 +200,8 @@ class WebSocketProgressReporter:
         message: str,
         result: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Report task progress to Backend.
-
-        Args:
-            progress: Progress percentage (0-100).
-            status: Status string (e.g., 'running', 'completed', 'failed').
-            message: Progress message.
-            result: Optional result data.
-        """
-        try:
-            await self.client.emit(
-                TaskEvents.PROGRESS,
-                {
-                    "task_id": self.task_id,
-                    "subtask_id": self.subtask_id,
-                    "task_title": self.task_title,
-                    "subtask_title": self.subtask_title,
-                    "progress": progress,
-                    "status": status,
-                    "message": message,
-                    "result": result,
-                },
-            )
-            logger.debug(
-                f"Progress reported: task_id={self.task_id}, progress={progress}%, status={status}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to report progress for task {self.task_id}: {e}")
+        """Report task progress."""
+        await self.send_progress_event(progress, status, message, result)
 
     async def report_result(
         self,
@@ -92,135 +209,20 @@ class WebSocketProgressReporter:
         result: Dict[str, Any],
         message: str = "",
     ) -> None:
-        """Report final task result to Backend.
-
-        Args:
-            status: Final status (e.g., 'completed', 'failed').
-            result: Result data dictionary.
-            message: Optional result message.
-
-        Raises:
-            Exception: If the emit fails, re-raised after logging.
-        """
-        try:
-            data = {
-                "task_id": self.task_id,
-                "subtask_id": self.subtask_id,
-                "task_title": self.task_title,
-                "subtask_title": self.subtask_title,
-                "status": status,
-                "result": result,
-                "message": message,
-            }
-            # Truncate data to 20 characters for logging
-            data_str = str(data)
-            truncated_data = data_str[:20] + "..." if len(data_str) > 20 else data_str
-            logger.info(f"Reporting result: {truncated_data}")
-            await self.client.emit(TaskEvents.RESULT, data)
-            logger.info(f"Result reported: task_id={self.task_id}, status={status}")
-        except Exception as e:
-            logger.exception(f"Failed to report result for task {self.task_id}: {e}")
-            raise
-
-    async def send_chat_start(
-        self,
-        model: str = "",
-        message_id: Optional[str] = None,
-    ) -> None:
-        """Send chat start event.
-
-        Args:
-            model: Model name being used.
-            message_id: Optional message ID.
-        """
-        try:
-            await self.client.emit(
-                ChatEvents.START,
-                {
-                    "task_id": self.task_id,
-                    "subtask_id": self.subtask_id,
-                    "model": model,
-                    "message_id": message_id,
-                },
+        """Report final task result."""
+        normalized = status.upper()
+        if normalized in ("COMPLETED", "SUCCESS"):
+            await self.send_done_event(
+                content=result.get("value", "") or "",
+                usage=result.get("usage"),
+                sources=result.get("sources"),
             )
-            logger.debug(f"Chat start sent: task_id={self.task_id}")
-        except Exception as e:
-            logger.error(f"Failed to send chat start for task {self.task_id}: {e}")
-
-    async def send_chat_chunk(
-        self,
-        chunk: str,
-        message_id: Optional[str] = None,
-    ) -> None:
-        """Send streaming chat message chunk.
-
-        Args:
-            chunk: Message chunk content.
-            message_id: Optional message ID for grouping chunks.
-        """
-        try:
-            await self.client.emit(
-                ChatEvents.CHUNK,
-                {
-                    "task_id": self.task_id,
-                    "subtask_id": self.subtask_id,
-                    "chunk": chunk,
-                    "message_id": message_id,
-                },
+        elif normalized == "CANCELLED":
+            await self.send_cancelled_event(
+                content=result.get("value", "") or "",
             )
-            # Don't log every chunk to avoid spam
-        except Exception as e:
-            logger.error(f"Failed to send chat chunk for task {self.task_id}: {e}")
-
-    async def send_chat_done(
-        self,
-        full_content: str,
-        message_id: Optional[str] = None,
-        usage: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Send chat completion event.
-
-        Args:
-            full_content: Full message content.
-            message_id: Optional message ID.
-            usage: Optional token usage statistics.
-        """
-        try:
-            await self.client.emit(
-                ChatEvents.DONE,
-                {
-                    "task_id": self.task_id,
-                    "subtask_id": self.subtask_id,
-                    "content": full_content,
-                    "message_id": message_id,
-                    "usage": usage,
-                },
+        else:
+            await self.send_error_event(
+                error=result.get("error") or message or "Unknown error",
+                error_code="execution_error",
             )
-            logger.debug(f"Chat done sent: task_id={self.task_id}")
-        except Exception as e:
-            logger.error(f"Failed to send chat done for task {self.task_id}: {e}")
-
-    async def send_chat_error(
-        self,
-        error: str,
-        message_id: Optional[str] = None,
-    ) -> None:
-        """Send chat error event.
-
-        Args:
-            error: Error message.
-            message_id: Optional message ID.
-        """
-        try:
-            await self.client.emit(
-                ChatEvents.ERROR,
-                {
-                    "task_id": self.task_id,
-                    "subtask_id": self.subtask_id,
-                    "error": error,
-                    "message_id": message_id,
-                },
-            )
-            logger.info(f"Chat error sent: task_id={self.task_id}, error={error}")
-        except Exception as e:
-            logger.error(f"Failed to send chat error for task {self.task_id}: {e}")

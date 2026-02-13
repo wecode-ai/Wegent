@@ -13,8 +13,22 @@ Key components:
 - WebSocketClient: WebSocket client for Backend communication
 - WebSocketProgressReporter: Progress reporter via WebSocket
 - HeartbeatService: Heartbeat service for connection health
+- Events: Event type definitions (Socket.IO events)
 """
 
+from executor.modes.local.events import (
+    ChatEvents,
+    DeviceEvents,
+    TaskEvents,
+)
+from executor.modes.local.progress_reporter import WebSocketProgressReporter
 from executor.modes.local.runner import LocalRunner
 
-__all__ = ["LocalRunner"]
+__all__ = [
+    "LocalRunner",
+    "WebSocketProgressReporter",
+    # Event classes
+    "DeviceEvents",
+    "TaskEvents",
+    "ChatEvents",
+]

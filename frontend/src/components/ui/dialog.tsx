@@ -96,7 +96,6 @@ const DialogContent = React.forwardRef<
 
         if (isFromCodeMirror) {
           // Don't prevent default or close dialog - let Vim handle ESC
-          console.log('[Dialog] ESC from CodeMirror, not preventing')
           event.preventDefault() // Prevent dialog close but don't stop Vim
           return
         }

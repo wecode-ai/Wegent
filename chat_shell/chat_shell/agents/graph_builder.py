@@ -222,10 +222,10 @@ class LangGraphAgentBuilder:
                         "[prompt_modifier] Final system prompt (len=%d)",
                         len(updated_content),
                     )
-                    logger.debug(
-                        "[prompt_modifier] Final system prompt content:\n%s",
-                        updated_content,
-                    )
+                    # logger.debug(
+                    #     "[prompt_modifier] Final system prompt content:\n%s",
+                    #     updated_content,
+                    # )
 
                 else:
                     new_messages.append(msg)
@@ -987,8 +987,6 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
-                    tool_input_data = event.get("data", {})
-                    logger.info("[TOOL] %s started", tool_name)
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
@@ -1048,49 +1046,8 @@ class LangGraphAgentBuilder:
                     run_id = event.get("run_id", "")
                     # Get tool output for logging
                     tool_data = event.get("data", {})
-                    tool_output = tool_data.get("output", "")
-                    # Log tool output, especially for load_skill
-                    if tool_name == "load_skill":
-                        logger.info(
-                            "[stream_tokens] load_skill completed (run_id=%s), output length=%d, output preview:\n---\n%s\n---",
-                            run_id,
-                            len(str(tool_output)),
-                            (
-                                str(tool_output)[:500] + "..."
-                                if len(str(tool_output)) > 500
-                                else str(tool_output)
-                            ),
-                        )
-                    elif tool_name == "gemini_search":
-                        # If we reach here, it means the streaming interception didn't work
-                        # (e.g., _gemini_search_tool was None). Fall back to non-streaming output.
-                        logger.info(
-                            "[stream_tokens] gemini_search completed (fallback non-streaming), "
-                            "yielding output directly as final response (run_id=%s), output length=%d",
-                            run_id,
-                            len(str(tool_output)),
-                        )
-                        # Notify callback if provided
-                        if on_tool_event:
-                            on_tool_event(
-                                "tool_end",
-                                {
-                                    "name": tool_name,
-                                    "run_id": run_id,
-                                    "data": tool_data,
-                                },
-                            )
-                        # Yield the tool output directly as the final response
-                        if tool_output:
-                            streamed_content = True
-                            yield str(tool_output)
-                        # Return early to stop the agent loop since return_direct=True
-                        # means we should use the tool output as the final response
-                        return
-                    else:
-                        logger.info("[TOOL] %s completed", tool_name)
-                    # Notify callback if provided (for non-gemini_search tools)
-                    if tool_name != "gemini_search" and on_tool_event:
+                    # Notify callback if provided
+                    if on_tool_event:
                         on_tool_event(
                             "tool_end",
                             {
@@ -1321,7 +1278,6 @@ class LangGraphAgentBuilder:
                 if kind == "on_tool_start":
                     tool_name = event.get("name", "unknown")
                     run_id = event.get("run_id", "")
-                    logger.info("[TOOL] %s started", tool_name)
                     if on_tool_event:
                         on_tool_event(
                             "tool_start",
@@ -1335,7 +1291,6 @@ class LangGraphAgentBuilder:
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "unknown")
                     run_id = event.get("run_id", "")
-                    logger.info("[TOOL] %s completed", tool_name)
                     if on_tool_event:
                         on_tool_event(
                             "tool_end",

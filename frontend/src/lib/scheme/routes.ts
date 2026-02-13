@@ -115,7 +115,6 @@ export function initializeRouteMappings(): void {
     handler: (_context: SchemeHandlerContext) => {
       // This will be implemented when we add the feedback dialog
       // For now, just log a message
-      console.log('[SchemeURL] Feedback dialog requested')
       // TODO: Implement feedback dialog trigger
     },
     requireAuth: false,

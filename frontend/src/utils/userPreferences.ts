@@ -68,10 +68,8 @@ export function getLastTeamId(): number | null {
     }
     const result = parseInt(teamId, 10)
     if (isNaN(result)) {
-      console.log('[userPreferences] Failed to parse team ID, got NaN from:', teamId)
       return null
     }
-    console.log('[userPreferences] Getting team from localStorage:', result)
     return result
   } catch (error) {
     console.warn('Failed to get last team from localStorage:', error)
@@ -137,13 +135,8 @@ export function getLastTeamIdByMode(mode: 'chat' | 'code' | 'knowledge' | 'task'
     }
     const result = parseInt(teamId, 10)
     if (isNaN(result)) {
-      console.log(
-        `[userPreferences] Failed to parse team ID for ${mode} mode, got NaN from:`,
-        teamId
-      )
       return getLastTeamId()
     }
-    console.log(`[userPreferences] Getting team from localStorage for ${mode} mode:`, result)
     return result
   } catch (error) {
     console.warn('Failed to get last team from localStorage:', error)

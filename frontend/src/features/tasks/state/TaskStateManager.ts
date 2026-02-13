@@ -31,7 +31,6 @@ class TaskStateManagerImpl {
    */
   initialize(deps: TaskStateMachineDeps): void {
     this.deps = deps
-    console.log('[TaskStateManager] Initialized with dependencies')
   }
 
   /**
@@ -60,7 +59,6 @@ class TaskStateManagerImpl {
       this.notifyGlobalListeners(taskId, state)
     })
 
-    console.log('[TaskStateManager] Created new TaskStateMachine for task', taskId)
     return machine
   }
 
@@ -79,21 +77,16 @@ class TaskStateManagerImpl {
    * keeps both temp and real task IDs pointing to the same machine.
    */
   async recoverAll(): Promise<void> {
-    console.log('[TaskStateManager] Starting recovery for all tasks')
-
     // Dedupe by machine instance to avoid recovering the same machine twice
     // This is needed because migrateState() keeps both temp and real IDs
     const uniqueMachines = new Set(this.machines.values())
     const recoveryPromises: Promise<void>[] = []
 
     for (const machine of uniqueMachines) {
-      const state = machine.getState()
-      console.log('[TaskStateManager] Recovering task', state.taskId)
       recoveryPromises.push(machine.recover({ force: true }))
     }
 
     await Promise.allSettled(recoveryPromises)
-    console.log('[TaskStateManager] All task recoveries initiated')
   }
 
   /**
@@ -104,7 +97,6 @@ class TaskStateManagerImpl {
     if (machine) {
       machine.leave()
       this.machines.delete(taskId)
-      console.log('[TaskStateManager] Cleaned up TaskStateMachine for task', taskId)
     }
   }
 
@@ -112,9 +104,8 @@ class TaskStateManagerImpl {
    * Clean up all TaskStateMachines
    */
   cleanupAll(): void {
-    for (const [taskId, machine] of this.machines) {
+    for (const [_, machine] of this.machines) {
       machine.leave()
-      console.log('[TaskStateManager] Cleaned up TaskStateMachine for task', taskId)
     }
     this.machines.clear()
   }
@@ -171,7 +162,6 @@ class TaskStateManagerImpl {
   migrateState(tempTaskId: number, realTaskId: number): void {
     const tempMachine = this.machines.get(tempTaskId)
     if (!tempMachine) {
-      console.log('[TaskStateManager] No temp machine to migrate from', tempTaskId)
       return
     }
 
@@ -194,21 +184,6 @@ class TaskStateManagerImpl {
     this.machines.set(realTaskId, tempMachine)
     // DO NOT delete tempTaskId mapping - components may still be using it
     // this.machines.delete(tempTaskId)  // REMOVED - keep both mappings
-
-    const state = tempMachine.getState()
-    console.log(
-      '[TaskStateManager] Migrated state: both',
-      tempTaskId,
-      'and',
-      realTaskId,
-      'now point to same machine',
-      {
-        status: state.status,
-        streamingSubtaskId: state.streamingSubtaskId,
-        messagesCount: state.messages.size,
-        isStopping: state.isStopping,
-      }
-    )
   }
 
   /**

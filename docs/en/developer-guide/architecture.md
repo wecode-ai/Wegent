@@ -30,12 +30,14 @@ graph TB
     subgraph "🖥️ Management Platform Layer"
         Frontend["🌐 Next.js Frontend<br/>React 19 + TypeScript"]
         Backend["⚙️ FastAPI Backend<br/>Python + SQLAlchemy"]
+        ChatShell["💬 Chat Shell<br/>LangGraph + Multi-LLM"]
         API["🚀 Declarative API<br/>Kubernetes-style"]
     end
 
     subgraph "📊 Data Layer"
         MySQL[("💾 MySQL Database<br/>v9.4")]
         Redis[("🔴 Redis Cache<br/>v7")]
+        Celery["⚡ Celery<br/>Async Task Queue"]
     end
 
     subgraph "🔍 Execution Layer"
@@ -43,6 +45,7 @@ graph TB
         Executor1["🚀 Executor 1<br/>Isolated Sandbox"]
         Executor2["🚀 Executor 2<br/>Isolated Sandbox"]
         ExecutorN["🚀 Executor N<br/>Isolated Sandbox"]
+        LocalDevice["📱 Local Device<br/>WebSocket Connection"]
     end
 
     subgraph "🤖 Agent Layer"
@@ -51,42 +54,59 @@ graph TB
         Dify["✨ Dify<br/>External API Agent"]
     end
 
+    subgraph "📚 Knowledge Layer"
+        KnowledgeOrch["🎼 KnowledgeOrchestrator<br/>Unified Knowledge Management"]
+        RAG["🔍 RAG<br/>Retrieval Augmented Generation"]
+        Embedding["📊 Embedding<br/>Vectorization Service"]
+    end
 
     %% System Interactions
     Frontend --> API
     API --> Backend
+    Backend --> ChatShell
     Backend --> MySQL
     Backend --> Redis
+    Backend --> Celery
     Backend --> ExecutorManager
+    Backend --> KnowledgeOrch
     ExecutorManager --> Executor1
     ExecutorManager --> Executor2
     ExecutorManager --> ExecutorN
+    Backend --> LocalDevice
 
     %% AI Program Integration
     Executor1 --> Claude
     Executor2 --> Agno
     ExecutorN --> Dify
 
+    %% Knowledge Layer Integration
+    KnowledgeOrch --> RAG
+    KnowledgeOrch --> Embedding
+    ChatShell --> KnowledgeOrch
+
     %% Styling
     classDef platform fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
     classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     classDef execution fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     classDef agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef knowledge fill:#fce4ec,stroke:#c2185b,stroke-width:2px
 
-    class Frontend,Backend,API platform
-    class MySQL,Redis data
-    class ExecutorManager,Executor1,Executor2,ExecutorN execution
+    class Frontend,Backend,ChatShell,API platform
+    class MySQL,Redis,Celery data
+    class ExecutorManager,Executor1,Executor2,ExecutorN,LocalDevice execution
     class Claude,Agno,Dify agent
+    class KnowledgeOrch,RAG,Embedding knowledge
 ```
 
 ### Architecture Layers
 
 | Layer | Responsibilities | Core Technologies |
 |-------|-----------------|-------------------|
-| **Management Platform Layer** | User interaction, resource management, API services | Next.js 15, FastAPI, React 19 |
-| **Data Layer** | Data persistence, cache management | MySQL 9.4, Redis 7 |
-| **Execution Layer** | Task scheduling, container orchestration, resource isolation | Docker, Python |
+| **Management Platform Layer** | User interaction, resource management, API services, chat processing | Next.js 15, FastAPI, React 19, Chat Shell |
+| **Data Layer** | Data persistence, cache management, async task scheduling | MySQL 9.4, Redis 7, Celery |
+| **Execution Layer** | Task scheduling, container orchestration, resource isolation, local device management | Docker, Python, WebSocket |
 | **Agent Layer** | AI capabilities, code execution, chat processing, external API integration | Claude Code, Agno, Dify |
+| **Knowledge Layer** | Knowledge base management, RAG retrieval, vectorization | KnowledgeOrchestrator, Embedding |
 
 ---
 
@@ -98,29 +118,53 @@ graph TB
 - Provide user interface for resource definition and management
 - Implement task creation, monitoring, and result display
 - Provide real-time interaction and status updates
+- Manage local devices and executors
 
 **Technology Stack**:
 - **Framework**: Next.js 15 (App Router)
-- **UI Library**: React 19, Ant Design 5
-- **Styling**: Tailwind CSS 3
-- **State Management**: React Hooks
-- **Internationalization**: i18next
-- **Icons**: Heroicons, Tabler Icons
+- **UI Library**: React 19, shadcn/ui
+- **Styling**: Tailwind CSS 3.4
+- **State Management**: React Context + Hooks
+- **Internationalization**: i18next 25.5
+- **Icons**: Heroicons, Tabler Icons, Lucide React
 
 **Core Features**:
 - 🎨 Configuration-driven UI with YAML visualization
-- 🔄 Real-time task status updates
+- 🔄 Real-time task status updates (WebSocket)
 - 🌍 Multi-language support (Chinese/English)
-- 📱 Responsive design
+- 📱 Responsive design (Mobile/Desktop component separation)
+- 📱 Local device management interface
+- 💭 Thinking process visualization
 
 **Key File Structure**:
 ```
-frontend/
+frontend/src/
 ├── app/              # Next.js App Router
-├── components/       # React components
-├── public/          # Static assets
-└── package.json     # Dependencies
+│   ├── (tasks)/     # Task-related pages
+│   ├── (settings)/  # Settings pages
+│   └── admin/       # Admin pages
+├── features/        # Feature modules
+│   ├── admin/       # Admin dashboard
+│   ├── devices/     # Device management (new)
+│   ├── feed/        # Discovery and subscriptions
+│   ├── knowledge/   # Knowledge base management
+│   ├── settings/    # Agent configuration
+│   └── tasks/       # Core task functionality
+├── components/      # Shared components
+│   ├── ui/          # shadcn/ui base components
+│   └── common/      # Business common components
+└── hooks/           # Custom hooks
 ```
+
+**Feature Modules**:
+
+| Module | Purpose |
+|--------|---------|
+| **tasks** | Task creation, chat, group chat, workbench |
+| **devices** | Local device management, executor guide |
+| **knowledge** | Knowledge base, documents, permissions |
+| **settings** | Agent, model, shell, skill configuration |
+| **feed** | Subscription market, trigger management |
 
 ---
 
@@ -131,23 +175,28 @@ frontend/
 - Manage user authentication and authorization
 - Coordinate execution layer for task scheduling
 - Provide WebSocket support for real-time chat communication (Socket.IO)
+- Unified knowledge management (KnowledgeOrchestrator)
+- Manage local device connections
 
 **Technology Stack**:
 - **Framework**: FastAPI 0.68+
 - **ORM**: SQLAlchemy 2.0
 - **Database Driver**: PyMySQL
-- **Authentication**: JWT (PyJWT), OAuth (Authlib)
+- **Authentication**: JWT (PyJWT), OAuth (Authlib), OIDC
 - **Async Support**: asyncio, aiohttp
 - **Cache**: Redis client
 - **Real-time Communication**: Socket.IO (python-socketio) with Redis adapter
+- **Async Tasks**: Celery
 
 **Core Features**:
 - 🚀 High-performance async API
 - 🔒 JWT-based authentication
 - 📝 Complete CRUD operation support
 - 🔄 Real-time status synchronization
-- 🛡️ Data encryption (AES)
+- 🛡️ Data encryption (AES-256-CBC)
 - 👥 Role-based access control (admin/user)
+- 🎼 Unified knowledge management (KnowledgeOrchestrator)
+- 📱 Local device management (Device Provider)
 
 **API Design**:
 ```
@@ -159,8 +208,24 @@ frontend/
 ├── /teams           # Team resource management
 ├── /workspaces      # Workspace resource management
 ├── /tasks           # Task resource management
+├── /devices         # Device management (new)
+├── /knowledge       # Knowledge base management
+├── /groups          # Organization/group management
+├── /share           # Share link management
 └── /admin           # Admin operations (user management, public models)
 ```
+
+**Service Layer Architecture**:
+
+| Service | Responsibility |
+|---------|----------------|
+| **KindService** | Unified CRD resource management |
+| **KnowledgeOrchestrator** | Knowledge management entry point (REST API + MCP tools) |
+| **DeviceService** | Local device management |
+| **ChatService** | Chat processing and RAG |
+| **SubtaskService** | Subtask management |
+| **GroupService** | Multi-tenant group management |
+| **UserService** | User management |
 
 **Key Dependencies**:
 ```python
@@ -169,28 +234,99 @@ SQLAlchemy >= 2.0.28   # ORM
 PyJWT >= 2.8.0         # JWT authentication
 Redis >= 4.5.0         # Cache
 httpx >= 0.19.0        # HTTP client
+python-socketio >= 5.0 # Socket.IO server
+celery >= 5.0          # Async tasks
 ```
 
 ---
 
-### 3. 💯 Executor Manager
+### 3. 💬 Chat Shell (Conversation Engine)
+
+**Responsibilities**:
+- Provide lightweight AI conversation engine
+- Support multiple LLM models (Anthropic, OpenAI, Google)
+- Manage conversation context and session storage
+- Integrate MCP tools and skill system
+- Support knowledge base retrieval augmentation (RAG)
+
+**Technology Stack**:
+- **Framework**: FastAPI
+- **Agent Framework**: LangGraph + LangChain
+- **LLM**: Anthropic, OpenAI, Google Gemini
+- **Storage**: SQLite, Remote API
+- **Observability**: OpenTelemetry
+
+**Three Deployment Modes**:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **HTTP** | Standalone HTTP service `/v1/response` | Production |
+| **Package** | Python package, imported by Backend | Monolithic deployment |
+| **CLI** | Command-line interactive interface | Development/Testing |
+
+**Core Features**:
+- 🤖 Multi-LLM support (Anthropic, OpenAI, Google)
+- 🛠️ MCP tool integration (Model Context Protocol)
+- 📚 Dynamic skill loading
+- 💾 Multiple storage backends (SQLite, Remote)
+- 📊 Message compression (auto-compress when exceeding context limit)
+- 📈 OpenTelemetry integration
+
+**Module Structure**:
+```
+chat_shell/chat_shell/
+├── main.py           # FastAPI application entry
+├── agent.py          # ChatAgent creation
+├── interface.py      # Unified interface definitions
+├── agents/           # LangGraph agent building
+├── api/              # REST API endpoints
+│   └── v1/          # V1 version API
+├── services/         # Business logic layer
+│   ├── chat_service.py
+│   └── streaming/   # Streaming response
+├── tools/            # Tool system
+│   ├── builtin/     # Built-in tools (WebSearch, etc.)
+│   ├── mcp/         # MCP tool integration
+│   └── sandbox/     # Sandbox execution environment
+├── storage/          # Session storage
+│   ├── sqlite/      # SQLite storage
+│   └── remote/      # Remote storage
+├── models/           # LLM model factory
+├── messages/         # Message processing
+├── compression/      # Context compression
+└── skills/           # Skill loading
+```
+
+---
+
+### 4. 💯 Executor Manager
 
 **Responsibilities**:
 - Manage Executor lifecycle
 - Task queue and scheduling
 - Resource allocation and rate limiting
 - Callback handling
+- Support multiple deployment modes
 
 **Technology Stack**:
 - **Language**: Python
 - **Container Management**: Docker SDK
 - **Networking**: Docker bridge network
+- **Scheduling**: APScheduler
+
+**Deployment Modes**:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Docker** | Use Docker SDK to manage local containers | Standard deployment |
+| **Local Device** | Connect to local device for execution | Development environment |
 
 **Core Features**:
 - 🎯 Maximum concurrent task control (default: 5)
 - 🔧 Dynamic port allocation (10001-10100)
 - 🐳 Docker container orchestration
 - 📊 Task status tracking
+- 📱 Local device support
 
 **Configuration Parameters**:
 ```yaml
@@ -203,7 +339,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 
 ---
 
-### 4. 🚀 Executor
+### 5. 🚀 Executor
 
 **Responsibilities**:
 - Provide isolated sandbox environment
@@ -216,11 +352,22 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 - **Runtime**: Claude Code, Agno, Dify
 - **Version Control**: Git
 
+**Agent Types**:
+
+| Agent | Type | Description |
+|-------|------|-------------|
+| **ClaudeCode** | local_engine | Claude Code SDK, supports Git, MCP, Skills |
+| **Agno** | local_engine | Multi-agent collaboration, SQLite session management |
+| **Dify** | external_api | Proxy to Dify platform |
+| **ImageValidator** | validator | Custom base image validation |
+
 **Core Features**:
 - 🔒 Fully isolated execution environment
 - 💼 Independent workspace
-- 🔄 Automatic cleanup mechanism
+- 🔄 Automatic cleanup mechanism (can be preserved with `preserveExecutor`)
 - 📝 Real-time log output
+- 🛠️ MCP tool support
+- 📚 Dynamic skill loading
 
 **Lifecycle**:
 ```mermaid
@@ -231,11 +378,12 @@ graph LR
     Completed --> Cleanup["Cleanup"]
     Failed --> Cleanup
     Cleanup --> Deleted["Deleted"]
+    Running -.-> |preserveExecutor| Preserved["Preserved"]
 ```
 
 ---
 
-### 5. 💾 Database (MySQL)
+### 6. 💾 Database (MySQL)
 
 **Responsibilities**:
 - Persistent storage of all resource definitions
@@ -247,14 +395,14 @@ graph LR
 **Core Table Structure**:
 ```
 wegent_db/
-├── ghosts           # Ghost definitions
-├── models           # Model configurations
-├── shells           # Shell configurations
-├── bots             # Bot instances
-├── teams            # Team definitions
-├── workspaces       # Workspace configurations
-├── tasks            # Task records
+├── kinds            # CRD resources (Ghost, Model, Shell, Bot, Team, Skill, Device)
+├── tasks            # Task and Workspace resources (separate table)
+├── skill_binaries   # Skill binary packages
 ├── users            # User information (with role field)
+├── groups           # Organizations/groups
+├── namespace_members # Namespace members
+├── knowledge_bases  # Knowledge bases
+├── documents        # Documents
 └── public_models    # System-wide public models
 ```
 
@@ -263,16 +411,18 @@ wegent_db/
 - Supports transactions and relational queries
 - Automatic timestamp management
 - Soft delete support
+- CRD resources uniquely identified by (namespace, name, user_id) tuple
 
 ---
 
-### 6. 🔴 Cache (Redis)
+### 7. 🔴 Cache (Redis)
 
 **Responsibilities**:
 - Task status caching
 - Session management
 - Temporary real-time data storage
 - Task expiration management
+- Socket.IO multi-instance adapter
 
 **Version**: Redis 7
 
@@ -281,6 +431,49 @@ wegent_db/
 - 💻 Code task status caching (2-hour expiration)
 - 🎯 Executor deletion delay control
 - 📊 Real-time status updates
+- 🔌 Socket.IO Redis adapter (multi-instance communication)
+
+---
+
+### 8. ⚡ Celery (Async Tasks)
+
+**Responsibilities**:
+- Knowledge base document indexing (async)
+- Document summary generation
+- Long-running task processing
+
+**Core Tasks**:
+
+| Task | Purpose |
+|------|---------|
+| `index_document_task` | Document vectorization indexing |
+| `generate_document_summary_task` | Document summary generation |
+
+---
+
+### 9. 🎼 KnowledgeOrchestrator
+
+**Responsibilities**:
+- Unify knowledge management for REST API and MCP tools
+- Automatically select retriever, embedding model, summary model
+- Coordinate Celery async tasks
+
+**Architecture**:
+```
+Entry Layer (REST/MCP)
+    ↓
+KnowledgeOrchestrator
+    ↓
+Service Layer (knowledge_service.py)
+    ↓
+Celery Tasks (async processing)
+```
+
+**Core Features**:
+- 🔗 Unified entry point: REST API and MCP tools share the same business logic
+- 🤖 Auto model selection: Task → Team → Bot → Model chain resolution
+- 📚 Multi-scope support: Personal, group, organization knowledge bases
+- ⚡ Async indexing: Handle large documents via Celery
 
 ---
 
@@ -373,12 +566,14 @@ The chat system uses Socket.IO for bidirectional real-time communication:
   "runtime": "React 19",
   "language": "TypeScript 5.7",
   "ui": [
-    "Ant Design 5.27",
+    "shadcn/ui",
     "Tailwind CSS 3.4",
+    "Lucide React",
     "Heroicons 2.2"
   ],
   "i18n": "i18next 25.5",
   "markdown": "react-markdown",
+  "realtime": "socket.io-client",
   "devTools": [
     "ESLint 9.17",
     "Prettier 3.4",
@@ -398,7 +593,8 @@ The chat system uses Socket.IO for bidirectional real-time communication:
     "auth": [
         "PyJWT >= 2.8.0",
         "python-jose 3.3.0",
-        "passlib 1.7.4"
+        "passlib 1.7.4",
+        "authlib"  # OIDC support
     ],
     "async": [
         "asyncio >= 3.4.3",
@@ -406,14 +602,33 @@ The chat system uses Socket.IO for bidirectional real-time communication:
         "httpx >= 0.19.0"
     ],
     "cache": "redis >= 4.5.0",
+    "realtime": "python-socketio >= 5.0",
+    "tasks": "celery >= 5.0",
     "security": [
         "cryptography >= 41.0.5",
         "pycryptodome >= 3.20.0"
     ],
+    "telemetry": "opentelemetry-*",
     "testing": [
         "pytest >= 7.4.0",
         "pytest-asyncio >= 0.21.0"
     ]
+}
+```
+
+### Chat Shell Stack
+
+```python
+{
+    "framework": "FastAPI",
+    "agent": "LangGraph + LangChain",
+    "llm": [
+        "langchain-anthropic",
+        "langchain-openai",
+        "langchain-google-genai"
+    ],
+    "storage": "SQLite / Remote API",
+    "telemetry": "opentelemetry-*"
 }
 ```
 
@@ -429,6 +644,10 @@ cache:
 container:
   docker: "latest"
   docker-compose: "latest"
+
+task_queue:
+  celery: "5.0+"
+  broker: "redis"
 
 executor_engines:
   - "Claude Code (Anthropic)"
@@ -481,10 +700,11 @@ status:
 ### 4. Security First
 
 - 🔒 JWT authentication mechanism
-- 🛡️ AES encryption for sensitive data
+- 🛡️ AES-256-CBC encryption for sensitive data
 - 🔐 Sandbox environment isolation
 - 🚫 Principle of least privilege
 - 👥 Role-based access control (admin/user roles)
+- 🔑 OIDC enterprise single sign-on support
 
 ### 5. Observability
 
@@ -492,6 +712,7 @@ status:
 - 📊 Status tracking and monitoring
 - 🔍 Detailed error information
 - 📈 Performance metrics collection
+- 🔭 OpenTelemetry integration (distributed tracing)
 
 ---
 
@@ -513,6 +734,15 @@ frontend:
 backend:
   replicas: 5
   session: redis
+  socket_adapter: redis  # Socket.IO multi-instance support
+```
+
+#### Chat Shell Scaling
+```yaml
+# Standalone service, supports multiple instances
+chat_shell:
+  replicas: 2
+  storage: remote  # Remote storage for multi-instance
 ```
 
 #### Executor Scaling
@@ -561,6 +791,17 @@ architecture:
 - Production environment
 - High concurrency requirements
 - Large-scale teams
+
+```yaml
+architecture:
+  frontend: "Multi-instance + Nginx load balancing"
+  backend: "Multi-instance + API gateway + Redis Socket.IO adapter"
+  chat_shell: "Multi-instance + Remote storage"
+  mysql: "Master-slave replication + read-write separation"
+  redis: "Redis Cluster"
+  celery: "Multi-worker"
+  executor: "Dynamic scaling"
+```
 
 #### 3. Cloud-Native Deployment (Kubernetes)
 ```yaml
@@ -619,6 +860,8 @@ logger.info("task.created",
 - [Collaboration Models](../concepts/collaboration-models.md) - Deep dive into collaboration patterns
 - [YAML Specification](../reference/yaml-specification.md) - Complete configuration guide
 - [CRD Architecture](./crd-architecture.md) - CRD design details
+- [Skill System](../concepts/skill-system.md) - Skill development and integration
+- [Local Device Architecture](./local-device-architecture.md) - Local device support
 
 ---
 

@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 from executor.callback.callback_client import CallbackClient
 from executor.config import config
 from shared.logger import setup_logger
+from shared.models.execution import EventType, ExecutionEvent
 from shared.status import TaskStatus
 from shared.utils import git_util
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
@@ -116,7 +117,7 @@ class Agent:
         result: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        Report progress to the executor_manager
+        Report progress to the executor_manager using OpenAI Responses API format.
 
         Args:
             progress: The progress percentage (0-100)
@@ -124,20 +125,18 @@ class Agent:
             message: Optional message string
             result: Optional result data dictionary
         """
+        from executor.callback.callback_handler import send_progress_event
+
         logger.info(
             f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}"
         )
         try:
-            self.callback_client.send_callback(
+            send_progress_event(
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
-                task_title=self.task_title,
-                subtask_title=self.subtask_title,
                 progress=progress,
-                status=status,
-                message=message,
-                result=result,
-                task_type=self.task_type,
+                status=status or "",
+                content=message or "",
             )
         except Exception as e:
             logger.critical(

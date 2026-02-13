@@ -513,10 +513,7 @@ async def save_kb_tool_result(
                     message="Missing required fields for RAG: injection_mode, query, chunks_count",
                 )
             # For rag_retrieval mode, extracted_text is required
-            if (
-                request.injection_mode == "rag_retrieval"
-                and not request.extracted_text
-            ):
+            if request.injection_mode == "rag_retrieval" and not request.extracted_text:
                 return SaveKbToolResultResponse(
                     success=False,
                     message="extracted_text is required for rag_retrieval mode",

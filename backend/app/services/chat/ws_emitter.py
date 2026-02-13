@@ -223,6 +223,86 @@ class WebSocketEmitter:
         logger.info(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
 
     # ============================================================
+    # Block Events for Mixed Content Rendering (to task room)
+    # ============================================================
+
+    async def emit_block_created(
+        self,
+        task_id: int,
+        subtask_id: int,
+        block: Dict[str, Any],
+    ) -> None:
+        """
+        Emit chat:block_created event to task room.
+
+        Used when a new tool block is created during streaming.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            block: Block data containing id, type, tool_name, tool_input, status, etc.
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_BLOCK_CREATED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "block": block,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit chat:block_created task={task_id} subtask={subtask_id} "
+            f"block_id={block.get('id')} tool_name={block.get('tool_name')}"
+        )
+
+    async def emit_block_updated(
+        self,
+        task_id: int,
+        subtask_id: int,
+        block_id: str,
+        content: Optional[str] = None,
+        tool_output: Optional[Any] = None,
+        status: Optional[str] = None,
+    ) -> None:
+        """
+        Emit chat:block_updated event to task room.
+
+        Used when a tool block is updated (e.g., tool execution completed).
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            block_id: Block ID to update
+            content: Optional text content update
+            tool_output: Optional tool output data
+            status: Optional status update (pending, streaming, done, error)
+        """
+        payload: Dict[str, Any] = {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "block_id": block_id,
+        }
+        if content is not None:
+            payload["content"] = content
+        if tool_output is not None:
+            payload["tool_output"] = tool_output
+        if status is not None:
+            payload["status"] = status
+
+        await self.sio.emit(
+            ServerEvents.CHAT_BLOCK_UPDATED,
+            payload,
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit chat:block_updated task={task_id} subtask={subtask_id} "
+            f"block_id={block_id} status={status}"
+        )
+
+    # ============================================================
     # Non-streaming Messages (to task room, exclude sender)
     # ============================================================
 

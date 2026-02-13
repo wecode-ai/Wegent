@@ -16,6 +16,15 @@ import logging
 from typing import Any, Dict, Optional
 
 from telegram import Update
+from telegram.error import (
+    Conflict,
+    Forbidden,
+    InvalidToken,
+    NetworkError,
+    RetryAfter,
+    TelegramError,
+    TimedOut,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -257,6 +266,9 @@ class TelegramChannelProvider(BaseChannelProvider):
             self._application.add_handler(
                 MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
             )
+
+            # Register error handler for polling and handler errors
+            self._application.add_error_handler(self._handle_error)
 
             # Initialize and start polling in background
             await self._application.initialize()
@@ -653,3 +665,114 @@ class TelegramChannelProvider(BaseChannelProvider):
 
         # Process through the channel handler
         await self._handler.handle_message(update)
+
+    async def _handle_error(
+        self, update: object, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """
+        Handle errors that occur during polling or message handling.
+
+        This error handler is called for:
+        - Network errors during get_updates (polling)
+        - Errors raised in command/message handlers
+        - Telegram API errors
+
+        Args:
+            update: The update that caused the error (may be None for polling errors)
+            context: The context containing the error
+        """
+        error = context.error
+
+        # Handle specific Telegram error types
+        if isinstance(error, Conflict):
+            # Another bot instance is running with the same token
+            # This is a critical error - we should stop polling
+            logger.error(
+                "[Telegram] Channel %s (id=%d) CONFLICT ERROR: Another bot instance "
+                "is using the same token. Stopping polling. Error: %s",
+                self.channel_name,
+                self.channel_id,
+                error,
+            )
+            self._set_error(
+                "Conflict: Another bot instance is using the same token. "
+                "Please ensure only one instance is running."
+            )
+            # Don't stop here - let the library's retry mechanism handle it
+            # The error will be logged and the polling will retry
+
+        elif isinstance(error, InvalidToken):
+            # Bot token is invalid
+            logger.error(
+                "[Telegram] Channel %s (id=%d) INVALID TOKEN: The bot token is invalid. "
+                "Please check your configuration. Error: %s",
+                self.channel_name,
+                self.channel_id,
+                error,
+            )
+            self._set_error("Invalid bot token. Please check your configuration.")
+
+        elif isinstance(error, Forbidden):
+            # Bot was blocked by user or kicked from group
+            logger.warning(
+                "[Telegram] Channel %s (id=%d) FORBIDDEN: Bot was blocked or kicked. "
+                "Update: %s, Error: %s",
+                self.channel_name,
+                self.channel_id,
+                update,
+                error,
+            )
+            # This is not critical - just skip this update
+
+        elif isinstance(error, RetryAfter):
+            # Rate limited by Telegram
+            logger.warning(
+                "[Telegram] Channel %s (id=%d) RATE LIMITED: Retry after %d seconds. "
+                "Error: %s",
+                self.channel_name,
+                self.channel_id,
+                error.retry_after,
+                error,
+            )
+            # The library will handle the retry automatically
+
+        elif isinstance(error, TimedOut):
+            # Request timed out - this is common and usually recoverable
+            logger.debug(
+                "[Telegram] Channel %s (id=%d) TIMEOUT: Request timed out. "
+                "This is usually temporary. Error: %s",
+                self.channel_name,
+                self.channel_id,
+                error,
+            )
+            # No action needed - the library will retry
+
+        elif isinstance(error, NetworkError):
+            # General network error (connection issues, DNS, etc.)
+            logger.warning(
+                "[Telegram] Channel %s (id=%d) NETWORK ERROR: %s. "
+                "Will retry automatically.",
+                self.channel_name,
+                self.channel_id,
+                error,
+            )
+            # No action needed - the library will retry
+
+        elif isinstance(error, TelegramError):
+            # Other Telegram API errors
+            logger.error(
+                "[Telegram] Channel %s (id=%d) TELEGRAM API ERROR: %s. Update: %s",
+                self.channel_name,
+                self.channel_id,
+                error,
+                update,
+            )
+
+        else:
+            # Unknown error - log with full traceback
+            logger.exception(
+                "[Telegram] Channel %s (id=%d) UNEXPECTED ERROR while handling update %s",
+                self.channel_name,
+                self.channel_id,
+                update,
+            )

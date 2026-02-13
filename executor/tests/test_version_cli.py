@@ -27,6 +27,7 @@ class TestVersionCLI:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
+            timeout=30,
         )
         assert result.returncode == 0
         assert result.stdout.strip() == get_version()
@@ -38,6 +39,7 @@ class TestVersionCLI:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
+            timeout=30,
         )
         assert result.returncode == 0
         assert result.stdout.strip() == get_version()
@@ -49,6 +51,7 @@ class TestVersionCLI:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
+            timeout=30,
         )
         version_output = result.stdout.strip()
         # Version should be a simple semver format (e.g., "1.0.0")
@@ -66,6 +69,7 @@ class TestVersionCLI:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
+            timeout=30,
         )
         assert result.stdout.strip() == expected_version
 

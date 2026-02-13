@@ -141,7 +141,7 @@ export function TaskMembersPanel({
         wasConverted = true
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat
-        console.log('Task conversion:', conversionError)
+        console.error('Task conversion:', conversionError)
       }
 
       // Generate the invite link with permanent expiration (0 hours)

@@ -405,12 +405,12 @@ def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
         )
 
 
-def get_mcp_system_config(backend_url: str, task_token: str) -> Dict[str, Any]:
+def get_mcp_system_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
     """Get system MCP server configuration for task injection.
 
     Args:
         backend_url: Backend URL (e.g., "http://localhost:8000")
-        task_token: Task token for authentication
+        auth_token: Authentication token for MCP server
 
     Returns:
         MCP server configuration dictionary
@@ -418,17 +418,17 @@ def get_mcp_system_config(backend_url: str, task_token: str) -> Dict[str, Any]:
     return _build_streamable_http_config(
         name="wegent-system",
         url=f"{backend_url}{SYSTEM_MCP_MOUNT_PATH}",
-        task_token=task_token,
+        auth_token=auth_token,
         timeout=60,
     )
 
 
-def get_mcp_knowledge_config(backend_url: str, task_token: str) -> Dict[str, Any]:
+def get_mcp_knowledge_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
     """Get knowledge MCP server configuration for Skill injection.
 
     Args:
         backend_url: Backend URL (e.g., "http://localhost:8000")
-        task_token: Task token for authentication (uses placeholder for Skill)
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
 
     Returns:
         MCP server configuration dictionary
@@ -436,7 +436,7 @@ def get_mcp_knowledge_config(backend_url: str, task_token: str) -> Dict[str, Any
     return _build_streamable_http_config(
         name="wegent-knowledge",
         url=f"{backend_url}{KNOWLEDGE_MCP_MOUNT_PATH}{KNOWLEDGE_MCP_TRANSPORT_PATH}",
-        task_token=task_token,
+        auth_token=auth_token,
         timeout=300,  # 5 minutes for document operations
     )
 
@@ -459,14 +459,14 @@ def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
 
 
 def _build_streamable_http_config(
-    name: str, url: str, task_token: str, timeout: int
+    name: str, url: str, auth_token: str, timeout: int
 ) -> Dict[str, Any]:
     return {
         name: {
             "type": "streamable-http",
             "url": url,
             "headers": {
-                "Authorization": f"Bearer {task_token}",
+                "Authorization": f"Bearer {auth_token}",
             },
             "timeout": timeout,
         }

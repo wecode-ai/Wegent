@@ -107,8 +107,8 @@ services:
       # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # Task Dispatch Configuration
-      # Mode: 'pull' (default, executor_manager polls) or 'push' (backend pushes)
-      TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-pull}
+      # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
+      TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-push}
       # OpenTelemetry Configuration (uncomment to enable)
       # OTEL_ENABLED: "true"
       # OTEL_SERVICE_NAME: "wegent-backend"
@@ -229,8 +229,8 @@ services:
       # Leave empty to auto-detect based on kernel version
       - ENABLE_SECCOMP=${ENABLE_SECCOMP:-true}
       # Task Dispatch Configuration
-      # Mode: 'pull' (default) or 'push' (receive tasks from backend)
-      - TASK_DISPATCH_MODE=${TASK_DISPATCH_MODE:-pull}
+      # Mode: 'push' (default) or 'pull' (deprecated, executor_manager polls)
+      - TASK_DISPATCH_MODE=${TASK_DISPATCH_MODE:-push}
       # Service pool name for this instance (used for queue isolation)
       - SERVICE_POOL=${SERVICE_POOL:-default}
       # JWT secret for verifying backend tokens (must match backend SECRET_KEY)

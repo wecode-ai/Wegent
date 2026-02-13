@@ -15,7 +15,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
-from executor.callback.callback_handler import send_status_callback
+from executor.callback.callback_handler import send_cancelled_event
 from executor.tasks.task_state_manager import TaskStateManager
 from shared.logger import setup_logger
 from shared.status import TaskStatus
@@ -269,8 +269,8 @@ class AgentService:
 
     async def send_cancel_callback_async(self, task_id: int) -> None:
         """
-        Asynchronously send cancel task callback
-        This method is called in a background task and will not block the cancel API response
+        Asynchronously send cancel task callback using unified ExecutionEvent format.
+        This method is called in a background task and will not block the cancel API response.
 
         Args:
             task_id: Task ID
@@ -288,31 +288,24 @@ class AgentService:
 
             # Get task information
             subtask_id = task_data.get("subtask_id", -1)
-            task_title = task_data.get("task_title", "")
-            subtask_title = task_data.get("subtask_title", "")
 
             logger.info(
-                f"[{_format_task_log(task_id, subtask_id)}] Sending cancel callback asynchronously"
+                f"[{_format_task_log(task_id, subtask_id)}] Sending cancel event asynchronously"
             )
 
-            # Send CANCELLED status callback (not COMPLETED)
-            result = send_status_callback(
+            # Send CANCELLED event using unified ExecutionEvent format
+            result = send_cancelled_event(
                 task_id=task_id,
                 subtask_id=subtask_id,
-                task_title=task_title,
-                subtask_title=subtask_title,
-                status=TaskStatus.CANCELLED.value,
-                message="${{tasks.cancel_task}}",
-                progress=100,
             )
 
             if result and result.get("status") == TaskStatus.SUCCESS.value:
                 logger.info(
-                    f"[{_format_task_log(task_id, subtask_id)}] Cancel callback sent successfully"
+                    f"[{_format_task_log(task_id, subtask_id)}] Cancel event sent successfully"
                 )
             else:
                 logger.error(
-                    f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel callback: {result}"
+                    f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel event: {result}"
                 )
 
             # DO NOT cleanup task state here - SDK interrupt messages still need to be processed

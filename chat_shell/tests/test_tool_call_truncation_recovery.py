@@ -18,13 +18,16 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from chat_shell.agents.graph_builder import (
-    MAX_TRUNCATION_RETRIES,
     TOOL_CALL_TRUNCATION_ERROR_TEMPLATE,
     TRUNCATED_MARKER_END,
     TRUNCATED_MARKER_START,
     LangGraphAgentBuilder,
     ToolCallTruncatedError,
 )
+from chat_shell.core.config import settings
+
+# Get MAX_TRUNCATION_RETRIES from settings
+MAX_TRUNCATION_RETRIES = settings.MAX_TRUNCATION_RETRIES
 
 
 class TestToolCallTruncatedError:
@@ -51,7 +54,7 @@ class TestTruncationRecoveryConstants:
         """Test that MAX_TRUNCATION_RETRIES is a positive integer."""
         assert isinstance(MAX_TRUNCATION_RETRIES, int)
         assert MAX_TRUNCATION_RETRIES > 0
-        assert MAX_TRUNCATION_RETRIES == 2  # Default value
+        assert MAX_TRUNCATION_RETRIES == 3  # Default value from settings
 
     def test_error_template_format(self):
         """Test that error template can be formatted with required parameters."""
