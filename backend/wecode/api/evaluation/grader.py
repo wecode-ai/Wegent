@@ -1585,9 +1585,11 @@ def get_grader_question(
     _check_grader_permission(db, topic, current_user.id, permission_service)
 
     # For graders, include criteria data from content_data["_criteria"]
+    # Structure: {"type": "text", "data": {"text": "...", "url": "...", "attachments": [...]}}
     criteria = (question.content_data or {}).get("_criteria", {})
     criteria_type = criteria.get("type")
-    criteria_data = {k: v for k, v in criteria.items() if k != "type"} if criteria else {}
+    # Get the actual criteria data from the "data" field
+    criteria_data = criteria.get("data", {}) if criteria else {}
 
     # Get content data without criteria
     content_data = {k: v for k, v in (question.content_data or {}).items() if k != "_criteria"}

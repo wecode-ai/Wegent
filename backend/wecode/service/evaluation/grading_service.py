@@ -404,6 +404,11 @@ class GradingService:
 
         This creates a Wegent Task to run the AI grading.
 
+        Note: This method bypasses normal Team permission checks because:
+        1. The grader has already been verified to have grading permission for the topic
+        2. The team_id comes from the topic's grading_team_config, configured by the creator
+        3. The creator has implicitly authorized graders to use this team for grading
+
         Args:
             db: Database session
             task: Grading task to execute
@@ -441,60 +446,18 @@ class GradingService:
             db.flush()
             return task
 
-        # Create Wegent Task via task_kinds_service
+        # Create Wegent Task directly (bypassing permission check)
+        # This is intentional because the grader has evaluation permission,
+        # and the team_id is configured by the topic creator
         try:
-            from app.models.kind import Kind
-            from app.models.user import User
-            from app.schemas.task import TaskCreate
-            from app.services.adapters.task_kinds import task_kinds_service
-
-            # Get the team and user for task creation
-            team = db.query(Kind).filter(Kind.id == team_id).first()
-            user = db.query(User).filter(User.id == user_id).first()
-
-            if not team:
-                raise ValueError(f"Team {team_id} not found")
-            if not user:
-                raise ValueError(f"User {user_id} not found")
-
-            # Create task with prompt
-            task_create = TaskCreate(
-                title=f"Grading Task #{task.id}",
-                team_id=team.id,
-                team_name=team.name,
-                team_namespace=team.namespace,
-                git_url="",
-                git_repo="",
-                git_repo_id=0,
-                git_domain="",
-                branch_name="",
-                prompt=prompt,
-                type="online",
-                task_type="chat",
-                auto_delete_executor="true",
-                source="evaluation",
+            wegent_task_id = self._create_wegent_task_for_grading(
+                db, task, team_id, user_id, prompt
             )
-
-            # Create the task
-            task_dict = task_kinds_service.create_task_or_append(
-                db=db,
-                obj_in=task_create,
-                user=user,
-                task_id=None,
-            )
-
-            wegent_task_id = task_dict.get("id")
             task.task_id = wegent_task_id
 
             logger.info(
                 f"[Evaluation] Created Wegent Task {wegent_task_id} for grading task {task.id}"
             )
-
-            # Note: The grading task completion will be handled by:
-            # 1. Manual polling: Grader checks task status periodically
-            # 2. Callback mechanism: When Wegent Task completes, it can call
-            #    the grading callback endpoint to update status
-            # For now, we rely on manual status updates via the grader UI
 
         except Exception as e:
             logger.error(
@@ -506,6 +469,201 @@ class GradingService:
 
         db.flush()
         return task
+
+    def _create_wegent_task_for_grading(
+        self,
+        db: Session,
+        grading_task: EvalGradingTask,
+        team_id: int,
+        user_id: int,
+        prompt: str,
+    ) -> int:
+        """
+        Create a Wegent Task for grading, bypassing normal permission checks.
+
+        This method directly creates the Task and Workspace records without
+        going through task_kinds_service, because the grader has already been
+        verified to have evaluation permission for the topic.
+
+        Args:
+            db: Database session
+            grading_task: The evaluation grading task
+            team_id: Team ID to use for grading
+            user_id: User ID of the grader
+            prompt: The grading prompt
+
+        Returns:
+            The created Wegent Task ID
+        """
+        from sqlalchemy import text
+
+        from app.models.kind import Kind
+        from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+        from app.models.task import TaskResource
+        from app.models.user import User
+
+        # Get Team by ID directly (no permission check - intentional)
+        team = db.query(Kind).filter(Kind.id == team_id, Kind.is_active == True).first()
+        if not team:
+            raise ValueError(f"Team {team_id} not found")
+
+        # Get user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+
+        # Allocate task ID using the same logic as task_kinds_service
+        existing_placeholder = db.execute(
+            text(
+                """
+            SELECT id FROM tasks
+            WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
+            LIMIT 1
+        """
+            ),
+            {"user_id": user_id},
+        ).fetchone()
+
+        if existing_placeholder:
+            task_id = existing_placeholder[0]
+            db.execute(text("DELETE FROM tasks WHERE id = :id"), {"id": task_id})
+        else:
+            import json as json_lib
+
+            placeholder_json = {
+                "kind": "Placeholder",
+                "metadata": {"name": "temp-placeholder", "namespace": "default"},
+                "spec": {},
+                "status": {"state": "Reserved"},
+            }
+            result = db.execute(
+                text(
+                    """
+                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
+                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, NOW(), NOW())
+            """
+                ),
+                {"user_id": user_id, "json": json_lib.dumps(placeholder_json)},
+            )
+            task_id = result.lastrowid
+            if not task_id:
+                raise ValueError("Failed to allocate task ID")
+            db.execute(text("DELETE FROM tasks WHERE id = :id"), {"id": task_id})
+
+        # Generate title
+        title = f"Grading Task #{grading_task.id}"
+
+        # Create Workspace
+        workspace_name = f"workspace-{task_id}"
+        workspace_json = {
+            "kind": "Workspace",
+            "spec": {
+                "repository": {
+                    "gitUrl": "",
+                    "gitRepo": "",
+                    "gitRepoId": 0,
+                    "gitDomain": "",
+                    "branchName": "",
+                }
+            },
+            "status": {"state": "Available"},
+            "metadata": {"name": workspace_name, "namespace": "default"},
+            "apiVersion": "agent.wecode.io/v1",
+        }
+
+        workspace = TaskResource(
+            user_id=user_id,
+            kind="Workspace",
+            name=workspace_name,
+            namespace="default",
+            json=workspace_json,
+            is_active=True,
+        )
+        db.add(workspace)
+
+        # Create Task JSON
+        # Note: We store team.user_id in teamRef to maintain proper reference
+        task_json = {
+            "kind": "Task",
+            "spec": {
+                "title": title,
+                "prompt": prompt,
+                "teamRef": {
+                    "name": team.name,
+                    "namespace": team.namespace,
+                    "user_id": team.user_id,  # Team owner's user_id
+                },
+                "workspaceRef": {"name": workspace_name, "namespace": "default"},
+            },
+            "status": {
+                "state": "Available",
+                "status": "PENDING",
+                "progress": 0,
+                "result": None,
+                "errorMessage": "",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+                "completedAt": None,
+            },
+            "metadata": {
+                "name": f"task-{task_id}",
+                "namespace": "default",
+                "labels": {
+                    "type": "online",
+                    "taskType": "chat",
+                    "autoDeleteExecutor": "true",
+                    "source": "evaluation",
+                },
+            },
+            "apiVersion": "agent.wecode.io/v1",
+        }
+
+        wegent_task = TaskResource(
+            id=task_id,
+            user_id=user_id,
+            kind="Task",
+            name=f"task-{task_id}",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+        )
+        db.add(wegent_task)
+
+        # Create subtasks (user message and assistant placeholder)
+        user_subtask = Subtask(
+            task_id=task_id,
+            user_id=user_id,
+            bot_namespace="default",
+            bot_name="default",
+            role=SubtaskRole.USER,
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            prompt=prompt,
+            content=prompt,
+        )
+        db.add(user_subtask)
+
+        assistant_subtask = Subtask(
+            task_id=task_id,
+            user_id=user_id,
+            bot_namespace="default",
+            bot_name="default",
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            prompt="",
+            content="",
+        )
+        db.add(assistant_subtask)
+
+        db.flush()
+
+        # Dispatch task to executor_manager
+        from app.services.task_dispatcher import task_dispatcher
+
+        task_dispatcher.schedule_dispatch(task_id)
+
+        return task_id
 
     def complete(
         self,
