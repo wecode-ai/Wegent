@@ -2,27 +2,42 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+Kubernetes executor for running tasks in K8s pods.
+
+Uses unified ExecutionRequest from shared.models.execution.
+"""
+
 import json
 import os
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import requests
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from shared.logger import setup_logger
-from shared.status import TaskStatus
 
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
-    DEFAULT_API_ENDPOINT, DEFAULT_PROGRESS_COMPLETE)
+    DEFAULT_API_ENDPOINT,
+    DEFAULT_PROGRESS_COMPLETE,
+)
 from executor_manager.utils.executor_name import generate_executor_name
 from executor_manager.wecode.config.config import (
-    EXECUTOR_DEFAULT_MAGE, K8S_NAMESPACE, MAX_USER_TASKS,
-    USER_WHITELIST_TASK_LIMIT_MAP, WARMPOOL_ENABLED, WARMPOOL_TEMPLATE_NAME)
-from executor_manager.wecode.executors.k8s.build_pod import \
-    build_pod_configuration
+    EXECUTOR_DEFAULT_MAGE,
+    K8S_NAMESPACE,
+    MAX_USER_TASKS,
+    USER_WHITELIST_TASK_LIMIT_MAP,
+    WARMPOOL_ENABLED,
+    WARMPOOL_TEMPLATE_NAME,
+)
+from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
+from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
+from shared.models.openai_converter import get_metadata_field
+from shared.status import TaskStatus
+from shared.utils.http_client import traced_session, traced_sync_client
 
 logger = setup_logger(__name__)
 
@@ -98,10 +113,19 @@ def _get_api_client() -> Optional[client.ApiClient]:
 
 
 class K8sExecutor(Executor):
-    def __init__(self):
+    """Kubernetes executor for running tasks in K8s pods"""
+
+    def __init__(self, requests_module=None):
+        """
+        Initialize K8s executor with dependency injection for better testability
+
+        Args:
+            requests_module: HTTP session for requests (default: traced_session with auto trace context)
+        """
         # Ensure configuration is loaded during initialization
         if not _ensure_k8s_config_loaded():
             raise RuntimeError("Failed to configure Kubernetes client")
+        self.requests = requests_module or traced_session()
 
     def _get_core_v1_api(self) -> Optional[client.CoreV1Api]:
         """
@@ -116,28 +140,32 @@ class K8sExecutor(Executor):
         return client.CoreV1Api(api_client)
 
     def submit_executor(
-        self, task: Dict[str, Any], callback: Optional[callable] = None
+        self,
+        task: Union[Dict[str, Any], ExecutionRequest],
+        callback: Optional[callable] = None,
     ) -> Dict[str, Any]:
         """
         Submit a Kubernetes pod for the given task.
 
         Args:
-            task (Dict[str, Any]): Task information.
-            callback (Optional[callable]): Optional callback function.
+            task: Task information as dict or ExecutionRequest.
+            callback: Optional callback function.
 
         Returns:
             Dict[str, Any]: Submission result.
         """
+        # Convert ExecutionRequest to dict for internal processing
+        task_dict = task.to_dict() if isinstance(task, ExecutionRequest) else task
 
-        image = task.get("executor_image", EXECUTOR_DEFAULT_MAGE)
-        task_id = task.get("task_id", "-1")
-        subtask_id = task.get("subtask_id", "-1")
+        image = get_metadata_field(task_dict, "executor_image", EXECUTOR_DEFAULT_MAGE)
+        task_id = get_metadata_field(task_dict, "task_id", "-1")
+        subtask_id = get_metadata_field(task_dict, "subtask_id", "-1")
 
-        user_config = task.get("user") or {}
-        user_name = user_config.get("name", "unknown")
+        user_config = get_metadata_field(task_dict, "user", {})
+        user_name = user_config.get("name", "unknown") if user_config else "unknown"
 
         # Check task type for special handling
-        task_type = task.get("type")
+        task_type = get_metadata_field(task_dict, "type")
         is_validation_task = task_type == "validation"
         is_subagent_task = task_type == "subagent"
         is_sandbox_task = task_type == "sandbox"
@@ -149,12 +177,12 @@ class K8sExecutor(Executor):
 
         # Initialize executor_name to None - will be set later if needed
         executor_name = None
-        should_create_new_pod = not task.get("executor_name")
+        should_create_new_pod = not get_metadata_field(task_dict, "executor_name")
 
-        if task.get("executor_name"):
-            executor_name = task.get("executor_name")
+        if get_metadata_field(task_dict, "executor_name"):
+            executor_name = get_metadata_field(task_dict, "executor_name")
             result = self._submit_to_existing_executor(
-                task=task,
+                task=task_dict,
                 executor_name=executor_name,
                 task_id=task_id,
                 subtask_id=subtask_id,
@@ -172,7 +200,9 @@ class K8sExecutor(Executor):
             # Create new pod, reuse executor_name if pod was completed, otherwise generate new one
             try:
                 if not executor_name:
-                    executor_name = generate_executor_name(task_id, subtask_id, user_name)
+                    executor_name = generate_executor_name(
+                        task_id, subtask_id, user_name
+                    )
 
                 user_pod_count = self.get_user_pods(user_name=user_name)
                 logger.info(f"User {user_name} has {user_pod_count} pods.")
@@ -189,7 +219,7 @@ class K8sExecutor(Executor):
                     if WARMPOOL_ENABLED and is_sandbox_task:
                         # Create pod from warm pool
                         pod_result = self._create_pod_from_warmpool(
-                            task=task,
+                            task=task_dict,
                             executor_name=executor_name,
                             user_name=user_name,
                             task_id=task_id,
@@ -197,7 +227,7 @@ class K8sExecutor(Executor):
                         )
                     else:
                         # Extract base_image from bot configuration (if available)
-                        base_image = self._get_base_image_from_task(task)
+                        base_image = self._get_base_image_from_task(task_dict)
 
                         # Log base_image usage
                         if base_image:
@@ -210,10 +240,10 @@ class K8sExecutor(Executor):
                             user_name,
                             executor_name,
                             K8S_NAMESPACE,
-                            task,
+                            task_dict,
                             image,
                             task_id,
-                            task.get("mode", "default"),
+                            get_metadata_field(task_dict, "mode", "default"),
                         )
                         pod_result = self._submit_kubernetes_pod(
                             pod, K8S_NAMESPACE, executor_name, task_id
@@ -226,7 +256,7 @@ class K8sExecutor(Executor):
                             task_id=task_id,
                             subtask_id=subtask_id,
                             executor_name=executor_name,
-                            task_type=task.get("type", "online"),
+                            task_type=get_metadata_field(task_dict, "type", "online"),
                         )
                     elif not pod_result or pod_result.get("status") != "success":
                         logger.error(
@@ -392,7 +422,7 @@ class K8sExecutor(Executor):
                 task_id=task_id,
                 subtask_id=subtask_id,
                 executor_name=executor_name,
-                task_type=task.get("type", "online"),
+                task_type=get_metadata_field(task, "type", "online"),
                 context=f"existing executor: {executor_name}",
             )
             return {
@@ -416,7 +446,7 @@ class K8sExecutor(Executor):
         """Send task to container API endpoint"""
         endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
         logger.info(f"Sending task to {endpoint}")
-        return requests.post(endpoint, json=task)
+        return self.requests.post(endpoint, json=task)
 
     def _submit_kubernetes_pod(self, pod, namespace, pod_name, task_id):
         """
@@ -480,6 +510,11 @@ class K8sExecutor(Executor):
         Returns:
             dict with status and error_msg if failed
         """
+        from executor_manager.wecode.config.config import (
+            CALLBACK_URL,
+            EXECUTOR_MANAGER_HEARTBEAT_BASE_URL,
+            TASK_API_DOMAIN,
+        )
         from executor_manager.wecode.executors.warmpool import WarmPoolClient
         from executor_manager.wecode.executors.warmpool.constants import (
             ANNOTATION_AUTH_TOKEN,
@@ -497,11 +532,6 @@ class K8sExecutor(Executor):
             LABEL_TASK_TYPE,
             LABEL_TEAM_MODE,
             LABEL_USER,
-        )
-        from executor_manager.wecode.config.config import (
-            CALLBACK_URL,
-            EXECUTOR_MANAGER_HEARTBEAT_BASE_URL,
-            TASK_API_DOMAIN,
         )
 
         api_client = _get_api_client()
@@ -522,7 +552,10 @@ class K8sExecutor(Executor):
                 )
                 # Get sandbox status to retrieve pod info
                 sandbox_status = warmpool_client.get_sandbox_status(executor_name)
-                if sandbox_status.get("exists") and sandbox_status.get("phase") == "Running":
+                if (
+                    sandbox_status.get("exists")
+                    and sandbox_status.get("phase") == "Running"
+                ):
                     logger.info(
                         f"Existing sandbox '{executor_name}' is running, reusing"
                     )
@@ -571,8 +604,8 @@ class K8sExecutor(Executor):
                 LABEL_TASK_ID: str(task_id),
                 LABEL_USER: user_name,
                 LABEL_PROXY_USER: user_name,
-                LABEL_TASK_TYPE: task.get("type", "online"),
-                LABEL_TEAM_MODE: task.get("mode", "default"),
+                LABEL_TASK_TYPE: get_metadata_field(task, "type", "online"),
+                LABEL_TEAM_MODE: get_metadata_field(task, "mode", "default"),
             }
             annotations = {
                 ANNOTATION_EMAIL: "weibo_ai_coding@weibo.com",
@@ -581,13 +614,15 @@ class K8sExecutor(Executor):
                 # Use task_id as heartbeat_id for sandbox lookup compatibility
                 ANNOTATION_HEARTBEAT_ID: str(task_id),
             }
-            auth_token = task.get("auth_token")
+            auth_token = get_metadata_field(task, "auth_token")
             if auth_token:
                 annotations[ANNOTATION_AUTH_TOKEN] = auth_token
             if TASK_API_DOMAIN:
                 annotations[ANNOTATION_TASK_API_DOMAIN] = TASK_API_DOMAIN
             if EXECUTOR_MANAGER_HEARTBEAT_BASE_URL:
-                annotations[ANNOTATION_HEARTBEAT_BASE_URL] = EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
+                annotations[ANNOTATION_HEARTBEAT_BASE_URL] = (
+                    EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
+                )
             if CALLBACK_URL:
                 annotations[ANNOTATION_CALLBACK_URL] = CALLBACK_URL
 
@@ -664,7 +699,9 @@ class K8sExecutor(Executor):
                     logger.info(f"Sandbox {name} is running and service is accessible")
                     return status
                 else:
-                    logger.debug(f"Sandbox {name} is running but service not yet accessible")
+                    logger.debug(
+                        f"Sandbox {name} is running but service not yet accessible"
+                    )
             else:
                 logger.debug(f"Waiting for sandbox {name}, current phase: {phase}")
 
@@ -1325,7 +1362,7 @@ class K8sExecutor(Executor):
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
 
             try:
-                response = requests.post(cancel_url, timeout=10)
+                response = self.requests.post(cancel_url, timeout=10)
                 response.raise_for_status()
 
                 logger.info(f"Successfully cancelled task {task_id}")
@@ -1334,7 +1371,7 @@ class K8sExecutor(Executor):
                     "pod_name": pod_name,
                     "message": f"Task {task_id} cancellation requested successfully",
                 }
-            except requests.exceptions.RequestException as e:
+            except requests.RequestException as e:
                 logger.error(f"Failed to call cancel API for task {task_id}: {e}")
                 return {
                     "status": "failed",
@@ -1358,7 +1395,7 @@ class K8sExecutor(Executor):
         Returns:
             Optional[str]: base_image if found, None otherwise
         """
-        bots = task.get("bot", [])
+        bots = get_metadata_field(task, "bot", [])
         if bots and isinstance(bots, list) and len(bots) > 0:
             # Use the first bot's base_image if available
             first_bot = bots[0]
@@ -1377,10 +1414,10 @@ class K8sExecutor(Executor):
             stage: Current validation stage
             error_message: Error message to report
         """
-        import httpx
-
-        validation_params = task.get("validation_params", {})
-        validation_id = validation_params.get("validation_id")
+        validation_params = get_metadata_field(task, "validation_params", {})
+        validation_id = (
+            validation_params.get("validation_id") if validation_params else None
+        )
 
         if not validation_id:
             logger.debug("No validation_id in task, skipping failure report")
@@ -1398,7 +1435,7 @@ class K8sExecutor(Executor):
         }
 
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with traced_sync_client(timeout=10.0) as client:
                 response = client.post(update_url, json=update_payload)
                 if response.status_code == 200:
                     logger.info(
