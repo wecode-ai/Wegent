@@ -65,7 +65,8 @@
     "version_history": "版本历史",
     "version_description": "查看此专题的已发布版本及其题目快照。",
     "view_versions": "查看版本",
-    "no_versions": "暂无已发布版本"
+    "no_versions": "暂无已发布版本",
+    "publish_hint": "请先发布至少一个题目，再发布专题"
   },
   "questions": {
     "title": "题目",

@@ -170,11 +170,18 @@ function TopicDetailContent() {
           </Badge>
         </div>
         {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
-        {publishedQuestions.length > 0 && (
-          <Button variant="primary" onClick={handlePublish} disabled={publishing}>
-            <Send className="mr-2 h-4 w-4" />
-            {publishing ? '...' : t('topics.publish')}
-          </Button>
+        {questions.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <Button variant="primary" onClick={handlePublish} disabled={publishing || publishedQuestions.length === 0}>
+              <Send className="mr-2 h-4 w-4" />
+              {publishing ? '...' : t('topics.publish')}
+            </Button>
+            {publishedQuestions.length === 0 && (
+              <p className="text-sm text-text-muted">
+                {t('topics.publish_hint')}
+              </p>
+            )}
+          </div>
         )}
       </div>
 

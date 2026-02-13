@@ -39,7 +39,9 @@ function NewQuestionContent() {
   const [contentType, setContentType] = useState<string>(ContentType.TEXT)
   const [contentText, setContentText] = useState('')
   const [contentUrl, setContentUrl] = useState('')
+  const [criteriaType, setCriteriaType] = useState<string>(ContentType.TEXT)
   const [criteriaText, setCriteriaText] = useState('')
+  const [criteriaUrl, setCriteriaUrl] = useState('')
 
   const loadTopic = useCallback(async () => {
     setTopicLoading(true)
@@ -87,14 +89,22 @@ function NewQuestionContent() {
       }
 
       const criteriaData: Record<string, unknown> = {}
-      if (criteriaText.trim()) {
-        criteriaData.text = criteriaText.trim()
+      if (criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) {
+        if (criteriaText.trim()) {
+          criteriaData.text = criteriaText.trim()
+        }
+      }
+      if (criteriaType === ContentType.URL || criteriaType === ContentType.MIXED) {
+        if (criteriaUrl.trim()) {
+          criteriaData.url = criteriaUrl.trim()
+        }
       }
 
       await createAuthorQuestion(topicId, {
         title: title.trim(),
         content_type: contentType,
         content_data: contentData,
+        criteria_type: criteriaType,
         criteria_data: Object.keys(criteriaData).length > 0 ? criteriaData : undefined,
       })
 
@@ -204,18 +214,50 @@ function NewQuestionContent() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="criteria">{t('questions.criteria', 'Grading Criteria')}</Label>
-              <Textarea
-                id="criteria"
-                value={criteriaText}
-                onChange={e => setCriteriaText(e.target.value)}
-                placeholder={t('questions.criteria', 'Grading Criteria')}
-                rows={4}
-              />
-              <p className="text-xs text-text-muted">
-                {t('grading.description', 'Used for AI grading')}
-              </p>
+              <Label htmlFor="criteriaType">{t('questions.criteria_type')}</Label>
+              <Select value={criteriaType} onValueChange={setCriteriaType}>
+                <SelectTrigger id="criteriaType">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text">{t('questions.content_types.text')}</SelectItem>
+                  <SelectItem value="url">{t('questions.content_types.url')}</SelectItem>
+                  <SelectItem value="attachment">
+                    {t('questions.content_types.attachment')}
+                  </SelectItem>
+                  <SelectItem value="mixed">{t('questions.content_types.mixed')}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+
+            {(criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) && (
+              <div className="space-y-2">
+                <Label htmlFor="criteria">{t('questions.criteria')}</Label>
+                <Textarea
+                  id="criteria"
+                  value={criteriaText}
+                  onChange={e => setCriteriaText(e.target.value)}
+                  placeholder={t('questions.criteria_placeholder')}
+                  rows={4}
+                />
+                <p className="text-xs text-text-muted">
+                  {t('grading.description')}
+                </p>
+              </div>
+            )}
+
+            {(criteriaType === ContentType.URL || criteriaType === ContentType.MIXED) && (
+              <div className="space-y-2">
+                <Label htmlFor="criteriaUrl">{t('questions.criteria')} URL</Label>
+                <Input
+                  id="criteriaUrl"
+                  type="url"
+                  value={criteriaUrl}
+                  onChange={e => setCriteriaUrl(e.target.value)}
+                  placeholder="https://example.com/criteria"
+                />
+              </div>
+            )}
 
             <div className="flex justify-end gap-4">
               <Button
