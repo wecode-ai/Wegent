@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,6 +10,17 @@ from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.factory import AgentFactory
+
+
+def create_mock_emitter():
+    """Create a mock emitter for testing."""
+    emitter = MagicMock()
+    emitter.in_progress = AsyncMock()
+    emitter.start = AsyncMock()
+    emitter.done = AsyncMock()
+    emitter.error = AsyncMock()
+    emitter.text_delta = AsyncMock()
+    return emitter
 
 
 class TestAgentFactory:
@@ -41,6 +52,11 @@ class TestAgentFactory:
             yield {"get": mock_get, "callback": mock_callback}
 
     @pytest.fixture
+    def mock_emitter(self):
+        """Create a mock emitter for testing"""
+        return create_mock_emitter()
+
+    @pytest.fixture
     def task_data(self):
         """Sample task data for testing"""
         return {
@@ -52,60 +68,60 @@ class TestAgentFactory:
             "bot": [{"api_key": "test_api_key", "model": "claude-3-5-sonnet-20241022"}],
         }
 
-    def test_get_claudecode_agent(self, task_data):
+    def test_get_claudecode_agent(self, task_data, mock_emitter):
         """Test creating ClaudeCode agent"""
-        agent = AgentFactory.get_agent("claudecode", task_data)
+        agent = AgentFactory.get_agent("claudecode", task_data, mock_emitter)
 
         assert agent is not None
         assert isinstance(agent, ClaudeCodeAgent)
         assert agent.task_id == task_data["task_id"]
 
-    def test_get_claudecode_agent_case_insensitive(self, task_data):
+    def test_get_claudecode_agent_case_insensitive(self, task_data, mock_emitter):
         """Test creating ClaudeCode agent with different case"""
-        agent = AgentFactory.get_agent("ClaudeCode", task_data)
+        agent = AgentFactory.get_agent("ClaudeCode", task_data, mock_emitter)
 
         assert agent is not None
         assert isinstance(agent, ClaudeCodeAgent)
 
-    def test_get_agno_agent(self, task_data):
+    def test_get_agno_agent(self, task_data, mock_emitter):
         """Test creating Agno agent"""
-        agent = AgentFactory.get_agent("agno", task_data)
+        agent = AgentFactory.get_agent("agno", task_data, mock_emitter)
 
         assert agent is not None
         assert isinstance(agent, AgnoAgent)
         assert agent.task_id == task_data["task_id"]
 
-    def test_get_agno_agent_case_insensitive(self, task_data):
+    def test_get_agno_agent_case_insensitive(self, task_data, mock_emitter):
         """Test creating Agno agent with different case"""
-        agent = AgentFactory.get_agent("AGNO", task_data)
+        agent = AgentFactory.get_agent("AGNO", task_data, mock_emitter)
 
         assert agent is not None
         assert isinstance(agent, AgnoAgent)
 
-    def test_get_dify_agent(self, task_data):
+    def test_get_dify_agent(self, task_data, mock_emitter):
         """Test creating Dify agent"""
-        agent = AgentFactory.get_agent("dify", task_data)
+        agent = AgentFactory.get_agent("dify", task_data, mock_emitter)
 
         assert agent is not None
         assert isinstance(agent, DifyAgent)
         assert agent.task_id == task_data["task_id"]
 
-    def test_get_dify_agent_case_insensitive(self, task_data):
+    def test_get_dify_agent_case_insensitive(self, task_data, mock_emitter):
         """Test creating Dify agent with different case"""
-        agent = AgentFactory.get_agent("DIFY", task_data)
+        agent = AgentFactory.get_agent("DIFY", task_data, mock_emitter)
 
         assert agent is not None
         assert isinstance(agent, DifyAgent)
 
-    def test_get_unsupported_agent(self, task_data):
+    def test_get_unsupported_agent(self, task_data, mock_emitter):
         """Test creating unsupported agent type"""
-        agent = AgentFactory.get_agent("unsupported_type", task_data)
+        agent = AgentFactory.get_agent("unsupported_type", task_data, mock_emitter)
 
         assert agent is None
 
-    def test_get_empty_agent_type(self, task_data):
+    def test_get_empty_agent_type(self, task_data, mock_emitter):
         """Test creating agent with empty type"""
-        agent = AgentFactory.get_agent("", task_data)
+        agent = AgentFactory.get_agent("", task_data, mock_emitter)
 
         assert agent is None
 
