@@ -358,6 +358,24 @@ def get_question_detail(
         k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
     }
 
+    # Check if there's a newer version since user's last answer
+    has_new_version = False
+    from wecode.models.evaluation import EvalAnswer
+
+    latest_answer = (
+        db.query(EvalAnswer)
+        .filter(
+            EvalAnswer.question_id == question_id,
+            EvalAnswer.respondent_id == current_user.id,
+            EvalAnswer.is_latest == True,
+        )
+        .first()
+    )
+    if latest_answer:
+        # If user has answered and the question version is different
+        if latest_answer.question_version != question.current_version:
+            has_new_version = True
+
     return QuestionInDB(
         id=question.id,
         topic_id=question.topic_id,
@@ -371,6 +389,8 @@ def get_question_detail(
         created_at=question.created_at,
         updated_at=question.updated_at,
         is_active=question.is_active,
+        has_new_version=has_new_version,
+        latest_version=question.current_version,
         # Explicitly exclude criteria_data for respondents
     )
 
