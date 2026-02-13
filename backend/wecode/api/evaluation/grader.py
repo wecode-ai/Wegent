@@ -1536,11 +1536,16 @@ def get_grader_answer(
     # Get grading task
     grading_task = grading_service.get_by_answer(db, answer.id)
 
+    # Get respondent name
+    respondent = db.query(User).filter(User.id == answer.respondent_id).first()
+    respondent_name = respondent.user_name if respondent else None
+
     return AnswerWithGradingInfo(
         id=answer.id,
         question_id=answer.question_id,
         question_version=answer.question_version,
         respondent_id=answer.respondent_id,
+        respondent_name=respondent_name,
         content_type=answer.content_type,
         content_data=answer.content_data,
         submitted_at=answer.submitted_at,

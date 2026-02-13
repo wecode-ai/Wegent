@@ -6,15 +6,15 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, FileText, Clock, Link } from 'lucide-react'
+import { ArrowLeft, FileText, Clock, Link, Paperclip, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { respondentListAnswerHistory } from '@wecode/api/evaluation'
-import type { Answer } from '@wecode/types/evaluation'
+import { respondentListAnswerHistory, downloadFile } from '@wecode/api/evaluation'
+import type { Answer, ContentAttachment } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 /**
@@ -33,6 +33,7 @@ function RespondentHistoryContent() {
   const [answersTotal, setAnswersTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [answersPage, setAnswersPage] = useState(1)
+  const [downloading, setDownloading] = useState<string | null>(null)
 
   const loadAnswers = useCallback(async () => {
     setLoading(true)
@@ -58,6 +59,56 @@ function RespondentHistoryContent() {
   useEffect(() => {
     loadAnswers()
   }, [loadAnswers])
+
+  const handleDownloadFile = async (s3Path: string, filename: string) => {
+    setDownloading(s3Path)
+    try {
+      const response = await downloadFile(s3Path)
+      window.open(response.download_url, '_blank')
+    } catch (_error) {
+      toast({
+        title: t('errors.download_failed'),
+        description: '',
+        variant: 'destructive',
+      })
+    } finally {
+      setDownloading(null)
+    }
+  }
+
+  const renderAttachments = (attachments: ContentAttachment[] | undefined) => {
+    if (!attachments || attachments.length === 0) return null
+
+    return (
+      <div className="mt-2 space-y-1">
+        {attachments.map((attachment, index) => (
+          <div
+            key={`${attachment.s3_key}-${index}`}
+            className="flex items-center justify-between rounded-lg bg-surface px-3 py-2"
+          >
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <Paperclip className="h-4 w-4 flex-shrink-0 text-text-muted" />
+              <span className="truncate text-sm text-text-secondary">{attachment.filename}</span>
+              {attachment.size && (
+                <span className="flex-shrink-0 text-xs text-text-muted">
+                  ({Math.round(attachment.size / 1024)}KB)
+                </span>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleDownloadFile(attachment.s3_key, attachment.filename)}
+              disabled={downloading === attachment.s3_key}
+              className="flex-shrink-0"
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8">
@@ -130,7 +181,7 @@ function RespondentHistoryContent() {
                   </p>
                 )}
                 {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
-                  <div className="flex items-center gap-2">
+                  <div className="mt-2 flex items-center gap-2">
                     <Link className="h-4 w-4 text-primary" />
                     <a
                       href={answer.content_data.url}
@@ -142,6 +193,7 @@ function RespondentHistoryContent() {
                     </a>
                   </div>
                 )}
+                {renderAttachments(answer.content_data?.attachments)}
               </CardContent>
             </Card>
           ))}
