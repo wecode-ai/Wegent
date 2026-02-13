@@ -767,7 +767,7 @@ def get_permissions(
                 role=perm.role,
                 granted_by=perm.granted_by,
                 granted_at=perm.granted_at,
-                user_name=user.username if user else None,
+                user_name=user.user_name if user else None,
                 user_email=user.email if user else None,
             )
         )
@@ -855,7 +855,7 @@ def get_graders(
                 role=perm.role,
                 granted_by=perm.granted_by,
                 granted_at=perm.granted_at,
-                user_name=user.username if user else None,
+                user_name=user.user_name if user else None,
                 user_email=user.email if user else None,
             )
         )

@@ -309,7 +309,7 @@ class GradingService:
         # Get respondent user info
         respondent = db.query(User).filter(User.id == task.respondent_id).first()
         respondent_name = (
-            respondent.username if respondent else f"User #{task.respondent_id}"
+            respondent.user_name if respondent else f"User #{task.respondent_id}"
         )
 
         # Format question content
