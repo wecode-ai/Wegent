@@ -216,6 +216,147 @@ def _convert_answer_to_schema(answer: EvalAnswer) -> AnswerInDB:
 
 
 # ============================================================================
+# Topic Endpoints (Grader View)
+# ============================================================================
+
+
+class GraderTopicInDB(BaseModel):
+    """Topic information for grader view."""
+
+    id: int
+    name: str
+    creator_id: int
+    visibility: str
+    status: int
+    current_version: str
+    created_at: str
+    updated_at: str
+    # Statistics
+    total_answers: int = Field(0, description="Total answers submitted")
+    pending_tasks: int = Field(0, description="Pending grading tasks")
+    completed_tasks: int = Field(0, description="Completed grading tasks")
+    published_tasks: int = Field(0, description="Published reports")
+
+    class Config:
+        from_attributes = True
+
+
+class GraderTopicListResponse(BaseModel):
+    """Paginated list response for grader topics."""
+
+    total: int
+    items: List[GraderTopicInDB]
+
+
+@router.get("/topics", response_model=GraderTopicListResponse)
+def list_grader_topics(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    List all topics where the current user has grader access.
+
+    Returns topics where user is creator OR has grader permission,
+    along with grading statistics for each topic.
+    """
+    permission_service = get_permission_service()
+
+    # Get topic IDs with grader access
+    topic_ids = _get_topic_ids_with_grader_access(
+        db, current_user.id, permission_service
+    )
+
+    if not topic_ids:
+        return GraderTopicListResponse(total=0, items=[])
+
+    # Query topics with pagination
+    query = db.query(EvalTopic).filter(
+        EvalTopic.id.in_(topic_ids),
+        EvalTopic.is_active == True,
+    )
+
+    total = query.count()
+    topics = (
+        query.order_by(EvalTopic.updated_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    items = []
+    for topic in topics:
+        # Get question IDs for this topic
+        question_ids = (
+            db.query(EvalQuestion.id)
+            .filter(
+                EvalQuestion.topic_id == topic.id,
+                EvalQuestion.is_active == True,
+            )
+            .subquery()
+        )
+
+        # Count answers
+        total_answers = (
+            db.query(func.count(EvalAnswer.id))
+            .filter(EvalAnswer.question_id.in_(question_ids))
+            .scalar()
+            or 0
+        )
+
+        # Count tasks by status
+        pending = (
+            db.query(func.count(EvalGradingTask.id))
+            .filter(
+                EvalGradingTask.question_id.in_(question_ids),
+                EvalGradingTask.status == GradingTaskStatus.PENDING,
+            )
+            .scalar()
+            or 0
+        )
+
+        completed = (
+            db.query(func.count(EvalGradingTask.id))
+            .filter(
+                EvalGradingTask.question_id.in_(question_ids),
+                EvalGradingTask.status == GradingTaskStatus.COMPLETED,
+            )
+            .scalar()
+            or 0
+        )
+
+        published = (
+            db.query(func.count(EvalGradingTask.id))
+            .filter(
+                EvalGradingTask.question_id.in_(question_ids),
+                EvalGradingTask.status == GradingTaskStatus.PUBLISHED,
+            )
+            .scalar()
+            or 0
+        )
+
+        items.append(
+            GraderTopicInDB(
+                id=topic.id,
+                name=topic.name,
+                creator_id=topic.creator_id,
+                visibility=topic.visibility,
+                status=topic.status,
+                current_version=topic.current_version,
+                created_at=topic.created_at.isoformat(),
+                updated_at=topic.updated_at.isoformat(),
+                total_answers=total_answers,
+                pending_tasks=pending,
+                completed_tasks=completed,
+                published_tasks=published,
+            )
+        )
+
+    return GraderTopicListResponse(total=total, items=items)
+
+
+# ============================================================================
 # Dashboard Endpoints
 # ============================================================================
 

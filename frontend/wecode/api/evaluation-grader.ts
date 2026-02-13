@@ -10,7 +10,6 @@
 import { fetchJson, getGraderUrl } from './evaluation-client'
 import type {
   Topic,
-  TopicListResponse,
   TopicStatistics,
   Question,
   Answer,
@@ -42,17 +41,38 @@ export async function getGraderDashboard(): Promise<GraderDashboardStats> {
 // Topic API (Grader)
 // ============================================================================
 
+export interface GraderTopicItem {
+  id: number
+  name: string
+  creator_id: number
+  visibility: string
+  status: number
+  current_version: string
+  created_at: string
+  updated_at: string
+  // Statistics
+  total_answers: number
+  pending_tasks: number
+  completed_tasks: number
+  published_tasks: number
+}
+
+export interface GraderTopicListResponse {
+  total: number
+  items: GraderTopicItem[]
+}
+
 export async function graderListTopics(params: {
   page?: number
   limit?: number
   search?: string
-}): Promise<TopicListResponse> {
+}): Promise<GraderTopicListResponse> {
   const searchParams = new URLSearchParams()
   if (params.page) searchParams.set('page', params.page.toString())
   if (params.limit) searchParams.set('limit', params.limit.toString())
   if (params.search) searchParams.set('search', params.search)
 
-  return fetchJson<TopicListResponse>(getGraderUrl(`/topics?${searchParams.toString()}`))
+  return fetchJson<GraderTopicListResponse>(getGraderUrl(`/topics?${searchParams.toString()}`))
 }
 
 export async function graderGetTopic(topicId: number): Promise<Topic> {
