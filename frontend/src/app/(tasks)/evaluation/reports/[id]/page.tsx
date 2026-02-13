@@ -12,7 +12,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { viewReport } from '@wecode/api/evaluation-shared'
@@ -209,7 +208,7 @@ function SharedReportViewContent() {
 
           {report.question_version && (
             <>
-              <Separator className="my-4" />
+              <div className="my-4 border-t border-border" />
               <div className="flex items-center gap-2 text-sm text-text-muted">
                 <Link className="h-4 w-4" />
                 {t('answers.version')}: {report.question_version}
