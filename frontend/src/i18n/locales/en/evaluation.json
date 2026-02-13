@@ -70,6 +70,16 @@
     "no_versions": "No published versions yet",
     "publish_hint": "Publish at least one question before publishing the topic"
   },
+  "versions": {
+    "current": "Current",
+    "current_version": "Current",
+    "rollback": "Rollback",
+    "rollback_title": "Confirm Rollback",
+    "rollback_description": "Are you sure you want to rollback to version {{version}}? This will restore the topic to the state at that version. Your current changes will not be lost, but the active version will change.",
+    "rollback_success": "Rollback successful",
+    "rollback_success_description": "Topic has been rolled back to version {{version}}",
+    "rolling_back": "Rolling back..."
+  },
   "questions": {
     "title": "Questions",
     "create": "Create Question",

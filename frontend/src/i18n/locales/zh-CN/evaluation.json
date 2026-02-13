@@ -70,6 +70,16 @@
     "no_versions": "暂无已发布版本",
     "publish_hint": "请先发布至少一个题目，再发布专题"
   },
+  "versions": {
+    "current": "当前版本",
+    "current_version": "当前",
+    "rollback": "回滚",
+    "rollback_title": "确认回滚",
+    "rollback_description": "确定要回滚到版本 {{version}} 吗？这将把专题恢复到该版本的状态。您当前的更改不会丢失，但当前激活版本会改变。",
+    "rollback_success": "回滚成功",
+    "rollback_success_description": "专题已回滚到版本 {{version}}",
+    "rolling_back": "正在回滚..."
+  },
   "questions": {
     "title": "题目",
     "create": "创建题目",
