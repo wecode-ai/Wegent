@@ -160,6 +160,7 @@ async def _execute_sse_sync(
         execution_data: Subscription execution data
     """
     import asyncio
+    import threading
 
     from app.core.events import TaskCompletedEvent, get_event_bus
     from app.services.execution import execution_dispatcher
@@ -167,7 +168,9 @@ async def _execute_sse_sync(
 
     logger.info(
         f"[_execute_sse_sync] Starting SSE sync execution: "
-        f"execution_id={execution_data.execution_id}"
+        f"execution_id={execution_data.execution_id}, "
+        f"thread={threading.current_thread().name}, "
+        f"is_daemon={threading.current_thread().daemon}"
     )
 
     event_bus = get_event_bus()
@@ -180,9 +183,19 @@ async def _execute_sse_sync(
             subtask_id=execution_data.subtask_id,
         )
 
+        logger.info(
+            f"[_execute_sse_sync] Created SSEResultEmitter, starting dispatch: "
+            f"execution_id={execution_data.execution_id}"
+        )
+
         # Start dispatch task (runs concurrently)
         dispatch_task = asyncio.create_task(
             execution_dispatcher.dispatch(request, emitter=emitter)
+        )
+
+        logger.info(
+            f"[_execute_sse_sync] Dispatch task created, waiting for emitter.collect(): "
+            f"execution_id={execution_data.execution_id}"
         )
 
         # Collect all content from emitter
@@ -208,6 +221,11 @@ async def _execute_sse_sync(
             result = final_event.result
 
         # Publish TaskCompletedEvent for unified handling
+        logger.info(
+            f"[_execute_sse_sync] About to publish TaskCompletedEvent: "
+            f"task_id={execution_data.task_id}, subtask_id={execution_data.subtask_id}, "
+            f"status=COMPLETED, execution_id={execution_data.execution_id}"
+        )
         await event_bus.publish(
             TaskCompletedEvent(
                 task_id=execution_data.task_id,
@@ -216,6 +234,10 @@ async def _execute_sse_sync(
                 status="COMPLETED",
                 result=result,
             )
+        )
+        logger.info(
+            f"[_execute_sse_sync] TaskCompletedEvent published successfully: "
+            f"execution_id={execution_data.execution_id}"
         )
 
     except Exception as e:

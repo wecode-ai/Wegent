@@ -7,7 +7,7 @@
 # -*- coding: utf-8 -*-
 
 import os
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
@@ -27,35 +27,33 @@ class ModelFactory:
 
     @staticmethod
     def create_model(
-        agent_config: Dict[str, Any], default_headers: Dict[str, Any]
+        model_config: Dict[str, Any], default_headers: Dict[str, Any]
     ) -> Union[Claude, OpenAIChat, Gemini]:
         """
         Create a model instance based on configuration
 
         Args:
-            agent_config: Agent configuration dictionary
+            model_config: Model configuration from task_data.model_config
+                         Contains: api_key, base_url, model_id, model (type)
             default_headers: Default headers for API requests
 
         Returns:
             Model instance (Claude, OpenAI or Gemini)
         """
-        env = agent_config.get("env", {})
-        model_config = env.get("model", "claude")
+        model_type = model_config.get("model", "claude")
 
-        logger.info(f"Creating model with config: {model_config}")
+        logger.info(f"Creating model with type: {model_type}")
 
-        if model_config == "claude":
-            return ModelFactory._create_claude_model(env, default_headers)
-        elif model_config == "openai":
-            return ModelFactory._create_openai_model(env, default_headers)
-        elif model_config == "gemini":
-            return ModelFactory._create_gemini_model(env, default_headers)
+        if model_type == "claude":
+            return ModelFactory._create_claude_model(model_config, default_headers)
+        elif model_type == "openai":
+            return ModelFactory._create_openai_model(model_config, default_headers)
+        elif model_type == "gemini":
+            return ModelFactory._create_gemini_model(model_config, default_headers)
         else:
             # Default to Claude
-            logger.warning(
-                f"Unknown model config: {model_config}, defaulting to Claude"
-            )
-            return ModelFactory._create_claude_model(env, default_headers)
+            logger.warning(f"Unknown model type: {model_type}, defaulting to Claude")
+            return ModelFactory._create_claude_model(model_config, default_headers)
 
     @staticmethod
     def _create_claude_model(

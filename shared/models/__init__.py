@@ -44,15 +44,6 @@ from .blocks import (
     create_tool_block,
 )
 
-# Unified event emitter
-from .emitter import (
-    CallbackTransport,
-    EventTransport,
-    GeneratorTransport,
-    ResponsesAPIEmitter,
-    WebSocketTransport,
-)
-
 # Unified execution protocol
 from .execution import EventType, ExecutionEvent, ExecutionRequest
 
@@ -68,6 +59,25 @@ from .responses_api import (
     ResponsesAPIEventBuilder,
     ResponsesAPIStreamEvents,
     ResponsesAPIStreamingResponse,
+)
+
+# Unified event emitter
+from .responses_api_emitter import (
+    CallbackTransport,
+    EventTransport,
+    GeneratorTransport,
+    ResponsesAPIEmitter,
+    WebSocketTransport,
+)
+
+# Factory and Builder for emitter
+from .responses_api_factory import (
+    EmitterBuilder,
+    RedisTransport,
+    ThrottleConfig,
+    ThrottledTransport,
+    TransportFactory,
+    TransportType,
 )
 
 __all__ = [
@@ -86,9 +96,17 @@ __all__ = [
     "CallbackTransport",
     "WebSocketTransport",
     "GeneratorTransport",
+    # Factory and Builder for emitter
+    "EmitterBuilder",
+    "TransportFactory",
+    "TransportType",
+    "RedisTransport",
+    "ThrottleConfig",
+    "ThrottledTransport",
     # OpenAI Request Converter
     "OpenAIRequestConverter",
     "OpenAIEventConverter",
+    "get_metadata_field",
     # Block types for mixed content rendering
     "BlockType",
     "BlockStatus",

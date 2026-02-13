@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -33,9 +33,20 @@ class TestAgent:
         }
 
     @pytest.fixture
-    def agent(self, task_data):
+    def mock_emitter(self):
+        """Create a mock emitter for testing"""
+        emitter = MagicMock()
+        emitter.in_progress = AsyncMock()
+        emitter.start = AsyncMock()
+        emitter.done = AsyncMock()
+        emitter.error = AsyncMock()
+        emitter.text_delta = AsyncMock()
+        return emitter
+
+    @pytest.fixture
+    def agent(self, task_data, mock_emitter):
         """Create a test agent instance"""
-        return Agent(task_data)
+        return Agent(task_data, mock_emitter)
 
     def test_agent_initialization(self, agent, task_data):
         """Test agent initialization with task data"""
@@ -65,9 +76,10 @@ class TestAgent:
         status = agent.initialize()
         assert status == TaskStatus.SUCCESS
 
-    @patch("executor.callback.callback_handler.send_progress_event")
-    def test_report_progress(self, mock_send_progress, agent):
-        """Test report_progress sends callback"""
+    def test_report_progress(self, agent, mock_emitter):
+        """Test report_progress sends callback via emitter"""
+        # The agent already has mock_emitter injected via fixture
+        # report_progress calls self.get_emitter().in_progress()
         agent.report_progress(
             progress=50,
             status="running",
@@ -75,13 +87,8 @@ class TestAgent:
             result={"key": "value"},
         )
 
-        mock_send_progress.assert_called_once_with(
-            task_id=agent.task_id,
-            subtask_id=agent.subtask_id,
-            progress=50,
-            status="running",
-            content="Test message",
-        )
+        # Verify emitter.in_progress was called
+        mock_emitter.in_progress.assert_called_once()
 
     @patch("executor.agents.base.git_util.clone_repo")
     @patch("executor.agents.base.git_util.get_repo_name_from_url")
@@ -182,8 +189,19 @@ class TestAgentHandle:
         }
 
     @pytest.fixture
-    def concrete_agent(self, task_data):
-        return ConcreteAgent(task_data)
+    def mock_emitter(self):
+        """Create a mock emitter for testing"""
+        emitter = MagicMock()
+        emitter.in_progress = AsyncMock()
+        emitter.start = AsyncMock()
+        emitter.done = AsyncMock()
+        emitter.error = AsyncMock()
+        emitter.text_delta = AsyncMock()
+        return emitter
+
+    @pytest.fixture
+    def concrete_agent(self, task_data, mock_emitter):
+        return ConcreteAgent(task_data, mock_emitter)
 
     def test_handle_success(self, concrete_agent):
         """Test successful handle execution"""

@@ -130,7 +130,7 @@ type Event =
   | { type: 'SYNC_DONE' }
   | { type: 'SYNC_DONE_STREAMING'; subtaskId: number }
   | { type: 'SYNC_ERROR'; error: string }
-  | { type: 'CHAT_START'; subtaskId: number; shellType?: string }
+  | { type: 'CHAT_START'; subtaskId: number; shellType?: string; messageId?: number }
   | {
       type: 'CHAT_CHUNK'
       subtaskId: number
@@ -273,8 +273,8 @@ export class TaskStateMachine {
   /**
    * Handle chat:start event
    */
-  handleChatStart(subtaskId: number, shellType?: string): void {
-    this.dispatch({ type: 'CHAT_START', subtaskId, shellType })
+  handleChatStart(subtaskId: number, shellType?: string, messageId?: number): void {
+    this.dispatch({ type: 'CHAT_START', subtaskId, shellType, messageId })
   }
 
   /**
@@ -995,6 +995,7 @@ export class TaskStateMachine {
       content: '',
       timestamp: Date.now(),
       subtaskId: event.subtaskId,
+      messageId: event.messageId, // Set messageId from chat:start event for proper ordering
       result: initialResult,
     })
 
@@ -1271,7 +1272,10 @@ export class TaskStateMachine {
       subtaskStatus: finalSubtaskStatus,
       content: finalContent,
       error: event.hasError ? event.errorMessage : existingMessage.error,
-      messageId: event.messageId,
+      // CRITICAL FIX: Only update messageId if event.messageId is defined
+      // Otherwise preserve the existing messageId from chat:start
+      // This prevents messageId from being overwritten with undefined/null
+      messageId: event.messageId ?? existingMessage.messageId,
       sources: event.sources || existingMessage.sources,
       result: event.result
         ? {

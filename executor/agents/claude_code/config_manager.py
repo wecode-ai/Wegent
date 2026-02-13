@@ -305,13 +305,16 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         "permission_prompt_tool_name",
         "cwd",
         "max_buffer_size",
+        "include_partial_messages",
     ]
 
     # Collect all non-None configuration parameters
     # Set max_buffer_size to 50MB to handle large file reads (default is 1MB)
+    # Enable include_partial_messages for streaming output (StreamEvent)
     options: Dict[str, Any] = {
         "setting_sources": ["user", "project", "local"],
         "max_buffer_size": 50 * 1024 * 1024,  # 50MB
+        "include_partial_messages": True,  # Enable streaming output for real-time text updates
     }
 
     bots = task_data.get("bot", [])

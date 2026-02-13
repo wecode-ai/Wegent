@@ -2,14 +2,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Database handler for Chat Shell."""
+"""Database handler for Chat Shell.
+
+Note: This module is responsible ONLY for database operations.
+WebSocket notifications should be handled by the emitter chain (WebSocketResultEmitter),
+not by database operations. This follows the Single Responsibility Principle.
+"""
 
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Callable, Generator, Optional, TypeVar
+from typing import Any, Callable, Generator, TypeVar
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -23,36 +28,6 @@ _db_executor = ThreadPoolExecutor(max_workers=10)
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
 
 T = TypeVar("T")
-
-
-async def emit_task_status_update(
-    user_id: int, task_id: int, status: str, progress: Optional[int] = None
-) -> None:
-    """
-    Emit task:status WebSocket event to notify frontend of task status changes.
-
-    Args:
-        user_id: User ID who owns the task
-        task_id: Task ID
-        status: New task status
-        progress: Optional progress percentage
-    """
-    try:
-        from app.services.chat.ws_emitter import get_ws_emitter
-
-        ws_emitter = get_ws_emitter()
-        if ws_emitter:
-            await ws_emitter.emit_task_status(
-                user_id=user_id,
-                task_id=task_id,
-                status=status,
-                progress=progress,
-            )
-            logger.debug(
-                f"[WS] Emitted task:status event for task={task_id} status={status}"
-            )
-    except Exception as e:
-        logger.warning(f"Failed to emit task:status event: {e}")
 
 
 @contextmanager
@@ -195,10 +170,6 @@ class DatabaseHandler:
         from app.models.task import TaskResource
         from app.schemas.kind import Task
 
-        user_id = None
-        new_status = None
-        progress = None
-
         try:
             with _db_session() as db:
                 task = (
@@ -212,9 +183,6 @@ class DatabaseHandler:
                 )
                 if not task:
                     return
-
-                # Get user_id for WebSocket notification
-                user_id = task.user_id
 
                 subtasks = (
                     db.query(Subtask)
@@ -234,60 +202,13 @@ class DatabaseHandler:
                 if task_crd.status:
                     self._apply_status_update(task_crd.status, last_subtask)
                     task_crd.status.updatedAt = datetime.now()
-                    # Capture status for WebSocket notification
-                    new_status = task_crd.status.status
-                    progress = task_crd.status.progress
 
                 task.json = task_crd.model_dump(mode="json")
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
 
-            # After commit, emit WebSocket event for task status update
-            if user_id and new_status:
-                self._schedule_ws_emit(user_id, task_id, new_status, progress)
-
         except Exception:
             logger.exception("Error updating task %s status", task_id)
-
-    def _schedule_ws_emit(
-        self, user_id: int, task_id: int, status: str, progress: Optional[int]
-    ) -> None:
-        """Schedule WebSocket emit in the event loop."""
-        try:
-            # First try to get the running event loop
-            loop = asyncio.get_running_loop()
-            # We're in an async context, schedule directly
-            asyncio.run_coroutine_threadsafe(
-                emit_task_status_update(user_id, task_id, status, progress), loop
-            )
-            logger.debug(
-                f"[WS] Scheduled task:status via running loop for task={task_id}"
-            )
-        except RuntimeError:
-            # No running event loop in current thread
-            # Try to use the main event loop reference from ws_emitter
-            try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    # Schedule the coroutine to run in the main event loop
-                    asyncio.run_coroutine_threadsafe(
-                        emit_task_status_update(user_id, task_id, status, progress),
-                        main_loop,
-                    )
-                    logger.debug(
-                        f"[WS] Scheduled task:status via main loop for task={task_id}"
-                    )
-                else:
-                    # No running event loop available - skip emit
-                    logger.warning(
-                        f"Could not emit task:status event - no running event loop available for task={task_id}"
-                    )
-            except RuntimeError:
-                logger.warning(
-                    f"Could not emit task:status event - no event loop available for task={task_id}"
-                )
 
     def _apply_status_update(self, status_obj, last_subtask) -> None:
         """Apply status update based on last subtask."""

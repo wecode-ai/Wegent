@@ -10,17 +10,10 @@ import os
 from typing import Any, Dict, Optional, Tuple, Union
 
 from executor.agents import Agent, AgentFactory
-from executor.callback.callback_handler import (
-    send_done_event,
-    send_done_event_async,
-    send_error_event,
-    send_error_event_async,
-    send_start_event,
-    send_start_event_async,
-)
 from executor.config import config
 from executor.services.agent_service import AgentService
 from shared.logger import setup_logger
+from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
 from shared.models.execution import ExecutionRequest
 from shared.models.openai_converter import get_metadata_field
 from shared.status import TaskStatus
@@ -68,11 +61,11 @@ def execute_task(agent: Agent) -> Tuple[TaskStatus, Optional[str]]:
     return agent_service.execute_agent_task(agent)
 
 
-def _get_callback_params(
+def _create_emitter(
     request: Union[ExecutionRequest, Dict[str, Any]],
-) -> Dict[str, Any]:
+) -> ResponsesAPIEmitter:
     """
-    Extract common callback parameters from execution request or task data.
+    Create an emitter for the task from execution request or task data.
 
     Supports ExecutionRequest, OpenAI format dict, and legacy dict.
 
@@ -80,22 +73,29 @@ def _get_callback_params(
         request: ExecutionRequest object or task data dict
 
     Returns:
-        dict: Common callback parameters
+        ResponsesAPIEmitter: Configured emitter for the task
     """
+    from executor.config import config
+
     if isinstance(request, ExecutionRequest):
-        return {
-            "task_id": request.task_id,
-            "subtask_id": request.subtask_id,
-            "executor_name": os.getenv("EXECUTOR_NAME"),
-            "executor_namespace": os.getenv("EXECUTOR_NAMESPACE"),
-        }
+        task_id = request.task_id
+        subtask_id = request.subtask_id
     else:
-        return {
-            "task_id": get_metadata_field(request, "task_id", -1),
-            "subtask_id": get_metadata_field(request, "subtask_id", -1),
-            "executor_name": os.getenv("EXECUTOR_NAME"),
-            "executor_namespace": os.getenv("EXECUTOR_NAMESPACE"),
-        }
+        task_id = get_metadata_field(request, "task_id", -1)
+        subtask_id = get_metadata_field(request, "subtask_id", -1)
+
+    return (
+        EmitterBuilder()
+        .with_task(task_id, subtask_id)
+        .with_transport(
+            TransportFactory.create_callback(callback_url=config.CALLBACK_URL)
+        )
+        .with_executor_info(
+            name=os.getenv("EXECUTOR_NAME"),
+            namespace=os.getenv("EXECUTOR_NAMESPACE"),
+        )
+        .build()
+    )
 
 
 def _extract_task_attributes(
@@ -162,6 +162,22 @@ def _normalize_request(
     return ExecutionRequest.from_dict(request)
 
 
+def _run_async(coro):
+    """Run an async coroutine in sync context."""
+    import asyncio
+    import concurrent.futures
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(coro)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(asyncio.run, coro)
+        return future.result()
+
+
 @trace_sync(
     span_name="execute_task",
     tracer_name="executor.tasks",
@@ -181,122 +197,7 @@ def process(request: Union[ExecutionRequest, Dict[str, Any]]) -> TaskStatus:
     Returns:
         TaskStatus: Processing status
     """
-    # Normalize to ExecutionRequest for type safety
-    exec_request = _normalize_request(request)
-
-    # Convert to dict for AgentService (which still uses dict internally)
-    task_data = exec_request.to_dict()
-
-    callback_params = _get_callback_params(exec_request)
-
-    # Check if this is a subscription task
-    is_subscription = exec_request.is_subscription
-
-    # Extract validation_id for validation tasks
-    # Note: validation_params is not in ExecutionRequest, check task_data for backward compatibility
-    validation_params = task_data.get("validation_params", {})
-    validation_id = (
-        validation_params.get("validation_id") if validation_params else None
-    )
-
-    started_result = None
-    if validation_id:
-        started_result = {"validation_id": validation_id, "stage": "running"}
-
-    # Send task started event using unified ExecutionEvent format
-    result = send_start_event(**callback_params)
-    if not result or result.get("status") != TaskStatus.SUCCESS.value:
-        logger.error("Failed to send 'start' event")
-        set_span_attribute("error", True)
-        set_span_attribute("error.message", "Failed to send start event")
-        # For subscription tasks, exit container on failure
-        if is_subscription:
-            logger.info(
-                "Subscription task failed to start, exiting container with code 1"
-            )
-            os._exit(1)
-        return TaskStatus.FAILED
-
-    add_span_event("task_started_event_sent")
-
-    # Execute task using AgentService
-    try:
-        agent_service = AgentService()
-        status, error_message = agent_service.execute_task(task_data)
-
-        message = (
-            "Task executed successfully"
-            if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]
-            else error_message
-        )
-
-        set_span_attribute("task.execution_status", status.value)
-        if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
-            add_span_event("task_execution_completed")
-        elif status == TaskStatus.FAILED:
-            set_span_attribute("error", True)
-            set_span_attribute("error.message", error_message or "Unknown error")
-        elif status == TaskStatus.RUNNING:
-            add_span_event("task_execution_running")
-
-    except Exception as e:
-        error_msg = f"Unexpected error during task execution: {str(e)}"
-        logger.exception(error_msg)
-        status = TaskStatus.FAILED
-        message = error_msg
-        set_span_attribute("error", True)
-        set_span_attribute("error.message", error_msg)
-
-    # Send task completion or failure event using unified ExecutionEvent format
-    if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
-        done_result = None
-        if validation_id:
-            done_result = {"validation_id": validation_id, "stage": "completed"}
-            # Try to retrieve detailed validation results from the agent
-            try:
-                agent = agent_service.get_agent(f"{exec_request.task_id}")
-                if agent and hasattr(agent, "validation_result"):
-                    import json
-
-                    done_result["value"] = json.dumps(agent.validation_result)
-            except Exception as e:
-                logger.warning(f"Failed to retrieve validation result: {e}")
-        send_done_event(result=done_result, **callback_params)
-        add_span_event("task_done_event_sent")
-    elif status == TaskStatus.FAILED:
-        fail_result = None
-        if validation_id:
-            fail_result = {
-                "validation_id": validation_id,
-                "stage": "failed",
-                "validation_result": {
-                    "valid": False,
-                    "checks": [],
-                    "errors": [message] if message else [],
-                },
-            }
-        send_error_event(
-            error=message or "Unknown error",
-            **callback_params,
-        )
-        add_span_event("task_error_event_sent")
-
-    # For subscription tasks, exit container after completion
-    # Subscription tasks are one-time background executions that don't need
-    # to keep the container running for follow-up messages
-    if is_subscription and status in [
-        TaskStatus.SUCCESS,
-        TaskStatus.COMPLETED,
-        TaskStatus.FAILED,
-    ]:
-        exit_code = 0 if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED] else 1
-        logger.info(
-            f"Subscription task completed with status {status.value}, "
-            f"exiting container with code {exit_code}"
-        )
-        os._exit(exit_code)
-
-    return status
+    return _run_async(process_async(request))
 
 
 @trace_async(
@@ -327,7 +228,8 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
     # Convert to dict for AgentService (which still uses dict internally)
     task_data = exec_request.to_dict()
 
-    callback_params = _get_callback_params(exec_request)
+    # Create emitter for the task lifecycle
+    emitter = _create_emitter(exec_request)
 
     # Check if this is a subscription task
     is_subscription = exec_request.is_subscription
@@ -339,12 +241,8 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
         validation_params.get("validation_id") if validation_params else None
     )
 
-    started_result = None
-    if validation_id:
-        started_result = {"validation_id": validation_id, "stage": "running"}
-
-    # Send task started event using unified ExecutionEvent format (async)
-    result = await send_start_event_async(**callback_params)
+    # Send task started event using emitter
+    result = await emitter.start()
     if not result or result.get("status") != TaskStatus.SUCCESS.value:
         logger.error("Failed to send 'start' event")
         set_span_attribute("error", True)
@@ -387,38 +285,25 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
         set_span_attribute("error", True)
         set_span_attribute("error.message", error_msg)
 
-    # Send task completion or failure event using unified ExecutionEvent format (async)
+    # Send task completion or failure event using emitter
     if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
-        done_result = None
+        done_content = ""
         if validation_id:
+            import json
+
             done_result = {"validation_id": validation_id, "stage": "completed"}
             # Try to retrieve detailed validation results from the agent
             try:
                 agent = agent_service.get_agent(f"{exec_request.task_id}")
                 if agent and hasattr(agent, "validation_result"):
-                    import json
-
                     done_result["value"] = json.dumps(agent.validation_result)
             except Exception as e:
                 logger.warning(f"Failed to retrieve validation result: {e}")
-        await send_done_event_async(result=done_result, **callback_params)
+            done_content = json.dumps(done_result)
+        await emitter.done(content=done_content)
         add_span_event("task_done_event_sent")
     elif status == TaskStatus.FAILED:
-        fail_result = None
-        if validation_id:
-            fail_result = {
-                "validation_id": validation_id,
-                "stage": "failed",
-                "validation_result": {
-                    "valid": False,
-                    "checks": [],
-                    "errors": [message] if message else [],
-                },
-            }
-        await send_error_event_async(
-            error=message or "Unknown error",
-            **callback_params,
-        )
+        await emitter.error(message or "Unknown error")
         add_span_event("task_error_event_sent")
 
     # For subscription tasks, exit container after completion

@@ -17,6 +17,7 @@ from executor.config import config
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
+from shared.models import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult
 from shared.status import TaskStatus
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
@@ -47,14 +48,19 @@ class DifyAgent(Agent):
     def get_name(self) -> str:
         return "Dify"
 
-    def __init__(self, task_data: Dict[str, Any]):
+    def __init__(
+        self,
+        task_data: Dict[str, Any],
+        emitter: ResponsesAPIEmitter,
+    ):
         """
         Initialize the Dify Agent
 
         Args:
             task_data: The task data dictionary
+            emitter: Emitter instance for sending events. Required parameter.
         """
-        super().__init__(task_data)
+        super().__init__(task_data, emitter)
 
         self.prompt = task_data.get("prompt", "")
         self.bot_prompt = task_data.get("bot_prompt", "")

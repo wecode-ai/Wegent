@@ -2,17 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Streaming services for Chat Shell."""
+"""Streaming services for Chat Shell.
+
+Uses unified ResponsesAPIEmitter from shared module for event emission.
+"""
 
 from .core import StreamingConfig, StreamingCore, StreamingState
-from .emitters import NullEmitter, SSEEmitter, StreamEmitter, StreamEvent
 
 __all__ = [
     "StreamingCore",
     "StreamingConfig",
     "StreamingState",
-    "StreamEmitter",
-    "SSEEmitter",
-    "NullEmitter",
-    "StreamEvent",
 ]
