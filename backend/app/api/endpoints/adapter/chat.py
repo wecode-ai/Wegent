@@ -29,7 +29,6 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.services.chat.config import (
     get_team_first_bot_shell_type,
-    should_use_direct_chat,
 )
 from app.services.chat.correction import (
     apply_correction_to_subtask,
@@ -79,10 +78,23 @@ async def check_direct_chat(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Check if a team supports direct chat mode.
+    Check team's supported communication modes.
 
     Returns:
-        {"supports_direct_chat": bool, "shell_type": str}
+        {
+            "shell_type": str,
+            "supported_modes": list[str]
+        }
+
+    Supported modes:
+    - "sse": Supports SSE streaming (real-time response)
+    - "websocket": Supports WebSocket mode (local executor)
+    - "http_callback": Supports HTTP + Callback mode (queued response)
+
+    Shell type to mode mapping:
+    - "Chat": ["sse"]
+    - "ClaudeCode", "Agno", "Dify": ["http_callback"]
+    - All types support "websocket" when device_id is provided
     """
     team = (
         db.query(Kind)
@@ -97,14 +109,26 @@ async def check_direct_chat(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    supports_direct_chat = should_use_direct_chat(db, team, current_user.id)
-
     # Get shell type of first bot
     shell_type = get_team_first_bot_shell_type(db, team)
 
+    # Determine supported modes based on shell_type
+    # Reference: ExecutionRouter.EXECUTION_SERVICES
+    supported_modes = []
+
+    if shell_type == "Chat":
+        # Chat Shell supports SSE streaming
+        supported_modes.append("sse")
+    else:
+        # ClaudeCode, Agno, Dify use HTTP + Callback
+        supported_modes.append("http_callback")
+
+    # All types support WebSocket mode when device_id is provided
+    supported_modes.append("websocket")
+
     return {
-        "supports_direct_chat": supports_direct_chat,
         "shell_type": shell_type,
+        "supported_modes": supported_modes,
     }
 
 

@@ -13,7 +13,7 @@ Used for executing background Chat Shell tasks that don't require real-time WebS
 
 Features:
 - Creates Task/Subtask records for tracking
-- Reuses Chat Shell HTTP Adapter
+- Uses ExecutionDispatcher for unified task dispatch
 - Synchronously waits for complete response (accumulates all CHUNKs)
 - Supports JSON output parsing
 """
@@ -27,11 +27,10 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
-from app.services.chat.adapters.http import HTTPAdapter
-from app.services.chat.adapters.interface import ChatEventType, ChatRequest
+from app.services.execution import execution_dispatcher
+from shared.models import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +65,7 @@ class BackgroundChatExecutor:
     def __init__(self, db: Session, user_id: int):
         self.db = db
         self.user_id = user_id
-        self._adapter = HTTPAdapter(
-            base_url=settings.CHAT_SHELL_URL,
-            token=settings.CHAT_SHELL_TOKEN,
-            timeout=300.0,
-        )
+        # Use global execution_dispatcher instead of HTTPAdapter
 
     async def execute(
         self,
@@ -117,28 +112,8 @@ class BackgroundChatExecutor:
                 f"subtask_id={assistant_subtask.id}"
             )
 
-            # 3. Build ChatRequest
+            # 3. Build ExecutionRequest
             model_config = config.model_config or self._get_default_model_config()
-            chat_request = ChatRequest(
-                task_id=task.id,
-                subtask_id=assistant_subtask.id,
-                message=user_message,
-                user_id=self.user_id,
-                user_name="system",
-                team_id=0,  # System task
-                team_name="system-background",
-                model_config=model_config,
-                system_prompt=system_prompt,
-                enable_tools=False,  # Summary tasks don't need tools
-                enable_web_search=False,
-                enable_deep_thinking=False,
-            )
-
-            # 4. Call Chat Shell, accumulate complete response
-            logger.info(
-                f"[BackgroundChatExecutor] Sending request to Chat Shell: "
-                f"task_id={task.id}"
-            )
 
             logger.info(
                 "[BackgroundChatExecutor] Model config summary: name=%s, namespace=%s, type=%s",
@@ -147,27 +122,67 @@ class BackgroundChatExecutor:
                 model_config.get("model_type"),
             )
 
-            accumulated_content = ""
-            chunk_count = 0
-            async for event in self._adapter.chat(chat_request):
-                if event.type == ChatEventType.CHUNK:
-                    content = event.data.get("content", "")
-                    if content:
-                        accumulated_content += content
-                        chunk_count += 1
-                elif event.type == ChatEventType.ERROR:
-                    error_msg = event.data.get("error", "Unknown error")
-                    logger.error(
-                        f"[BackgroundChatExecutor] Chat Shell error: "
-                        f"task_id={task.id}, error={error_msg}"
-                    )
-                    raise Exception(error_msg)
-                elif event.type == ChatEventType.DONE:
-                    logger.info(
-                        f"[BackgroundChatExecutor] Chat Shell response completed: "
-                        f"task_id={task.id}, chunks_received={chunk_count}, "
-                        f"content_length={len(accumulated_content)}"
-                    )
+            execution_request = ExecutionRequest(
+                task_id=task.id,
+                subtask_id=assistant_subtask.id,
+                team_id=0,  # System task
+                team_name="system-background",
+                user={"id": self.user_id, "name": "system"},
+                user_id=self.user_id,
+                user_name="system",
+                bot=[
+                    {
+                        "name": "system-background",
+                        "shell_type": "Chat",
+                        "system_prompt": system_prompt,
+                        "mcp_servers": [],
+                        "skills": [],
+                    }
+                ],
+                model_config=model_config,
+                system_prompt=system_prompt,
+                prompt=user_message,
+                enable_tools=False,  # Summary tasks don't need tools
+                enable_web_search=False,
+                enable_deep_thinking=False,
+                message_id=assistant_subtask.id,
+                is_group_chat=False,
+            )
+
+            # 4. Call Chat Shell via ExecutionDispatcher, get complete response
+            import asyncio
+
+            from app.services.execution.emitters import SSEResultEmitter
+
+            logger.info(
+                f"[BackgroundChatExecutor] Sending request to Chat Shell: "
+                f"task_id={task.id}"
+            )
+
+            # Create SSEResultEmitter for collecting response
+            emitter = SSEResultEmitter(
+                task_id=execution_request.task_id,
+                subtask_id=execution_request.subtask_id,
+            )
+
+            # Start dispatch task (runs concurrently)
+            dispatch_task = asyncio.create_task(
+                execution_dispatcher.dispatch(execution_request, emitter=emitter)
+            )
+
+            # Collect all content from emitter
+            accumulated_content, _ = await emitter.collect()
+
+            # Wait for dispatch task to complete
+            try:
+                await dispatch_task
+            except Exception:
+                pass  # Error already handled via emitter
+
+            logger.info(
+                f"[BackgroundChatExecutor] Chat Shell response completed: "
+                f"task_id={task.id}, content_length={len(accumulated_content)}"
+            )
 
             # 5. Parse JSON (if needed)
             parsed_content = None

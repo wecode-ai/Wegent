@@ -16,16 +16,7 @@ export async function fetchBotsList(
 ): Promise<Bot[]> {
   const params: PaginationParams = {}
   const botsData = await botApis.getBots(params, scope, groupName)
-  console.log('[DEBUG] fetchBotsList response:', JSON.stringify(botsData, null, 2))
   const items = Array.isArray(botsData.items) ? botsData.items : []
-  // Log each bot's agent_config for debugging
-  items.forEach((bot, index) => {
-    console.log(`[DEBUG] Bot ${index} (${bot.name}):`, {
-      id: bot.id,
-      shell_type: bot.shell_type,
-      agent_config: bot.agent_config,
-    })
-  })
   return items
 }
 

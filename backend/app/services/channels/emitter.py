@@ -5,7 +5,7 @@
 """
 Response Emitters for IM Channels.
 
-This module provides ChatEventEmitter implementations for IM channels:
+This module provides ResultEmitter implementations for IM channels:
 - SyncResponseEmitter: Collects complete response before replying (channel-agnostic)
 - CompositeEmitter: Forwards events to multiple emitters
 
@@ -16,12 +16,13 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.services.chat.trigger.emitter import ChatEventEmitter
+from app.services.execution.emitters import ResultEmitter
+from shared.models import ExecutionEvent
 
 logger = logging.getLogger(__name__)
 
 
-class SyncResponseEmitter(ChatEventEmitter):
+class SyncResponseEmitter(ResultEmitter):
     """Synchronous response collector emitter.
 
     Used for external channel integrations (DingTalk, Feishu, Telegram, etc.) that need
@@ -58,210 +59,190 @@ class SyncResponseEmitter(ChatEventEmitter):
         return "".join(self._response_chunks)
 
     def get_result(self) -> Optional[Dict[str, Any]]:
-        """Get the result dictionary from chat:done event.
+        """Get the result dictionary from done event.
 
         Returns:
             Result dictionary or None
         """
         return self._result
 
-    async def emit_chat_start(
+    async def emit(self, event: ExecutionEvent) -> None:
+        """Emit a single event.
+
+        Args:
+            event: Execution event to emit
+        """
+        from shared.models import EventType
+
+        if event.type == EventType.START:
+            await self.emit_start(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                message_id=event.message_id,
+            )
+        elif event.type == EventType.CHUNK:
+            await self.emit_chunk(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                content=event.content or "",
+                offset=event.offset,
+            )
+        elif event.type == EventType.DONE:
+            await self.emit_done(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                result=event.result,
+            )
+        elif event.type == EventType.ERROR:
+            await self.emit_error(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                error=event.error or "Unknown error",
+            )
+
+    async def emit_start(
         self,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int] = None,
-        shell_type: str = "Chat",
+        **kwargs,
     ) -> None:
-        """Emit chat:start event."""
-        logger.debug(
-            f"[SyncEmitter] chat:start task={task_id} subtask={subtask_id} "
-            f"shell_type={shell_type}"
-        )
+        """Emit start event."""
+        logger.debug(f"[SyncEmitter] start task={task_id} subtask={subtask_id}")
 
-    async def emit_chat_chunk(
+    async def emit_chunk(
         self,
         task_id: int,
         subtask_id: int,
         content: str,
         offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        block_id: Optional[str] = None,
-        block_offset: Optional[int] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:chunk event - collect chunk content."""
+        """Emit chunk event - collect chunk content."""
         if content:
             self._response_chunks.append(content)
 
-    async def emit_chat_done(
+    async def emit_done(
         self,
         task_id: int,
         subtask_id: int,
-        offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        message_id: Optional[int] = None,
+        result: Optional[dict] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:done event - signal completion."""
+        """Emit done event - signal completion."""
         self._result = result
         logger.debug(
-            f"[SyncEmitter] chat:done task={task_id} subtask={subtask_id} "
+            f"[SyncEmitter] done task={task_id} subtask={subtask_id} "
             f"total_chunks={len(self._response_chunks)}"
         )
         self._complete_event.set()
 
-    async def emit_chat_error(
+    async def emit_error(
         self,
         task_id: int,
         subtask_id: int,
         error: str,
-        message_id: Optional[int] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:error event - signal error."""
+        """Emit error event - signal error."""
         self._error = error
         logger.warning(
-            f"[SyncEmitter] chat:error task={task_id} subtask={subtask_id} error={error}"
+            f"[SyncEmitter] error task={task_id} subtask={subtask_id} error={error}"
         )
         self._complete_event.set()
 
-    async def emit_chat_cancelled(
-        self,
-        task_id: int,
-        subtask_id: int,
-    ) -> None:
-        """Emit chat:cancelled event - signal cancellation."""
-        self._error = "Response was cancelled"
-        logger.debug(
-            f"[SyncEmitter] chat:cancelled task={task_id} subtask={subtask_id}"
-        )
-        self._complete_event.set()
-
-    async def emit_chat_bot_complete(
-        self,
-        user_id: int,
-        task_id: int,
-        subtask_id: int,
-        content: str,
-        result: Dict[str, Any],
-    ) -> None:
-        """Emit chat:bot_complete event (no-op for sync emitter)."""
-        logger.debug(
-            f"[SyncEmitter] chat:bot_complete user={user_id} task={task_id} "
-            f"subtask={subtask_id} (skipped)"
-        )
+    async def close(self) -> None:
+        """Close the emitter and release resources."""
+        pass
 
 
-class CompositeEmitter(ChatEventEmitter):
+class CompositeEmitter(ResultEmitter):
     """Composite emitter that forwards events to multiple emitters.
 
     This allows collecting response content while also streaming
     updates to the user.
     """
 
-    def __init__(self, *emitters: ChatEventEmitter):
+    def __init__(self, *emitters: ResultEmitter):
         """Initialize with multiple emitters."""
-        self._emitters: List[ChatEventEmitter] = list(emitters)
+        self._emitters: List[ResultEmitter] = list(emitters)
 
-    def add_emitter(self, emitter: ChatEventEmitter) -> None:
+    def add_emitter(self, emitter: ResultEmitter) -> None:
         """Add an emitter to the composite."""
         self._emitters.append(emitter)
 
-    async def emit_chat_start(
+    async def emit(self, event: ExecutionEvent) -> None:
+        """Forward event to all emitters."""
+        for emitter in self._emitters:
+            await emitter.emit(event)
+
+    async def emit_start(
         self,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int] = None,
-        shell_type: str = "Chat",
+        **kwargs,
     ) -> None:
         """Forward to all emitters."""
         for emitter in self._emitters:
-            await emitter.emit_chat_start(
+            await emitter.emit_start(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 message_id=message_id,
-                shell_type=shell_type,
+                **kwargs,
             )
 
-    async def emit_chat_chunk(
+    async def emit_chunk(
         self,
         task_id: int,
         subtask_id: int,
         content: str,
         offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        block_id: Optional[str] = None,
-        block_offset: Optional[int] = None,
+        **kwargs,
     ) -> None:
         """Forward to all emitters."""
         for emitter in self._emitters:
-            await emitter.emit_chat_chunk(
+            await emitter.emit_chunk(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 content=content,
                 offset=offset,
-                result=result,
-                block_id=block_id,
-                block_offset=block_offset,
+                **kwargs,
             )
 
-    async def emit_chat_done(
+    async def emit_done(
         self,
         task_id: int,
         subtask_id: int,
-        offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        message_id: Optional[int] = None,
+        result: Optional[dict] = None,
+        **kwargs,
     ) -> None:
         """Forward to all emitters."""
         for emitter in self._emitters:
-            await emitter.emit_chat_done(
+            await emitter.emit_done(
                 task_id=task_id,
                 subtask_id=subtask_id,
-                offset=offset,
                 result=result,
-                message_id=message_id,
+                **kwargs,
             )
 
-    async def emit_chat_error(
+    async def emit_error(
         self,
         task_id: int,
         subtask_id: int,
         error: str,
-        message_id: Optional[int] = None,
+        **kwargs,
     ) -> None:
         """Forward to all emitters."""
         for emitter in self._emitters:
-            await emitter.emit_chat_error(
+            await emitter.emit_error(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 error=error,
-                message_id=message_id,
+                **kwargs,
             )
 
-    async def emit_chat_cancelled(
-        self,
-        task_id: int,
-        subtask_id: int,
-    ) -> None:
-        """Forward to all emitters."""
+    async def close(self) -> None:
+        """Close all emitters."""
         for emitter in self._emitters:
-            await emitter.emit_chat_cancelled(
-                task_id=task_id,
-                subtask_id=subtask_id,
-            )
-
-    async def emit_chat_bot_complete(
-        self,
-        user_id: int,
-        task_id: int,
-        subtask_id: int,
-        content: str,
-        result: Dict[str, Any],
-    ) -> None:
-        """Forward to all emitters."""
-        for emitter in self._emitters:
-            await emitter.emit_chat_bot_complete(
-                user_id=user_id,
-                task_id=task_id,
-                subtask_id=subtask_id,
-                content=content,
-                result=result,
-            )
+            await emitter.close()

@@ -9,22 +9,20 @@ This package contains services for the OpenAPI v1/responses endpoint:
 - helpers: Utility functions for status conversion, parsing, validation
 - chat_session: Chat session setup and history building
 - mcp: MCP (Model Context Protocol) tools loading
-- chat_response: Streaming and synchronous response handlers
 - streaming: SSE streaming service
+
+Note: chat_response module is deprecated. OpenAPI responses now use the unified
+trigger architecture via build_execution_request + dispatch_sse_stream.
 """
 
-from app.services.openapi.chat_response import (
-    create_streaming_response,
-    create_sync_response,
-)
 from app.services.openapi.chat_session import (
     ChatSessionSetup,
     build_chat_history,
     setup_chat_session,
 )
 from app.services.openapi.helpers import (
-    check_team_supports_direct_chat,
     extract_input_text,
+    get_team_shell_type,
     parse_model_string,
     parse_wegent_tools,
     subtask_status_to_message_status,
@@ -33,16 +31,13 @@ from app.services.openapi.helpers import (
 from app.services.openapi.mcp import load_bot_mcp_tools, load_server_mcp_tools
 
 __all__ = [
-    # chat_response
-    "create_streaming_response",
-    "create_sync_response",
     # chat_session
     "ChatSessionSetup",
     "build_chat_history",
     "setup_chat_session",
     # helpers
-    "check_team_supports_direct_chat",
     "extract_input_text",
+    "get_team_shell_type",
     "parse_model_string",
     "parse_wegent_tools",
     "subtask_status_to_message_status",

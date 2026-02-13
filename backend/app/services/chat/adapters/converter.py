@@ -11,7 +11,7 @@ to WebSocket events for broadcasting to connected clients.
 import logging
 from typing import Any
 
-from .interface import ChatEvent, ChatEventType
+from shared.models import EventType, ExecutionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +33,11 @@ class SSEToWebSocketConverter:
         self.task_id = task_id
         self.task_room = task_room
 
-    async def convert_and_emit(self, event: ChatEvent) -> None:
+    async def convert_and_emit(self, event: ExecutionEvent) -> None:
         """Convert SSE event to WebSocket event and emit.
 
         Args:
-            event: ChatEvent from Chat Shell
+            event: ExecutionEvent from Chat Shell
         """
         # Import here to avoid circular import
         from app.services.chat.ws_emitter import get_ws_emitter
@@ -47,72 +47,70 @@ class SSEToWebSocketConverter:
             logger.warning("[SSE_WS_CONVERTER] WebSocket emitter not available")
             return
 
-        subtask_id = event.data.get("subtask_id")
+        subtask_id = event.subtask_id
 
         try:
-            if event.type == ChatEventType.START:
+            if event.type == EventType.START.value:
                 await ws_emitter.emit_chat_start(
                     task_id=self.task_id,
                     subtask_id=subtask_id,
                     shell_type=event.data.get("shell_type", "Chat"),
                 )
 
-            elif event.type == ChatEventType.CHUNK:
+            elif event.type == EventType.CHUNK.value:
                 await ws_emitter.emit_chat_chunk(
                     task_id=self.task_id,
                     subtask_id=subtask_id,
-                    content=event.data.get("content", ""),
-                    offset=event.data.get("offset", 0),
-                    result=event.data.get("result"),
+                    content=event.content or "",
+                    offset=event.offset,
+                    result=event.result,
                     block_id=event.data.get("block_id"),
                     block_offset=event.data.get("block_offset"),
                 )
 
-            elif event.type == ChatEventType.THINKING:
+            elif event.type == EventType.THINKING.value:
                 # Emit thinking step as part of result in chunk
                 result = {
                     "shell_type": "Chat",
-                    "thinking": [event.data],
+                    "thinking": [{"content": event.content}],
                     "blocks": event.data.get("blocks", []),
                 }
                 await ws_emitter.emit_chat_chunk(
                     task_id=self.task_id,
                     subtask_id=subtask_id,
                     content="",
-                    offset=event.data.get("offset", 0),
+                    offset=event.offset,
                     result=result,
                 )
 
-            elif event.type == ChatEventType.TOOL_START:
+            elif event.type == EventType.TOOL_START.value:
                 # Tool start is part of thinking
-                await self._emit_tool_event(ws_emitter, subtask_id, event.data, "start")
+                await self._emit_tool_event(ws_emitter, subtask_id, event, "start")
 
-            elif event.type == ChatEventType.TOOL_RESULT:
+            elif event.type == EventType.TOOL_RESULT.value:
                 # Tool result is part of thinking
-                await self._emit_tool_event(
-                    ws_emitter, subtask_id, event.data, "result"
-                )
+                await self._emit_tool_event(ws_emitter, subtask_id, event, "result")
 
-            elif event.type == ChatEventType.DONE:
+            elif event.type == EventType.DONE.value:
                 await ws_emitter.emit_chat_done(
                     task_id=self.task_id,
                     subtask_id=subtask_id,
-                    offset=event.data.get("offset", 0),
-                    result=event.data.get("result", {}),
-                    message_id=event.data.get("message_id"),
+                    offset=event.offset,
+                    result=event.result or {},
+                    message_id=event.message_id,
                 )
 
-            elif event.type == ChatEventType.CANCELLED:
+            elif event.type == EventType.CANCELLED.value:
                 await ws_emitter.emit_chat_cancelled(
                     task_id=self.task_id,
                     subtask_id=subtask_id,
                 )
 
-            elif event.type == ChatEventType.ERROR:
+            elif event.type == EventType.ERROR.value:
                 await ws_emitter.emit_chat_error(
                     task_id=self.task_id,
                     subtask_id=subtask_id,
-                    error=event.data.get("error", "Unknown error"),
+                    error=event.error or "Unknown error",
                 )
 
             else:
@@ -128,7 +126,7 @@ class SSEToWebSocketConverter:
         self,
         ws_emitter: Any,
         subtask_id: int,
-        data: dict,
+        event: ExecutionEvent,
         status: str,
     ) -> None:
         """Emit tool event as thinking step.
@@ -136,18 +134,18 @@ class SSEToWebSocketConverter:
         Args:
             ws_emitter: WebSocket emitter instance
             subtask_id: Subtask ID
-            data: Tool event data
+            event: ExecutionEvent with tool data
             status: "start" or "result"
         """
         thinking_step = {
-            "title": data.get("tool_name", "Tool"),
+            "title": event.tool_name or "Tool",
             "next_action": "continue" if status == "start" else "complete",
             "details": {
                 "type": "tool_use" if status == "start" else "tool_result",
                 "status": status,
-                "tool_name": data.get("tool_name"),
-                "input": data.get("tool_args") if status == "start" else None,
-                "output": data.get("result") if status == "result" else None,
+                "tool_name": event.tool_name,
+                "input": event.tool_input if status == "start" else None,
+                "output": event.tool_output if status == "result" else None,
             },
         }
 
@@ -157,14 +155,14 @@ class SSEToWebSocketConverter:
         }
 
         # Include blocks if present in data
-        if "blocks" in data:
-            result["blocks"] = data["blocks"]
+        if event.data.get("blocks"):
+            result["blocks"] = event.data["blocks"]
 
         await ws_emitter.emit_chat_chunk(
             task_id=self.task_id,
             subtask_id=subtask_id,
             content="",
-            offset=data.get("offset", 0),
+            offset=event.offset,
             result=result,
         )
 
@@ -176,13 +174,13 @@ async def stream_sse_to_websocket(
 ) -> None:
     """Stream SSE events to WebSocket.
 
-    This function consumes an async iterator of ChatEvents from Chat Shell
+    This function consumes an async iterator of ExecutionEvents from Chat Shell
     and converts them to WebSocket events.
 
     Args:
         task_id: Task ID for event routing
         task_room: WebSocket room name
-        sse_stream: Async iterator of ChatEvents
+        sse_stream: Async iterator of ExecutionEvents
     """
     converter = SSEToWebSocketConverter(task_id, task_room)
 
@@ -191,8 +189,8 @@ async def stream_sse_to_websocket(
 
         # Stop if we receive a terminal event
         if event.type in (
-            ChatEventType.DONE,
-            ChatEventType.ERROR,
-            ChatEventType.CANCELLED,
+            EventType.DONE.value,
+            EventType.ERROR.value,
+            EventType.CANCELLED.value,
         ):
             break

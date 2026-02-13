@@ -47,8 +47,6 @@ class StreamEmitter(ABC):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
-        block_id: Optional[str] = None,
-        block_offset: Optional[int] = None,
     ) -> None:
         """Emit a content chunk.
 
@@ -57,8 +55,6 @@ class StreamEmitter(ABC):
             offset: Current offset in the full response
             subtask_id: Subtask ID
             result: Optional full result data (for thinking/workbench display)
-            block_id: Optional block ID for text block streaming (append content to specific block)
-            block_offset: Optional character offset within the current block
         """
         pass
 
@@ -127,10 +123,8 @@ class SSEEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
-        block_id: Optional[str] = None,
-        block_offset: Optional[int] = None,
     ) -> None:
-        """Emit chunk as SSE data with optional block_id and block_offset."""
+        """Emit chunk as SSE data."""
         payload = {
             "type": "chunk",
             "content": content,
@@ -139,10 +133,6 @@ class SSEEmitter(StreamEmitter):
         }
         if result is not None:
             payload["result"] = result
-        if block_id is not None:
-            payload["block_id"] = block_id
-        if block_offset is not None:
-            payload["block_offset"] = block_offset
         self._events.append(self.format_sse(payload))
 
     async def emit_done(
@@ -286,8 +276,6 @@ class RedisPublishingEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
-        block_id: Optional[str] = None,
-        block_offset: Optional[int] = None,
     ) -> None:
         """Publish chunk event to Redis channel."""
         storage = self._get_storage()
@@ -299,17 +287,11 @@ class RedisPublishingEmitter(StreamEmitter):
         }
         if result is not None:
             payload["result"] = result
-        if block_id is not None:
-            payload["block_id"] = block_id
-        if block_offset is not None:
-            payload["block_offset"] = block_offset
         await storage.publish_streaming_chunk(subtask_id, json.dumps(payload))
         logger.debug(
-            "[REDIS_EMITTER] Published chunk: subtask_id=%d, content_len=%d, block_id=%s, block_offset=%s",
+            "[REDIS_EMITTER] Published chunk: subtask_id=%d, content_len=%d",
             subtask_id,
             len(content),
-            block_id,
-            block_offset,
         )
 
     async def emit_done(
@@ -433,7 +415,6 @@ class NullEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
-        block_id: Optional[str] = None,
     ) -> None:
         """No-op: event published to Redis channel instead."""
         pass

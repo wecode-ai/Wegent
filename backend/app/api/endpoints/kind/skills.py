@@ -173,7 +173,7 @@ def list_skills(
         description="Task ID for task-based authorization. "
         "If provided, also searches skills owned by the task owner.",
     ),
-    current_user: User = Depends(security.get_current_user_flexible_for_executor),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
     """
@@ -636,7 +636,7 @@ async def update_public_skill_with_upload(
 @router.get("/public/{skill_id}/download")
 def download_public_skill(
     skill_id: int,
-    current_user: User = Depends(security.get_current_user_flexible_for_executor),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
     """
@@ -1063,7 +1063,7 @@ def download_skill(
         description="Task ID for task-based authorization. "
         "If provided, allows downloading skills owned by the task owner.",
     ),
-    current_user: User = Depends(security.get_current_user_flexible_for_executor),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
     """

@@ -272,6 +272,7 @@ class DatabaseHandler:
 
         status_map = {
             SubtaskStatus.COMPLETED: ("COMPLETED", 100, True),
+            SubtaskStatus.CANCELLED: ("CANCELLED", 100, True),
             SubtaskStatus.FAILED: ("FAILED", None, False),
             SubtaskStatus.RUNNING: ("RUNNING", None, False),
         }

@@ -57,9 +57,26 @@ const MixedContentView = memo(function MixedContentView({
       const mapped = blocks
         .map(block => {
           if (block.type === 'text') {
+            // CRITICAL FIX: When page refreshes during streaming, block.content may be empty
+            // but the actual content is in the `content` prop (from cached_content).
+            // We need to use the `content` prop as fallback when block.content is empty.
+            let textContent = block.content || ''
+
+            // If block.content is empty but we have content prop, use it
+            // This handles the page refresh recovery case
+            if (!textContent && content) {
+              // Handle ${$$}$ separator - only show the result part (after separator)
+              if (content.includes('${$$}$')) {
+                const parts = content.split('${$$}$')
+                textContent = parts[1] || ''
+              } else {
+                textContent = content
+              }
+            }
+
             return {
               type: 'content' as const,
-              content: block.content || '',
+              content: textContent,
               blockId: block.id,
             }
           } else if (block.type === 'tool') {
@@ -110,10 +127,32 @@ const MixedContentView = memo(function MixedContentView({
           return null
         })
         .filter(Boolean)
-      console.log('[MixedContentView] After mapping and filtering:', {
-        mappedCount: mapped.length,
-        mappedTypes: mapped.map(m => (m as { type: string }).type),
-      })
+
+      // CRITICAL FIX: When blocks exist but no text blocks, we need to also render
+      // the main content. This handles the case where:
+      // 1. chat:block_created creates a tool block
+      // 2. chat:chunk sends text content (accumulated in message.content)
+      // 3. Without this fix, only tool blocks are rendered, text content is lost
+      const hasTextBlock = blocks.some(b => b.type === 'text')
+      if (!hasTextBlock && content && content.trim()) {
+        // Handle ${$$}$ separator - only show the result part (after separator)
+        // This separator is used to split prompt and result in some message formats
+        let contentToRender = content
+        if (content.includes('${$$}$')) {
+          const parts = content.split('${$$}$')
+          contentToRender = parts[1] || ''
+        }
+
+        if (contentToRender && contentToRender.trim()) {
+          // Add main content at the end (after tool blocks)
+          mapped.push({
+            type: 'content' as const,
+            content: contentToRender,
+            blockId: 'main-content',
+          })
+        }
+      }
+
       return mapped
     }
 

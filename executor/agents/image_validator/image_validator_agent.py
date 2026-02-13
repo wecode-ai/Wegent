@@ -152,6 +152,9 @@ class ImageValidatorAgent(Agent):
 
         logger.info(f"Validation completed: valid={all_passed}, checks={len(results)}")
 
+        # Store for retrieval by task_processor to include in done_event
+        self.validation_result = validation_result
+
         # Send result via callback with result data including validation_id
         self.report_progress(
             progress=100,
