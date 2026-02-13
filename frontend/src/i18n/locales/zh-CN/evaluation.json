@@ -1,5 +1,5 @@
 {
-  "title": "AI考评",
+  "title": "AI 考评",
   "description": "创建和管理考评专题，支持 AI 辅助评分",
   "roles": {
     "creator": "出题人",
