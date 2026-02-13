@@ -32,6 +32,7 @@ from wecode.schemas.evaluation import (
     QuestionListResponse,
     QuestionUpdate,
     QuestionVersionInDB,
+    QuestionVersionListResponse,
     TopicCreate,
     TopicInDB,
     TopicListResponse,
@@ -574,6 +575,62 @@ def publish_question(
         criteria_data=version.criteria_data,
         published_at=version.published_at,
         published_by=version.published_by,
+    )
+
+
+@router.get("/questions/{question_id}/versions", response_model=QuestionVersionListResponse)
+def list_question_versions(
+    question_id: int,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    List all versions of a question.
+
+    Only the topic creator can view question versions.
+    """
+    from wecode.models.evaluation import EvalQuestionVersion
+
+    question_service = get_question_service()
+
+    question = question_service.get(db, question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = _get_topic_or_404(db, question.topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    # Query versions
+    query = db.query(EvalQuestionVersion).filter(
+        EvalQuestionVersion.question_id == question_id
+    )
+    total = query.count()
+    versions = (
+        query.order_by(EvalQuestionVersion.published_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    return QuestionVersionListResponse(
+        total=total,
+        items=[
+            QuestionVersionInDB(
+                id=v.id,
+                question_id=v.question_id,
+                version=v.version,
+                content_data=v.content_data,
+                criteria_data=v.criteria_data,
+                published_at=v.published_at,
+                published_by=v.published_by,
+            )
+            for v in versions
+        ],
     )
 
 

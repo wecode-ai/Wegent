@@ -905,6 +905,148 @@ def publish_grader_task(
 
 
 # ============================================================================
+# Batch Operations
+# ============================================================================
+
+
+class BatchExecuteRequest(BaseModel):
+    """Request body for batch execute."""
+
+    task_ids: List[int] = Field(..., description="List of task IDs to execute")
+    team_id: Optional[int] = Field(None, description="Override team ID for grading")
+
+
+class BatchExecuteResponse(BaseModel):
+    """Response for batch execute."""
+
+    executed_count: int
+    task_ids: List[int]
+
+
+class BatchPublishResponse(BaseModel):
+    """Response for batch publish."""
+
+    published_count: int
+    task_ids: List[int]
+
+
+@router.post("/tasks/batch-execute", response_model=BatchExecuteResponse)
+def batch_execute_grader_tasks(
+    request: BatchExecuteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Execute multiple grading tasks in batch.
+
+    Only tasks in PENDING or FAILED status will be executed.
+    Requires grader permission for each task's associated topic.
+    """
+    grading_service = get_grading_service()
+    permission_service = get_permission_service()
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+
+    executed_ids = []
+
+    for task_id in request.task_ids:
+        task = grading_service.get(db, task_id)
+        if not task:
+            continue
+
+        if task.status not in (GradingTaskStatus.PENDING, GradingTaskStatus.FAILED):
+            continue
+
+        # Check permission
+        question = question_service.get(db, task.question_id)
+        if not question:
+            continue
+
+        topic = topic_service.get(db, question.topic_id)
+        if not topic:
+            continue
+
+        if not permission_service.can_grade(db, topic, current_user.id):
+            continue
+
+        # Get team ID
+        team_id = request.team_id
+        if not team_id and topic.grading_team_config:
+            team_id = topic.grading_team_config.get("team_id")
+
+        if not team_id:
+            continue
+
+        try:
+            grading_service.execute(db, task, team_id, current_user.id)
+            executed_ids.append(task_id)
+        except Exception as e:
+            logger.warning(f"Failed to execute task {task_id}: {e}")
+            continue
+
+    db.commit()
+
+    return BatchExecuteResponse(
+        executed_count=len(executed_ids),
+        task_ids=executed_ids,
+    )
+
+
+@router.post("/tasks/batch-publish", response_model=BatchPublishResponse)
+def batch_publish_grader_tasks(
+    task_ids: List[int],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Publish multiple grading reports in batch.
+
+    Only tasks in COMPLETED status will be published.
+    Requires grader permission for each task's associated topic.
+    """
+    grading_service = get_grading_service()
+    permission_service = get_permission_service()
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+
+    published_ids = []
+
+    for task_id in task_ids:
+        task = grading_service.get(db, task_id)
+        if not task:
+            continue
+
+        if task.status != GradingTaskStatus.COMPLETED:
+            continue
+
+        # Check permission
+        question = question_service.get(db, task.question_id)
+        if not question:
+            continue
+
+        topic = topic_service.get(db, question.topic_id)
+        if not topic:
+            continue
+
+        if not permission_service.can_grade(db, topic, current_user.id):
+            continue
+
+        try:
+            grading_service.publish(db, task, None)
+            published_ids.append(task_id)
+        except Exception as e:
+            logger.warning(f"Failed to publish task {task_id}: {e}")
+            continue
+
+    db.commit()
+
+    return BatchPublishResponse(
+        published_count=len(published_ids),
+        task_ids=published_ids,
+    )
+
+
+# ============================================================================
 # Answers Endpoints
 # ============================================================================
 

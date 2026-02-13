@@ -205,6 +205,13 @@ class QuestionVersionInDB(BaseModel):
         from_attributes = True
 
 
+class QuestionVersionListResponse(BaseModel):
+    """Paginated list response for question versions."""
+
+    total: int
+    items: List[QuestionVersionInDB]
+
+
 # ============================================================================
 # Permission Schemas
 # ============================================================================

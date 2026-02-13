@@ -6,7 +6,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, FileText, CheckCircle, Clock, Link } from 'lucide-react'
+import { ArrowLeft, FileText, CheckCircle, Clock, Link, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -235,11 +235,22 @@ function RespondentHistoryContent() {
                       <CardTitle className="text-base">
                         {report.question_title || `Question #${report.question_id}`}
                       </CardTitle>
-                      <Badge variant="success">{getStatusLabel(report.status, 'grading')}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="success">{getStatusLabel(report.status, 'grading')}</Badge>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => router.push(`/evaluation/reports/${report.id}`)}
+                        >
+                          <ExternalLink className="mr-1 h-4 w-4" />
+                          {t('actions.view')}
+                        </Button>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent>
                     <div className="mb-2 flex items-center gap-4 text-sm text-text-secondary">
+                      {report.topic_name && <span>{report.topic_name}</span>}
                       {report.published_at && (
                         <span>Published: {new Date(report.published_at).toLocaleString()}</span>
                       )}
@@ -247,7 +258,7 @@ function RespondentHistoryContent() {
                     {report.report_data && typeof report.report_data === 'object' && (
                       <div className="rounded-lg bg-surface p-4">
                         <h4 className="mb-2 font-medium">{t('grading.report')}</h4>
-                        <p className="whitespace-pre-wrap text-sm text-text-secondary">
+                        <p className="line-clamp-4 whitespace-pre-wrap text-sm text-text-secondary">
                           {typeof (report.report_data as Record<string, unknown>).content ===
                           'string'
                             ? String((report.report_data as Record<string, unknown>).content)
