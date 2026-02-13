@@ -1601,6 +1601,7 @@ def get_grader_question(
         order_index=question.order_index,
         status=question.status,
         current_version=question.current_version,
+        creator_id=question.creator_id,
         created_at=question.created_at,
         updated_at=question.updated_at,
         criteria_type=criteria_type,
