@@ -417,8 +417,13 @@ def build_executable(
             "--hidden-import=starlette.types",
             "--hidden-import=sse_starlette",
             "--hidden-import=sse_starlette.sse",
+            # Tokenizer plugin used by litellm/tiktoken at runtime
+            "--hidden-import=tiktoken_ext.openai_public",
             # SSL certificates (needed for HTTPS connections)
             "--collect-data=certifi",
+            "--collect-data=litellm",
+            "--collect-data=tiktoken",
+            "--collect-data=tiktoken_ext",
         ]
 
         # Add Claude CLI binary only for Windows (avoids asyncio + .cmd issue)
