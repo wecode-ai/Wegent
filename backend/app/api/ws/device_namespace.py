@@ -25,6 +25,7 @@ Events:
 - disconnect: Cleanup on device disconnection
 """
 
+import asyncio
 import logging
 import uuid
 from contextlib import contextmanager
@@ -474,6 +475,32 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         # Known OpenAI Responses API event prefixes
         self._responses_api_prefixes = ("response.", "error")
+
+        # Per-subtask locks to ensure events are processed in order
+        # This prevents race conditions when multiple response.output_text.delta
+        # events arrive concurrently for the same subtask
+        self._subtask_locks: Dict[int, asyncio.Lock] = {}
+
+    def _get_subtask_lock(self, subtask_id: int) -> asyncio.Lock:
+        """Get or create a lock for the given subtask.
+
+        Args:
+            subtask_id: Subtask ID
+
+        Returns:
+            asyncio.Lock for the subtask
+        """
+        if subtask_id not in self._subtask_locks:
+            self._subtask_locks[subtask_id] = asyncio.Lock()
+        return self._subtask_locks[subtask_id]
+
+    def _cleanup_subtask_lock(self, subtask_id: int) -> None:
+        """Clean up the lock for a completed subtask.
+
+        Args:
+            subtask_id: Subtask ID
+        """
+        self._subtask_locks.pop(subtask_id, None)
 
     @trace_websocket_event(
         exclude_events={"connect"},
@@ -1058,6 +1085,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         Reuses the same processing chain as /api/internal/callback:
         ResponsesAPIEventParser -> StatusUpdatingEmitter -> WebSocketResultEmitter
 
+        IMPORTANT: Uses per-subtask locking to ensure events are processed in order.
+        This prevents race conditions when multiple response.output_text.delta events
+        arrive concurrently for the same subtask, which would cause text content to
+        be appended to Redis in the wrong order.
+
         Args:
             sid: Socket ID
             event_type: OpenAI Responses API event type (e.g., response.output_text.delta)
@@ -1093,42 +1125,56 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"task_id={task_id}, subtask_id={subtask_id}"
         )
 
+        # Get lock for this subtask to ensure events are processed in order
+        # This prevents race conditions when multiple events arrive concurrently
+        lock = self._get_subtask_lock(subtask_id)
+
+        # Track whether this is a terminal event for lock cleanup
+        is_terminal = False
+
         try:
-            # Parse using shared ResponsesAPIEventParser
-            event = self._event_parser.parse(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                message_id=message_id,
-                event_type=event_type,
-                data=event_data,
-            )
-
-            if event is None:
-                # Lifecycle events (response.created, etc.) are skipped
-                return {"success": True}
-
-            # Emit via StatusUpdatingEmitter -> WebSocketResultEmitter
-            ws_emitter = WebSocketResultEmitter(
-                task_id=task_id,
-                subtask_id=subtask_id,
-            )
-            emitter = StatusUpdatingEmitter(
-                wrapped=ws_emitter,
-                task_id=task_id,
-                subtask_id=subtask_id,
-            )
-            await emitter.emit(event)
-            await emitter.close()
-
-            # Handle terminal events
-            if event.type in (
-                EventType.DONE.value,
-                EventType.ERROR.value,
-                EventType.CANCELLED.value,
-            ):
-                await self._publish_task_completed_event(
-                    task_id, subtask_id, user_id, device_id, event
+            # Acquire lock to ensure sequential processing of events for this subtask
+            async with lock:
+                # Parse using shared ResponsesAPIEventParser
+                event = self._event_parser.parse(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    message_id=message_id,
+                    event_type=event_type,
+                    data=event_data,
                 )
+
+                if event is None:
+                    # Lifecycle events (response.created, etc.) are skipped
+                    return {"success": True}
+
+                # Emit via StatusUpdatingEmitter -> WebSocketResultEmitter
+                ws_emitter = WebSocketResultEmitter(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                )
+                emitter = StatusUpdatingEmitter(
+                    wrapped=ws_emitter,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                )
+                await emitter.emit(event)
+                await emitter.close()
+
+                # Handle terminal events
+                is_terminal = event.type in (
+                    EventType.DONE.value,
+                    EventType.ERROR.value,
+                    EventType.CANCELLED.value,
+                )
+                if is_terminal:
+                    await self._publish_task_completed_event(
+                        task_id, subtask_id, user_id, device_id, event
+                    )
+
+            # Clean up lock after terminal event (outside the lock context)
+            if is_terminal:
+                self._cleanup_subtask_lock(subtask_id)
 
             return {"success": True}
 
@@ -1137,6 +1183,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 f"[Device WS] Error handling Responses API event: "
                 f"type={event_type}, subtask_id={subtask_id}, error={e}"
             )
+            # Clean up lock on error to prevent memory leak
+            self._cleanup_subtask_lock(subtask_id)
             return {"error": str(e)}
 
     async def _publish_task_completed_event(

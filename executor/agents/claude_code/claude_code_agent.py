@@ -58,6 +58,7 @@ from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
+from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
@@ -111,14 +112,19 @@ class ClaudeCodeAgent(Agent):
         """
         return SessionManager.get_active_session_count()
 
-    def __init__(self, task_data: Dict[str, Any]):
+    def __init__(
+        self,
+        task_data: Dict[str, Any],
+        emitter: ResponsesAPIEmitter,
+    ):
         """
         Initialize the Claude Code Agent
 
         Args:
             task_data: The task data dictionary
+            emitter: Emitter instance for sending events. Required parameter.
         """
-        super().__init__(task_data)
+        super().__init__(task_data, emitter)
         self.client = None
         self.new_session = task_data.get("new_session", False)
 
@@ -176,6 +182,9 @@ class ClaudeCodeAgent(Agent):
 
         # Initialize execution mode strategy
         self._mode_strategy: ExecutionModeStrategy = ModeStrategyFactory.create()
+
+        # Note: emitter is created in base class Agent.__init__()
+        # using EmitterBuilder with CallbackTransport
 
     def add_thinking_step(
         self,
@@ -709,6 +718,7 @@ class ClaudeCodeAgent(Agent):
             result = await process_response(
                 self.client,
                 self.state_manager,
+                self.get_emitter(),
                 self.thinking_manager,
                 self.task_state_manager,
                 session_id=self.session_id,
@@ -803,7 +813,10 @@ class ClaudeCodeAgent(Agent):
                 if asyncio.iscoroutinefunction(self.on_client_created_callback):
                     await self.on_client_created_callback()
                 else:
-                    self.on_client_created_callback()
+                    # Handle case where callback is a lambda that returns a coroutine
+                    result = self.on_client_created_callback()
+                    if asyncio.iscoroutine(result):
+                        await result
             except Exception as e:
                 logger.warning(f"Error in on_client_created_callback: {e}")
 

@@ -125,6 +125,8 @@ class ResponsesAPIEmitter:
     ) -> Any:
         """Emit response.completed event.
 
+        Automatically flushes any buffered events before sending the done event.
+
         Args:
             content: Full response content
             usage: Token usage info
@@ -137,6 +139,9 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
+        # Flush any buffered events before sending done
+        await self.flush()
+
         data = self.builder.response_completed(
             content=content,
             usage=usage,
@@ -151,6 +156,8 @@ class ResponsesAPIEmitter:
     async def incomplete(self, reason: str = "cancelled", content: str = "") -> Any:
         """Emit response.incomplete event.
 
+        Automatically flushes any buffered events before sending the incomplete event.
+
         Args:
             reason: Reason for incompletion
             content: Partial content
@@ -158,6 +165,9 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
+        # Flush any buffered events before sending incomplete
+        await self.flush()
+
         data = self.builder.response_incomplete(reason, content)
         return await self._emit(
             ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value, data
@@ -166,6 +176,8 @@ class ResponsesAPIEmitter:
     async def error(self, message: str, code: str = "internal_error") -> Any:
         """Emit error event.
 
+        Automatically flushes any buffered events before sending the error event.
+
         Args:
             message: Error message
             code: Error code
@@ -173,6 +185,9 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
+        # Flush any buffered events before sending error
+        await self.flush()
+
         data = self.builder.error(message, code)
         return await self._emit(ResponsesAPIStreamEvents.ERROR.value, data)
 
@@ -250,6 +265,7 @@ class ResponsesAPIEmitter:
         call_id: str,
         name: str,
         arguments: Optional[dict] = None,
+        output: Optional[str] = None,
     ) -> Any:
         """Emit function call done events.
 
@@ -262,6 +278,7 @@ class ResponsesAPIEmitter:
             call_id: Function call ID
             name: Function name
             arguments: Function arguments
+            output: Tool execution output (Wegent extension)
 
         Returns:
             Transport-specific result
@@ -270,8 +287,10 @@ class ResponsesAPIEmitter:
         if hasattr(self.transport, "start_collecting"):
             self.transport.start_collecting()
 
-        # Send arguments done
-        done_data = self.builder.function_call_arguments_done(call_id, arguments)
+        # Send arguments done (with output for tool result)
+        done_data = self.builder.function_call_arguments_done(
+            call_id, arguments, output
+        )
         await self._emit(
             ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value, done_data
         )
@@ -299,6 +318,22 @@ class ResponsesAPIEmitter:
         return await self._emit(
             ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value, data
         )
+
+    # ============================================================
+    # Buffer Management
+    # ============================================================
+
+    async def flush(self) -> None:
+        """Flush any buffered events in the transport.
+
+        This method should be called before sending terminal events (done, error, incomplete)
+        to ensure all buffered text_delta events are sent first.
+
+        For ThrottledTransport, this flushes all pending buffers.
+        For other transports, this is a no-op.
+        """
+        if hasattr(self.transport, "flush_all"):
+            await self.transport.flush_all()
 
     # ============================================================
     # Internal Methods
@@ -436,27 +471,37 @@ class WebSocketTransport(EventTransport):
             payload["message_id"] = message_id
 
         # Map event_type to socket event name
-        socket_event = self.event_mapping.get(event_type, "chat:chunk")
+        # If no mapping provided, use the original event_type as socket event name
+        socket_event = self.event_mapping.get(event_type, event_type)
+        logger.info(
+            f"[WebSocketTransport] Sending event: event_type={event_type}, "
+            f"socket_event={socket_event}, task_id={task_id}, subtask_id={subtask_id}"
+        )
         await self.client.emit(socket_event, payload)
 
 
 class GeneratorTransport(EventTransport):
     """Generator transport for SSE mode (chat_shell).
 
-    This transport returns event data directly for immediate yielding.
-    For scenarios that need to collect multiple events (like tool_start/tool_done),
-    use the collect() context manager or manually call start_collecting()/stop_collecting().
+    This transport collects events for retrieval via get_events().
+    Events are always collected by default for SSE streaming scenarios.
+    For scenarios that need to disable collecting, use stop_collecting().
     """
 
-    def __init__(self, callback: Optional[Callable[[str, dict], Any]] = None):
+    def __init__(
+        self,
+        callback: Optional[Callable[[str, dict], Any]] = None,
+        auto_collect: bool = True,
+    ):
         """Initialize generator transport.
 
         Args:
             callback: Optional callback function(event_type, data) to process events
+            auto_collect: Whether to automatically collect events (default: True)
         """
         self.callback = callback
         self.events: list[tuple[str, dict]] = []
-        self._collecting = False
+        self._collecting = auto_collect
 
     async def send(
         self,
@@ -492,12 +537,14 @@ class GeneratorTransport(EventTransport):
         self._collecting = False
 
     def get_events(self) -> list[tuple[str, dict]]:
-        """Get and clear collected events, and stop collecting.
+        """Get and clear collected events.
+
+        Note: This method does NOT stop collecting mode.
+        Events will continue to be collected after this call.
 
         Returns:
             List of (event_type, data) tuples
         """
         events = self.events.copy()
         self.events.clear()
-        self._collecting = False
         return events

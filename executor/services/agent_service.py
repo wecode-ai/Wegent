@@ -16,9 +16,10 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
-from executor.callback.callback_handler import send_cancelled_event
+from executor.config import config
 from executor.tasks.task_state_manager import TaskStateManager
 from shared.logger import setup_logger
+from shared.models import EmitterBuilder, TransportFactory
 from shared.status import TaskStatus
 
 logger = setup_logger("agent_service")
@@ -93,7 +94,20 @@ class AgentService:
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{shell_type}'"
             )
-            agent = AgentFactory.get_agent(shell_type, task_data)
+
+            # Create emitter with throttled CallbackTransport for Docker mode
+            emitter = (
+                EmitterBuilder()
+                .with_task(task_id, subtask_id)
+                .with_transport(
+                    TransportFactory.create_callback_throttled(
+                        callback_url=config.CALLBACK_URL
+                    )
+                )
+                .build()
+            )
+
+            agent = AgentFactory.get_agent(shell_type, task_data, emitter)
 
             if not agent:
                 logger.error(
@@ -293,13 +307,21 @@ class AgentService:
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Sending cancel event asynchronously"
             )
-            # Send CANCELLED event using unified ExecutionEvent format
-            result = send_cancelled_event(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                executor_name=os.getenv("EXECUTOR_NAME"),
-                executor_namespace=os.getenv("EXECUTOR_NAMESPACE"),
+
+            # Create emitter and send CANCELLED event
+            emitter = (
+                EmitterBuilder()
+                .with_task(task_id, subtask_id)
+                .with_transport(
+                    TransportFactory.create_callback(callback_url=config.CALLBACK_URL)
+                )
+                .with_executor_info(
+                    name=os.getenv("EXECUTOR_NAME"),
+                    namespace=os.getenv("EXECUTOR_NAMESPACE"),
+                )
+                .build()
             )
+            result = await emitter.incomplete(reason="cancelled")
 
             if result and result.get("status") == TaskStatus.SUCCESS.value:
                 logger.info(

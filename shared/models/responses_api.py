@@ -74,6 +74,7 @@ class ResponsesAPIEventBuilder:
         self.output_index = 0
         self.content_index = 0
         self._tool_output_index = 1  # Tool calls start at index 1
+        self._text_offset = 0  # Track cumulative text offset for streaming
 
     # ============================================================
     # Response Lifecycle Events
@@ -287,12 +288,19 @@ class ResponsesAPIEventBuilder:
         Returns:
             Event data dictionary
         """
+        # Capture current offset before incrementing
+        current_offset = self._text_offset
+        # Update offset for next delta
+        self._text_offset += len(delta)
+
         return {
             "type": ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value,
             "item_id": self.item_id,
             "output_index": self.output_index,
             "content_index": self.content_index,
             "delta": delta,
+            # Wegent extension: include offset for streaming position tracking
+            "offset": current_offset,
         }
 
     def text_done(self, text: str) -> dict:
@@ -425,24 +433,30 @@ class ResponsesAPIEventBuilder:
         self,
         call_id: str,
         arguments: Optional[dict] = None,
+        output: Optional[str] = None,
     ) -> dict:
         """Create response.function_call_arguments.done event.
 
         Args:
             call_id: Function call ID
             arguments: Complete arguments dict
+            output: Tool execution output (Wegent extension)
 
         Returns:
             Event data dictionary
         """
         args_str = json.dumps(arguments) if arguments else ""
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
             "response_id": self.response_id,
             "item_id": call_id,
             "output_index": self._tool_output_index,
             "arguments": args_str,
         }
+        # Add output as Wegent extension for tool result
+        if output is not None:
+            data["output"] = output
+        return data
 
     def function_call_done(
         self,

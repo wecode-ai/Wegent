@@ -19,7 +19,6 @@ from typing import Any, Dict
 
 import requests
 
-from executor.config import config
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.utils.http_client import traced_session
@@ -36,7 +35,7 @@ class CallbackClient:
 
     def __init__(
         self,
-        callback_url: str = None,
+        callback_url: str,
         timeout: int = 10,
         max_retries: int = 10,
         retry_delay: int = 1,
@@ -46,16 +45,13 @@ class CallbackClient:
         Initialize the callback client
 
         Args:
-            callback_url: URL for the callback endpoint. If not provided, will use config.CALLBACK_URL (which supports env override).
+            callback_url: URL for the callback endpoint (required)
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
             retry_delay: Initial delay between retries in seconds
             retry_backoff: Backoff multiplier for retry delay
         """
-        if callback_url is None:
-            self.callback_url = config.CALLBACK_URL
-        else:
-            self.callback_url = callback_url
+        self.callback_url = callback_url
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay

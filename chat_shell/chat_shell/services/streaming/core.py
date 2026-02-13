@@ -8,6 +8,8 @@ This module provides the unified streaming infrastructure that handles:
 - Semaphore-based concurrency control
 - Cancellation event management via local asyncio.Event
 - SSE response streaming
+
+Uses unified ResponsesAPIEmitter from shared module for event emission.
 """
 
 import asyncio
@@ -18,8 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
 from chat_shell.core.config import settings
-
-from .emitters import StreamEmitter
+from shared.models import ResponsesAPIEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +216,14 @@ class StreamingConfig:
 class StreamingCore:
     """Core streaming logic for SSE responses.
 
+    Uses unified ResponsesAPIEmitter for event emission.
+
     Usage:
+        emitter = EmitterBuilder()
+            .with_task(task_id, subtask_id)
+            .with_transport(TransportFactory.create_generator())
+            .build()
+
         core = StreamingCore(emitter, state, config, storage_handler)
         if await core.acquire_resources():
             async for token in agent.stream_tokens(messages, cancel_event=core.cancel_event):
@@ -227,12 +235,19 @@ class StreamingCore:
 
     def __init__(
         self,
-        emitter: StreamEmitter,
+        emitter: ResponsesAPIEmitter,
         state: StreamingState,
         config: Optional[StreamingConfig] = None,
         storage_handler: Optional[StorageHandlerProtocol] = None,
     ):
-        """Initialize streaming core."""
+        """Initialize streaming core.
+
+        Args:
+            emitter: ResponsesAPIEmitter instance for event emission
+            state: StreamingState for tracking session state
+            config: Optional StreamingConfig
+            storage_handler: Optional storage handler for stream registration
+        """
         self.emitter = emitter
         self.state = state
         self.config = config or StreamingConfig()
@@ -264,10 +279,7 @@ class StreamingCore:
                 timeout=self.config.semaphore_timeout,
             )
         except asyncio.TimeoutError:
-            await self.emitter.emit_error(
-                self.state.subtask_id,
-                "Too many concurrent chat requests",
-            )
+            await self.emitter.error("Too many concurrent chat requests")
             return False
 
         # Register stream for cancellation
@@ -281,12 +293,8 @@ class StreamingCore:
         # Record stream start time for TTFT calculation
         self.state.stream_start_time = time.time()
 
-        # Emit start event via emitter
-        await self.emitter.emit_start(
-            self.state.task_id,
-            self.state.subtask_id,
-            self.state.shell_type,
-        )
+        # Emit start event via ResponsesAPIEmitter
+        await self.emitter.start(shell_type=self.state.shell_type)
 
         return True
 
@@ -314,6 +322,10 @@ class StreamingCore:
         Returns:
             True if processing should continue, False if cancelled
         """
+        # Skip empty tokens - don't emit empty text_delta events
+        if not token:
+            return True
+
         # Log TTFT (Time To First Token) for the first token
         if not self.state.first_token_received and self.state.stream_start_time:
             ttft_ms = (time.time() - self.state.stream_start_time) * 1000
@@ -340,7 +352,9 @@ class StreamingCore:
                 self.state.subtask_id,
                 len(self.state.full_response),
             )
-            await self.emitter.emit_cancelled(self.state.subtask_id)
+            await self.emitter.incomplete(
+                reason="cancelled", content=self.state.full_response
+            )
             return False
 
         # Check for reasoning content marker
@@ -348,14 +362,8 @@ class StreamingCore:
             reasoning_text = token[len(REASONING_START) : -len(REASONING_END)]
             self.state.append_reasoning(reasoning_text)
 
-            result = self.state.get_current_result(include_value=False)
-            result["reasoning_chunk"] = reasoning_text
-            await self.emitter.emit_chunk(
-                "",
-                self.state.offset,
-                self.state.subtask_id,
-                result=result,
-            )
+            # Emit reasoning event via ResponsesAPIEmitter
+            await self.emitter.reasoning(reasoning_text)
             return True
 
         # Check for truncation marker
@@ -365,17 +373,9 @@ class StreamingCore:
             # Don't yield the marker itself as content, just record the state
             return True
 
-        # Regular content
+        # Regular content - emit text delta via ResponsesAPIEmitter
         self.state.append_content(token)
-
-        result = self.state.get_current_result(include_value=False)
-
-        await self.emitter.emit_chunk(
-            token,
-            self.state.offset - len(token),
-            self.state.subtask_id,
-            result=result,
-        )
+        await self.emitter.text_delta(token)
 
         return True
 
@@ -387,9 +387,8 @@ class StreamingCore:
             self.state.append_content(TRUNCATION_WARNING_MESSAGE)
 
             # Emit error event for truncation
-            await self.emitter.emit_error(
-                self.state.subtask_id,
-                f"Content truncated due to max_token limit (reason: {self.state.truncation_reason})",
+            await self.emitter.error(
+                f"Content truncated due to max_token limit (reason: {self.state.truncation_reason})"
             )
 
         result = self.state.get_current_result(include_value=True)
@@ -400,13 +399,12 @@ class StreamingCore:
             self.state.is_truncated,
         )
 
-        # Emit done event via emitter
-        await self.emitter.emit_done(
-            self.state.task_id,
-            self.state.subtask_id,
-            self.state.offset,
-            result,
-            message_id=self.state.message_id,
+        # Emit done event via ResponsesAPIEmitter
+        await self.emitter.done(
+            content=result.get("value", ""),
+            sources=result.get("sources"),
+            silent_exit=result.get("silent_exit"),
+            silent_exit_reason=result.get("silent_exit_reason"),
         )
 
         return result
@@ -419,21 +417,11 @@ class StreamingCore:
         )
 
         error_msg = str(error)
-        await self.emitter.emit_error(self.state.subtask_id, error_msg)
+        await self.emitter.error(error_msg)
 
-        # Emit done event with error
-        result = {
-            "value": self.state.full_response,
-            "error": error_msg,
-            "shell_type": self.state.shell_type,
-        }
-
-        await self.emitter.emit_done(
-            self.state.task_id,
-            self.state.subtask_id,
-            self.state.offset,
-            result,
-            message_id=self.state.message_id,
+        # Emit done event with error content
+        await self.emitter.done(
+            content=self.state.full_response,
         )
 
     def set_mcp_client(self, client: Any) -> None:

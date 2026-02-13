@@ -8,6 +8,11 @@ Local mode runner for executor.
 This module implements the main runner for local deployment mode,
 which handles WebSocket connection, task queue management, and
 agent execution.
+
+Events are sent using OpenAI Responses API event types directly as Socket.IO
+event names (e.g., "response.created", "response.completed", "error").
+This allows backend's DeviceNamespace to route them correctly to
+_handle_responses_api_event handler.
 """
 
 import asyncio
@@ -23,9 +28,9 @@ from executor.config.device_config import DeviceConfig
 from executor.modes.local.events import ChatEvents, TaskEvents
 from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
-from executor.modes.local.progress_reporter import WebSocketProgressReporter
 from executor.modes.local.websocket_client import WebSocketClient
 from shared.logger import setup_logger
+from shared.models import ResponsesAPIEmitter
 from shared.status import TaskStatus
 
 logger = setup_logger("local_runner")
@@ -344,10 +349,15 @@ class LocalRunner:
         except Exception as e:
             logger.warning(f"[TaskStart] Failed to send heartbeat: {e}")
 
-    def _make_ws_report_progress(
-        self, progress_reporter: WebSocketProgressReporter
-    ) -> callable:
-        """Create a progress callback that reports via WebSocket."""
+    def _make_emitter_report_progress(self, emitter: ResponsesAPIEmitter) -> callable:
+        """Create a progress callback that reports via emitter.
+
+        Args:
+            emitter: ResponsesAPIEmitter instance for sending events
+
+        Returns:
+            A callback function for reporting progress
+        """
 
         def report(
             progress: int,
@@ -355,16 +365,35 @@ class LocalRunner:
             message: Optional[str] = None,
             result: Optional[Dict[str, Any]] = None,
         ) -> None:
-            asyncio.create_task(
-                progress_reporter.report_progress(
-                    progress=progress,
-                    status=status or "",
-                    message=message or "",
-                    result=result,
-                )
-            )
+            # Use emitter.in_progress() for progress updates
+            asyncio.create_task(emitter.in_progress())
 
         return report
+
+    def _create_emitter(self, task_id: int, subtask_id: int) -> ResponsesAPIEmitter:
+        """Create a WebSocket emitter for local mode.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+
+        Returns:
+            ResponsesAPIEmitter configured with WebSocket transport
+        """
+        from shared.models import EmitterBuilder, WebSocketTransport
+
+        # Create WebSocket transport for local mode
+        # No event_mapping - use original OpenAI Responses API event types as Socket.IO event names
+        # This allows backend's DeviceNamespace to route events correctly to _handle_responses_api_event
+        ws_transport = WebSocketTransport(self.websocket_client)
+
+        # Create WebSocket emitter for local mode
+        return (
+            EmitterBuilder()
+            .with_task(task_id, subtask_id)
+            .with_transport(ws_transport)
+            .build()
+        )
 
     async def _execute_task(self, task_data: Dict[str, Any]) -> None:
         """Execute a single task."""
@@ -373,127 +402,87 @@ class LocalRunner:
         logger.info(f"Executing task: task_id={task_id}, subtask_id={subtask_id}")
 
         from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
-        from executor.callback.callback_handler import clear_transport, set_transport
-        from executor.modes.local.progress_reporter import EVENT_MAPPING
-        from shared.models import WebSocketTransport
 
-        # Inject WebSocket transport so that callback_handler.get_emitter()
-        # sends events via WebSocket instead of HTTP callback (which has no URL in local mode).
-        ws_transport = WebSocketTransport(self.websocket_client, EVENT_MAPPING)
-        set_transport(ws_transport)
+        # Create WebSocket emitter for local mode
+        ws_emitter = self._create_emitter(task_id, subtask_id)
 
-        # Create progress reporter
-        progress_reporter = WebSocketProgressReporter(
-            websocket_client=self.websocket_client,
-            task_id=task_id,
-            subtask_id=subtask_id,
+        # Create and initialize agent with WebSocket emitter
+        self.current_agent = ClaudeCodeAgent(task_data, emitter=ws_emitter)
+
+        self.current_agent.on_client_created_callback = lambda: self._on_client_created(
+            task_id
+        )
+        self.current_agent.report_progress = self._make_emitter_report_progress(
+            ws_emitter
         )
 
-        task_data["_local_progress_reporter"] = progress_reporter
+        # Report task started via emitter (response.in_progress)
+        await ws_emitter.in_progress()
 
-        # Create and initialize agent
-        self.current_agent = ClaudeCodeAgent(task_data)
+        # Initialize agent
+        init_status = self.current_agent.initialize()
+        if init_status != TaskStatus.SUCCESS:
+            logger.error(f"Agent initialization failed: {init_status}")
+            await ws_emitter.error("Agent initialization failed", "init_error")
+            return
 
-        try:
-            self.current_agent.on_client_created_callback = (
-                lambda: self._on_client_created(task_id)
+        # Pre-execute
+        pre_status = self.current_agent.pre_execute()
+        if pre_status != TaskStatus.SUCCESS:
+            logger.error(f"Agent pre-execution failed: {pre_status}")
+            await ws_emitter.error("Agent pre-execution failed", "pre_execute_error")
+            return
+
+        # Execute the task (Claude client will be created inside, triggering heartbeat callback)
+        result = await self.current_agent.execute_async()
+        logger.info(f"Task execution completed: task_id={task_id}")
+
+        # Get execution result for logging
+        execution_result = {}
+        if (
+            hasattr(self.current_agent, "state_manager")
+            and self.current_agent.state_manager
+        ):
+            execution_result = (
+                self.current_agent.state_manager.get_current_state() or {}
             )
-            self.current_agent.report_progress = self._make_ws_report_progress(
-                progress_reporter
+            # Truncate execution_result to 20 characters for logging
+            result_str = str(execution_result)
+            truncated_result = (
+                result_str[:20] + "..." if len(result_str) > 20 else result_str
             )
+            logger.info(f"Execution result for task_id={task_id}: {truncated_result}")
 
-            # Report task started
-            await progress_reporter.report_progress(
-                progress=10,
-                status=TaskStatus.RUNNING.value,
-                message="${{thinking.task_started}}",
-            )
-
-            # Initialize agent
-            init_status = self.current_agent.initialize()
-            if init_status != TaskStatus.SUCCESS:
-                logger.error(f"Agent initialization failed: {init_status}")
-                await progress_reporter.report_result(
-                    status=TaskStatus.FAILED.value,
-                    result={"error": "Agent initialization failed"},
-                    message="Agent initialization failed",
-                )
-                return
-
-            # Pre-execute
-            pre_status = self.current_agent.pre_execute()
-            if pre_status != TaskStatus.SUCCESS:
-                logger.error(f"Agent pre-execution failed: {pre_status}")
-                await progress_reporter.report_result(
-                    status=TaskStatus.FAILED.value,
-                    result={"error": "Agent pre-execution failed"},
-                    message="Agent pre-execution failed",
-                )
-                return
-
-            # Execute the task (Claude client will be created inside, triggering heartbeat callback)
-            result = await self.current_agent.execute_async()
-            logger.info(f"Task execution completed: task_id={task_id}")
-
-            # Get execution result for logging
-            execution_result = {}
-            if (
-                hasattr(self.current_agent, "state_manager")
-                and self.current_agent.state_manager
-            ):
-                execution_result = (
-                    self.current_agent.state_manager.get_current_state() or {}
-                )
-                # Truncate execution_result to 20 characters for logging
-                result_str = str(execution_result)
-                truncated_result = (
-                    result_str[:20] + "..." if len(result_str) > 20 else result_str
-                )
+            # Log workbench status if present
+            if "workbench" in execution_result:
+                workbench_status = execution_result["workbench"].get("status", "N/A")
                 logger.info(
-                    f"Execution result for task_id={task_id}: {truncated_result}"
+                    f"Workbench status for task_id={task_id}: {workbench_status}"
                 )
 
-                # Log workbench status if present
-                if "workbench" in execution_result:
-                    workbench_status = execution_result["workbench"].get(
-                        "status", "N/A"
-                    )
-                    logger.info(
-                        f"Workbench status for task_id={task_id}: {workbench_status}"
-                    )
-
-            # Only report final result for non-success cases.
-            # For success, response_processor.py already sends the response.completed
-            # event with correct content via callback_handler -> WebSocket transport.
-            # Sending another response.completed here would overwrite the DB with
-            # empty content (since get_current_state() doesn't include "value").
-            if result != TaskStatus.COMPLETED:
-                await progress_reporter.report_result(
-                    status=result.value,
-                    result=execution_result,
-                    message=f"Task completed with status: {result.value}",
-                )
-        finally:
-            clear_transport()
+        # Only report final result for non-success cases.
+        # For success, response_processor.py already sends the response.completed
+        # event with correct content via emitter -> WebSocket transport.
+        # Sending another response.completed here would overwrite the DB with
+        # empty content (since get_current_state() doesn't include "value").
+        if result == TaskStatus.CANCELLED:
+            await ws_emitter.incomplete(reason="cancelled")
+        elif result != TaskStatus.COMPLETED:
+            error_msg = execution_result.get(
+                "error", f"Task failed with status: {result.value}"
+            )
+            await ws_emitter.error(error_msg, "execution_error")
 
     async def _report_task_failure(
         self, task_data: Dict[str, Any], error_message: str
     ) -> None:
-        """Report task failure via WebSocket."""
+        """Report task failure via WebSocket emitter."""
         task_id = task_data.get("task_id", -1)
         subtask_id = task_data.get("subtask_id", -1)
 
-        progress_reporter = WebSocketProgressReporter(
-            websocket_client=self.websocket_client,
-            task_id=task_id,
-            subtask_id=subtask_id,
-        )
-
-        await progress_reporter.report_result(
-            status=TaskStatus.FAILED.value,
-            result={"error": error_message},
-            message=error_message,
-        )
+        # Create emitter for error reporting
+        ws_emitter = self._create_emitter(task_id, subtask_id)
+        await ws_emitter.error(error_message, "execution_error")
 
     def _setup_file_logging(self) -> None:
         """Configure file logging for local mode."""
@@ -533,7 +522,6 @@ class LocalRunner:
                 "websocket_client",
                 "local_heartbeat",
                 "local_handlers",
-                "websocket_progress_reporter",
                 "task_executor",
                 "executor.config.config_loader",
                 # Agent and download loggers
@@ -569,7 +557,6 @@ class LocalRunner:
                     "websocket_client",
                     "local_heartbeat",
                     "local_handlers",
-                    "websocket_progress_reporter",
                     "task_executor",
                     "executor.config.config_loader",
                     "claude_code_agent",

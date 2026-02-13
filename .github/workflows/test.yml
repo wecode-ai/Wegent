@@ -166,11 +166,20 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-shared-${{ hashFiles('shared/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-shared-
+
       - name: Install dependencies
         working-directory: ./shared
         run: |
-          python -m pip install --upgrade pip
-          pip install cryptography pytest pytest-cov
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          source $HOME/.cargo/env
+          uv sync --dev
 
       - name: Run shared tests
         working-directory: ./shared
@@ -179,9 +188,10 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
         run: |
+          source $HOME/.cargo/env
           # Run pytest and capture exit code, ignoring thread cleanup errors
           set +e
-          pytest tests/ --cov=utils --cov-config=.coveragerc --cov-report=xml --cov-report=term-missing -v -p no:cacheprovider 2>&1
+          uv run pytest tests/ --cov=utils --cov-config=.coveragerc --cov-report=xml --cov-report=term-missing -v -p no:cacheprovider 2>&1
           PYTEST_EXIT=$?
           set -e
           # Exit code 0 = success, others indicate test failures
