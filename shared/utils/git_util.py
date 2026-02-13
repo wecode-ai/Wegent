@@ -11,6 +11,31 @@ from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 logger = setup_logger(__name__)
 
 
+def mask_url_credentials(url: str) -> str:
+    """
+    Mask credentials (username:password/token) in a URL for safe logging.
+
+    Args:
+        url: URL that may contain credentials in format protocol://user:token@host/path
+
+    Returns:
+        URL with credentials masked, e.g., https://***:***@github.com/repo
+    """
+    if "://" not in url:
+        return url
+
+    protocol, rest = url.split("://", 1)
+
+    # Check if URL contains credentials (user:pass@host format)
+    if "@" in rest:
+        credentials_and_host = rest.split("@", 1)
+        if len(credentials_and_host) == 2:
+            host_and_path = credentials_and_host[1]
+            return f"{protocol}://***:***@{host_and_path}"
+
+    return url
+
+
 def get_repo_name_from_url(url):
     # Remove .git suffix if exists
     if url.endswith(".git"):
@@ -108,7 +133,7 @@ def clone_repo_with_token(project_url, branch, project_path, username, token):
             encoded_username = quote(username, safe="")
             encoded_token = quote(token, safe="")
             auth_url = f"{protocol}://{encoded_username}:{encoded_token}@{rest}"
-            logger.info(f"Auth URL: {auth_url}")
+            logger.info(f"Auth URL: {mask_url_credentials(auth_url)}")
         else:
             # For non-Gerrit repos (GitHub, GitLab, etc.), use credentials as-is
             auth_url = f"{protocol}://{username}:{token}@{rest}"
@@ -116,7 +141,7 @@ def clone_repo_with_token(project_url, branch, project_path, username, token):
         auth_url = project_url
 
     logger.info(
-        f"Git clone {auth_url} to {project_path}, branch: {branch if branch else '(default)'}"
+        f"Git clone {mask_url_credentials(auth_url)} to {project_path}, branch: {branch if branch else '(default)'}"
     )
 
     # Build basic command
