@@ -403,12 +403,6 @@ class GradingConfigUpdate(BaseModel):
         "manual",
         description="Trigger condition: manual/on_submit/scheduled/auto_with_review",
     )
-    prompt_template: str = Field(
-        "default", description="Prompt template to use: default/custom"
-    )
-    custom_prompt: Optional[str] = Field(
-        None, description="Custom prompt when prompt_template is 'custom'"
-    )
     grading_timeout: int = Field(
         3600, description="Grading timeout in seconds", ge=60, le=7200
     )

@@ -891,8 +891,6 @@ def get_grading_config(
         team_id=config.get("team_id"),
         auto_trigger=config.get("auto_trigger", False),
         trigger_condition=config.get("trigger_condition", "manual"),
-        prompt_template=config.get("prompt_template", "default"),
-        custom_prompt=config.get("custom_prompt"),
         grading_timeout=config.get("grading_timeout", 3600),
         team_name=team_name,
         team_valid=team_valid,
@@ -961,8 +959,6 @@ def update_grading_config(
             "team_id": config_update.team_id,
             "auto_trigger": config_update.auto_trigger,
             "trigger_condition": config_update.trigger_condition,
-            "prompt_template": config_update.prompt_template,
-            "custom_prompt": config_update.custom_prompt,
             "grading_timeout": config_update.grading_timeout,
         }
     )
@@ -973,8 +969,6 @@ def update_grading_config(
         team_id=config_update.team_id,
         auto_trigger=config_update.auto_trigger,
         trigger_condition=config_update.trigger_condition,
-        prompt_template=config_update.prompt_template,
-        custom_prompt=config_update.custom_prompt,
         grading_timeout=config_update.grading_timeout,
         team_name=team_name,
         team_valid=team_valid,

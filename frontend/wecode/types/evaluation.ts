@@ -262,8 +262,6 @@ export interface GradingConfig {
   team_id?: number
   auto_trigger: boolean
   trigger_condition: string
-  prompt_template: string
-  custom_prompt?: string
   grading_timeout: number
   team_name?: string
   team_valid?: boolean
@@ -273,8 +271,6 @@ export interface GradingConfigUpdate {
   team_id?: number
   auto_trigger?: boolean
   trigger_condition?: string
-  prompt_template?: string
-  custom_prompt?: string
   grading_timeout?: number
 }
 

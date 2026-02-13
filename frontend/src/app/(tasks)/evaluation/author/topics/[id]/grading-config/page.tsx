@@ -6,10 +6,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Bot, Save, Zap, Clock, FileText, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Bot, Save, Zap, Clock, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -40,11 +39,6 @@ const TRIGGER_CONDITIONS = {
   SCHEDULED: 'scheduled',
 }
 
-const PROMPT_TEMPLATES = {
-  DEFAULT: 'default',
-  CUSTOM: 'custom',
-}
-
 // Special value for "no team selected" - Radix Select doesn't allow empty string
 const NO_TEAM_VALUE = '__none__'
 
@@ -65,8 +59,6 @@ function GradingConfigContent() {
   const [teamId, setTeamId] = useState<string>('')
   const [autoTrigger, setAutoTrigger] = useState(false)
   const [triggerCondition, setTriggerCondition] = useState(TRIGGER_CONDITIONS.ON_SUBMIT)
-  const [promptTemplate, setPromptTemplate] = useState(PROMPT_TEMPLATES.DEFAULT)
-  const [customPrompt, setCustomPrompt] = useState('')
   const [gradingTimeout, setGradingTimeout] = useState(3600)
 
   const loadData = useCallback(async () => {
@@ -85,8 +77,6 @@ function GradingConfigContent() {
       setTeamId(configData.team_id?.toString() || NO_TEAM_VALUE)
       setAutoTrigger(configData.auto_trigger || false)
       setTriggerCondition(configData.trigger_condition || TRIGGER_CONDITIONS.ON_SUBMIT)
-      setPromptTemplate(configData.prompt_template || PROMPT_TEMPLATES.DEFAULT)
-      setCustomPrompt(configData.custom_prompt || '')
       setGradingTimeout(configData.grading_timeout || 3600)
     } catch (_error) {
       toast({
@@ -113,8 +103,6 @@ function GradingConfigContent() {
         team_id: teamId && teamId !== NO_TEAM_VALUE ? parseInt(teamId) : undefined,
         auto_trigger: autoTrigger,
         trigger_condition: triggerCondition,
-        prompt_template: promptTemplate,
-        custom_prompt: promptTemplate === PROMPT_TEMPLATES.CUSTOM ? customPrompt : undefined,
         grading_timeout: gradingTimeout,
       })
 
@@ -266,51 +254,6 @@ function GradingConfigContent() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Prompt Template Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5" />
-              {t('grading.prompt_template')}
-            </CardTitle>
-            <CardDescription>{t('grading.prompt_template_description')}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="promptTemplate">{t('grading.template_type')}</Label>
-              <Select value={promptTemplate} onValueChange={setPromptTemplate}>
-                <SelectTrigger id="promptTemplate">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={PROMPT_TEMPLATES.DEFAULT}>
-                    {t('grading.template_default')}
-                  </SelectItem>
-                  <SelectItem value={PROMPT_TEMPLATES.CUSTOM}>
-                    {t('grading.template_custom')}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {promptTemplate === PROMPT_TEMPLATES.CUSTOM && (
-              <div className="space-y-2">
-                <Label htmlFor="customPrompt">{t('grading.custom_prompt')}</Label>
-                <Textarea
-                  id="customPrompt"
-                  value={customPrompt}
-                  onChange={e => setCustomPrompt(e.target.value)}
-                  placeholder={t('grading.custom_prompt_placeholder')}
-                  rows={8}
-                />
-                <p className="text-xs text-text-muted">
-                  {t('grading.custom_prompt_hint')}
-                </p>
               </div>
             )}
           </CardContent>

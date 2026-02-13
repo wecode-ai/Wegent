@@ -239,7 +239,6 @@ class GradingService:
         db: Session,
         task: EvalGradingTask,
         storage_service: Optional["EvalStorageService"] = None,
-        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Build the grading prompt for a task.
@@ -249,14 +248,10 @@ class GradingService:
         - Grading criteria (text, URL, attachments)
         - Student answer (text, URL, attachments)
 
-        If custom_prompt is provided, it will be appended after the content.
-        Otherwise, a simple default instruction is used.
-
         Args:
             db: Database session
             task: Grading task
             storage_service: Storage service for presigned URLs
-            custom_prompt: Optional custom prompt from topic config
 
         Returns:
             Formatted prompt string
@@ -304,13 +299,7 @@ class GradingService:
             storage_service,
         )
 
-        # Use custom prompt template if provided
-        if custom_prompt:
-            prompt_template = custom_prompt
-        else:
-            prompt_template = GRADING_PROMPT_TEMPLATE
-
-        return prompt_template.format(
+        return GRADING_PROMPT_TEMPLATE.format(
             question_content=question_content,
             question_url=question_url,
             question_attachments=question_attachments,
@@ -398,31 +387,13 @@ class GradingService:
 
         logger.info(f"Started grading task {task.id} with team {team_id}")
 
-        # Get custom prompt from topic's grading config
-        custom_prompt = None
-        question = (
-            db.query(EvalQuestion)
-            .filter(EvalQuestion.id == task.question_id)
-            .first()
-        )
-        if question:
-            topic = (
-                db.query(EvalTopic)
-                .filter(EvalTopic.id == question.topic_id)
-                .first()
-            )
-            if topic and topic.grading_team_config:
-                config = topic.grading_team_config
-                if config.get("prompt_template") == "custom" and config.get("custom_prompt"):
-                    custom_prompt = config.get("custom_prompt")
-
         # Build the grading prompt with presigned URLs
         try:
             storage_service = EvalStorageService()
-            prompt = self.build_grading_prompt(db, task, storage_service, custom_prompt)
+            prompt = self.build_grading_prompt(db, task, storage_service)
             logger.info(
                 f"Built grading prompt for task {task.id} "
-                f"(length: {len(prompt)} chars, custom: {custom_prompt is not None})"
+                f"(length: {len(prompt)} chars)"
             )
         except Exception as e:
             logger.error(f"Failed to build grading prompt for task {task.id}: {e}")
