@@ -987,6 +987,8 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
+                    # Get tool input data from event
+                    tool_input_data = event.get("data", {})
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
