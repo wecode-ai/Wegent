@@ -62,6 +62,7 @@ class GraderDashboardStats(BaseModel):
     failed_count: int = Field(0, description="Number of failed grading tasks")
     published_count: int = Field(0, description="Number of published reports")
     total_answers: int = Field(0, description="Total number of answers to grade")
+    total_topics: int = Field(0, description="Total number of accessible topics")
     recent_activity: List[GradingTaskInDB] = Field(
         default_factory=list, description="Recent grading activity"
     )
@@ -286,6 +287,7 @@ def get_grader_dashboard(
         failed_count=counts.get(GradingTaskStatus.FAILED, 0),
         published_count=counts.get(GradingTaskStatus.PUBLISHED, 0),
         total_answers=total_answers or 0,
+        total_topics=len(topic_ids),
         recent_activity=[_convert_task_to_schema(t) for t in recent_tasks],
     )
 
