@@ -538,24 +538,24 @@ function QuestionDetailContent() {
               {/* Display mode - Content */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.content')}</Label>
-                {question.content_data?.text && (
+                {typeof question.content_data?.text === 'string' && question.content_data.text && (
                   <p className="whitespace-pre-wrap text-text-primary">
-                    {question.content_data.text as string}
+                    {question.content_data.text}
                   </p>
                 )}
-                {question.content_data?.url && (
+                {typeof question.content_data?.url === 'string' && question.content_data.url && (
                   <a
-                    href={question.content_data.url as string}
+                    href={question.content_data.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
                   >
-                    {question.content_data.url as string}
+                    {question.content_data.url}
                   </a>
                 )}
                 {renderAttachmentList(question.content_data?.attachments as EvalAttachment[])}
-                {!question.content_data?.text &&
-                  !question.content_data?.url &&
+                {typeof question.content_data?.text !== 'string' &&
+                  typeof question.content_data?.url !== 'string' &&
                   !(question.content_data?.attachments as EvalAttachment[])?.length && (
                     <p className="text-text-muted">-</p>
                   )}
@@ -564,24 +564,24 @@ function QuestionDetailContent() {
               {/* Display mode - Criteria */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.criteria')}</Label>
-                {question.criteria_data?.text && (
+                {typeof question.criteria_data?.text === 'string' && question.criteria_data.text && (
                   <p className="whitespace-pre-wrap text-text-primary">
-                    {question.criteria_data.text as string}
+                    {question.criteria_data.text}
                   </p>
                 )}
-                {question.criteria_data?.url && (
+                {typeof question.criteria_data?.url === 'string' && question.criteria_data.url && (
                   <a
-                    href={question.criteria_data.url as string}
+                    href={question.criteria_data.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary hover:underline"
                   >
-                    {question.criteria_data.url as string}
+                    {question.criteria_data.url}
                   </a>
                 )}
                 {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[])}
-                {!question.criteria_data?.text &&
-                  !question.criteria_data?.url &&
+                {typeof question.criteria_data?.text !== 'string' &&
+                  typeof question.criteria_data?.url !== 'string' &&
                   !(question.criteria_data?.attachments as EvalAttachment[])?.length && (
                     <p className="text-text-muted">-</p>
                   )}
