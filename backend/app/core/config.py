@@ -488,6 +488,14 @@ class Settings(BaseSettings):
     # Morning summary notification hour (0-23, default 9:00)
     MORNING_SUMMARY_HOUR: int = 9
 
+    # Evaluation grading task monitor configuration
+    # Enable/disable the background monitor for stuck grading tasks
+    EVAL_GRADING_MONITOR_ENABLED: bool = True
+    # Monitor check interval in seconds (default: 5 minutes)
+    EVAL_GRADING_MONITOR_INTERVAL_SECONDS: int = 300
+    # Task timeout threshold in minutes (tasks running longer are considered stuck)
+    EVAL_GRADING_STUCK_TIMEOUT_MINUTES: int = 30
+
     DINGTALK_CORP_ID: str = ""
     DINGTALK_CLIENT_ID: str = ""
     DINGTALK_CLIENT_SECRET: str = ""
