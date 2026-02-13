@@ -142,7 +142,7 @@ class TopicService:
             permitted_topic_ids = (
                 db.query(EvalPermission.topic_id)
                 .filter(EvalPermission.user_id == user_id)
-                .subquery()
+                .scalar_subquery()
             )
 
             query = query.filter(
@@ -386,14 +386,14 @@ class TopicService:
             .scalar()
         )
 
-        # Get question IDs for this topic
+        # Get question IDs for this topic - use scalar_subquery for IN clause
         question_ids = (
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
                 EvalQuestion.is_active,
             )
-            .subquery()
+            .scalar_subquery()
         )
 
         # Answer counts

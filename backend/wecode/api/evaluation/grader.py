@@ -298,14 +298,14 @@ def list_grader_topics(
 
     items = []
     for topic in topics:
-        # Get question IDs for this topic
+        # Get question IDs for this topic - use scalar_subquery for IN clause
         question_ids = (
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic.id,
                 EvalQuestion.is_active,
             )
-            .subquery()
+            .scalar_subquery()
         )
 
         # Count answers
@@ -391,14 +391,14 @@ def get_grader_topic(
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
 
-    # Get question IDs for this topic
+    # Get question IDs for this topic - use scalar_subquery for IN clause
     question_ids = (
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id == topic.id,
             EvalQuestion.is_active,
         )
-        .subquery()
+        .scalar_subquery()
     )
 
     # Count answers
@@ -511,14 +511,14 @@ def get_grader_dashboard(
     if not topic_ids:
         return GraderDashboardStats()
 
-    # Get question IDs for these topics
+    # Get question IDs for these topics - use scalar_subquery for IN clause
     question_ids_query = (
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id.in_(topic_ids),
             EvalQuestion.is_active,
         )
-        .subquery()
+        .scalar_subquery()
     )
 
     # Count tasks by status
@@ -605,14 +605,14 @@ def list_grader_tasks(
     if not topic_ids:
         return GradingTaskListResponse(total=0, items=[])
 
-    # Get question IDs for these topics
+    # Get question IDs for these topics - use scalar_subquery for IN clause
     question_ids_query = (
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id.in_(topic_ids),
             EvalQuestion.is_active,
         )
-        .subquery()
+        .scalar_subquery()
     )
 
     # Build query
@@ -1426,14 +1426,14 @@ def list_grader_answers(
             )
         query = db.query(EvalAnswer).filter(EvalAnswer.question_id == question_id)
     else:
-        # Get question IDs for these topics
+        # Get question IDs for these topics - use scalar_subquery for IN clause
         question_ids_query = (
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id.in_(topic_ids),
                 EvalQuestion.is_active,
             )
-            .subquery()
+            .scalar_subquery()
         )
         query = db.query(EvalAnswer).filter(
             EvalAnswer.question_id.in_(question_ids_query)
@@ -1648,14 +1648,14 @@ def list_topic_answers_for_grader(
             )
         query = db.query(EvalAnswer).filter(EvalAnswer.question_id == question_id)
     else:
-        # Get question IDs for this topic
+        # Get question IDs for this topic - use scalar_subquery for IN clause
         question_ids_query = (
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
                 EvalQuestion.is_active,
             )
-            .subquery()
+            .scalar_subquery()
         )
         query = db.query(EvalAnswer).filter(
             EvalAnswer.question_id.in_(question_ids_query)
@@ -1747,14 +1747,14 @@ def list_grader_reports(
     if not topic_ids:
         return ReportListResponse(total=0, items=[])
 
-    # Get question IDs for these topics
+    # Get question IDs for these topics - use scalar_subquery for IN clause
     question_ids_query = (
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id.in_(topic_ids),
             EvalQuestion.is_active,
         )
-        .subquery()
+        .scalar_subquery()
     )
 
     # Query published reports

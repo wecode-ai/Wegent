@@ -181,14 +181,14 @@ class GradingService:
         Returns:
             Tuple of (tasks list, total count)
         """
-        # Get question IDs for this topic
+        # Get question IDs for this topic - use scalar_subquery for IN clause
         question_ids = (
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
                 EvalQuestion.is_active,
             )
-            .subquery()
+            .scalar_subquery()
         )
 
         query = db.query(EvalGradingTask).filter(
@@ -245,7 +245,7 @@ class GradingService:
                     EvalQuestion.topic_id == topic_id,
                     EvalQuestion.is_active,
                 )
-                .subquery()
+                .scalar_subquery()
             )
             query = query.filter(EvalGradingTask.question_id.in_(question_ids))
 

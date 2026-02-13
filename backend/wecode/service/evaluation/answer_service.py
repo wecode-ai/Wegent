@@ -236,14 +236,14 @@ class AnswerService:
         Returns:
             Tuple of (answers list, total count)
         """
-        # Get question IDs for this topic
+        # Get question IDs for this topic - use scalar_subquery for IN clause
         question_ids = (
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
                 EvalQuestion.is_active,
             )
-            .subquery()
+            .scalar_subquery()
         )
 
         query = db.query(EvalAnswer).filter(EvalAnswer.question_id.in_(question_ids))
@@ -368,14 +368,14 @@ class AnswerService:
             .scalar()
         )
 
-        # Get question IDs for this topic
+        # Get question IDs for this topic - use scalar_subquery for IN clause
         question_ids = (
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
                 EvalQuestion.is_active,
             )
-            .subquery()
+            .scalar_subquery()
         )
 
         # Get answered questions count
