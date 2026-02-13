@@ -93,6 +93,12 @@
     "updated_success": "Question updated successfully",
     "deleted_success": "Question deleted successfully",
     "published_success": "Question published successfully",
+    "drag_drop_hint": "Drag & drop files or click to browse",
+    "max_files": "{{count}} more files allowed",
+    "upload_error": "Upload failed",
+    "attachments": "Attachments",
+    "content_attachments": "Content Attachments",
+    "criteria_attachments": "Criteria Attachments",
     "content_types": {
       "text": "Text",
       "url": "URL",
@@ -181,7 +187,8 @@
     "edit": "Edit",
     "delete": "Delete",
     "refresh": "Refresh",
-    "creating": "Creating..."
+    "creating": "Creating...",
+    "download": "Download"
   },
   "common": {
     "all": "All",

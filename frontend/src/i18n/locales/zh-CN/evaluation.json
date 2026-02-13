@@ -93,6 +93,12 @@
     "updated_success": "题目更新成功",
     "deleted_success": "题目删除成功",
     "published_success": "题目发布成功",
+    "drag_drop_hint": "拖拽文件到此处或点击上传",
+    "max_files": "还可上传 {{count}} 个文件",
+    "upload_error": "上传失败",
+    "attachments": "附件",
+    "content_attachments": "内容附件",
+    "criteria_attachments": "评分标准附件",
     "content_types": {
       "text": "文本",
       "url": "链接",
@@ -181,7 +187,8 @@
     "edit": "编辑",
     "delete": "删除",
     "refresh": "刷新",
-    "creating": "创建中..."
+    "creating": "创建中...",
+    "download": "下载"
   },
   "common": {
     "all": "全部",

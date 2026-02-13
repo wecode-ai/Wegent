@@ -38,6 +38,21 @@ export const ContentType = {
   MIXED: 'mixed',
 } as const
 
+// Attachment interface for evaluation module
+export interface EvalAttachment {
+  key: string
+  filename: string
+  file_size?: number
+  content_type?: string
+}
+
+// Content data interface with typed attachments
+export interface ContentData {
+  text?: string
+  url?: string
+  attachments?: EvalAttachment[]
+}
+
 // Topic types
 export interface Topic {
   id: number

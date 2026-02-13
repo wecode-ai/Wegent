@@ -92,12 +92,14 @@ export async function respondentListAnswerHistory(params: {
   page?: number
   limit?: number
   topic_id?: number
+  question_id?: number
   latest_only?: boolean
 }): Promise<AnswerListResponse> {
   const searchParams = new URLSearchParams()
   if (params.page) searchParams.set('page', params.page.toString())
   if (params.limit) searchParams.set('limit', params.limit.toString())
   if (params.topic_id) searchParams.set('topic_id', params.topic_id.toString())
+  if (params.question_id) searchParams.set('question_id', params.question_id.toString())
   if (params.latest_only !== undefined)
     searchParams.set('latest_only', params.latest_only.toString())
 

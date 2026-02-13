@@ -21,8 +21,9 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
+import { EvaluationFileUpload } from '@/features/evaluation/components/common/EvaluationFileUpload'
 import { createAuthorQuestion, getAuthorTopic } from '@wecode/api/evaluation-author'
-import { ContentType, type Topic } from '@wecode/types/evaluation'
+import { ContentType, type Topic, type EvalAttachment } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function NewQuestionContent() {
@@ -39,9 +40,11 @@ function NewQuestionContent() {
   const [contentType, setContentType] = useState<string>(ContentType.TEXT)
   const [contentText, setContentText] = useState('')
   const [contentUrl, setContentUrl] = useState('')
+  const [contentAttachments, setContentAttachments] = useState<EvalAttachment[]>([])
   const [criteriaType, setCriteriaType] = useState<string>(ContentType.TEXT)
   const [criteriaText, setCriteriaText] = useState('')
   const [criteriaUrl, setCriteriaUrl] = useState('')
+  const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
 
   const loadTopic = useCallback(async () => {
     setTopicLoading(true)
@@ -87,6 +90,12 @@ function NewQuestionContent() {
       if (contentType === ContentType.URL || contentType === ContentType.MIXED) {
         contentData.url = contentUrl.trim()
       }
+      if (
+        (contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED) &&
+        contentAttachments.length > 0
+      ) {
+        contentData.attachments = contentAttachments
+      }
 
       const criteriaData: Record<string, unknown> = {}
       if (criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) {
@@ -98,6 +107,12 @@ function NewQuestionContent() {
         if (criteriaUrl.trim()) {
           criteriaData.url = criteriaUrl.trim()
         }
+      }
+      if (
+        (criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED) &&
+        criteriaAttachments.length > 0
+      ) {
+        criteriaData.attachments = criteriaAttachments
       }
 
       await createAuthorQuestion(topicId, {
@@ -123,6 +138,12 @@ function NewQuestionContent() {
       setLoading(false)
     }
   }
+
+  // Check if content type should show attachment upload
+  const showContentAttachment =
+    contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED
+  const showCriteriaAttachment =
+    criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED
 
   if (topicLoading) {
     return (
@@ -213,6 +234,19 @@ function NewQuestionContent() {
               </div>
             )}
 
+            {showContentAttachment && (
+              <div className="space-y-2">
+                <Label>{t('questions.content_attachments', 'Content Attachments')}</Label>
+                <EvaluationFileUpload
+                  topicId={topicId}
+                  fileType="question_content"
+                  attachments={contentAttachments}
+                  onChange={setContentAttachments}
+                  maxFiles={10}
+                />
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="criteriaType">{t('questions.criteria_type')}</Label>
               <Select value={criteriaType} onValueChange={setCriteriaType}>
@@ -240,9 +274,7 @@ function NewQuestionContent() {
                   placeholder={t('questions.criteria_placeholder')}
                   rows={4}
                 />
-                <p className="text-xs text-text-muted">
-                  {t('grading.description')}
-                </p>
+                <p className="text-xs text-text-muted">{t('grading.description')}</p>
               </div>
             )}
 
@@ -255,6 +287,19 @@ function NewQuestionContent() {
                   value={criteriaUrl}
                   onChange={e => setCriteriaUrl(e.target.value)}
                   placeholder="https://example.com/criteria"
+                />
+              </div>
+            )}
+
+            {showCriteriaAttachment && (
+              <div className="space-y-2">
+                <Label>{t('questions.criteria_attachments', 'Criteria Attachments')}</Label>
+                <EvaluationFileUpload
+                  topicId={topicId}
+                  fileType="question_criteria"
+                  attachments={criteriaAttachments}
+                  onChange={setCriteriaAttachments}
+                  maxFiles={10}
                 />
               </div>
             )}

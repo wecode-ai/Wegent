@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Edit, Trash2, Send, X, Check } from 'lucide-react'
+import { ArrowLeft, Edit, Trash2, Send, X, Check, File, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -34,14 +34,17 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
+import { EvaluationFileUpload } from '@/features/evaluation/components/common/EvaluationFileUpload'
 import {
   getAuthorQuestion,
   updateAuthorQuestion,
   deleteAuthorQuestion,
   publishAuthorQuestion,
 } from '@wecode/api/evaluation-author'
-import { ContentType, QuestionStatus, type Question } from '@wecode/types/evaluation'
+import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
+import { ContentType, QuestionStatus, type Question, type EvalAttachment } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatFileSize } from '@/apis/attachments'
 
 function QuestionDetailContent() {
   const router = useRouter()
@@ -63,9 +66,11 @@ function QuestionDetailContent() {
   const [contentType, setContentType] = useState<string>(ContentType.TEXT)
   const [contentText, setContentText] = useState('')
   const [contentUrl, setContentUrl] = useState('')
+  const [contentAttachments, setContentAttachments] = useState<EvalAttachment[]>([])
   const [criteriaType, setCriteriaType] = useState<string>(ContentType.TEXT)
   const [criteriaText, setCriteriaText] = useState('')
   const [criteriaUrl, setCriteriaUrl] = useState('')
+  const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
 
   const loadQuestion = useCallback(async () => {
     setLoading(true)
@@ -77,9 +82,11 @@ function QuestionDetailContent() {
       setContentType(questionData.content_type || ContentType.TEXT)
       setContentText((questionData.content_data?.text as string) || '')
       setContentUrl((questionData.content_data?.url as string) || '')
+      setContentAttachments((questionData.content_data?.attachments as EvalAttachment[]) || [])
       setCriteriaType(questionData.criteria_type || ContentType.TEXT)
       setCriteriaText((questionData.criteria_data?.text as string) || '')
       setCriteriaUrl((questionData.criteria_data?.url as string) || '')
+      setCriteriaAttachments((questionData.criteria_data?.attachments as EvalAttachment[]) || [])
     } catch (_error) {
       toast({
         title: t('errors.load_failed'),
@@ -105,9 +112,11 @@ function QuestionDetailContent() {
       setContentType(question.content_type || ContentType.TEXT)
       setContentText((question.content_data?.text as string) || '')
       setContentUrl((question.content_data?.url as string) || '')
+      setContentAttachments((question.content_data?.attachments as EvalAttachment[]) || [])
       setCriteriaType(question.criteria_type || ContentType.TEXT)
       setCriteriaText((question.criteria_data?.text as string) || '')
       setCriteriaUrl((question.criteria_data?.url as string) || '')
+      setCriteriaAttachments((question.criteria_data?.attachments as EvalAttachment[]) || [])
     }
     setIsEditing(false)
   }
@@ -131,6 +140,12 @@ function QuestionDetailContent() {
       if (contentType === ContentType.URL || contentType === ContentType.MIXED) {
         contentData.url = contentUrl.trim()
       }
+      if (
+        (contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED) &&
+        contentAttachments.length > 0
+      ) {
+        contentData.attachments = contentAttachments
+      }
 
       const criteriaData: Record<string, unknown> = {}
       if (criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) {
@@ -142,6 +157,12 @@ function QuestionDetailContent() {
         if (criteriaUrl.trim()) {
           criteriaData.url = criteriaUrl.trim()
         }
+      }
+      if (
+        (criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED) &&
+        criteriaAttachments.length > 0
+      ) {
+        criteriaData.attachments = criteriaAttachments
       }
 
       await updateAuthorQuestion(questionId, {
@@ -209,6 +230,14 @@ function QuestionDetailContent() {
     }
   }
 
+  const handleDownload = async (attachment: EvalAttachment) => {
+    try {
+      await downloadEvaluationFile(attachment.key, attachment.filename)
+    } catch (error) {
+      console.error('Download failed:', error)
+    }
+  }
+
   // Helper function to get status label with i18n
   const getStatusText = (status: number) => {
     if (status === QuestionStatus.DRAFT) {
@@ -220,6 +249,41 @@ function QuestionDetailContent() {
   // Helper function to get content type label
   const getContentTypeText = (type: string) => {
     return t(`questions.content_types.${type}`, type)
+  }
+
+  // Check if content type should show attachment upload
+  const showContentAttachment =
+    contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED
+  const showCriteriaAttachment =
+    criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED
+
+  // Render attachment list (for display mode)
+  const renderAttachmentList = (attachments: EvalAttachment[] | undefined) => {
+    if (!attachments || attachments.length === 0) return null
+    return (
+      <div className="space-y-2">
+        {attachments.map((attachment, index) => (
+          <div
+            key={attachment.key || index}
+            className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2"
+          >
+            <File className="h-4 w-4 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate text-sm">{attachment.filename}</span>
+            {attachment.file_size && (
+              <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => handleDownload(attachment)}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   if (loading) {
@@ -392,6 +456,21 @@ function QuestionDetailContent() {
                 </div>
               )}
 
+              {/* Content Attachments */}
+              {showContentAttachment && (
+                <div className="space-y-2">
+                  <Label>{t('questions.content_attachments')}</Label>
+                  <EvaluationFileUpload
+                    topicId={topicId}
+                    questionId={questionId}
+                    fileType="question_content"
+                    attachments={contentAttachments}
+                    onChange={setContentAttachments}
+                    maxFiles={10}
+                  />
+                </div>
+              )}
+
               {/* Criteria Type */}
               <div className="space-y-2">
                 <Label htmlFor="criteriaType">{t('questions.criteria_type')}</Label>
@@ -438,6 +517,21 @@ function QuestionDetailContent() {
                   />
                 </div>
               )}
+
+              {/* Criteria Attachments */}
+              {showCriteriaAttachment && (
+                <div className="space-y-2">
+                  <Label>{t('questions.criteria_attachments')}</Label>
+                  <EvaluationFileUpload
+                    topicId={topicId}
+                    questionId={questionId}
+                    fileType="question_criteria"
+                    attachments={criteriaAttachments}
+                    onChange={setCriteriaAttachments}
+                    maxFiles={10}
+                  />
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-6">
@@ -459,9 +553,12 @@ function QuestionDetailContent() {
                     {question.content_data.url as string}
                   </a>
                 )}
-                {!question.content_data?.text && !question.content_data?.url && (
-                  <p className="text-text-muted">-</p>
-                )}
+                {renderAttachmentList(question.content_data?.attachments as EvalAttachment[])}
+                {!question.content_data?.text &&
+                  !question.content_data?.url &&
+                  !(question.content_data?.attachments as EvalAttachment[])?.length && (
+                    <p className="text-text-muted">-</p>
+                  )}
               </div>
 
               {/* Display mode - Criteria */}
@@ -482,9 +579,12 @@ function QuestionDetailContent() {
                     {question.criteria_data.url as string}
                   </a>
                 )}
-                {!question.criteria_data?.text && !question.criteria_data?.url && (
-                  <p className="text-text-muted">-</p>
-                )}
+                {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[])}
+                {!question.criteria_data?.text &&
+                  !question.criteria_data?.url &&
+                  !(question.criteria_data?.attachments as EvalAttachment[])?.length && (
+                    <p className="text-text-muted">-</p>
+                  )}
               </div>
 
               {/* Metadata */}
@@ -492,7 +592,7 @@ function QuestionDetailContent() {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="text-text-secondary">Version:</span>{' '}
-                    <span className="text-text-primary">{question.current_version}</span>
+                    <span className="text-text-primary">{question.current_version || '-'}</span>
                   </div>
                   <div>
                     <span className="text-text-secondary">Order:</span>{' '}

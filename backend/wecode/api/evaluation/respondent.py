@@ -378,6 +378,7 @@ def list_my_answer_history(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
     topic_id: Optional[int] = Query(None, description="Filter by topic"),
+    question_id: Optional[int] = Query(None, description="Filter by question"),
     latest_only: bool = Query(True, description="Only show latest answers"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -386,33 +387,36 @@ def list_my_answer_history(
     List current user's answer history across all topics.
     """
     answer_service = get_answer_service()
+    from wecode.models.evaluation import EvalAnswer
+
+    query = db.query(EvalAnswer).filter(EvalAnswer.respondent_id == current_user.id)
 
     if topic_id:
-        # Filter by specific topic
-        answers, total = answer_service.list_by_topic(
-            db=db,
-            topic_id=topic_id,
-            respondent_id=current_user.id,
-            latest_only=latest_only,
-            page=page,
-            limit=limit,
+        # Get all questions for the topic and filter by question IDs
+        question_service = get_question_service()
+        questions, _ = question_service.list_questions(
+            db=db, topic_id=topic_id, page=1, limit=1000
         )
-    else:
-        # Get all answers for this user across all topics
-        from wecode.models.evaluation import EvalAnswer
+        question_ids = [q.id for q in questions]
+        if question_ids:
+            query = query.filter(EvalAnswer.question_id.in_(question_ids))
+        else:
+            # No questions in topic, return empty
+            return AnswerListResponse(total=0, items=[])
 
-        query = db.query(EvalAnswer).filter(EvalAnswer.respondent_id == current_user.id)
+    if question_id:
+        query = query.filter(EvalAnswer.question_id == question_id)
 
-        if latest_only:
-            query = query.filter(EvalAnswer.is_latest == True)
+    if latest_only:
+        query = query.filter(EvalAnswer.is_latest == True)
 
-        total = query.count()
-        answers = (
-            query.order_by(EvalAnswer.submitted_at.desc())
-            .offset((page - 1) * limit)
-            .limit(limit)
-            .all()
-        )
+    total = query.count()
+    answers = (
+        query.order_by(EvalAnswer.submitted_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
 
     items = []
     for answer in answers:

@@ -447,6 +447,33 @@ def list_questions(
     return QuestionListResponse(total=total, items=items)
 
 
+@router.get("/questions/{question_id}", response_model=QuestionInDB)
+def get_question(
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get a single question by ID.
+
+    Only the topic creator can access this endpoint.
+    Returns full question data including criteria.
+    """
+    question_service = get_question_service()
+
+    question = question_service.get(db, question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = _get_topic_or_404(db, question.topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    return _question_to_response(question, include_criteria=True)
+
+
 @router.put("/questions/{question_id}", response_model=QuestionInDB)
 def update_question(
     question_id: int,
