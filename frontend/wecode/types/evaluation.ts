@@ -111,6 +111,7 @@ export interface Question {
   created_at: string
   updated_at: string
   is_active: boolean
+  criteria_type?: string
   criteria_data?: Record<string, unknown>
   has_new_version?: boolean
   latest_version?: string
@@ -120,6 +121,7 @@ export interface QuestionCreate {
   title: string
   content_type?: string
   content_data?: Record<string, unknown>
+  criteria_type?: string
   criteria_data?: Record<string, unknown>
   order_index?: number
 }
@@ -128,6 +130,7 @@ export interface QuestionUpdate {
   title?: string
   content_type?: string
   content_data?: Record<string, unknown>
+  criteria_type?: string
   criteria_data?: Record<string, unknown>
   order_index?: number
 }
@@ -234,6 +237,27 @@ export interface GradingTaskPublishRequest {
 
 export interface GradingTaskUpdateReportRequest {
   report_content: string
+}
+
+// Grading configuration types
+export interface GradingConfig {
+  team_id?: number
+  auto_trigger: boolean
+  trigger_condition: string
+  prompt_template: string
+  custom_prompt?: string
+  grading_timeout: number
+  team_name?: string
+  team_valid?: boolean
+}
+
+export interface GradingConfigUpdate {
+  team_id?: number
+  auto_trigger?: boolean
+  trigger_condition?: string
+  prompt_template?: string
+  custom_prompt?: string
+  grading_timeout?: number
 }
 
 // List response types

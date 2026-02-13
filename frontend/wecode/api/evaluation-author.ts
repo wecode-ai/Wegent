@@ -28,6 +28,8 @@ import type {
   GradingTaskPublishRequest,
   GradingTaskUpdateReportRequest,
   GradingTaskListResponse,
+  GradingConfig,
+  GradingConfigUpdate,
 } from '../types/evaluation'
 
 // ============================================================================
@@ -295,4 +297,54 @@ export async function batchPublishAuthorGradingTasks(
     method: 'POST',
     body: JSON.stringify(taskIds),
   })
+}
+
+// ============================================================================
+// Grading Configuration API (Author)
+// ============================================================================
+
+export async function getAuthorGradingConfig(topicId: number): Promise<GradingConfig> {
+  return fetchJson<GradingConfig>(getAuthorUrl(`/topics/${topicId}/grading-config`))
+}
+
+export async function updateAuthorGradingConfig(
+  topicId: number,
+  data: GradingConfigUpdate
+): Promise<GradingConfig> {
+  return fetchJson<GradingConfig>(getAuthorUrl(`/topics/${topicId}/grading-config`), {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+// ============================================================================
+// Topic Rollback API (Author)
+// ============================================================================
+
+export async function rollbackAuthorTopic(topicId: number, version: string): Promise<Topic> {
+  const searchParams = new URLSearchParams()
+  searchParams.set('version', version)
+  return fetchJson<Topic>(getAuthorUrl(`/topics/${topicId}/rollback?${searchParams.toString()}`), {
+    method: 'POST',
+  })
+}
+
+// ============================================================================
+// Graders List API (Author)
+// ============================================================================
+
+export async function listAuthorGraders(
+  topicId: number,
+  params: {
+    page?: number
+    limit?: number
+  }
+): Promise<PermissionListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+
+  return fetchJson<PermissionListResponse>(
+    getAuthorUrl(`/topics/${topicId}/graders?${searchParams.toString()}`)
+  )
 }
