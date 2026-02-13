@@ -133,11 +133,16 @@ function GradingConfigContent() {
 
   // Filter teams by ClaudeCode shell type (as per spec)
   const claudeCodeTeams = teams.filter(team => {
+    // Check team's agent_type directly
+    if (team.agent_type?.toLowerCase().includes('claudecode') ||
+        team.agent_type?.toLowerCase().includes('claude')) {
+      return true
+    }
     // Check if any bot in the team uses ClaudeCode shell
-    return team.spec?.members?.some(
-      member => member.shellRef?.toLowerCase().includes('claudecode') ||
-                member.botRef?.toLowerCase().includes('claudecode')
-    ) || team.spec?.shellType === 'ClaudeCode'
+    return team.bots?.some(
+      teamBot => teamBot.bot?.shell_type?.toLowerCase().includes('claudecode') ||
+                 teamBot.bot?.shell_type?.toLowerCase().includes('claude')
+    )
   })
 
   if (loading) {
@@ -200,7 +205,7 @@ function GradingConfigContent() {
                   <SelectItem value="">{t('grading.no_team')}</SelectItem>
                   {(claudeCodeTeams.length > 0 ? claudeCodeTeams : teams).map(team => (
                     <SelectItem key={team.id} value={team.id?.toString() || ''}>
-                      {team.spec?.metadata?.name || team.name || `Team ${team.id}`}
+                      {team.name || `Team ${team.id}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
