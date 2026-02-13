@@ -13,7 +13,7 @@ This router handles all endpoints for the "author" role, which includes:
 """
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -39,6 +39,7 @@ from wecode.schemas.evaluation import (
     TopicStatistics,
     TopicUpdate,
     TopicVersionInDB,
+    TopicVersionListResponse,
 )
 from wecode.service.evaluation import (
     get_permission_service,
@@ -315,9 +316,11 @@ def publish_topic(
     )
 
 
-@router.get("/topics/{topic_id}/versions", response_model=List[TopicVersionInDB])
+@router.get("/topics/{topic_id}/versions", response_model=TopicVersionListResponse)
 def get_topic_versions(
     topic_id: int,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -331,19 +334,22 @@ def get_topic_versions(
     _verify_topic_ownership(topic, current_user.id)
 
     topic_service = get_topic_service()
-    versions = topic_service.list_versions(db, topic_id)
+    versions, total = topic_service.list_versions(db, topic_id, page=page, limit=limit)
 
-    return [
-        TopicVersionInDB(
-            id=v.id,
-            topic_id=v.topic_id,
-            version=v.version,
-            question_snapshots=v.question_snapshots,
-            published_at=v.published_at,
-            published_by=v.published_by,
-        )
-        for v in versions
-    ]
+    return TopicVersionListResponse(
+        total=total,
+        items=[
+            TopicVersionInDB(
+                id=v.id,
+                topic_id=v.topic_id,
+                version=v.version,
+                question_snapshots=v.question_snapshots,
+                published_at=v.published_at,
+                published_by=v.published_by,
+            )
+            for v in versions
+        ],
+    )
 
 
 @router.get("/topics/{topic_id}/statistics", response_model=TopicStatistics)

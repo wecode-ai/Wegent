@@ -320,23 +320,34 @@ class TopicService:
             .first()
         )
 
-    def list_versions(self, db: Session, topic_id: int) -> List[EvalTopicVersion]:
+    def list_versions(
+        self,
+        db: Session,
+        topic_id: int,
+        page: int = 1,
+        limit: int = 20,
+    ) -> Tuple[List[EvalTopicVersion], int]:
         """
-        List all versions of a topic.
+        List all versions of a topic with pagination.
 
         Args:
             db: Database session
             topic_id: Topic ID
+            page: Page number (1-indexed)
+            limit: Items per page
 
         Returns:
-            List of topic versions (newest first)
+            Tuple of (versions list, total count)
         """
-        return (
-            db.query(EvalTopicVersion)
-            .filter(EvalTopicVersion.topic_id == topic_id)
-            .order_by(EvalTopicVersion.published_at.desc())
+        query = db.query(EvalTopicVersion).filter(EvalTopicVersion.topic_id == topic_id)
+        total = query.count()
+        versions = (
+            query.order_by(EvalTopicVersion.published_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
             .all()
         )
+        return versions, total
 
     def get_statistics(self, db: Session, topic_id: int) -> Dict:
         """

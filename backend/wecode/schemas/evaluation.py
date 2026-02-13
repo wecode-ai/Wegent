@@ -95,6 +95,13 @@ class TopicVersionInDB(BaseModel):
         from_attributes = True
 
 
+class TopicVersionListResponse(BaseModel):
+    """Paginated list response for topic versions."""
+
+    total: int
+    items: List[TopicVersionInDB]
+
+
 # ============================================================================
 # Question Schemas
 # ============================================================================
