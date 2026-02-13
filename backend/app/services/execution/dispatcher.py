@@ -495,6 +495,10 @@ class ExecutionDispatcher:
 
         # Stream response using OpenAI client
         # Note: tools is a first-class parameter in OpenAI Responses API, not in extra_body
+        logger.info(
+            f"[ExecutionDispatcher] About to call client.responses.create: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
         stream = await client.responses.create(
             model=openai_request.get("model", ""),
             input=openai_request.get("input", ""),
@@ -506,13 +510,26 @@ class ExecutionDispatcher:
                 "model_config": openai_request.get("model_config", {}),
             },
         )
+        logger.info(
+            f"[ExecutionDispatcher] Stream created, starting to iterate events: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
 
+        event_count = 0
         # Process streaming events
         async for event in stream:
+            event_count += 1
             # Get event type from the event object
             event_type = getattr(event, "type", None)
             if not event_type:
                 continue
+
+            # Log every event for debugging
+            if event_count <= 5 or event_type in ("response.completed", "error"):
+                logger.info(
+                    f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
+                    f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+                )
 
             # Convert event to dict for parsing
             event_data = (
@@ -530,6 +547,28 @@ class ExecutionDispatcher:
 
             if parsed_event:
                 await emitter.emit(parsed_event)
+
+            # Break out of loop on terminal events
+            # OpenAI SDK's stream iterator doesn't auto-exit after response.completed,
+            # so we need to manually break to avoid hanging
+            if event_type in (
+                ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+                ResponsesAPIStreamEvents.ERROR.value,
+                ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+            ):
+                logger.info(
+                    f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
+                    f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+                    f"event_type={event_type}"
+                )
+                break
+
+        # Log when stream iteration completes
+        logger.info(
+            f"[ExecutionDispatcher] SSE stream completed: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+            f"total_events={event_count}"
+        )
 
     async def _dispatch_websocket(
         self,

@@ -281,6 +281,22 @@ async def _stream_response(
                 event_type, data = event
                 yield _create_sse_event(event_type, data)
 
+                # Mark transport as done on terminal events to exit loop
+                # This ensures the SSE stream closes properly after completion
+                if event_type in (
+                    ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+                    ResponsesAPIStreamEvents.ERROR.value,
+                    ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+                ):
+                    logger.info(
+                        "[RESPONSE] Terminal event sent, marking transport done: "
+                        "task_id=%d, subtask_id=%d, event_type=%s",
+                        task_id,
+                        subtask_id,
+                        event_type,
+                    )
+                    transport.mark_done()
+
             # Check if chat task completed with error
             if chat_task.done() and chat_task.exception():
                 raise chat_task.exception()

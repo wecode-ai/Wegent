@@ -424,6 +424,7 @@ async def _handle_user_message(
                     await emitter.tool_done(
                         call_id=block.tool_use_id,
                         name="",  # Tool name not available in ToolResultBlock
+                        arguments=None,  # Arguments not available in ToolResultBlock
                         output=tool_output,
                     )
                     logger.info(

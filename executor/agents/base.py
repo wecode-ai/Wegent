@@ -38,12 +38,19 @@ class Agent:
         """
         return self.__class__.__name__
 
-    def __init__(self, task_data: Dict[str, Any]):
+    def __init__(
+        self,
+        task_data: Dict[str, Any],
+        emitter: ResponsesAPIEmitter,
+    ):
         """
         Initialize the base agent
 
         Args:
             task_data: The task data dictionary
+            emitter: Emitter instance for sending events. Required parameter.
+                     - Local mode: Use WebSocketTransport emitter
+                     - Docker mode: Use CallbackTransport emitter
         """
         self.task_data = task_data
         self.callback_client = CallbackClient(callback_url=config.CALLBACK_URL)
@@ -57,42 +64,17 @@ class Agent:
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
 
-        # Create emitter for the task lifecycle - shared across all operations
-        # Use private attribute, access via get_emitter() method
-        self._emitter: ResponsesAPIEmitter = self._create_emitter()
-
-    def _create_emitter(self) -> ResponsesAPIEmitter:
-        """
-        Template method for creating the emitter.
-        Subclasses can override this to customize emitter creation.
-
-        Returns:
-            ResponsesAPIEmitter: The emitter instance for this agent
-        """
-        return (
-            EmitterBuilder()
-            .with_task(self.task_id, self.subtask_id)
-            .with_transport(
-                TransportFactory.create_callback_throttled(
-                    callback_url=config.CALLBACK_URL
-                )
-            )
-            .with_executor_info(
-                name=os.getenv("EXECUTOR_NAME"),
-                namespace=os.getenv("EXECUTOR_NAMESPACE"),
-            )
-            .build()
-        )
+        # Emitter is required and must be provided by caller
+        self.emitter: ResponsesAPIEmitter = emitter
 
     def get_emitter(self) -> ResponsesAPIEmitter:
         """
         Get the emitter instance for this agent.
-        Use this method instead of accessing _emitter directly.
 
         Returns:
             ResponsesAPIEmitter: The emitter instance
         """
-        return self._emitter
+        return self.emitter
 
     def handle(
         self, pre_executed: Optional[TaskStatus] = None

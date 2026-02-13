@@ -23,6 +23,7 @@ from executor.config.config import DEBUG_RUN, EXECUTOR_ENV
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
+from shared.models import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
@@ -90,14 +91,19 @@ class AgnoAgent(Agent):
     def get_name(self) -> str:
         return "Agno"
 
-    def __init__(self, task_data: Dict[str, Any]):
+    def __init__(
+        self,
+        task_data: Dict[str, Any],
+        emitter: ResponsesAPIEmitter,
+    ):
         """
         Initialize the Agno Agent
 
         Args:
             task_data: The task data dictionary
+            emitter: Emitter instance for sending events. Required parameter.
         """
-        super().__init__(task_data)
+        super().__init__(task_data, emitter)
         self.client = None
         # Check if this subtask should start a new session (no conversation history)
         # This is used in pipeline mode when user confirms a stage and proceeds to next bot

@@ -178,12 +178,33 @@ class EventBus:
         # WebSocket operations don't work across process boundaries
         from app.services.chat.ws_emitter import get_ws_emitter
 
-        if get_ws_emitter() is None:
-            logger.info(
-                "[EVENT_BUS] Skipping event %s - not in FastAPI context (likely Celery worker)",
+        ws_emitter = get_ws_emitter()
+        if ws_emitter is None:
+            # Log detailed info for debugging subscription execution status issue
+            import threading
+
+            logger.warning(
+                "[EVENT_BUS] get_ws_emitter() returned None for event %s - "
+                "thread=%s, thread_id=%s, is_daemon=%s. "
+                "This may cause subscription execution status not to update!",
                 type(event).__name__,
+                threading.current_thread().name,
+                threading.current_thread().ident,
+                threading.current_thread().daemon,
             )
-            return
+            # For TaskCompletedEvent, we should NOT skip - it's needed for subscription status update
+            # The handler (SubscriptionTaskCompletionHandler) doesn't need WebSocket
+            if type(event).__name__ == "TaskCompletedEvent":
+                logger.info(
+                    "[EVENT_BUS] TaskCompletedEvent detected, proceeding despite no ws_emitter "
+                    "(subscription status update doesn't need WebSocket)"
+                )
+            else:
+                logger.info(
+                    "[EVENT_BUS] Skipping event %s - not in FastAPI context (likely Celery worker)",
+                    type(event).__name__,
+                )
+                return
 
         event_type = type(event)
         handlers = self._handlers.get(event_type, [])
@@ -210,18 +231,39 @@ class EventBus:
         # If not, this is a programming error and should fail explicitly
         current_loop = asyncio.get_running_loop()
 
-        # If we have a main loop reference and we're in a different loop,
-        # schedule handlers in main loop to ensure proper async context
-        if (
-            self._main_loop is not None
-            and current_loop is not self._main_loop
-            and self._main_loop.is_running()
-        ):
-            logger.info(
-                "[EVENT_BUS] Publishing from different loop, scheduling in main loop"
-            )
-            await self._schedule_in_main_loop(handlers, event)
-            return
+        # Check if we're in a different loop than the main loop
+        is_different_loop = (
+            self._main_loop is not None and current_loop is not self._main_loop
+        )
+
+        if is_different_loop:
+            # For TaskCompletedEvent, execute handlers directly in current loop.
+            # This is critical because:
+            # 1. SubscriptionTaskCompletionHandler only updates database, doesn't need WebSocket
+            # 2. asyncio.run_coroutine_threadsafe schedules tasks but main loop may not process them
+            #    (observed issue: tasks only execute when server shuts down)
+            # 3. Executing directly in current loop ensures immediate execution
+            if type(event).__name__ == "TaskCompletedEvent":
+                logger.info(
+                    "[EVENT_BUS] TaskCompletedEvent from different loop, "
+                    "executing handlers directly in current loop "
+                    "(handler doesn't need main loop context, avoids scheduling issues)"
+                )
+                await self._execute_handlers(handlers, event)
+                return
+
+            # For other events that may need WebSocket/main loop context,
+            # schedule in main loop if it's running
+            if self._main_loop.is_running():
+                logger.info(
+                    "[EVENT_BUS] Publishing from different loop, scheduling in main loop"
+                )
+                await self._schedule_in_main_loop(handlers, event)
+                return
+            else:
+                logger.warning(
+                    "[EVENT_BUS] Main loop not running, executing handlers in current loop"
+                )
 
         # Execute handlers in current loop
         await self._execute_handlers(handlers, event)

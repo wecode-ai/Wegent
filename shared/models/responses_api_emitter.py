@@ -288,7 +288,9 @@ class ResponsesAPIEmitter:
             self.transport.start_collecting()
 
         # Send arguments done (with output for tool result)
-        done_data = self.builder.function_call_arguments_done(call_id, arguments, output)
+        done_data = self.builder.function_call_arguments_done(
+            call_id, arguments, output
+        )
         await self._emit(
             ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value, done_data
         )
@@ -469,7 +471,12 @@ class WebSocketTransport(EventTransport):
             payload["message_id"] = message_id
 
         # Map event_type to socket event name
-        socket_event = self.event_mapping.get(event_type, "chat:chunk")
+        # If no mapping provided, use the original event_type as socket event name
+        socket_event = self.event_mapping.get(event_type, event_type)
+        logger.info(
+            f"[WebSocketTransport] Sending event: event_type={event_type}, "
+            f"socket_event={socket_event}, task_id={task_id}, subtask_id={subtask_id}"
+        )
         await self.client.emit(socket_event, payload)
 
 
