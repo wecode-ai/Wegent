@@ -20,20 +20,22 @@ interface GitHubEditProps {
   editInfo: GitInfo | null
 }
 
+const httpSchemePattern = /^(https?:\/\/)/i
+
 const sanitizeDomainInput = (value: string) => {
   if (!value) return ''
   const trimmed = value.trim()
   if (!trimmed) return ''
 
   // Check if it starts with http:// or https://
-  const httpMatch = trimmed.match(/^(https?:\/\/)/i)
-  const protocol = httpMatch ? httpMatch[1].toLowerCase() : ''
+  const httpMatch = trimmed.match(httpSchemePattern)
+  const protocol = httpMatch?.[1]?.toLowerCase() ?? ''
 
   // Remove protocol for processing
-  const withoutProtocol = trimmed.replace(/^https?:\/\//i, '')
+  const withoutProtocol = trimmed.replace(httpSchemePattern, '')
 
   // Get domain only (remove path)
-  const domainOnly = withoutProtocol.split('common:/')[0]
+  const domainOnly = withoutProtocol.split('/')[0]
 
   // Return with protocol if it was http://, otherwise return domain only
   return protocol === 'http://'
@@ -45,7 +47,7 @@ const isValidDomain = (value: string) => {
   if (!value) return false
 
   // Extract domain without protocol
-  const domainWithoutProtocol = value.replace(/^https?:\/\//i, '')
+  const domainWithoutProtocol = value.replace(httpSchemePattern, '')
   const [host, port] = domainWithoutProtocol.split(':')
 
   if (!host) return false
@@ -89,9 +91,13 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     return !isValidDomain(domain)
   }, [domain])
 
+  const domainPlaceholder = useMemo(() => {
+    return `your-${type}-domain`
+  }, [type])
+
   const domainLink = useMemo(() => {
     if (!domain) return ''
-    return /^https?:\/\//i.test(domain) ? domain : `https://${domain}`
+    return httpSchemePattern.test(domain) ? domain : `https://${domain}`
   }, [domain])
 
   const giteaSettingsLink = useMemo(() => {
@@ -415,19 +421,19 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
                 {t('common:github.howto.step1_visit') || 'Visit: '}
                 <a
-                  href={isGerrit && domain ? `https://${domain}/settings/#HTTPCredentials` : '#'}
+                  href={isGerrit && domain ? `${domainLink}/settings/#HTTPCredentials` : '#'}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
                   title={
                     isGerrit && domain
-                      ? `https://${domain}/settings/#HTTPCredentials`
-                      : 'your-gerrit-domain/settings/#HTTPCredentials'
+                      ? `${domainLink}/settings/#HTTPCredentials`
+                      : `${domainPlaceholder}/settings/#HTTPCredentials`
                   }
                 >
                   {isGerrit && domain
-                    ? `https://${domain}/settings/#HTTPCredentials`
-                    : 'your-gerrit-domain/settings/#HTTPCredentials'}
+                    ? `${domainLink}/settings/#HTTPCredentials`
+                    : `${domainPlaceholder}/settings/#HTTPCredentials`}
                 </a>
               </p>
               <p className="text-xs text-text-muted mb-2">
@@ -445,22 +451,20 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 {t('common:github.howto.step1_visit')}
                 <a
                   href={
-                    isGitlabLike && domain
-                      ? `https://${domain}/-/profile/personal_access_tokens`
-                      : '#'
+                    isGitlabLike && domain ? `${domainLink}/-/profile/personal_access_tokens` : '#'
                   }
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
                   title={
                     isGitlabLike && domain
-                      ? `https://${domain}/-/profile/personal_access_tokens`
-                      : 'your-gitlab-domain/-/profile/personal_access_tokens'
+                      ? `${domainLink}/-/profile/personal_access_tokens`
+                      : `${domainPlaceholder}/-/profile/personal_access_tokens`
                   }
                 >
                   {isGitlabLike && domain
-                    ? `https://${domain}/-/profile/personal_access_tokens`
-                    : 'your-gitlab-domain/-/profile/personal_access_tokens'}
+                    ? `${domainLink}/-/profile/personal_access_tokens`
+                    : `${domainPlaceholder}/-/profile/personal_access_tokens`}
                 </a>
               </p>
               <p className="text-xs text-text-muted mb-2">
