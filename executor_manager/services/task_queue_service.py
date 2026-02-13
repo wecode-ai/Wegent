@@ -21,8 +21,9 @@ from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Queue key prefix
-QUEUE_KEY_PREFIX = "wegent:task_queue"
+# Queue key prefix - configurable via environment variable for different environments
+# Default: "wegent:task_queue", can be set to e.g., "wegent:dev:task_queue" or "wegent:prod:task_queue"
+QUEUE_KEY_PREFIX = os.getenv("TASK_QUEUE_KEY_PREFIX", "wegent:task_queue")
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 3
