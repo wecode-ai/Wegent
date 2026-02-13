@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  ClipboardCheck,
+  ClipboardList,
   CheckCircle,
   XCircle,
   Send,
@@ -17,12 +17,15 @@ import {
   Play,
   Eye,
   RotateCcw,
+  ArrowLeft,
+  Filter,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -48,21 +51,20 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import {
-  getGraderDashboard,
-  type GraderDashboardStats,
-  listGraderTasks,
-  getGraderTask,
-  executeGraderTask,
-  retryGraderTask,
-  publishGraderTask,
-  batchExecuteGraderTasks,
-  batchPublishGraderTasks,
-} from '@wecode/api/evaluation'
-import { graderListTopics, type GraderTopicItem } from '@wecode/api/evaluation-grader'
+  graderListTasks,
+  graderGetTask,
+  graderExecuteTask,
+  graderRetryTask,
+  graderPublishTask,
+  graderBatchExecuteTasks,
+  graderBatchPublishTasks,
+  graderListTopics,
+  type GraderTopicItem,
+} from '@wecode/api/evaluation-grader'
 import { GradingTaskStatus, type GradingTask, getStatusLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
-function GraderDashboardContent() {
+function GraderTasksContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
@@ -71,8 +73,8 @@ function GraderDashboardContent() {
   // Get initial filters from URL
   const initialStatus = searchParams.get('status')
   const initialTopicId = searchParams.get('topic')
+  const initialSearch = searchParams.get('search')
 
-  const [stats, setStats] = useState<GraderDashboardStats | null>(null)
   const [topics, setTopics] = useState<GraderTopicItem[]>([])
   const [tasks, setTasks] = useState<GradingTask[]>([])
   const [total, setTotal] = useState(0)
@@ -81,6 +83,7 @@ function GraderDashboardContent() {
   const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set())
   const [statusFilter, setStatusFilter] = useState<string>(initialStatus ?? 'all')
   const [topicFilter, setTopicFilter] = useState<string>(initialTopicId ?? 'all')
+  const [searchQuery, setSearchQuery] = useState<string>(initialSearch ?? '')
   const [page, setPage] = useState(1)
   const [executing, setExecuting] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -90,26 +93,15 @@ function GraderDashboardContent() {
   const [selectedTask, setSelectedTask] = useState<GradingTask | null>(null)
   const [loadingReport, setLoadingReport] = useState(false)
 
-  // Load dashboard stats and topics list
-  const loadDashboard = useCallback(async () => {
-    setLoading(true)
+  // Load topics list
+  const loadTopics = useCallback(async () => {
     try {
-      const [dashboardData, topicsData] = await Promise.all([
-        getGraderDashboard(),
-        graderListTopics({ page: 1, limit: 100 }),
-      ])
-      setStats(dashboardData)
+      const topicsData = await graderListTopics({ page: 1, limit: 100 })
       setTopics(topicsData.items)
     } catch (_error) {
-      toast({
-        title: t('errors.load_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setLoading(false)
+      // Silent fail for topics list
     }
-  }, [toast, t])
+  }, [])
 
   // Load tasks with filters
   const loadTasks = useCallback(async () => {
@@ -125,7 +117,7 @@ function GraderDashboardContent() {
       if (topicFilter !== 'all') {
         params.topic_id = parseInt(topicFilter)
       }
-      const response = await listGraderTasks(params)
+      const response = await graderListTasks(params)
       setTasks(response.items)
       setTotal(response.total)
     } catch (_error) {
@@ -136,12 +128,13 @@ function GraderDashboardContent() {
       })
     } finally {
       setLoadingTasks(false)
+      setLoading(false)
     }
   }, [page, statusFilter, topicFilter, toast, t])
 
   useEffect(() => {
-    loadDashboard()
-  }, [loadDashboard])
+    loadTopics()
+  }, [loadTopics])
 
   useEffect(() => {
     loadTasks()
@@ -152,9 +145,10 @@ function GraderDashboardContent() {
     const params = new URLSearchParams()
     if (statusFilter !== 'all') params.set('status', statusFilter)
     if (topicFilter !== 'all') params.set('topic', topicFilter)
-    const newUrl = params.toString() ? `?${params.toString()}` : '/evaluation/grader'
+    if (searchQuery) params.set('search', searchQuery)
+    const newUrl = params.toString() ? `?${params.toString()}` : '/evaluation/grader/tasks'
     router.replace(newUrl, { scroll: false })
-  }, [statusFilter, topicFilter, router])
+  }, [statusFilter, topicFilter, searchQuery, router])
 
   const handleSelectTask = (taskId: number, checked: boolean) => {
     const newSelected = new Set(selectedTasks)
@@ -177,13 +171,12 @@ function GraderDashboardContent() {
   const handleExecuteSingle = async (taskId: number) => {
     setExecuting(true)
     try {
-      await executeGraderTask(taskId)
+      await graderExecuteTask(taskId)
       toast({
         title: t('grading.execute_success'),
         description: '',
       })
       loadTasks()
-      loadDashboard()
     } catch (_error) {
       toast({
         title: t('errors.save_failed'),
@@ -198,13 +191,12 @@ function GraderDashboardContent() {
   const handleRetrySingle = async (taskId: number) => {
     setExecuting(true)
     try {
-      await retryGraderTask(taskId)
+      await graderRetryTask(taskId)
       toast({
         title: t('grading.execute_success'),
         description: '',
       })
       loadTasks()
-      loadDashboard()
     } catch (_error) {
       toast({
         title: t('errors.save_failed'),
@@ -219,13 +211,12 @@ function GraderDashboardContent() {
   const handlePublishSingle = async (taskId: number) => {
     setPublishing(true)
     try {
-      await publishGraderTask(taskId)
+      await graderPublishTask(taskId)
       toast({
         title: t('grading.publish_success'),
         description: '',
       })
       loadTasks()
-      loadDashboard()
     } catch (_error) {
       toast({
         title: t('errors.save_failed'),
@@ -242,14 +233,13 @@ function GraderDashboardContent() {
 
     setExecuting(true)
     try {
-      const result = await batchExecuteGraderTasks(Array.from(selectedTasks))
+      const result = await graderBatchExecuteTasks(Array.from(selectedTasks))
       toast({
         title: t('grading.execute_success'),
         description: `${result.executed_count} ${t('grading.tasks').toLowerCase()}`,
       })
       setSelectedTasks(new Set())
       loadTasks()
-      loadDashboard()
     } catch (_error) {
       toast({
         title: t('errors.save_failed'),
@@ -266,14 +256,13 @@ function GraderDashboardContent() {
 
     setPublishing(true)
     try {
-      const result = await batchPublishGraderTasks(Array.from(selectedTasks))
+      const result = await graderBatchPublishTasks(Array.from(selectedTasks))
       toast({
         title: t('grading.publish_success'),
         description: `${result.published_count} ${t('grading.tasks').toLowerCase()}`,
       })
       setSelectedTasks(new Set())
       loadTasks()
-      loadDashboard()
     } catch (_error) {
       toast({
         title: t('errors.save_failed'),
@@ -289,7 +278,7 @@ function GraderDashboardContent() {
     setLoadingReport(true)
     setReportDialogOpen(true)
     try {
-      const fullTask = await getGraderTask(task.id)
+      const fullTask = await graderGetTask(task.id)
       setSelectedTask(fullTask)
     } catch (_error) {
       toast({
@@ -325,8 +314,24 @@ function GraderDashboardContent() {
     }
   }
 
+  const getStatusIcon = (status: number) => {
+    switch (status) {
+      case GradingTaskStatus.PENDING:
+        return <Clock className="h-4 w-4" />
+      case GradingTaskStatus.RUNNING:
+        return <Loader2 className="h-4 w-4 animate-spin" />
+      case GradingTaskStatus.COMPLETED:
+        return <CheckCircle className="h-4 w-4" />
+      case GradingTaskStatus.FAILED:
+        return <XCircle className="h-4 w-4" />
+      case GradingTaskStatus.PUBLISHED:
+        return <Send className="h-4 w-4" />
+      default:
+        return <Clock className="h-4 w-4" />
+    }
+  }
+
   const handleRefresh = () => {
-    loadDashboard()
     loadTasks()
   }
 
@@ -334,11 +339,6 @@ function GraderDashboardContent() {
     return (
       <div className="container mx-auto max-w-6xl px-4 py-8">
         <Skeleton className="mb-6 h-10 w-64" />
-        <div className="mb-8 grid gap-4 md:grid-cols-5">
-          {[...Array(5)].map((_, i) => (
-            <Skeleton key={i} className="h-24" />
-          ))}
-        </div>
         <Skeleton className="h-96 w-full" />
       </div>
     )
@@ -347,120 +347,43 @@ function GraderDashboardContent() {
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8">
       {/* Header */}
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
-            <ClipboardCheck className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold text-text-primary">{t('roles.grader')}</h1>
-            <p className="text-sm text-text-secondary">{t('grader.tasks_description')}</p>
+          <Button variant="ghost" size="sm" onClick={() => router.push('/evaluation/grader')}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            {t('actions.back')}
+          </Button>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+              <ClipboardList className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-text-primary">{t('grading.tasks')}</h1>
+              <p className="text-sm text-text-secondary">
+                {total} {t('grading.tasks').toLowerCase()}
+              </p>
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => router.push('/evaluation/grader/tasks')}>
-            {t('grading.tasks')}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => router.push('/evaluation/grader/reports')}>
-            {t('grader.all_reports')}
-          </Button>
-          <Button variant="outline" onClick={handleRefresh}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            {t('actions.refresh')}
-          </Button>
-        </div>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="mb-8 grid gap-4 md:grid-cols-5">
-        <Card
-          className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '0' ? 'ring-2 ring-primary' : ''}`}
-          onClick={() => setStatusFilter(statusFilter === '0' ? 'all' : '0')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <Clock className="h-8 w-8 text-yellow-500" />
-              <div>
-                <div className="text-sm text-text-secondary">{t('grading.status.pending')}</div>
-                <div className="text-2xl font-semibold">{stats?.pending_count ?? 0}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '1' ? 'ring-2 ring-primary' : ''}`}
-          onClick={() => setStatusFilter(statusFilter === '1' ? 'all' : '1')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <Loader2 className="h-8 w-8 text-blue-500" />
-              <div>
-                <div className="text-sm text-text-secondary">{t('grading.status.running')}</div>
-                <div className="text-2xl font-semibold">{stats?.running_count ?? 0}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '2' ? 'ring-2 ring-primary' : ''}`}
-          onClick={() => setStatusFilter(statusFilter === '2' ? 'all' : '2')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="h-8 w-8 text-green-500" />
-              <div>
-                <div className="text-sm text-text-secondary">{t('grading.status.completed')}</div>
-                <div className="text-2xl font-semibold">{stats?.completed_count ?? 0}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '3' ? 'ring-2 ring-primary' : ''}`}
-          onClick={() => setStatusFilter(statusFilter === '3' ? 'all' : '3')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <XCircle className="h-8 w-8 text-red-500" />
-              <div>
-                <div className="text-sm text-text-secondary">{t('grading.status.failed')}</div>
-                <div className="text-2xl font-semibold">{stats?.failed_count ?? 0}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === '4' ? 'ring-2 ring-primary' : ''}`}
-          onClick={() => setStatusFilter(statusFilter === '4' ? 'all' : '4')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <Send className="h-8 w-8 text-primary" />
-              <div>
-                <div className="text-sm text-text-secondary">{t('grading.status.published')}</div>
-                <div className="text-2xl font-semibold">{stats?.published_count ?? 0}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <Button variant="outline" onClick={handleRefresh}>
+          <RefreshCw className="mr-2 h-4 w-4" />
+          {t('actions.refresh')}
+        </Button>
       </div>
 
       {/* Tasks Card */}
       <Card>
         <CardHeader>
-          <CardTitle>{t('grading.tasks')}</CardTitle>
-          <CardDescription>
-            {total} {t('grading.tasks').toLowerCase()}
-          </CardDescription>
+          <CardTitle className="flex items-center gap-2">
+            <Filter className="h-5 w-5" />
+            {t('grading.tasks')}
+          </CardTitle>
+          <CardDescription>{t('grader.tasks_description')}</CardDescription>
         </CardHeader>
         <CardContent>
           {/* Filters and batch actions */}
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-40">
                   <SelectValue />
@@ -487,6 +410,12 @@ function GraderDashboardContent() {
                   ))}
                 </SelectContent>
               </Select>
+              <Input
+                placeholder={t('topics.search_placeholder')}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-48"
+              />
             </div>
             {selectedTasks.size > 0 && (
               <div className="flex items-center gap-2">
@@ -524,7 +453,7 @@ function GraderDashboardContent() {
             </div>
           ) : tasks.length === 0 ? (
             <div className="py-8 text-center">
-              <ClipboardCheck className="mx-auto mb-4 h-12 w-12 text-text-muted" />
+              <ClipboardList className="mx-auto mb-4 h-12 w-12 text-text-muted" />
               <p className="text-text-secondary">{t('grading.no_tasks')}</p>
             </div>
           ) : (
@@ -537,6 +466,7 @@ function GraderDashboardContent() {
                       onCheckedChange={handleSelectAll}
                     />
                   </TableHead>
+                  <TableHead>{t('common.id')}</TableHead>
                   <TableHead>{t('topics.topic_name')}</TableHead>
                   <TableHead>{t('questions.question_title')}</TableHead>
                   <TableHead>{t('permissions.user')}</TableHead>
@@ -553,13 +483,16 @@ function GraderDashboardContent() {
                         onCheckedChange={checked => handleSelectTask(task.id, checked as boolean)}
                       />
                     </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {task.topic_name || '-'}
-                    </TableCell>
+                    <TableCell className="font-mono text-xs text-text-muted">#{task.id}</TableCell>
+                    <TableCell className="text-text-secondary">{task.topic_name || '-'}</TableCell>
                     <TableCell>{task.question_title || `Question #${task.question_id}`}</TableCell>
                     <TableCell>{task.respondent_name || `User #${task.respondent_id}`}</TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(task.status)}>
+                      <Badge
+                        variant={getStatusBadgeVariant(task.status)}
+                        className="flex w-fit items-center gap-1"
+                      >
+                        {getStatusIcon(task.status)}
                         {getStatusLabel(task.status, 'grading', t)}
                       </Badge>
                     </TableCell>
@@ -630,17 +563,17 @@ function GraderDashboardContent() {
           {total > 20 && (
             <div className="mt-6 flex justify-center gap-2">
               <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                {t('common:previous', 'Previous')}
+                {t('common.previous')}
               </Button>
               <span className="flex items-center px-4 text-sm text-text-secondary">
-                {t('common:page', 'Page')} {page} / {Math.ceil(total / 20)}
+                {t('common.page')} {page} / {Math.ceil(total / 20)}
               </span>
               <Button
                 variant="outline"
                 disabled={page >= Math.ceil(total / 20)}
                 onClick={() => setPage(page + 1)}
               >
-                {t('common:next', 'Next')}
+                {t('common.next')}
               </Button>
             </div>
           )}
@@ -660,8 +593,7 @@ function GraderDashboardContent() {
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data &&
-              Object.keys(selectedTask.report_data).length > 0 ? (
+            ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
               <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
                 {typeof selectedTask.report_data === 'string'
                   ? selectedTask.report_data
@@ -679,10 +611,10 @@ function GraderDashboardContent() {
   )
 }
 
-export default function GraderDashboardPage() {
+export default function GraderTasksPage() {
   return (
-    <EvaluationPageLayout>
-      <GraderDashboardContent />
+    <EvaluationPageLayout title="Grading Tasks">
+      <GraderTasksContent />
     </EvaluationPageLayout>
   )
 }
