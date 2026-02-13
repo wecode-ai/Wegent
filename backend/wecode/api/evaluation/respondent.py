@@ -708,3 +708,75 @@ def get_grading_report_detail(
         completed_at=task.completed_at,
         published_at=task.published_at,
     )
+
+
+@router.get("/reports/{report_id}/download-url")
+def get_report_download_url(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get a presigned URL for downloading a published grading report.
+
+    Respondents can only download their own published reports.
+    """
+    from wecode.service.evaluation.storage_service import EvalStorageService
+
+    grading_service = get_grading_service()
+
+    task = grading_service.get(db, report_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grading report not found",
+        )
+
+    # Respondents can only download their own reports
+    if task.respondent_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only download your own grading reports",
+        )
+
+    # Respondents can only download published reports
+    if task.status != GradingTaskStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This report has not been published yet",
+        )
+
+    report_data = task.report_data or {}
+
+    # Get final report S3 path
+    s3_path = None
+    filename = "report.md"
+
+    # Try to get final report first, then fallback to report_s3_path
+    final_report = report_data.get("final_report", {})
+    if final_report.get("s3_path"):
+        s3_path = final_report["s3_path"]
+        attachment = final_report.get("attachment")
+        if attachment:
+            filename = attachment.get("filename", "report")
+    else:
+        s3_path = task.report_s3_path
+
+    if not s3_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report file not available for download",
+        )
+
+    storage_service = EvalStorageService()
+    download_url = storage_service.get_presigned_url(s3_path)
+    if not download_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate download URL",
+        )
+
+    return {
+        "download_url": download_url,
+        "filename": filename,
+    }

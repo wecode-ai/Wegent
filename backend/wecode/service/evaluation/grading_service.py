@@ -6,11 +6,34 @@
 Grading service for evaluation module.
 
 Handles AI-powered grading tasks and Wegent Task integration.
+
+Report Data Structure:
+The report_data JSON field stores versioned report content:
+{
+    "ai_report": {
+        "content": "...",        # AI-generated Markdown content
+        "s3_path": "...",        # S3 path for AI report
+        "created_at": "..."      # Timestamp
+    },
+    "human_report": {
+        "content": "...",        # Human-reviewed Markdown content
+        "s3_path": "...",        # S3 path for human-reviewed report
+        "updated_at": "...",     # Timestamp
+        "reviewer_id": ...       # User ID of reviewer
+    },
+    "final_report": {
+        "content": "...",        # Final published content (can be text or attachment)
+        "s3_path": "...",        # S3 path for final report
+        "attachment": {...},     # Optional: uploaded attachment info
+        "published_at": "..."    # Timestamp
+    },
+    "content": "..."             # Legacy field for backward compatibility
+}
 """
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -477,21 +500,62 @@ class GradingService:
         report_s3_path: str = "",
     ) -> EvalGradingTask:
         """
-        Complete a grading task with results.
+        Complete a grading task with AI results.
+
+        Saves the AI-generated report to S3 and updates the task.
 
         Args:
             db: Database session
             task: Grading task
-            report_content: Markdown report content
-            report_s3_path: S3 path for report file
+            report_content: Markdown report content from AI
+            report_s3_path: Optional pre-existing S3 path
 
         Returns:
             Updated grading task
         """
+        from wecode.service.evaluation.storage_service import EvalStorageService
+
+        now = datetime.now()
+
+        # Save AI report to S3 if not already provided
+        ai_s3_path = report_s3_path
+        if not ai_s3_path and report_content:
+            try:
+                # Get topic_id from question
+                question = (
+                    db.query(EvalQuestion)
+                    .filter(EvalQuestion.id == task.question_id)
+                    .first()
+                )
+                topic_id = question.topic_id if question else 0
+
+                storage_service = EvalStorageService()
+                ai_s3_path = storage_service.save_grading_report(
+                    respondent_id=task.respondent_id,
+                    topic_id=topic_id,
+                    question_id=task.question_id,
+                    content=report_content,
+                    is_draft=True,  # AI report is draft
+                )
+                logger.info(f"Saved AI report to S3: {ai_s3_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save AI report to S3: {e}")
+
+        # Build report_data with versioned structure
+        report_data: Dict[str, Any] = {
+            "ai_report": {
+                "content": report_content,
+                "s3_path": ai_s3_path or "",
+                "created_at": now.isoformat(),
+            },
+            # Legacy field for backward compatibility
+            "content": report_content,
+        }
+
         task.status = GradingTaskStatus.COMPLETED
-        task.report_data = {"content": report_content}
-        task.report_s3_path = report_s3_path
-        task.completed_at = datetime.now()
+        task.report_data = report_data
+        task.report_s3_path = ai_s3_path or ""
+        task.completed_at = now
         db.flush()
 
         logger.info(f"Completed grading task {task.id}")
@@ -529,23 +593,64 @@ class GradingService:
         db: Session,
         task: EvalGradingTask,
         report_content: Optional[str] = None,
+        attachment: Optional[Dict[str, Any]] = None,
     ) -> EvalGradingTask:
         """
         Publish a grading report to the respondent.
 
+        The final published report can be:
+        1. The latest content (human-reviewed or AI)
+        2. A newly provided report_content
+        3. An uploaded attachment
+
         Args:
             db: Database session
             task: Grading task
-            report_content: Optional updated report content
+            report_content: Optional final report content
+            attachment: Optional uploaded attachment info
+                        {key, filename, size, content_type}
 
         Returns:
             Updated grading task
         """
-        if report_content:
-            task.report_data = {"content": report_content}
+        now = datetime.now()
 
+        report_data = task.report_data or {}
+
+        # Determine final content
+        final_content = report_content
+        if not final_content:
+            # Use human-reviewed if available, otherwise AI
+            if report_data.get("human_report", {}).get("content"):
+                final_content = report_data["human_report"]["content"]
+            elif report_data.get("ai_report", {}).get("content"):
+                final_content = report_data["ai_report"]["content"]
+            else:
+                final_content = report_data.get("content", "")
+
+        # Determine final S3 path
+        final_s3_path = task.report_s3_path
+        if attachment and attachment.get("key"):
+            final_s3_path = attachment["key"]
+        elif report_data.get("human_report", {}).get("s3_path"):
+            final_s3_path = report_data["human_report"]["s3_path"]
+        elif report_data.get("ai_report", {}).get("s3_path"):
+            final_s3_path = report_data["ai_report"]["s3_path"]
+
+        # Build final_report
+        report_data["final_report"] = {
+            "content": final_content,
+            "s3_path": final_s3_path,
+            "attachment": attachment,
+            "published_at": now.isoformat(),
+        }
+        # Update legacy field
+        report_data["content"] = final_content
+
+        task.report_data = report_data
+        task.report_s3_path = final_s3_path or ""
         task.status = GradingTaskStatus.PUBLISHED
-        task.published_at = datetime.now()
+        task.published_at = now
         db.flush()
 
         logger.info(f"Published grading task {task.id}")
@@ -556,22 +661,67 @@ class GradingService:
         db: Session,
         task: EvalGradingTask,
         report_content: str,
+        reviewer_id: Optional[int] = None,
     ) -> EvalGradingTask:
         """
-        Update the report content before publishing.
+        Update the report content with human review before publishing.
+
+        Saves the human-reviewed version as a separate version while
+        preserving the original AI report.
 
         Args:
             db: Database session
             task: Grading task
-            report_content: New report content
+            report_content: New report content (human reviewed)
+            reviewer_id: ID of the reviewer making changes
 
         Returns:
             Updated grading task
         """
-        task.report_data = {"content": report_content}
+        from wecode.service.evaluation.storage_service import EvalStorageService
+
+        now = datetime.now()
+
+        # Save human-reviewed report to S3
+        human_s3_path = ""
+        try:
+            question = (
+                db.query(EvalQuestion)
+                .filter(EvalQuestion.id == task.question_id)
+                .first()
+            )
+            topic_id = question.topic_id if question else 0
+
+            storage_service = EvalStorageService()
+            human_s3_path = storage_service.save_grading_report(
+                respondent_id=task.respondent_id,
+                topic_id=topic_id,
+                question_id=task.question_id,
+                content=report_content,
+                is_draft=False,  # Human-reviewed is not draft
+            )
+            logger.info(f"Saved human-reviewed report to S3: {human_s3_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save human-reviewed report to S3: {e}")
+
+        # Update report_data while preserving AI report
+        report_data = task.report_data or {}
+        report_data["human_report"] = {
+            "content": report_content,
+            "s3_path": human_s3_path,
+            "updated_at": now.isoformat(),
+            "reviewer_id": reviewer_id,
+        }
+        # Update legacy content field to human-reviewed version
+        report_data["content"] = report_content
+
+        task.report_data = report_data
+        # Update main s3_path to human-reviewed version
+        if human_s3_path:
+            task.report_s3_path = human_s3_path
         db.flush()
 
-        logger.info(f"Updated report for grading task {task.id}")
+        logger.info(f"Updated report for grading task {task.id} (reviewer: {reviewer_id})")
         return task
 
     def batch_execute(

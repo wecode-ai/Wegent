@@ -185,6 +185,97 @@ export async function graderListReports(params: {
 }
 
 // ============================================================================
+// Report Upload/Download API (Grader)
+// ============================================================================
+
+export interface ReportUploadResponse {
+  upload_url: string
+  key: string
+  expires_in: number
+}
+
+export interface ReportDownloadResponse {
+  download_url: string
+  filename: string
+  s3_path?: string
+}
+
+/**
+ * Get a presigned URL for uploading a report file.
+ * Use this to upload a file as the final report before publishing.
+ */
+export async function graderGetReportUploadUrl(
+  taskId: number,
+  filename: string,
+  contentType?: string
+): Promise<ReportUploadResponse> {
+  return fetchJson<ReportUploadResponse>(getGraderUrl(`/tasks/${taskId}/report/upload-url`), {
+    method: 'POST',
+    body: JSON.stringify({
+      filename,
+      content_type: contentType || 'application/octet-stream',
+    }),
+  })
+}
+
+/**
+ * Upload a file to the presigned URL.
+ * Returns true if successful.
+ */
+export async function uploadFileToPresignedUrl(
+  uploadUrl: string,
+  file: File
+): Promise<boolean> {
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: file,
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+  })
+  return response.ok
+}
+
+/**
+ * Publish a grading task with an uploaded attachment as the final report.
+ */
+export async function graderPublishTaskWithAttachment(
+  taskId: number,
+  attachment: {
+    key: string
+    filename: string
+    size?: number
+    contentType?: string
+  }
+): Promise<GradingTask> {
+  return fetchJson<GradingTask>(getGraderUrl(`/tasks/${taskId}/publish-with-attachment`), {
+    method: 'POST',
+    body: JSON.stringify({
+      attachment_key: attachment.key,
+      attachment_filename: attachment.filename,
+      attachment_size: attachment.size,
+      attachment_content_type: attachment.contentType,
+    }),
+  })
+}
+
+/**
+ * Get a presigned URL for downloading a report file.
+ * @param version - Report version: ai, human, or final. Defaults to latest available.
+ */
+export async function graderGetReportDownloadUrl(
+  taskId: number,
+  version?: 'ai' | 'human' | 'final'
+): Promise<ReportDownloadResponse> {
+  const searchParams = new URLSearchParams()
+  if (version) searchParams.set('version', version)
+
+  return fetchJson<ReportDownloadResponse>(
+    getGraderUrl(`/tasks/${taskId}/report/download-url?${searchParams.toString()}`)
+  )
+}
+
+// ============================================================================
 // Supporting Data API (Grader)
 // ============================================================================
 

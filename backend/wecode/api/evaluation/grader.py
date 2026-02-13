@@ -845,7 +845,7 @@ def update_grader_task_report(
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
 
-    task = grading_service.update_report(db, task, request.report_content)
+    task = grading_service.update_report(db, task, request.report_content, current_user.id)
     db.commit()
 
     return _convert_task_to_schema(task)
@@ -902,6 +902,272 @@ def publish_grader_task(
     db.commit()
 
     return _convert_task_to_schema(task)
+
+
+# ============================================================================
+# Report Upload Endpoints
+# ============================================================================
+
+
+class ReportUploadRequest(BaseModel):
+    """Request body for report file upload."""
+
+    filename: str = Field(..., description="Filename of the report")
+    content_type: str = Field("application/octet-stream", description="MIME type")
+
+
+class ReportUploadResponse(BaseModel):
+    """Response for report file upload."""
+
+    upload_url: str = Field(..., description="Presigned URL for uploading")
+    key: str = Field(..., description="Storage key for the file")
+    expires_in: int = Field(3600, description="URL expiration time in seconds")
+
+
+class ReportPublishWithAttachmentRequest(BaseModel):
+    """Request body for publishing with an uploaded attachment."""
+
+    attachment_key: str = Field(..., description="S3 key of the uploaded attachment")
+    attachment_filename: str = Field(..., description="Filename of the attachment")
+    attachment_size: Optional[int] = Field(None, description="File size in bytes")
+    attachment_content_type: Optional[str] = Field(None, description="MIME type")
+
+
+@router.post("/tasks/{task_id}/report/upload-url", response_model=ReportUploadResponse)
+def get_report_upload_url(
+    task_id: int,
+    request: ReportUploadRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get a presigned URL for uploading a report file.
+
+    The task must be in COMPLETED status.
+    Use this to upload a file as the final report before publishing.
+    """
+    from wecode.service.evaluation.storage_service import EvalStorageService
+
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    grading_service = get_grading_service()
+    permission_service = get_permission_service()
+
+    task = grading_service.get(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grading task not found",
+        )
+
+    if task.status != GradingTaskStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only upload report for completed tasks",
+        )
+
+    question = question_service.get(db, task.question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = topic_service.get(db, question.topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    # Generate storage key
+    from datetime import datetime
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    key = f"evaluation/reports/{task.respondent_id}/{question.topic_id}/{task.question_id}/{timestamp}/final_{request.filename}"
+
+    # Get presigned upload URL
+    storage_service = EvalStorageService()
+    upload_url = storage_service.get_presigned_put_url(key)
+    if not upload_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate upload URL",
+        )
+
+    return ReportUploadResponse(
+        upload_url=upload_url,
+        key=key,
+        expires_in=3600,
+    )
+
+
+@router.post("/tasks/{task_id}/publish-with-attachment", response_model=GradingTaskInDB)
+def publish_grader_task_with_attachment(
+    task_id: int,
+    request: ReportPublishWithAttachmentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Publish a grading report with an uploaded attachment as the final report.
+
+    Use this endpoint after uploading a file via the upload-url endpoint.
+    The task must be in COMPLETED status.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    grading_service = get_grading_service()
+    permission_service = get_permission_service()
+
+    task = grading_service.get(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grading task not found",
+        )
+
+    if task.status != GradingTaskStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only publish completed grading tasks",
+        )
+
+    question = question_service.get(db, task.question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = topic_service.get(db, question.topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    # Build attachment info
+    attachment = {
+        "key": request.attachment_key,
+        "filename": request.attachment_filename,
+        "size": request.attachment_size,
+        "content_type": request.attachment_content_type,
+    }
+
+    task = grading_service.publish(db, task, report_content=None, attachment=attachment)
+    db.commit()
+
+    return _convert_task_to_schema(task)
+
+
+@router.get("/tasks/{task_id}/report/download-url")
+def get_report_download_url(
+    task_id: int,
+    version: Optional[str] = Query(None, description="Report version: ai, human, or final"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get a presigned URL for downloading a report file.
+
+    Args:
+        task_id: Grading task ID
+        version: Report version to download (ai, human, final). Defaults to latest available.
+
+    Returns:
+        JSON with download_url and filename
+    """
+    from wecode.service.evaluation.storage_service import EvalStorageService
+
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    grading_service = get_grading_service()
+    permission_service = get_permission_service()
+
+    task = grading_service.get(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grading task not found",
+        )
+
+    question = question_service.get(db, task.question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = topic_service.get(db, question.topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    report_data = task.report_data or {}
+
+    # Determine which S3 path to use
+    s3_path = None
+    filename = "report.md"
+
+    if version == "ai":
+        s3_path = report_data.get("ai_report", {}).get("s3_path")
+        filename = "ai_report.md"
+    elif version == "human":
+        s3_path = report_data.get("human_report", {}).get("s3_path")
+        filename = "human_report.md"
+    elif version == "final":
+        final_report = report_data.get("final_report", {})
+        s3_path = final_report.get("s3_path")
+        attachment = final_report.get("attachment")
+        if attachment:
+            filename = attachment.get("filename", "final_report")
+        else:
+            filename = "final_report.md"
+    else:
+        # Default: try final, then human, then ai
+        if report_data.get("final_report", {}).get("s3_path"):
+            s3_path = report_data["final_report"]["s3_path"]
+            attachment = report_data["final_report"].get("attachment")
+            if attachment:
+                filename = attachment.get("filename", "final_report")
+            else:
+                filename = "final_report.md"
+        elif report_data.get("human_report", {}).get("s3_path"):
+            s3_path = report_data["human_report"]["s3_path"]
+            filename = "human_report.md"
+        elif report_data.get("ai_report", {}).get("s3_path"):
+            s3_path = report_data["ai_report"]["s3_path"]
+            filename = "ai_report.md"
+        else:
+            s3_path = task.report_s3_path
+
+    if not s3_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report file not found in storage",
+        )
+
+    storage_service = EvalStorageService()
+    download_url = storage_service.get_presigned_url(s3_path)
+    if not download_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate download URL",
+        )
+
+    return {
+        "download_url": download_url,
+        "filename": filename,
+        "s3_path": s3_path,
+    }
 
 
 # ============================================================================

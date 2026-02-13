@@ -126,3 +126,15 @@ export async function respondentListGradingReports(params: {
 export async function respondentGetGradingReport(reportId: number): Promise<GradingTask> {
   return fetchJson<GradingTask>(getRespondentUrl(`/reports/${reportId}`))
 }
+
+/**
+ * Get a presigned URL for downloading a published grading report.
+ * Respondents can only download their own published reports.
+ */
+export async function respondentGetReportDownloadUrl(
+  reportId: number
+): Promise<{ download_url: string; filename: string }> {
+  return fetchJson<{ download_url: string; filename: string }>(
+    getRespondentUrl(`/reports/${reportId}/download-url`)
+  )
+}
