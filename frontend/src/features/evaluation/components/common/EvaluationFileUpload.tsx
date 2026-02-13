@@ -179,7 +179,7 @@ export function EvaluationFileUpload({
     setIsDragging(false)
   }, [])
 
-  const isUploading = uploadingFiles.size > 0
+  const _isUploading = uploadingFiles.size > 0 // Reserved for future loading state display
   const canAddMore = attachments.length < maxFiles && !disabled
 
   return (

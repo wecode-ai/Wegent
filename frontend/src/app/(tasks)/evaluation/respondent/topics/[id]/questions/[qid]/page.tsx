@@ -43,7 +43,7 @@ function RespondentQuestionDetailContent() {
   const topicId = parseInt(params.id as string)
   const questionId = parseInt(params.qid as string)
 
-  const [topic, setTopic] = useState<Topic | null>(null)
+  const [_topic, setTopic] = useState<Topic | null>(null)
   const [question, setQuestion] = useState<Question | null>(null)
   const [myAnswers, setMyAnswers] = useState<Answer[]>([])
   const [loading, setLoading] = useState(true)
@@ -62,7 +62,7 @@ function RespondentQuestionDetailContent() {
         respondentGetQuestion(questionId),
         respondentListAnswerHistory({ question_id: questionId, page: 1, limit: 20 }),
       ])
-      setTopic(topicData)
+      setTopic(topicData) // Keep topic data for potential future use
       setQuestion(questionData)
       setMyAnswers(answersData.items)
     } catch (_error) {

@@ -31,7 +31,7 @@ import {
 } from '@wecode/api/evaluation-author'
 import type { Topic, GradingConfig } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
-import { listTeams } from '@/apis/team'
+import { teamApis } from '@/apis/team'
 import type { Team } from '@/types/task'
 
 const TRIGGER_CONDITIONS = {
@@ -72,7 +72,7 @@ function GradingConfigContent() {
       const [topicData, configData, teamsData] = await Promise.all([
         getAuthorTopic(topicId),
         getAuthorGradingConfig(topicId),
-        listTeams({ page: 1, limit: 100 }),
+        teamApis.getTeams({ page: 1, limit: 100 }),
       ])
       setTopic(topicData)
       setConfig(configData)
