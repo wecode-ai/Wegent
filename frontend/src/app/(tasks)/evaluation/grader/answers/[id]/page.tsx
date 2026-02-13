@@ -206,6 +206,59 @@ function GraderAnswerContent() {
     }
   }
 
+  // Render answer content based on content_data structure
+  const renderAnswerContent = (contentData: Record<string, unknown>) => {
+    if (!contentData || Object.keys(contentData).length === 0) {
+      return <p className="text-text-secondary">{t('answers.no_answers')}</p>
+    }
+
+    const elements: React.ReactNode[] = []
+
+    // Handle text content
+    if (typeof contentData.text === 'string' && contentData.text) {
+      elements.push(
+        <p key="text" className="whitespace-pre-wrap">
+          {contentData.text}
+        </p>
+      )
+    }
+
+    // Handle URL content
+    if (typeof contentData.url === 'string' && contentData.url) {
+      elements.push(
+        <div key="url" className="flex items-center gap-2">
+          <Link className="h-4 w-4 text-primary" />
+          <a
+            href={contentData.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline"
+          >
+            {contentData.url}
+          </a>
+        </div>
+      )
+    }
+
+    // Handle other unknown data by showing JSON
+    const knownKeys = ['text', 'url', 'attachments']
+    const otherKeys = Object.keys(contentData).filter(k => !knownKeys.includes(k))
+    if (otherKeys.length > 0 && elements.length === 0) {
+      // If no text or url but has other data, show as JSON
+      elements.push(
+        <pre key="json" className="whitespace-pre-wrap text-sm">
+          {JSON.stringify(contentData, null, 2)}
+        </pre>
+      )
+    }
+
+    if (elements.length === 0) {
+      return <p className="text-text-secondary">{t('answers.no_answers')}</p>
+    }
+
+    return <div className="space-y-4">{elements}</div>
+  }
+
   if (loading) {
     return (
       <div className="container mx-auto max-w-4xl px-4 py-8">
@@ -224,14 +277,14 @@ function GraderAnswerContent() {
     <div className="container mx-auto max-w-4xl px-4 py-8">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={() => router.push('/evaluation/grader/tasks')}>
+        <Button variant="ghost" onClick={() => router.push('/evaluation/grader')}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           {t('actions.back')}
         </Button>
         <div className="flex items-center gap-2">
           {gradingTask && (
             <Badge variant={getStatusBadgeVariant(gradingTask.status)}>
-              {getStatusLabel(gradingTask.status, 'grading')}
+              {getStatusLabel(gradingTask.status, 'grading', t)}
             </Badge>
           )}
         </div>
@@ -289,25 +342,7 @@ function GraderAnswerContent() {
         </CardHeader>
         <CardContent>
           <div className="rounded-lg bg-surface p-4">
-            {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
-              <p className="whitespace-pre-wrap">{answer.content_data.text}</p>
-            )}
-            {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
-              <div className="flex items-center gap-2">
-                <Link className="h-4 w-4 text-primary" />
-                <a
-                  href={answer.content_data.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  {answer.content_data.url}
-                </a>
-              </div>
-            )}
-            {!answer.content_data?.text && !answer.content_data?.url && (
-              <p className="text-text-secondary">{t('answers.no_answers')}</p>
-            )}
+            {renderAnswerContent(answer.content_data)}
           </div>
         </CardContent>
       </Card>

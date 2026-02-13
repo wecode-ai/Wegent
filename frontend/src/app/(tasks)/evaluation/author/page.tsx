@@ -178,7 +178,7 @@ function AuthorTopicsContent() {
                       {getVisibilityLabel(topic.visibility)}
                     </Badge>
                     <Badge variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}>
-                      {getStatusLabel(topic.status, 'topic')}
+                      {getStatusLabel(topic.status, 'topic', t)}
                     </Badge>
                   </div>
                 </div>

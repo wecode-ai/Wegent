@@ -552,7 +552,7 @@ function GraderDashboardContent() {
                     <TableCell>{task.respondent_name || `User #${task.respondent_id}`}</TableCell>
                     <TableCell>
                       <Badge variant={getStatusBadgeVariant(task.status)}>
-                        {getStatusLabel(task.status, 'grading')}
+                        {getStatusLabel(task.status, 'grading', t)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">

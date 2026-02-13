@@ -162,7 +162,7 @@ function SharedReportViewContent() {
               </CardDescription>
             </div>
             <Badge variant={getStatusBadgeVariant(report.status)}>
-              {getStatusLabel(report.status, 'grading')}
+              {getStatusLabel(report.status, 'grading', t)}
             </Badge>
           </div>
         </CardHeader>

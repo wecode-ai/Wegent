@@ -289,19 +289,23 @@ export type AnswerListResponse = ListResponse<Answer>
 export type GradingTaskListResponse = ListResponse<GradingTask>
 
 // Helper functions
-export function getStatusLabel(status: number, type: 'topic' | 'question' | 'grading'): string {
+export function getStatusLabel(
+  status: number,
+  type: 'topic' | 'question' | 'grading',
+  t?: (key: string) => string
+): string {
   if (type === 'grading') {
     switch (status) {
       case GradingTaskStatus.PENDING:
-        return 'Pending'
+        return t ? t('grading.status.pending') : 'Pending'
       case GradingTaskStatus.RUNNING:
-        return 'Running'
+        return t ? t('grading.status.running') : 'Running'
       case GradingTaskStatus.COMPLETED:
-        return 'Completed'
+        return t ? t('grading.status.completed') : 'Completed'
       case GradingTaskStatus.FAILED:
-        return 'Failed'
+        return t ? t('grading.status.failed') : 'Failed'
       case GradingTaskStatus.PUBLISHED:
-        return 'Published'
+        return t ? t('grading.status.published') : 'Published'
       default:
         return 'Unknown'
     }
@@ -309,9 +313,9 @@ export function getStatusLabel(status: number, type: 'topic' | 'question' | 'gra
 
   switch (status) {
     case TopicStatus.DRAFT:
-      return 'Draft'
+      return t ? t('topics.status.draft') : 'Draft'
     case TopicStatus.PUBLISHED:
-      return 'Published'
+      return t ? t('topics.status.published') : 'Published'
     default:
       return 'Unknown'
   }
