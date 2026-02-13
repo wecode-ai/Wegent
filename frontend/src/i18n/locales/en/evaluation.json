@@ -64,7 +64,8 @@
     "versions": "Versions",
     "version_history": "Version History",
     "version_description": "View published versions of this topic and their question snapshots.",
-    "view_versions": "View Versions"
+    "view_versions": "View Versions",
+    "no_versions": "No published versions yet"
   },
   "questions": {
     "title": "Questions",
