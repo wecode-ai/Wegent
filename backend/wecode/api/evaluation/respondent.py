@@ -73,6 +73,7 @@ def list_available_topics(
     - Private topics where user has 'respondent' permission
     """
     topic_service = get_topic_service()
+    question_service = get_question_service()
 
     # Use the existing list_topics method which handles access control
     # It returns topics the user can access (public + permitted)
@@ -88,6 +89,15 @@ def list_available_topics(
 
     items = []
     for topic in topics:
+        # Get published question count for each topic
+        _, published_count = question_service.list_questions(
+            db=db,
+            topic_id=topic.id,
+            page=1,
+            limit=1,
+            status=QuestionStatus.PUBLISHED,
+        )
+
         topic_dict = {
             "id": topic.id,
             "name": topic.name,
@@ -101,6 +111,8 @@ def list_available_topics(
             "updated_at": topic.updated_at,
             "is_active": topic.is_active,
             "description": (topic.extra_data or {}).get("description"),
+            "question_count": published_count,
+            "published_question_count": published_count,
         }
         items.append(TopicInDB(**topic_dict))
 
@@ -119,6 +131,7 @@ def get_topic_detail(
     Hides grading team configuration from respondents.
     """
     topic_service = get_topic_service()
+    question_service = get_question_service()
     permission_service = get_permission_service()
 
     topic = topic_service.get(db, topic_id)
@@ -142,6 +155,15 @@ def get_topic_detail(
             detail="This topic is not yet available",
         )
 
+    # Get published question count
+    _, published_count = question_service.list_questions(
+        db=db,
+        topic_id=topic_id,
+        page=1,
+        limit=1,
+        status=QuestionStatus.PUBLISHED,
+    )
+
     return TopicInDB(
         id=topic.id,
         name=topic.name,
@@ -155,6 +177,8 @@ def get_topic_detail(
         updated_at=topic.updated_at,
         is_active=topic.is_active,
         description=(topic.extra_data or {}).get("description"),
+        question_count=published_count,
+        published_question_count=published_count,
     )
 
 
