@@ -253,7 +253,7 @@ function GraderReportsContent() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Reports</SelectItem>
+                  <SelectItem value="all">{t('grader.all_reports')}</SelectItem>
                   <SelectItem value="2">{t('grading.status.completed')}</SelectItem>
                   <SelectItem value="4">{t('grading.status.published')}</SelectItem>
                 </SelectContent>
@@ -261,7 +261,7 @@ function GraderReportsContent() {
             </div>
             {selectedReports.size > 0 && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-text-muted">{selectedReports.size} selected</span>
+                <span className="text-sm text-text-muted">{t('common.selected', { count: selectedReports.size })}</span>
                 <Button
                   variant="primary"
                   size="sm"
@@ -306,10 +306,10 @@ function GraderReportsContent() {
                       onCheckedChange={handleSelectAll}
                     />
                   </TableHead>
-                  <TableHead>ID</TableHead>
+                  <TableHead>{t('common.id')}</TableHead>
                   <TableHead>{t('questions.question_title')}</TableHead>
                   <TableHead>{t('permissions.user')}</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>{t('common.status')}</TableHead>
                   <TableHead>{t('answers.submitted_at')}</TableHead>
                   <TableHead className="text-right">{t('actions.view')}</TableHead>
                 </TableRow>
@@ -365,7 +365,7 @@ function GraderReportsContent() {
                             router.push(`/evaluation/grader/answers/${report.answer_id}`)
                           }
                         >
-                          View Details
+                          {t('actions.view_details')}
                         </Button>
                       </div>
                     </TableCell>
@@ -379,17 +379,17 @@ function GraderReportsContent() {
           {total > 20 && (
             <div className="mt-6 flex justify-center gap-2">
               <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                Previous
+                {t('common.previous')}
               </Button>
               <span className="flex items-center px-4 text-sm text-text-secondary">
-                Page {page} of {Math.ceil(total / 20)}
+                {t('common.page')} {page} / {Math.ceil(total / 20)}
               </span>
               <Button
                 variant="outline"
                 disabled={page >= Math.ceil(total / 20)}
                 onClick={() => setPage(page + 1)}
               >
-                Next
+                {t('common.next')}
               </Button>
             </div>
           )}
@@ -415,7 +415,7 @@ function GraderReportsContent() {
                   : JSON.stringify(selectedReport.report_data, null, 2)}
               </pre>
             ) : (
-              <p className="text-text-secondary">No report data available</p>
+              <p className="text-text-secondary">{t('grading.no_report_data')}</p>
             )}
           </div>
         </DialogContent>

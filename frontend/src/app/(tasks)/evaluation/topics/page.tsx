@@ -36,12 +36,14 @@ import {
   getStatusLabel,
   getVisibilityLabel,
 } from '@wecode/types/evaluation'
+import { useTranslation } from '@/hooks/useTranslation'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
 function TopicsContent() {
   const router = useRouter()
   const { toast } = useToast()
+  const { t } = useTranslation('evaluation')
   const [topics, setTopics] = useState<Topic[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -64,14 +66,14 @@ function TopicsContent() {
       setTotal(response.total)
     } catch (_error) {
       toast({
-        title: 'Error',
-        description: 'Failed to load topics',
+        title: t('errors.load_failed'),
+        description: t('errors.not_found'),
         variant: 'destructive',
       })
     } finally {
       setLoading(false)
     }
-  }, [page, search, visibility, myOnly, toast])
+  }, [page, search, visibility, myOnly, toast, t])
 
   useEffect(() => {
     loadTopics()
@@ -86,13 +88,13 @@ function TopicsContent() {
     <div className="container mx-auto max-w-6xl px-4 py-8">
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-text-primary">Evaluation Topics</h1>
-          <p className="text-sm text-text-secondary">Browse and manage evaluation topics</p>
+          <h1 className="text-2xl font-semibold text-text-primary">{t('topics.title')}</h1>
+          <p className="text-sm text-text-secondary">{t('topics.browse_description')}</p>
         </div>
         <Link href="/evaluation/topics/new">
           <Button variant="primary">
             <Plus className="mr-2 h-4 w-4" />
-            Create Topic
+            {t('topics.create')}
           </Button>
         </Link>
       </div>
@@ -101,7 +103,7 @@ function TopicsContent() {
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <div className="flex flex-1 items-center gap-2">
           <Input
-            placeholder="Search topics..."
+            placeholder={t('topics.search_placeholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -114,17 +116,17 @@ function TopicsContent() {
 
         <Select value={visibility} onValueChange={setVisibility}>
           <SelectTrigger className="w-32">
-            <SelectValue placeholder="Visibility" />
+            <SelectValue placeholder={t('topics.visibility')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="public">Public</SelectItem>
-            <SelectItem value="private">Private</SelectItem>
+            <SelectItem value="all">{t('topics.all')}</SelectItem>
+            <SelectItem value="public">{t('topics.public')}</SelectItem>
+            <SelectItem value="private">{t('topics.private')}</SelectItem>
           </SelectContent>
         </Select>
 
         <Button variant={myOnly ? 'default' : 'outline'} onClick={() => setMyOnly(!myOnly)}>
-          {myOnly ? 'My Topics' : 'All Topics'}
+          {myOnly ? t('creator.my_topics') : t('topics.all')}
         </Button>
       </div>
 
@@ -146,14 +148,14 @@ function TopicsContent() {
       ) : topics.length === 0 ? (
         <div className="py-12 text-center">
           <FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />
-          <h3 className="mb-2 text-lg font-medium text-text-primary">No topics found</h3>
+          <h3 className="mb-2 text-lg font-medium text-text-primary">{t('topics.no_topics')}</h3>
           <p className="mb-4 text-sm text-text-secondary">
-            {search ? 'Try adjusting your search terms' : 'Create your first topic to get started'}
+            {search ? t('topics.no_search_results') : t('topics.create_first')}
           </p>
           <Link href="/evaluation/topics/new">
             <Button variant="primary">
               <Plus className="mr-2 h-4 w-4" />
-              Create Topic
+              {t('topics.create')}
             </Button>
           </Link>
         </div>
@@ -194,7 +196,9 @@ function TopicsContent() {
                   </p>
                 )}
                 <div className="flex items-center justify-between text-xs text-text-muted">
-                  <span>{topic.question_count ?? 0} questions</span>
+                  <span>
+                    {topic.question_count ?? 0} {t('questions.title')}
+                  </span>
                   <span>{new Date(topic.updated_at).toLocaleDateString()}</span>
                 </div>
               </CardContent>
@@ -207,17 +211,17 @@ function TopicsContent() {
       {total > 20 && (
         <div className="mt-6 flex justify-center gap-2">
           <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-            Previous
+            {t('common.previous')}
           </Button>
           <span className="flex items-center px-4 text-sm text-text-secondary">
-            Page {page} of {Math.ceil(total / 20)}
+            {t('common.page')} {page} / {Math.ceil(total / 20)}
           </span>
           <Button
             variant="outline"
             disabled={page >= Math.ceil(total / 20)}
             onClick={() => setPage(page + 1)}
           >
-            Next
+            {t('common.next')}
           </Button>
         </div>
       )}

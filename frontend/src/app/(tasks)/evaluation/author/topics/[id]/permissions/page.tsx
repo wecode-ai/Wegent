@@ -8,7 +8,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { ArrowLeft, Plus, Trash2, UserPlus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -56,6 +55,7 @@ import {
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
 import TopNavigation from '@/features/layout/TopNavigation'
+import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import {
   getAuthorTopic,
   listAuthorPermissions,
@@ -64,6 +64,7 @@ import {
 } from '@wecode/api/evaluation-author'
 import { PermissionRole, type Topic, type Permission, getRoleLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { SearchUser } from '@/types/api'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
@@ -79,8 +80,8 @@ function PermissionsContent() {
   const [loading, setLoading] = useState(true)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
 
-  // Add form state
-  const [newUserId, setNewUserId] = useState('')
+  // Add form state - use user search instead of manual ID input
+  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
   const [newRole, setNewRole] = useState<string>(PermissionRole.RESPONDENT)
   const [adding, setAdding] = useState(false)
 
@@ -113,20 +114,10 @@ function PermissionsContent() {
   }, [topicId, loadData])
 
   const handleGrantPermission = async () => {
-    if (!newUserId.trim()) {
+    if (selectedUsers.length === 0) {
       toast({
         title: t('errors.save_failed'),
-        description: t('permissions.user') + ' ID is required',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    const userId = parseInt(newUserId.trim())
-    if (isNaN(userId)) {
-      toast({
-        title: t('errors.save_failed'),
-        description: 'Invalid user ID',
+        description: t('permissions.select_user'),
         variant: 'destructive',
       })
       return
@@ -134,17 +125,20 @@ function PermissionsContent() {
 
     setAdding(true)
     try {
-      await grantAuthorPermission(topicId, {
-        user_id: userId,
-        role: newRole,
-      })
+      // Grant permission to all selected users
+      for (const user of selectedUsers) {
+        await grantAuthorPermission(topicId, {
+          user_id: user.id,
+          role: newRole,
+        })
+      }
 
       toast({
-        title: t('permissions.granted_success', 'Permission granted successfully'),
+        title: t('permissions.granted_success'),
         description: '',
       })
       setAddDialogOpen(false)
-      setNewUserId('')
+      setSelectedUsers([])
       setNewRole(PermissionRole.RESPONDENT)
       loadData()
     } catch (error) {
@@ -162,7 +156,7 @@ function PermissionsContent() {
     try {
       await revokeAuthorPermission(topicId, userId)
       toast({
-        title: t('permissions.revoked_success', 'Permission revoked successfully'),
+        title: t('permissions.revoked_success'),
         description: '',
       })
       loadData()
@@ -194,56 +188,50 @@ function PermissionsContent() {
       <div className="mb-6 flex items-center justify-between">
         <Button variant="ghost" onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}>
           <ArrowLeft className="mr-2 h-4 w-4" />
-          {t('actions.back', 'Back')}
+          {t('actions.back')}
         </Button>
         <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
           <DialogTrigger asChild>
             <Button variant="primary">
               <UserPlus className="mr-2 h-4 w-4" />
-              {t('permissions.add', 'Add Permission')}
+              {t('permissions.add')}
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{t('permissions.add', 'Add Permission')}</DialogTitle>
-              <DialogDescription>
-                {t('permissions.description', 'Grant access to this topic')}
-              </DialogDescription>
+              <DialogTitle>{t('permissions.add')}</DialogTitle>
+              <DialogDescription>{t('permissions.add_description')}</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="userId">{t('permissions.user', 'User')} ID *</Label>
-                <Input
-                  id="userId"
-                  type="number"
-                  value={newUserId}
-                  onChange={e => setNewUserId(e.target.value)}
-                  placeholder="Enter user ID"
+                <Label>{t('permissions.user')} *</Label>
+                <UserSearchSelect
+                  selectedUsers={selectedUsers}
+                  onSelectedUsersChange={setSelectedUsers}
+                  placeholder={t('permissions.search_user_placeholder')}
+                  multiple={true}
+                  autoFocus={true}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="role">{t('permissions.role', 'Role')}</Label>
+                <Label htmlFor="role">{t('permissions.role')}</Label>
                 <Select value={newRole} onValueChange={setNewRole}>
                   <SelectTrigger id="role">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="respondent">
-                      {t('permissions.roles.respondent', 'Respondent')}
-                    </SelectItem>
-                    <SelectItem value="grader">
-                      {t('permissions.roles.grader', 'Grader')}
-                    </SelectItem>
+                    <SelectItem value="respondent">{t('permissions.roles.respondent')}</SelectItem>
+                    <SelectItem value="grader">{t('permissions.roles.grader')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
-                {t('actions.cancel', 'Cancel')}
+                {t('actions.cancel')}
               </Button>
               <Button variant="primary" onClick={handleGrantPermission} disabled={adding}>
-                {adding ? '...' : t('actions.save', 'Save')}
+                {adding ? '...' : t('actions.save')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -252,30 +240,28 @@ function PermissionsContent() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{t('permissions.title', 'Permissions')}</CardTitle>
+          <CardTitle>{t('permissions.title')}</CardTitle>
           <CardDescription>
-            {t('permissions.description', 'Manage access to this topic')} - {topic.name}
+            {t('permissions.description')} - {topic.name}
           </CardDescription>
         </CardHeader>
         <CardContent>
           {permissions.length === 0 ? (
             <div className="py-8 text-center">
-              <p className="text-text-secondary">
-                {t('permissions.no_permissions', 'No permissions yet')}
-              </p>
+              <p className="text-text-secondary">{t('permissions.no_permissions')}</p>
               <Button variant="outline" className="mt-4" onClick={() => setAddDialogOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
-                {t('permissions.add', 'Add Permission')}
+                {t('permissions.add')}
               </Button>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t('permissions.user', 'User')}</TableHead>
-                  <TableHead>{t('permissions.role', 'Role')}</TableHead>
-                  <TableHead>{t('permissions.granted_at', 'Granted At')}</TableHead>
-                  <TableHead className="text-right">{t('actions.delete', 'Delete')}</TableHead>
+                  <TableHead>{t('permissions.user')}</TableHead>
+                  <TableHead>{t('permissions.role')}</TableHead>
+                  <TableHead>{t('permissions.granted_at')}</TableHead>
+                  <TableHead className="text-right">{t('actions.delete')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -310,23 +296,18 @@ function PermissionsContent() {
                         </AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              {t('permissions.remove', 'Remove Permission')}
-                            </AlertDialogTitle>
+                            <AlertDialogTitle>{t('permissions.remove')}</AlertDialogTitle>
                             <AlertDialogDescription>
-                              {t(
-                                'permissions.remove_description',
-                                'Are you sure you want to revoke this permission?'
-                              )}
+                              {t('permissions.remove_description')}
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>{t('actions.cancel', 'Cancel')}</AlertDialogCancel>
+                            <AlertDialogCancel>{t('actions.cancel')}</AlertDialogCancel>
                             <AlertDialogAction
                               onClick={() => handleRevokePermission(permission.user_id)}
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                             >
-                              {t('actions.confirm', 'Confirm')}
+                              {t('actions.confirm')}
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>

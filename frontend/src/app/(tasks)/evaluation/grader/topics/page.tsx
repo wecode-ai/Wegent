@@ -118,7 +118,7 @@ function GraderTopicsContent() {
           <FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />
           <h3 className="mb-2 text-lg font-medium text-text-primary">{t('topics.no_topics')}</h3>
           <p className="text-sm text-text-secondary">
-            {search ? 'Try adjusting your search terms' : 'No topics available for grading'}
+            {search ? t('topics.no_search_results') : t('grader.no_topics_available')}
           </p>
         </div>
       ) : (
@@ -162,17 +162,17 @@ function GraderTopicsContent() {
       {total > 20 && (
         <div className="mt-6 flex justify-center gap-2">
           <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-            Previous
+            {t('common.previous')}
           </Button>
           <span className="flex items-center px-4 text-sm text-text-secondary">
-            Page {page} of {Math.ceil(total / 20)}
+            {t('common.page')} {page} / {Math.ceil(total / 20)}
           </span>
           <Button
             variant="outline"
             disabled={page >= Math.ceil(total / 20)}
             onClick={() => setPage(page + 1)}
           >
-            Next
+            {t('common.next')}
           </Button>
         </div>
       )}

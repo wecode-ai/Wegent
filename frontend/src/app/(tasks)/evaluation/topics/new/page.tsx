@@ -29,12 +29,14 @@ import {
 import TopNavigation from '@/features/layout/TopNavigation'
 import { createTopic } from '@wecode/api/evaluation'
 import { TopicVisibility } from '@wecode/types/evaluation'
+import { useTranslation } from '@/hooks/useTranslation'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
 function NewTopicContent() {
   const router = useRouter()
   const { toast } = useToast()
+  const { t } = useTranslation('evaluation')
   const [loading, setLoading] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -45,8 +47,8 @@ function NewTopicContent() {
 
     if (!name.trim()) {
       toast({
-        title: 'Error',
-        description: 'Topic name is required',
+        title: t('errors.save_failed'),
+        description: t('topics.name'),
         variant: 'destructive',
       })
       return
@@ -60,14 +62,14 @@ function NewTopicContent() {
         visibility,
       })
       toast({
-        title: 'Success',
-        description: 'Topic created successfully',
+        title: t('topics.created_success'),
+        description: '',
       })
       router.push(`/evaluation/topics/${topic.id}`)
     } catch (error) {
       toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to create topic',
+        title: t('errors.save_failed'),
+        description: error instanceof Error ? error.message : t('errors.save_failed'),
         variant: 'destructive',
       })
     } finally {
@@ -79,62 +81,62 @@ function NewTopicContent() {
     <div className="container mx-auto max-w-2xl px-4 py-8">
       <Button variant="ghost" className="mb-6" onClick={() => router.back()}>
         <ArrowLeft className="mr-2 h-4 w-4" />
-        Back
+        {t('actions.back')}
       </Button>
 
       <Card>
         <CardHeader>
-          <CardTitle>Create New Topic</CardTitle>
+          <CardTitle>{t('topics.create')}</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="name">Topic Name *</Label>
+              <Label htmlFor="name">{t('topics.name')} *</Label>
               <Input
                 id="name"
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder="Enter topic name"
+                placeholder={t('topics.name_placeholder')}
                 maxLength={200}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description">{t('topics.description')}</Label>
               <Textarea
                 id="description"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="Enter topic description"
+                placeholder={t('topics.description_placeholder')}
                 rows={4}
                 maxLength={2000}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="visibility">Visibility</Label>
+              <Label htmlFor="visibility">{t('topics.visibility')}</Label>
               <Select value={visibility} onValueChange={setVisibility}>
                 <SelectTrigger id="visibility">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="private">Private</SelectItem>
-                  <SelectItem value="public">Public</SelectItem>
+                  <SelectItem value="private">{t('topics.private')}</SelectItem>
+                  <SelectItem value="public">{t('topics.public')}</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-text-muted">
                 {visibility === 'public'
-                  ? 'Anyone can view and answer questions in this topic'
-                  : 'Only invited users can view and answer questions'}
+                  ? t('topics.public_description')
+                  : t('topics.private_description')}
               </p>
             </div>
 
             <div className="flex justify-end gap-4">
               <Button type="button" variant="outline" onClick={() => router.back()}>
-                Cancel
+                {t('actions.cancel')}
               </Button>
               <Button type="submit" variant="primary" disabled={loading}>
-                {loading ? 'Creating...' : 'Create Topic'}
+                {loading ? t('actions.creating') : t('topics.create')}
               </Button>
             </div>
           </form>
