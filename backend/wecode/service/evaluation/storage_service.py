@@ -379,7 +379,7 @@ class EvalStorageService:
             return False
 
     def get_presigned_url(
-        self, key: str, expires: Optional[int] = None
+        self, key: str, expires: Optional[int] = None, force_download: bool = True
     ) -> Optional[str]:
         """
         Generate presigned URL for file access (GET).
@@ -387,6 +387,7 @@ class EvalStorageService:
         Args:
             key: Storage key
             expires: Expiration time in seconds (default from config)
+            force_download: If True, set Content-Disposition header to force download
 
         Returns:
             Presigned URL if successful
@@ -398,10 +399,24 @@ class EvalStorageService:
             expires = self._presigned_expires
 
         try:
+            # Build response headers for download
+            response_headers = {}
+            if force_download:
+                # Extract filename from key (last part of the path)
+                filename = key.split("/")[-1]
+                # RFC 5987 encoding for non-ASCII filenames
+                # Use both filename for ASCII clients and filename* for modern browsers
+                encoded_filename = quote(filename, safe="")
+                response_headers["response-content-disposition"] = (
+                    f"attachment; filename=\"{encoded_filename}\"; "
+                    f"filename*=UTF-8''{encoded_filename}"
+                )
+
             url = self.client.presigned_get_object(
                 self._bucket,
                 key,
                 expires=timedelta(seconds=expires),
+                response_headers=response_headers if response_headers else None,
             )
             return url
 

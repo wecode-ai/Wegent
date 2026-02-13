@@ -45,6 +45,9 @@ const PROMPT_TEMPLATES = {
   CUSTOM: 'custom',
 }
 
+// Special value for "no team selected" - Radix Select doesn't allow empty string
+const NO_TEAM_VALUE = '__none__'
+
 function GradingConfigContent() {
   const router = useRouter()
   const params = useParams()
@@ -79,7 +82,7 @@ function GradingConfigContent() {
       setTeams(teamsData.items || [])
 
       // Populate form state
-      setTeamId(configData.team_id?.toString() || '')
+      setTeamId(configData.team_id?.toString() || NO_TEAM_VALUE)
       setAutoTrigger(configData.auto_trigger || false)
       setTriggerCondition(configData.trigger_condition || TRIGGER_CONDITIONS.ON_SUBMIT)
       setPromptTemplate(configData.prompt_template || PROMPT_TEMPLATES.DEFAULT)
@@ -107,7 +110,7 @@ function GradingConfigContent() {
     setSaving(true)
     try {
       await updateAuthorGradingConfig(topicId, {
-        team_id: teamId ? parseInt(teamId) : undefined,
+        team_id: teamId && teamId !== NO_TEAM_VALUE ? parseInt(teamId) : undefined,
         auto_trigger: autoTrigger,
         trigger_condition: triggerCondition,
         prompt_template: promptTemplate,
@@ -202,9 +205,9 @@ function GradingConfigContent() {
                   <SelectValue placeholder={t('grading.select_team_placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{t('grading.no_team')}</SelectItem>
+                  <SelectItem value={NO_TEAM_VALUE}>{t('grading.no_team')}</SelectItem>
                   {(claudeCodeTeams.length > 0 ? claudeCodeTeams : teams).map(team => (
-                    <SelectItem key={team.id} value={team.id?.toString() || ''}>
+                    <SelectItem key={team.id} value={team.id?.toString() || NO_TEAM_VALUE}>
                       {team.name || `Team ${team.id}`}
                     </SelectItem>
                   ))}
@@ -217,7 +220,7 @@ function GradingConfigContent() {
               )}
             </div>
 
-            {!teamId && (
+            {(!teamId || teamId === NO_TEAM_VALUE) && (
               <Alert>
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{t('grading.no_team_warning')}</AlertDescription>
@@ -241,7 +244,7 @@ function GradingConfigContent() {
                 <Label>{t('grading.enable_auto_trigger')}</Label>
                 <p className="text-xs text-text-muted">{t('grading.enable_auto_trigger_hint')}</p>
               </div>
-              <Switch checked={autoTrigger} onCheckedChange={setAutoTrigger} disabled={!teamId} />
+              <Switch checked={autoTrigger} onCheckedChange={setAutoTrigger} disabled={!teamId || teamId === NO_TEAM_VALUE} />
             </div>
 
             {autoTrigger && (
