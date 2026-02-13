@@ -473,17 +473,18 @@ async def download_attachment(
 async def executor_download_attachment(
     attachment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible_for_executor),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ):
     """
     Download attachment for executor.
 
     This endpoint is called by the Executor to download attachments
-    to the workspace. It supports both JWT Token and API Key authentication.
+    to the workspace. It supports multiple authentication methods.
 
     Authentication:
     - JWT Token: Standard Bearer token in Authorization header
     - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
+    - Task Token: JWT token issued for task execution
 
     Returns:
         File binary data with appropriate content type
@@ -607,7 +608,7 @@ async def get_attachment_by_subtask(
 async def get_all_task_attachments(
     task_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible_for_executor),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ):
     """
     Get all attachments for a task (across all subtasks).
@@ -615,7 +616,10 @@ async def get_all_task_attachments(
     This endpoint is used by the executor to pre-download all attachments
     for a task at sandbox startup.
 
-    Supports both JWT token and API Key authentication.
+    Supports multiple authentication methods:
+    - JWT Token: Standard Bearer token in Authorization header
+    - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
+    - Task Token: JWT token issued for task execution
 
     Args:
         task_id: Task ID
