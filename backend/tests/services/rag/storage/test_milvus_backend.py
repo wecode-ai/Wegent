@@ -68,6 +68,42 @@ class TestMilvusBackendInit:
         backend = MilvusBackend(config)
         assert backend.dim == 1536
 
+    def test_init_db_name_from_url_path(self):
+        """Test that db_name is extracted from URL path."""
+        config = {
+            "url": "http://localhost:19530/mydb",
+            "indexStrategy": {"mode": "per_dataset"},
+        }
+        backend = MilvusBackend(config)
+
+        assert backend.db_name == "mydb"
+        assert backend.base_url == "http://localhost:19530"
+
+    def test_init_db_name_default_when_no_path(self):
+        """Test that db_name defaults to 'default' when URL has no path."""
+        config = {
+            "url": "http://localhost:19530",
+            "indexStrategy": {"mode": "per_dataset"},
+        }
+        backend = MilvusBackend(config)
+
+        assert backend.db_name == "default"
+        assert backend.base_url == "http://localhost:19530"
+
+    def test_init_db_name_from_ext_takes_priority(self):
+        """Test that ext.db_name takes priority over URL path."""
+        config = {
+            "url": "http://localhost:19530/url_db",
+            "indexStrategy": {"mode": "per_dataset"},
+            "ext": {"db_name": "ext_db"},
+        }
+        backend = MilvusBackend(config)
+
+        # ext.db_name should take priority
+        assert backend.db_name == "ext_db"
+        # URL should remain unchanged when ext.db_name is used
+        assert backend.base_url == "http://localhost:19530/url_db"
+
 
 class TestMilvusBackendClassAttributes:
     """Tests for class-level attributes."""
@@ -92,11 +128,14 @@ class TestMilvusBackendClassAttributes:
 class TestCreateVectorStore:
     """Tests for create_vector_store method."""
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_create_vector_store_basic(self, mock_milvus_vs):
-        """Test creating a vector store with basic parameters."""
+        """Test creating a vector store with basic parameters.
+
+        Verifies that db_name is extracted from URL path and passed as separate parameter.
+        """
         config = {
-            "url": "http://localhost:19530/default",
+            "url": "http://localhost:19530/mydb",
             "username": "user",
             "password": "pass",
             "indexStrategy": {"mode": "per_dataset"},
@@ -105,11 +144,14 @@ class TestCreateVectorStore:
 
         backend.create_vector_store("test_collection")
 
+        # db_name should be extracted from URL path and passed separately
         mock_milvus_vs.assert_called_once_with(
-            uri="http://localhost:19530/default",
+            uri="http://localhost:19530",  # base URL without db_name path
             token="user:pass",
+            db_name="mydb",  # db_name as separate parameter
             collection_name="test_collection",
             dim=1536,
+            upsert_mode=True,
             overwrite=False,
             enable_sparse=True,
             hybrid_ranker="RRFRanker",
@@ -119,7 +161,7 @@ class TestCreateVectorStore:
 class TestRetrieve:
     """Tests for retrieve method."""
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_vector_mode(self, mock_milvus_vs):
         """Test retrieval in vector mode."""
         # Setup mock
@@ -147,7 +189,11 @@ class TestRetrieve:
             knowledge_id="kb_1",
             query="test query",
             embed_model=mock_embed_model,
-            retrieval_setting={"top_k": 10, "score_threshold": 0.5, "retrieval_mode": "vector"},
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "vector",
+            },
         )
 
         assert "records" in result
@@ -155,7 +201,7 @@ class TestRetrieve:
         assert result["records"][0]["content"] == "test content"
         assert result["records"][0]["score"] == 0.9
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_keyword_mode(self, mock_milvus_vs):
         """Test retrieval in keyword mode."""
         mock_store = MagicMock()
@@ -181,14 +227,18 @@ class TestRetrieve:
             knowledge_id="kb_1",
             query="test query",
             embed_model=mock_embed_model,
-            retrieval_setting={"top_k": 10, "score_threshold": 0.5, "retrieval_mode": "keyword"},
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "keyword",
+            },
         )
 
         assert "records" in result
         # Keyword mode should not call get_query_embedding
         mock_embed_model.get_query_embedding.assert_not_called()
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_hybrid_mode(self, mock_milvus_vs):
         """Test retrieval in hybrid mode."""
         mock_store = MagicMock()
@@ -215,7 +265,11 @@ class TestRetrieve:
             knowledge_id="kb_1",
             query="test query",
             embed_model=mock_embed_model,
-            retrieval_setting={"top_k": 10, "score_threshold": 0.5, "retrieval_mode": "hybrid"},
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+            },
         )
 
         assert "records" in result
@@ -232,7 +286,9 @@ class TestRetrieve:
 
         mock_embed_model = MagicMock()
 
-        with pytest.raises(ValueError, match="does not support 'invalid' retrieval mode"):
+        with pytest.raises(
+            ValueError, match="does not support 'invalid' retrieval mode"
+        ):
             backend.retrieve(
                 knowledge_id="kb_1",
                 query="test query",
@@ -240,7 +296,7 @@ class TestRetrieve:
                 retrieval_setting={"retrieval_mode": "invalid"},
             )
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_score_threshold_filtering(self, mock_milvus_vs):
         """Test that results below score threshold are filtered out."""
         mock_store = MagicMock()
@@ -270,7 +326,11 @@ class TestRetrieve:
             knowledge_id="kb_1",
             query="test query",
             embed_model=mock_embed_model,
-            retrieval_setting={"top_k": 10, "score_threshold": 0.5, "retrieval_mode": "vector"},
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "vector",
+            },
         )
 
         # Only high score result should be returned
@@ -281,7 +341,7 @@ class TestRetrieve:
 class TestDeleteDocument:
     """Tests for delete_document method."""
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_delete_document(self, mock_milvus_vs):
         """Test deleting a document."""
         mock_store = MagicMock()
@@ -308,7 +368,7 @@ class TestDeleteDocument:
 class TestGetDocument:
     """Tests for get_document method."""
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_get_document(self, mock_milvus_vs):
         """Test getting document details."""
         mock_store = MagicMock()
@@ -338,7 +398,7 @@ class TestGetDocument:
         assert result["chunks"][0]["chunk_index"] == 0
         assert result["chunks"][1]["chunk_index"] == 1
 
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_get_document_not_found(self, mock_milvus_vs):
         """Test getting a document that doesn't exist."""
         mock_store = MagicMock()
@@ -367,9 +427,21 @@ class TestListDocuments:
 
         # Simulate 3 chunks from 2 documents
         mock_client.query.return_value = [
-            {"doc_ref": "doc_1", "source_file": "file1.txt", "created_at": "2024-01-01"},
-            {"doc_ref": "doc_1", "source_file": "file1.txt", "created_at": "2024-01-01"},
-            {"doc_ref": "doc_2", "source_file": "file2.txt", "created_at": "2024-01-02"},
+            {
+                "doc_ref": "doc_1",
+                "source_file": "file1.txt",
+                "created_at": "2024-01-01",
+            },
+            {
+                "doc_ref": "doc_1",
+                "source_file": "file1.txt",
+                "created_at": "2024-01-01",
+            },
+            {
+                "doc_ref": "doc_2",
+                "source_file": "file2.txt",
+                "created_at": "2024-01-02",
+            },
         ]
 
         config = {
@@ -504,7 +576,7 @@ class TestIndexWithMetadata:
 
     @patch("app.services.rag.storage.milvus_backend.VectorStoreIndex")
     @patch("app.services.rag.storage.milvus_backend.StorageContext")
-    @patch("app.services.rag.storage.milvus_backend.MilvusVectorStore")
+    @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_index_with_metadata(self, mock_milvus_vs, mock_storage_ctx, mock_vs_index):
         """Test indexing nodes with metadata."""
         mock_store = MagicMock()
@@ -588,7 +660,11 @@ class TestIndexNameGeneration:
         """Test rolling index name generation."""
         config = {
             "url": "http://localhost:19530/default",
-            "indexStrategy": {"mode": "rolling", "prefix": "milvus", "rollingStep": 100},
+            "indexStrategy": {
+                "mode": "rolling",
+                "prefix": "milvus",
+                "rollingStep": 100,
+            },
         }
         backend = MilvusBackend(config)
 
