@@ -182,7 +182,7 @@ function VersionsContent() {
                               v{version.version}
                             </Badge>
                             {isCurrentVersion && (
-                              <Badge variant="outline" className="flex items-center gap-1">
+                              <Badge variant="info" className="flex items-center gap-1">
                                 <CheckCircle className="h-3 w-3" />
                                 {t('versions.current', 'Current')}
                               </Badge>
