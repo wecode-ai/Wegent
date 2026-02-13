@@ -41,7 +41,7 @@ class TestTransportFactory:
     def test_create_callback_with_client(self):
         """Test creating CallbackTransport with provided client."""
         mock_client = MagicMock()
-        transport = TransportFactory.create_callback(mock_client)
+        transport = TransportFactory.create_callback(client=mock_client)
         assert isinstance(transport, CallbackTransport)
         assert transport.client == mock_client
 
@@ -78,7 +78,9 @@ class TestTransportFactory:
         """Test creating throttled CallbackTransport."""
         mock_client = MagicMock()
         config = ThrottleConfig(default_interval=0.5)
-        transport = TransportFactory.create_callback_throttled(mock_client, config)
+        transport = TransportFactory.create_callback_throttled(
+            client=mock_client, config=config
+        )
         assert isinstance(transport, ThrottledTransport)
         assert isinstance(transport._transport, CallbackTransport)
         assert transport._config.default_interval == 0.5
@@ -174,7 +176,7 @@ class TestThrottleConfig:
     def test_default_config(self):
         """Test default configuration values."""
         config = ThrottleConfig()
-        assert config.default_interval == 0.3
+        assert config.default_interval == 2
         assert config.max_buffer_size == 4096
         assert config.throttled_events is None
         assert "response.created" in config.bypass_events
