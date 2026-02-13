@@ -161,7 +161,12 @@
     "execute": "Execute",
     "publish": "Publish Report",
     "report": "Grading Report",
+    "report_content": "Report Content",
     "edit_report": "Edit Report",
+    "completed_at": "Completed At",
+    "published_at": "Published At",
+    "report_not_published": "This report has not been published yet.",
+    "report_not_found": "Report not found or has been removed.",
     "status": {
       "pending": "Pending",
       "running": "Running",

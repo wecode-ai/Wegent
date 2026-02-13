@@ -161,7 +161,12 @@
     "execute": "执行评分",
     "publish": "发布报告",
     "report": "评分报告",
+    "report_content": "报告内容",
     "edit_report": "编辑报告",
+    "completed_at": "完成时间",
+    "published_at": "发布时间",
+    "report_not_published": "此报告尚未发布。",
+    "report_not_found": "报告未找到或已被删除。",
     "status": {
       "pending": "待处理",
       "running": "评分中",

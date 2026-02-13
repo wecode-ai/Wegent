@@ -356,6 +356,95 @@ def list_grader_topics(
     return GraderTopicListResponse(total=total, items=items)
 
 
+@router.get("/topics/{topic_id}", response_model=GraderTopicInDB)
+def get_grader_topic(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get detailed topic information for a grader.
+
+    Returns topic info with grading statistics.
+    Requires grader permission for the topic.
+    """
+    permission_service = get_permission_service()
+    topic_service = get_topic_service()
+
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    # Get question IDs for this topic
+    question_ids = (
+        db.query(EvalQuestion.id)
+        .filter(
+            EvalQuestion.topic_id == topic.id,
+            EvalQuestion.is_active == True,
+        )
+        .subquery()
+    )
+
+    # Count answers
+    total_answers = (
+        db.query(func.count(EvalAnswer.id))
+        .filter(EvalAnswer.question_id.in_(question_ids))
+        .scalar()
+        or 0
+    )
+
+    # Count tasks by status
+    pending = (
+        db.query(func.count(EvalGradingTask.id))
+        .filter(
+            EvalGradingTask.question_id.in_(question_ids),
+            EvalGradingTask.status == GradingTaskStatus.PENDING,
+        )
+        .scalar()
+        or 0
+    )
+
+    completed = (
+        db.query(func.count(EvalGradingTask.id))
+        .filter(
+            EvalGradingTask.question_id.in_(question_ids),
+            EvalGradingTask.status == GradingTaskStatus.COMPLETED,
+        )
+        .scalar()
+        or 0
+    )
+
+    published = (
+        db.query(func.count(EvalGradingTask.id))
+        .filter(
+            EvalGradingTask.question_id.in_(question_ids),
+            EvalGradingTask.status == GradingTaskStatus.PUBLISHED,
+        )
+        .scalar()
+        or 0
+    )
+
+    return GraderTopicInDB(
+        id=topic.id,
+        name=topic.name,
+        creator_id=topic.creator_id,
+        visibility=topic.visibility,
+        status=topic.status,
+        current_version=topic.current_version,
+        created_at=topic.created_at.isoformat(),
+        updated_at=topic.updated_at.isoformat(),
+        total_answers=total_answers,
+        pending_tasks=pending,
+        completed_tasks=completed,
+        published_tasks=published,
+    )
+
+
 # ============================================================================
 # Dashboard Endpoints
 # ============================================================================
