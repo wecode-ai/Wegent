@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { respondentListAnswerHistory, downloadFile } from '@wecode/api/evaluation'
+import { respondentListAnswerHistory, getDownloadUrl } from '@wecode/api/evaluation'
 import type { Answer, ContentAttachment } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -60,10 +60,10 @@ function RespondentHistoryContent() {
     loadAnswers()
   }, [loadAnswers])
 
-  const handleDownloadFile = async (s3Path: string, filename: string) => {
+  const handleDownloadFile = async (s3Path: string, _filename: string) => {
     setDownloading(s3Path)
     try {
-      const response = await downloadFile(s3Path)
+      const response = await getDownloadUrl(s3Path)
       window.open(response.download_url, '_blank')
     } catch (_error) {
       toast({

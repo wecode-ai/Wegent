@@ -56,6 +56,9 @@ export {
   // Respondents cannot view any grading status or results
 } from './evaluation-respondent'
 
+// Re-export shared file functions
+export { getDownloadUrl, downloadEvaluationFile } from './evaluation-shared'
+
 // Re-export grader functions with convenient aliases
 export {
   graderListTopics as listGraderTopics,

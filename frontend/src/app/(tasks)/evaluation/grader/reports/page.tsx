@@ -52,7 +52,7 @@ import {
   graderGetReportDownloadUrl,
   type GraderTopicItem,
 } from '@wecode/api/evaluation-grader'
-import { GradingTaskStatus, type GradingTask, getStatusLabel } from '@wecode/types/evaluation'
+import { GradingTaskStatus, type GradingTask } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function GraderReportsContent() {
