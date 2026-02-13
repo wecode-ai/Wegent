@@ -34,6 +34,7 @@ from wecode.schemas.evaluation import (
     GradingTaskListResponse,
     GradingTaskPublishRequest,
     GradingTaskUpdateReportRequest,
+    QuestionInDB,
     TopicStatistics,
 )
 from wecode.service.evaluation import (
@@ -180,7 +181,11 @@ def _get_topic_ids_with_grader_access(
     return list(topic_ids)
 
 
-def _convert_task_to_schema(task: EvalGradingTask) -> GradingTaskInDB:
+def _convert_task_to_schema(
+    task: EvalGradingTask,
+    question_title: Optional[str] = None,
+    respondent_name: Optional[str] = None,
+) -> GradingTaskInDB:
     """Convert a grading task model to schema."""
     return GradingTaskInDB(
         id=task.id,
@@ -198,6 +203,8 @@ def _convert_task_to_schema(task: EvalGradingTask) -> GradingTaskInDB:
         started_at=task.started_at,
         completed_at=task.completed_at,
         published_at=task.published_at,
+        question_title=question_title,
+        respondent_name=respondent_name,
     )
 
 
@@ -620,9 +627,32 @@ def list_grader_tasks(
         .all()
     )
 
+    # Get question titles and respondent names
+    question_ids = list(set(t.question_id for t in tasks))
+    respondent_ids = list(set(t.respondent_id for t in tasks))
+
+    questions_map = {}
+    if question_ids:
+        questions = (
+            db.query(EvalQuestion).filter(EvalQuestion.id.in_(question_ids)).all()
+        )
+        questions_map = {q.id: q.title for q in questions}
+
+    users_map = {}
+    if respondent_ids:
+        users = db.query(User).filter(User.id.in_(respondent_ids)).all()
+        users_map = {u.id: u.user_name for u in users}
+
     return GradingTaskListResponse(
         total=total,
-        items=[_convert_task_to_schema(t) for t in tasks],
+        items=[
+            _convert_task_to_schema(
+                t,
+                question_title=questions_map.get(t.question_id),
+                respondent_name=users_map.get(t.respondent_id),
+            )
+            for t in tasks
+        ],
     )
 
 
@@ -665,7 +695,13 @@ def get_grader_task(
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
 
-    return _convert_task_to_schema(task)
+    # Get respondent name
+    respondent = db.query(User).filter(User.id == task.respondent_id).first()
+    respondent_name = respondent.user_name if respondent else None
+
+    return _convert_task_to_schema(
+        task, question_title=question.title, respondent_name=respondent_name
+    )
 
 
 @router.post("/tasks/{task_id}/execute", response_model=GradingTaskInDB)
@@ -1494,6 +1530,55 @@ def get_grader_answer(
         question_title=question.title,
         topic_id=topic.id,
         topic_name=topic.name,
+    )
+
+
+@router.get("/questions/{question_id}", response_model=QuestionInDB)
+def get_grader_question(
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get question detail for grading.
+
+    Requires grader permission for the topic.
+    Returns question content and criteria for grading purposes.
+    """
+    question_service = get_question_service()
+    topic_service = get_topic_service()
+    permission_service = get_permission_service()
+
+    question = question_service.get(db, question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = topic_service.get(db, question.topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    # For graders, include criteria data
+    return QuestionInDB(
+        id=question.id,
+        topic_id=question.topic_id,
+        title=question.title,
+        content_type=question.content_type,
+        content_data=question.content_data or {},
+        order_index=question.order_index,
+        status=question.status,
+        current_version=question.current_version,
+        created_at=question.created_at,
+        updated_at=question.updated_at,
+        criteria_type=question.criteria_type,
+        criteria_data=question.criteria_data or {},
     )
 
 
