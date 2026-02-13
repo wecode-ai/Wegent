@@ -28,39 +28,62 @@ logger = logging.getLogger(__name__)
 
 
 # Grading prompt template
-GRADING_PROMPT_TEMPLATE = """You are a professional grading assistant. Please evaluate the following submission:
+GRADING_PROMPT_TEMPLATE = """You are a professional grading assistant. Please evaluate the following submission.
+
+## Important Instructions
+
+1. **For URL content**: Please visit the URLs provided and read the content before grading.
+2. **For attachments**: Click the provided download links to download and review any attached files.
+3. **Be thorough**: Read all provided materials carefully before making your evaluation.
+4. **Be fair**: Evaluate based solely on the grading criteria provided.
+
+---
 
 ## Question
 
 {question_content}
 
+{question_url}
+
 {question_attachments}
+
+---
 
 ## Grading Criteria
 
 {criteria_content}
 
+{criteria_url}
+
 {criteria_attachments}
+
+---
 
 ## Student Submission
 
 {answer_content}
 
+{answer_url}
+
 {answer_attachments}
+
+---
 
 ## Output Requirements
 
-Please generate a Markdown-formatted grading report including:
+Please generate a comprehensive Markdown-formatted grading report including:
 
-1. **Overall Score** - Total score and grade summary
-2. **Detailed Analysis** - Evaluation based on each criterion
-3. **Strengths** - What the student did well
-4. **Areas for Improvement** - What needs work
+1. **Overall Score** - Total score and grade summary (e.g., 85/100 - B+)
+2. **Detailed Analysis** - Evaluation based on each criterion from the grading criteria
+3. **Strengths** - What the student did well (with specific examples)
+4. **Areas for Improvement** - What needs work (with specific examples)
 5. **Suggestions** - Actionable recommendations for improvement
 
-Use the following format for scoring:
+**Formatting Guidelines:**
 - Clearly state points earned vs possible points
 - Provide specific examples from the submission to support your evaluation
+- Use bullet points for clarity
+- Be constructive in your feedback
 """
 
 
@@ -271,21 +294,24 @@ class GradingService:
             raise ValueError(f"Answer {task.answer_id} not found")
 
         # Format question content
-        question_content = question_version.content_data.get("text", "")
+        question_content = question_version.content_data.get("text", "") or ""
+        question_url = self._format_url(question_version.content_data.get("url"))
         question_attachments = self._format_attachments(
             question_version.content_data.get("attachments", []),
             storage_service,
         )
 
         # Format criteria content
-        criteria_content = question_version.criteria_data.get("text", "")
+        criteria_content = question_version.criteria_data.get("text", "") or ""
+        criteria_url = self._format_url(question_version.criteria_data.get("url"))
         criteria_attachments = self._format_attachments(
             question_version.criteria_data.get("attachments", []),
             storage_service,
         )
 
         # Format answer content
-        answer_content = answer.content_data.get("text", "")
+        answer_content = answer.content_data.get("text", "") or ""
+        answer_url = self._format_url(answer.content_data.get("url"))
         answer_attachments = self._format_attachments(
             answer.content_data.get("attachments", []),
             storage_service,
@@ -293,12 +319,29 @@ class GradingService:
 
         return GRADING_PROMPT_TEMPLATE.format(
             question_content=question_content,
+            question_url=question_url,
             question_attachments=question_attachments,
             criteria_content=criteria_content,
+            criteria_url=criteria_url,
             criteria_attachments=criteria_attachments,
             answer_content=answer_content,
+            answer_url=answer_url,
             answer_attachments=answer_attachments,
         )
+
+    def _format_url(self, url: Optional[str]) -> str:
+        """
+        Format URL content for prompt.
+
+        Args:
+            url: URL string or None
+
+        Returns:
+            Formatted URL string or empty string
+        """
+        if not url:
+            return ""
+        return f"**Reference URL:** [{url}]({url})"
 
     def _format_attachments(
         self,
@@ -350,29 +393,98 @@ class GradingService:
         Returns:
             Updated grading task
         """
+        from wecode.service.evaluation.storage_service import EvalStorageService
+
         # Update task status
         task.status = GradingTaskStatus.RUNNING
         task.team_id = team_id
         task.grader_id = user_id
         task.started_at = datetime.now()
+        task.attempt_count = task.attempt_count + 1
         db.flush()
 
         logger.info(f"Started grading task {task.id} with team {team_id}")
 
-        # Note: Actual Wegent Task creation would be done here
-        # For now, we just update the status. The integration with
-        # Wegent's TaskService would be:
-        #
-        # from app.services.task_dispatcher import TaskDispatcher
-        # prompt = self.build_grading_prompt(db, task, storage_service)
-        # wegent_task = TaskDispatcher.create_task(
-        #     team_id=team_id,
-        #     user_id=user_id,
-        #     prompt=prompt,
-        #     callback_url=f"/api/v1/wecode/evaluation/grading-tasks/{task.id}/callback"
-        # )
-        # task.task_id = wegent_task.id
+        # Build the grading prompt with presigned URLs
+        try:
+            storage_service = EvalStorageService()
+            prompt = self.build_grading_prompt(db, task, storage_service)
+            logger.info(
+                f"Built grading prompt for task {task.id} "
+                f"(length: {len(prompt)} chars)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to build grading prompt for task {task.id}: {e}")
+            task.status = GradingTaskStatus.FAILED
+            task.error_message = f"Failed to build grading prompt: {str(e)[:200]}"
+            task.completed_at = datetime.now()
+            db.flush()
+            return task
 
+        # Create Wegent Task via task_kinds_service
+        try:
+            from app.models.kind import Kind
+            from app.models.user import User
+            from app.schemas.task import TaskCreate
+            from app.services.adapters.task_kinds import task_kinds_service
+
+            # Get the team and user for task creation
+            team = db.query(Kind).filter(Kind.id == team_id).first()
+            user = db.query(User).filter(User.id == user_id).first()
+
+            if not team:
+                raise ValueError(f"Team {team_id} not found")
+            if not user:
+                raise ValueError(f"User {user_id} not found")
+
+            # Create task with prompt
+            task_create = TaskCreate(
+                title=f"Grading Task #{task.id}",
+                team_id=team.id,
+                team_name=team.name,
+                team_namespace=team.namespace,
+                git_url="",
+                git_repo="",
+                git_repo_id=0,
+                git_domain="",
+                branch_name="",
+                prompt=prompt,
+                type="online",
+                task_type="chat",
+                auto_delete_executor="true",
+                source="evaluation",
+            )
+
+            # Create the task
+            task_dict = task_kinds_service.create_task_or_append(
+                db=db,
+                obj_in=task_create,
+                user=user,
+                task_id=None,
+            )
+
+            wegent_task_id = task_dict.get("id")
+            task.task_id = wegent_task_id
+
+            logger.info(
+                f"Created Wegent Task {wegent_task_id} for grading task {task.id}"
+            )
+
+            # Note: The grading task completion will be handled by:
+            # 1. Manual polling: Grader checks task status periodically
+            # 2. Callback mechanism: When Wegent Task completes, it can call
+            #    the grading callback endpoint to update status
+            # For now, we rely on manual status updates via the grader UI
+
+        except Exception as e:
+            logger.error(
+                f"Failed to create Wegent Task for grading task {task.id}: {e}"
+            )
+            task.status = GradingTaskStatus.FAILED
+            task.error_message = f"Failed to create execution task: {str(e)[:200]}"
+            task.completed_at = datetime.now()
+
+        db.flush()
         return task
 
     def complete(
