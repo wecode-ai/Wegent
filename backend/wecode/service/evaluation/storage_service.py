@@ -12,7 +12,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Dict, Optional
+from typing import Optional
 from urllib.parse import quote
 
 from minio import Minio
@@ -408,7 +408,7 @@ class EvalStorageService:
                 # Use both filename for ASCII clients and filename* for modern browsers
                 encoded_filename = quote(filename, safe="")
                 response_headers["response-content-disposition"] = (
-                    f"attachment; filename=\"{encoded_filename}\"; "
+                    f'attachment; filename="{encoded_filename}"; '
                     f"filename*=UTF-8''{encoded_filename}"
                 )
 

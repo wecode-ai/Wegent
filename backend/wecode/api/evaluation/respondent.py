@@ -232,7 +232,7 @@ def get_my_progress(
             .filter(
                 EvalAnswer.question_id.in_(question_ids),
                 EvalAnswer.respondent_id == current_user.id,
-                EvalAnswer.is_latest == True,
+                EvalAnswer.is_latest,
             )
             .distinct()
             .count()
@@ -378,7 +378,7 @@ def get_question_detail(
         .filter(
             EvalAnswer.question_id == question_id,
             EvalAnswer.respondent_id == current_user.id,
-            EvalAnswer.is_latest == True,
+            EvalAnswer.is_latest,
         )
         .first()
     )
@@ -500,7 +500,7 @@ def list_my_answer_history(
     """
     List current user's answer history across all topics.
     """
-    answer_service = get_answer_service()
+    get_answer_service()
     from wecode.models.evaluation import EvalAnswer
 
     query = db.query(EvalAnswer).filter(EvalAnswer.respondent_id == current_user.id)
@@ -522,7 +522,7 @@ def list_my_answer_history(
         query = query.filter(EvalAnswer.question_id == question_id)
 
     if latest_only:
-        query = query.filter(EvalAnswer.is_latest == True)
+        query = query.filter(EvalAnswer.is_latest)
 
     total = query.count()
     answers = (

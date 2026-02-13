@@ -9,7 +9,6 @@ Handles answer submission and history management.
 """
 
 import logging
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import func
@@ -69,7 +68,7 @@ class AnswerService:
         db.query(EvalAnswer).filter(
             EvalAnswer.question_id == question_id,
             EvalAnswer.respondent_id == user_id,
-            EvalAnswer.is_latest == True,
+            EvalAnswer.is_latest,
         ).update({"is_latest": False})
 
         # Create new answer
@@ -149,7 +148,7 @@ class AnswerService:
             query = query.filter(EvalAnswer.respondent_id == respondent_id)
 
         if latest_only:
-            query = query.filter(EvalAnswer.is_latest == True)
+            query = query.filter(EvalAnswer.is_latest)
 
         total = query.count()
         answers = (
@@ -189,7 +188,7 @@ class AnswerService:
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .subquery()
         )
@@ -200,7 +199,7 @@ class AnswerService:
             query = query.filter(EvalAnswer.respondent_id == respondent_id)
 
         if latest_only:
-            query = query.filter(EvalAnswer.is_latest == True)
+            query = query.filter(EvalAnswer.is_latest)
 
         total = query.count()
         answers = (
@@ -231,7 +230,7 @@ class AnswerService:
             .filter(
                 EvalAnswer.question_id == question_id,
                 EvalAnswer.respondent_id == respondent_id,
-                EvalAnswer.is_latest == True,
+                EvalAnswer.is_latest,
             )
             .first()
         )
@@ -310,7 +309,7 @@ class AnswerService:
             db.query(func.count(EvalQuestion.id))
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
                 EvalQuestion.status == 1,  # Published
             )
             .scalar()
@@ -321,7 +320,7 @@ class AnswerService:
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .subquery()
         )

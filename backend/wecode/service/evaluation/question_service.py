@@ -9,10 +9,8 @@ Handles CRUD operations and version management for examination questions.
 """
 
 import logging
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from wecode.models.evaluation import (
@@ -98,7 +96,7 @@ class QuestionService:
             db.query(EvalQuestion)
             .filter(
                 EvalQuestion.id == question_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .first()
         )
@@ -128,7 +126,7 @@ class QuestionService:
         """
         query = db.query(EvalQuestion).filter(
             EvalQuestion.topic_id == topic_id,
-            EvalQuestion.is_active == True,
+            EvalQuestion.is_active,
         )
 
         if status is not None:
@@ -194,8 +192,16 @@ class QuestionService:
 
             existing_criteria = question.content_data.get("_criteria", {})
             new_criteria = {
-                "type": criteria_type if criteria_type is not None else existing_criteria.get("type", "text"),
-                "data": criteria_data if criteria_data is not None else existing_criteria.get("data", {}),
+                "type": (
+                    criteria_type
+                    if criteria_type is not None
+                    else existing_criteria.get("type", "text")
+                ),
+                "data": (
+                    criteria_data
+                    if criteria_data is not None
+                    else existing_criteria.get("data", {})
+                ),
             }
             question.content_data["_criteria"] = new_criteria
 

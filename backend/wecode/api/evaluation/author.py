@@ -572,7 +572,9 @@ def publish_question(
     )
 
 
-@router.get("/questions/{question_id}/versions", response_model=QuestionVersionListResponse)
+@router.get(
+    "/questions/{question_id}/versions", response_model=QuestionVersionListResponse
+)
 def list_question_versions(
     question_id: int,
     page: int = Query(1, ge=1, description="Page number"),
@@ -894,7 +896,7 @@ def get_grading_config(
             .filter(
                 Kind.id == team_id,
                 Kind.kind == "Team",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -943,7 +945,7 @@ def update_grading_config(
             .filter(
                 Kind.id == config_update.team_id,
                 Kind.kind == "Team",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -1027,4 +1029,3 @@ def rollback_topic(
     db.commit()
 
     return _topic_to_response(topic)
-

@@ -9,7 +9,6 @@ Handles CRUD operations and version management for examination topics.
 """
 
 import logging
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func, or_
@@ -92,7 +91,7 @@ class TopicService:
             db.query(EvalTopic)
             .filter(
                 EvalTopic.id == topic_id,
-                EvalTopic.is_active == True,
+                EvalTopic.is_active,
             )
             .first()
         )
@@ -130,7 +129,7 @@ class TopicService:
         Returns:
             Tuple of (topics list, total count)
         """
-        query = db.query(EvalTopic).filter(EvalTopic.is_active == True)
+        query = db.query(EvalTopic).filter(EvalTopic.is_active)
 
         if my_only:
             # Only user's own topics (can see all including drafts)
@@ -257,7 +256,7 @@ class TopicService:
             db.query(EvalQuestion)
             .filter(
                 EvalQuestion.topic_id == topic.id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
                 EvalQuestion.status == QuestionStatus.PUBLISHED,
             )
             .order_by(EvalQuestion.order_index)
@@ -361,7 +360,7 @@ class TopicService:
             db.query(func.count(EvalQuestion.id))
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .scalar()
         )
@@ -370,7 +369,7 @@ class TopicService:
             db.query(func.count(EvalQuestion.id))
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
                 EvalQuestion.status == QuestionStatus.PUBLISHED,
             )
             .scalar()
@@ -381,7 +380,7 @@ class TopicService:
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .subquery()
         )

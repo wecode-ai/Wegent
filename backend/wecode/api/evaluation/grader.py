@@ -29,7 +29,6 @@ from wecode.models.evaluation import (
 )
 from wecode.schemas.evaluation import (
     AnswerInDB,
-    AnswerListResponse,
     GradingTaskExecuteRequest,
     GradingTaskInDB,
     GradingTaskListResponse,
@@ -157,7 +156,7 @@ def _get_topic_ids_with_grader_access(
         db.query(EvalTopic.id)
         .filter(
             EvalTopic.creator_id == user_id,
-            EvalTopic.is_active == True,
+            EvalTopic.is_active,
         )
         .all()
     )
@@ -275,7 +274,7 @@ def list_grader_topics(
     # Query topics with pagination
     query = db.query(EvalTopic).filter(
         EvalTopic.id.in_(topic_ids),
-        EvalTopic.is_active == True,
+        EvalTopic.is_active,
     )
 
     total = query.count()
@@ -293,7 +292,7 @@ def list_grader_topics(
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic.id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .subquery()
         )
@@ -386,7 +385,7 @@ def get_grader_topic(
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id == topic.id,
-            EvalQuestion.is_active == True,
+            EvalQuestion.is_active,
         )
         .subquery()
     )
@@ -506,7 +505,7 @@ def get_grader_dashboard(
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id.in_(topic_ids),
-            EvalQuestion.is_active == True,
+            EvalQuestion.is_active,
         )
         .subquery()
     )
@@ -526,7 +525,7 @@ def get_grader_dashboard(
         db.query(func.count(EvalAnswer.id))
         .filter(
             EvalAnswer.question_id.in_(question_ids_query),
-            EvalAnswer.is_latest == True,
+            EvalAnswer.is_latest,
         )
         .scalar()
     )
@@ -600,7 +599,7 @@ def list_grader_tasks(
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id.in_(topic_ids),
-            EvalQuestion.is_active == True,
+            EvalQuestion.is_active,
         )
         .subquery()
     )
@@ -845,7 +844,9 @@ def update_grader_task_report(
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
 
-    task = grading_service.update_report(db, task, request.report_content, current_user.id)
+    task = grading_service.update_report(
+        db, task, request.report_content, current_user.id
+    )
     db.commit()
 
     return _convert_task_to_schema(task)
@@ -984,6 +985,7 @@ def get_report_upload_url(
 
     # Generate storage key
     from datetime import datetime
+
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     key = f"evaluation/reports/{task.respondent_id}/{question.topic_id}/{task.question_id}/{timestamp}/final_{request.filename}"
 
@@ -1067,7 +1069,9 @@ def publish_grader_task_with_attachment(
 @router.get("/tasks/{task_id}/report/download-url")
 def get_report_download_url(
     task_id: int,
-    version: Optional[str] = Query(None, description="Report version: ai, human, or final"),
+    version: Optional[str] = Query(
+        None, description="Report version: ai, human, or final"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -1372,7 +1376,7 @@ def list_grader_answers(
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id.in_(topic_ids),
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .subquery()
         )
@@ -1384,7 +1388,7 @@ def list_grader_answers(
         query = query.filter(EvalAnswer.respondent_id == respondent_id)
 
     if latest_only:
-        query = query.filter(EvalAnswer.is_latest == True)
+        query = query.filter(EvalAnswer.is_latest)
 
     total = query.count()
     answers = (
@@ -1538,7 +1542,7 @@ def list_topic_answers_for_grader(
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .subquery()
         )
@@ -1550,7 +1554,7 @@ def list_topic_answers_for_grader(
         query = query.filter(EvalAnswer.respondent_id == respondent_id)
 
     if latest_only:
-        query = query.filter(EvalAnswer.is_latest == True)
+        query = query.filter(EvalAnswer.is_latest)
 
     total = query.count()
     answers = (
@@ -1637,7 +1641,7 @@ def list_grader_reports(
         db.query(EvalQuestion.id)
         .filter(
             EvalQuestion.topic_id.in_(topic_ids),
-            EvalQuestion.is_active == True,
+            EvalQuestion.is_active,
         )
         .subquery()
     )

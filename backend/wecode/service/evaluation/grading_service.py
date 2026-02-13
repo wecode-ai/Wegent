@@ -33,9 +33,8 @@ The report_data JSON field stores versioned report content:
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from wecode.models.evaluation import (
@@ -43,9 +42,11 @@ from wecode.models.evaluation import (
     EvalGradingTask,
     EvalQuestion,
     EvalQuestionVersion,
-    EvalTopic,
     GradingTaskStatus,
 )
+
+if TYPE_CHECKING:
+    from wecode.service.evaluation.storage_service import EvalStorageService
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ class GradingService:
             db.query(EvalQuestion.id)
             .filter(
                 EvalQuestion.topic_id == topic_id,
-                EvalQuestion.is_active == True,
+                EvalQuestion.is_active,
             )
             .subquery()
         )
@@ -242,7 +243,7 @@ class GradingService:
                 db.query(EvalQuestion.id)
                 .filter(
                     EvalQuestion.topic_id == topic_id,
-                    EvalQuestion.is_active == True,
+                    EvalQuestion.is_active,
                 )
                 .subquery()
             )
@@ -307,7 +308,9 @@ class GradingService:
 
         # Get respondent user info
         respondent = db.query(User).filter(User.id == task.respondent_id).first()
-        respondent_name = respondent.username if respondent else f"User #{task.respondent_id}"
+        respondent_name = (
+            respondent.username if respondent else f"User #{task.respondent_id}"
+        )
 
         # Format question content
         question_content = question_version.content_data.get("text", "") or ""
@@ -733,7 +736,9 @@ class GradingService:
             task.report_s3_path = human_s3_path
         db.flush()
 
-        logger.info(f"Updated report for grading task {task.id} (reviewer: {reviewer_id})")
+        logger.info(
+            f"Updated report for grading task {task.id} (reviewer: {reviewer_id})"
+        )
         return task
 
     def batch_execute(

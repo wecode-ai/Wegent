@@ -344,7 +344,9 @@ def download_file(
             topic = topic_service.get(db, topic_id)
             if topic:
                 # Criteria: only creator or grader can download (not respondents)
-                allowed = permission_service.can_view_criteria(db, topic, current_user.id)
+                allowed = permission_service.can_view_criteria(
+                    db, topic, current_user.id
+                )
 
     # Check answer pattern
     if not allowed:

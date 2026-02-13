@@ -276,7 +276,9 @@ class AnswerCreate(BaseModel):
     content_type: str = Field(
         "text", description="Content type: text/url/attachment/mixed"
     )
-    content_text: Optional[str] = Field(None, description="Text content (convenience field)")
+    content_text: Optional[str] = Field(
+        None, description="Text content (convenience field)"
+    )
     content_data: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
         description="Content data including URL, attachments, or any additional metadata",
@@ -397,7 +399,8 @@ class GradingConfigUpdate(BaseModel):
         None, description="Team ID for AI grading (must be ClaudeCode type)"
     )
     auto_trigger: bool = Field(
-        False, description="Whether to automatically trigger grading on answer submission"
+        False,
+        description="Whether to automatically trigger grading on answer submission",
     )
     trigger_condition: str = Field(
         "manual",
