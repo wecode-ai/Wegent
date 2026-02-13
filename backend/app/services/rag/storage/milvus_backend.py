@@ -32,6 +32,11 @@ from app.services.rag.storage.base import BaseStorageBackend
 
 logger = logging.getLogger(__name__)
 
+# Named constants for magic numbers
+DEFAULT_EMBEDDING_DIM = 1536  # Default vector dimension (OpenAI text-embedding-ada-002)
+MAX_QUERY_LIMIT = 10000  # Maximum records to fetch for aggregation queries
+DEFAULT_TOP_K = 20  # Default top_k for retrieval
+
 
 class MilvusBackend(BaseStorageBackend):
     """
@@ -72,13 +77,37 @@ class MilvusBackend(BaseStorageBackend):
         super().__init__(config)
 
         # Get vector dimension from ext (default: 1536 for OpenAI embeddings)
-        self.dim = self.ext.get("dim", 1536)
+        self.dim = self.ext.get("dim", DEFAULT_EMBEDDING_DIM)
 
         # Build token for authentication: username:password
         if self.username and self.password:
             self.token = f"{self.username}:{self.password}"
         else:
             self.token = ""
+
+    @staticmethod
+    def _sanitize_filter_value(value: str) -> str:
+        """
+        Sanitize a string value for use in Milvus filter expressions.
+
+        Escapes backslashes and double quotes to prevent expression injection.
+
+        Args:
+            value: The string value to sanitize
+
+        Returns:
+            Sanitized string safe for use in filter expressions
+        """
+        return value.replace("\\", "\\\\").replace('"', '\\"')
+
+    def _get_client(self) -> MilvusClient:
+        """
+        Create a MilvusClient instance.
+
+        Returns:
+            MilvusClient instance for direct Milvus operations
+        """
+        return MilvusClient(uri=self.url, token=self.token)
 
     def create_vector_store(
         self, collection_name: str, retrieval_mode: str = "vector"
@@ -143,16 +172,8 @@ class MilvusBackend(BaseStorageBackend):
         # Get collection name
         collection_name = self.get_index_name(knowledge_id, **kwargs)
 
-        # Create vector store with upsert mode for data append/overwrite
-        vector_store = MilvusVectorStore(
-            uri=self.url,
-            token=self.token,
-            collection_name=collection_name,
-            dim=self.dim,
-            overwrite=False,
-            enable_sparse=True,
-            hybrid_ranker="RRFRanker",
-        )
+        # Create vector store (reuse create_vector_store method for DRY)
+        vector_store = self.create_vector_store(collection_name)
 
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
@@ -203,7 +224,7 @@ class MilvusBackend(BaseStorageBackend):
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
         # Increased default top_k from 5 to 20 for better RAG coverage
-        top_k = retrieval_setting.get("top_k", 20)
+        top_k = retrieval_setting.get("top_k", DEFAULT_TOP_K)
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
@@ -439,10 +460,11 @@ class MilvusBackend(BaseStorageBackend):
             Document list dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+        client = None
 
         try:
             # Create MilvusClient for direct query
-            client = MilvusClient(uri=self.url, token=self.token)
+            client = self._get_client()
 
             # Check if collection exists
             collections = client.list_collections()
@@ -455,14 +477,25 @@ class MilvusBackend(BaseStorageBackend):
                     "knowledge_id": knowledge_id,
                 }
 
+            # Sanitize knowledge_id to prevent expression injection
+            safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
+            filter_expr = f'knowledge_id == "{safe_knowledge_id}"'
+
             # Query all records with matching knowledge_id
             # Note: Milvus requires specifying output fields
             results = client.query(
                 collection_name=collection_name,
-                filter=f'knowledge_id == "{knowledge_id}"',
+                filter=filter_expr,
                 output_fields=["doc_ref", "source_file", "created_at", "chunk_index"],
-                limit=10000,  # Safety limit
+                limit=MAX_QUERY_LIMIT,
             )
+
+            # Warn if results may be truncated
+            if len(results) >= MAX_QUERY_LIMIT:
+                logger.warning(
+                    f"[Milvus] Knowledge base {knowledge_id} has >= {MAX_QUERY_LIMIT} "
+                    "chunks; document listing may be incomplete."
+                )
 
             # Aggregate by doc_ref
             doc_map: Dict[str, Dict] = {}
@@ -509,6 +542,13 @@ class MilvusBackend(BaseStorageBackend):
                 "page_size": page_size,
                 "knowledge_id": knowledge_id,
             }
+        finally:
+            # Ensure client is closed to avoid connection leaks
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
     def test_connection(self) -> bool:
         """
@@ -517,16 +557,24 @@ class MilvusBackend(BaseStorageBackend):
         Returns:
             True if connection successful, False otherwise
         """
+        client = None
         try:
-            client = MilvusClient(uri=self.url, token=self.token)
+            client = self._get_client()
             # Try to list collections as a connection test
             client.list_collections()
             return True
         except Exception:
             return False
+        finally:
+            # Ensure client is closed to avoid connection leaks
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
     def get_all_chunks(
-        self, knowledge_id: str, max_chunks: int = 10000, **kwargs
+        self, knowledge_id: str, max_chunks: int = MAX_QUERY_LIMIT, **kwargs
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base in Milvus.
@@ -542,20 +590,25 @@ class MilvusBackend(BaseStorageBackend):
             List of chunk dicts with content, title, chunk_id, doc_ref, metadata
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
+        client = None
 
         try:
             # Create MilvusClient for direct query
-            client = MilvusClient(uri=self.url, token=self.token)
+            client = self._get_client()
 
             # Check if collection exists
             collections = client.list_collections()
             if collection_name not in collections:
                 return []
 
+            # Sanitize knowledge_id to prevent expression injection
+            safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
+            filter_expr = f'knowledge_id == "{safe_knowledge_id}"'
+
             # Query all records with matching knowledge_id
             results = client.query(
                 collection_name=collection_name,
-                filter=f'knowledge_id == "{knowledge_id}"',
+                filter=filter_expr,
                 output_fields=[
                     "doc_ref",
                     "source_file",
@@ -592,3 +645,10 @@ class MilvusBackend(BaseStorageBackend):
                 f"[Milvus] Failed to get all chunks for KB {knowledge_id}: {e}"
             )
             return []
+        finally:
+            # Ensure client is closed to avoid connection leaks
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
