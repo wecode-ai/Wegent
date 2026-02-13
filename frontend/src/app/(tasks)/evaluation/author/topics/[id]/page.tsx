@@ -15,6 +15,8 @@ import {
   Send,
   Edit,
   History,
+  Bot,
+  Settings,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -326,23 +328,50 @@ function TopicDetailContent() {
         </TabsContent>
 
         <TabsContent value="grading" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('grading.tasks')}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="mb-4 text-text-secondary">
-                {t('grading.description')}
-              </p>
-              <Button
-                variant="primary"
-                onClick={() => router.push(`/evaluation/grader/topics/${topicId}`)}
-              >
-                <BarChart3 className="mr-2 h-4 w-4" />
-                {t('grading.view_tasks')}
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Grading Configuration Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="h-5 w-5" />
+                  {t('grading.config_title')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-4 text-sm text-text-secondary">
+                  {t('grading.select_team_description')}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => router.push(`/evaluation/author/topics/${topicId}/grading-config`)}
+                >
+                  <Settings className="mr-2 h-4 w-4" />
+                  {t('grading.config_title')}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Grading Tasks Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5" />
+                  {t('grading.tasks')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-4 text-sm text-text-secondary">
+                  {t('grading.description')}
+                </p>
+                <Button
+                  variant="primary"
+                  onClick={() => router.push(`/evaluation/grader/topics/${topicId}`)}
+                >
+                  {t('grading.view_tasks')}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="versions" className="mt-6">
