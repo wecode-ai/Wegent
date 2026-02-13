@@ -629,30 +629,70 @@ class GradingService:
         )
         db.add(wegent_task)
 
+        # Get bot_ids from team configuration
+        from app.schemas.kind import Team as TeamSchema
+        from app.services.readers.kinds import KindType, kindReader
+
+        bot_ids = []
+        try:
+            team_crd = TeamSchema.model_validate(team.json)
+            if team_crd.spec.members:
+                for member in team_crd.spec.members:
+                    bot = kindReader.get_by_name_and_namespace(
+                        db,
+                        team.user_id,
+                        KindType.BOT,
+                        member.botRef.namespace,
+                        member.botRef.name,
+                    )
+                    if bot:
+                        bot_ids.append(bot.id)
+        except Exception as e:
+            logger.warning(f"[Evaluation] Failed to get bot_ids from team: {e}")
+
+        if not bot_ids:
+            # Fallback: use team_id as bot_ids (not ideal but prevents error)
+            bot_ids = [team_id]
+
         # Create subtasks (user message and assistant placeholder)
+        # Using the correct Subtask model fields based on shared/models/db/subtask.py
         user_subtask = Subtask(
             task_id=task_id,
             user_id=user_id,
-            bot_namespace="default",
-            bot_name="default",
+            team_id=team_id,
+            title=f"{title} - User",
+            bot_ids=bot_ids,
             role=SubtaskRole.USER,
             status=SubtaskStatus.COMPLETED,
             progress=100,
             prompt=prompt,
-            content=prompt,
+            message_id=1,
+            parent_id=0,
+            executor_namespace="",
+            executor_name="",
+            error_message="",
+            completed_at=datetime.now(),
+            result=None,
         )
         db.add(user_subtask)
 
         assistant_subtask = Subtask(
             task_id=task_id,
             user_id=user_id,
-            bot_namespace="default",
-            bot_name="default",
+            team_id=team_id,
+            title=f"{title} - Assistant",
+            bot_ids=bot_ids,
             role=SubtaskRole.ASSISTANT,
             status=SubtaskStatus.PENDING,
             progress=0,
             prompt="",
-            content="",
+            message_id=2,
+            parent_id=1,
+            executor_namespace="",
+            executor_name="",
+            error_message="",
+            completed_at=datetime.now(),
+            result=None,
         )
         db.add(assistant_subtask)
 
