@@ -7,6 +7,7 @@ Storage backend abstraction for RAG functionality.
 """
 
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.storage.chunk_metadata import ChunkMetadata
 from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
 from app.services.rag.storage.factory import create_storage_backend
 from app.services.rag.storage.milvus_backend import MilvusBackend
@@ -14,6 +15,7 @@ from app.services.rag.storage.qdrant_backend import QdrantBackend
 
 __all__ = [
     "BaseStorageBackend",
+    "ChunkMetadata",
     "ElasticsearchBackend",
     "MilvusBackend",
     "QdrantBackend",

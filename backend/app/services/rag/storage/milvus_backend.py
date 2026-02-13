@@ -31,6 +31,7 @@ from pymilvus import AsyncMilvusClient, MilvusClient
 
 from app.services.rag.retrieval.filters import parse_metadata_filters
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.storage.chunk_metadata import ChunkMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -287,46 +288,31 @@ class MilvusBackend(BaseStorageBackend):
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
-        knowledge_id: str,
-        doc_ref: str,
-        source_file: str,
-        created_at: str,
+        chunk_metadata: ChunkMetadata,
         embed_model,
         **kwargs,
     ) -> Dict:
         """
-        Add metadata to nodes and index them into Milvus.
+        Index nodes into Milvus.
+
+        Note: Metadata is already applied to nodes by the indexer layer via
+        chunk_metadata.apply_to_nodes() before calling this method.
 
         This method automatically uses the embedding dimension from the embed_model
         if available (via _dimension attribute set from Model CRD's embeddingConfig).
         This ensures the Milvus collection schema matches the actual embedding vectors.
 
         Args:
-            nodes: List of nodes to index
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID (doc_xxx format)
-            source_file: Source file name
-            created_at: Creation timestamp
+            nodes: List of nodes to index (metadata already applied)
+            chunk_metadata: ChunkMetadata instance containing document metadata
             embed_model: Embedding model (may have _dimension attribute from Model CRD)
             **kwargs: Additional parameters (e.g., user_id for per_user strategy)
 
         Returns:
             Indexing result dict
         """
-        # Add metadata to nodes
-        for idx, node in enumerate(nodes):
-            node.metadata.update(
-                {
-                    "knowledge_id": knowledge_id,
-                    "doc_ref": doc_ref,
-                    "source_file": source_file,
-                    "chunk_index": idx,
-                    "created_at": created_at,
-                }
-            )
-
         # Get collection name
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        collection_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
 
         # Get embedding dimension from embed_model if available
         # CustomEmbedding stores dimension in _dimension attribute (set from Model CRD)

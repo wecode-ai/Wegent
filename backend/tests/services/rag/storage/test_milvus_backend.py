@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.services.rag.storage.chunk_metadata import ChunkMetadata
 from app.services.rag.storage.milvus_backend import MilvusBackend
 
 
@@ -584,24 +585,47 @@ class TestGetAllChunks:
 
 
 class TestIndexWithMetadata:
-    """Tests for index_with_metadata method."""
+    """Tests for index_with_metadata method.
+
+    Note: Metadata is now applied by the indexer layer via chunk_metadata.apply_to_nodes()
+    before calling index_with_metadata. The storage backend no longer applies metadata
+    to nodes - it only uses ChunkMetadata for index name generation.
+    """
 
     @patch("app.services.rag.storage.milvus_backend.VectorStoreIndex")
     @patch("app.services.rag.storage.milvus_backend.StorageContext")
     @patch("app.services.rag.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_index_with_metadata(self, mock_milvus_vs, mock_storage_ctx, mock_vs_index):
-        """Test indexing nodes with metadata."""
+        """Test indexing nodes with metadata.
+
+        Verifies that:
+        1. The correct index name is generated from ChunkMetadata
+        2. VectorStoreIndex is called with the correct parameters
+        3. The result contains expected fields
+        """
         mock_store = MagicMock()
         mock_milvus_vs.return_value = mock_store
 
         mock_ctx = MagicMock()
         mock_storage_ctx.from_defaults.return_value = mock_ctx
 
-        # Create mock nodes
+        # Create mock nodes with metadata already applied (simulating indexer layer)
         mock_node1 = MagicMock()
-        mock_node1.metadata = {}
+        mock_node1.metadata = {
+            "knowledge_id": "kb_1",
+            "doc_ref": "doc_123",
+            "source_file": "test.txt",
+            "chunk_index": 0,
+            "created_at": "2024-01-01T00:00:00",
+        }
         mock_node2 = MagicMock()
-        mock_node2.metadata = {}
+        mock_node2.metadata = {
+            "knowledge_id": "kb_1",
+            "doc_ref": "doc_123",
+            "source_file": "test.txt",
+            "chunk_index": 1,
+            "created_at": "2024-01-01T00:00:00",
+        }
 
         mock_embed_model = MagicMock()
 
@@ -611,25 +635,31 @@ class TestIndexWithMetadata:
         }
         backend = MilvusBackend(config)
 
-        result = backend.index_with_metadata(
-            nodes=[mock_node1, mock_node2],
+        chunk_metadata = ChunkMetadata(
             knowledge_id="kb_1",
             doc_ref="doc_123",
             source_file="test.txt",
             created_at="2024-01-01T00:00:00",
+        )
+
+        result = backend.index_with_metadata(
+            nodes=[mock_node1, mock_node2],
+            chunk_metadata=chunk_metadata,
             embed_model=mock_embed_model,
         )
 
+        # Verify result structure
         assert result["indexed_count"] == 2
         assert result["status"] == "success"
-        assert "index_name" in result
+        assert result["index_name"] == "test_kb_kb_1"
 
-        # Verify metadata was added to nodes
-        assert mock_node1.metadata["knowledge_id"] == "kb_1"
-        assert mock_node1.metadata["doc_ref"] == "doc_123"
-        assert mock_node1.metadata["source_file"] == "test.txt"
-        assert mock_node1.metadata["chunk_index"] == 0
-        assert mock_node2.metadata["chunk_index"] == 1
+        # Verify VectorStoreIndex was called with correct parameters
+        mock_vs_index.assert_called_once()
+        call_args = mock_vs_index.call_args
+        assert call_args[0][0] == [mock_node1, mock_node2]  # nodes
+        assert call_args[1]["storage_context"] == mock_ctx
+        assert call_args[1]["embed_model"] == mock_embed_model
+        assert call_args[1]["show_progress"] is True
 
 
 class TestIndexNameGeneration:
