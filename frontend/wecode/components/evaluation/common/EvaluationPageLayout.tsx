@@ -28,9 +28,13 @@ export function EvaluationPageLayout({ children }: EvaluationPageLayoutProps) {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
 
+  const handleToggleCollapsed = () => {
+    setIsSidebarCollapsed(!isSidebarCollapsed)
+  }
+
   if (isMobile) {
     return (
-      <div className="flex h-dvh flex-col bg-base text-text-primary">
+      <div className="flex smart-h-screen flex-col bg-base text-text-primary box-border">
         <TaskSidebar
           isMobileSidebarOpen={isMobileSidebarOpen}
           setIsMobileSidebarOpen={setIsMobileSidebarOpen}
@@ -42,29 +46,23 @@ export function EvaluationPageLayout({ children }: EvaluationPageLayoutProps) {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-base text-text-primary">
-      {isSidebarCollapsed ? (
-        <CollapsedSidebarButtons
-          onExpand={() => setIsSidebarCollapsed(false)}
-          onNewTask={() => {}}
-        />
-      ) : (
-        <ResizableSidebar
-          minWidth={220}
-          maxWidth={400}
-          defaultWidth={280}
-          storageKey="evaluation-sidebar-width"
-        >
-          <TaskSidebar
-            isMobileSidebarOpen={isMobileSidebarOpen}
-            setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-            pageType="evaluation"
-            isCollapsed={isSidebarCollapsed}
-            onToggleCollapsed={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          />
-        </ResizableSidebar>
+    <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {/* Collapsed sidebar floating buttons */}
+      {isSidebarCollapsed && (
+        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={() => {}} />
       )}
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* Responsive resizable sidebar */}
+      <ResizableSidebar isCollapsed={isSidebarCollapsed} onToggleCollapsed={handleToggleCollapsed}>
+        <TaskSidebar
+          isMobileSidebarOpen={false}
+          setIsMobileSidebarOpen={() => {}}
+          pageType="evaluation"
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapsed={handleToggleCollapsed}
+        />
+      </ResizableSidebar>
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col min-w-0">
         <TopNavigation activePage="evaluation" />
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
