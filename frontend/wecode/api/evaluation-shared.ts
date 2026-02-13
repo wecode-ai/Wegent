@@ -148,6 +148,7 @@ export async function uploadEvaluationFile(
 
 /**
  * Download a file from S3.
+ * Uses fetch + Blob to force download instead of opening in browser.
  *
  * @param s3Path - S3 storage path
  * @param filename - Optional filename for download
@@ -155,15 +156,39 @@ export async function uploadEvaluationFile(
 export async function downloadEvaluationFile(s3Path: string, filename?: string): Promise<void> {
   const { download_url } = await getDownloadUrl(s3Path)
 
-  // Create a temporary link to trigger download
-  const link = document.createElement('a')
-  link.href = download_url
-  if (filename) {
-    link.download = filename
+  try {
+    // Fetch the file content as blob to force download
+    const response = await fetch(download_url)
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status}`)
+    }
+
+    const blob = await response.blob()
+    const blobUrl = URL.createObjectURL(blob)
+
+    // Create a temporary link to trigger download
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = filename || 'download'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    // Clean up the blob URL
+    URL.revokeObjectURL(blobUrl)
+  } catch (error) {
+    // Fallback to direct link if fetch fails (e.g., CORS issues)
+    const link = document.createElement('a')
+    link.href = download_url
+    if (filename) {
+      link.download = filename
+    }
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    throw error
   }
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
 }
 
 // ============================================================================
