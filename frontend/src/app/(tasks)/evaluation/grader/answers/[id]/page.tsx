@@ -14,13 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import {
-  TaskSidebar,
-  ResizableSidebar,
-  CollapsedSidebarButtons,
-} from '@/features/tasks/components/sidebar'
-import TopNavigation from '@/features/layout/TopNavigation'
+import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
 import {
   getGraderAnswer,
   getGraderQuestion,
@@ -34,8 +28,6 @@ import {
 import type { Answer, Question, GradingTask } from '@wecode/types/evaluation'
 import { GradingTaskStatus, getStatusLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
-import '@/app/tasks/tasks.css'
-import '@/features/common/scrollbar.css'
 
 function GraderAnswerContent() {
   const router = useRouter()
@@ -412,52 +404,9 @@ function GraderAnswerContent() {
 }
 
 export default function GraderAnswerPage() {
-  const isMobile = useIsMobile()
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
-
-  if (isMobile) {
-    return (
-      <div className="flex h-dvh flex-col">
-        <TaskSidebar
-          isMobileSidebarOpen={isMobileSidebarOpen}
-          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-          pageType="evaluation"
-        />
-        <GraderAnswerContent />
-      </div>
-    )
-  }
-
   return (
-    <div className="flex h-dvh overflow-hidden">
-      {isSidebarCollapsed ? (
-        <CollapsedSidebarButtons
-          onExpand={() => setIsSidebarCollapsed(false)}
-          onNewTask={() => {}}
-        />
-      ) : (
-        <ResizableSidebar
-          minWidth={220}
-          maxWidth={400}
-          defaultWidth={280}
-          storageKey="evaluation-sidebar-width"
-        >
-          <TaskSidebar
-            isMobileSidebarOpen={isMobileSidebarOpen}
-            setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-            pageType="evaluation"
-            isCollapsed={isSidebarCollapsed}
-            onToggleCollapsed={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          />
-        </ResizableSidebar>
-      )}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <TopNavigation activePage="evaluation" />
-        <main className="flex-1 overflow-auto">
-          <GraderAnswerContent />
-        </main>
-      </div>
-    </div>
+    <EvaluationPageLayout>
+      <GraderAnswerContent />
+    </EvaluationPageLayout>
   )
 }

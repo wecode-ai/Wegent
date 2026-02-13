@@ -13,19 +13,11 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Progress } from '@/components/ui/progress'
 import { useToast } from '@/hooks/use-toast'
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import {
-  TaskSidebar,
-  ResizableSidebar,
-  CollapsedSidebarButtons,
-} from '@/features/tasks/components/sidebar'
-import TopNavigation from '@/features/layout/TopNavigation'
+import { EvaluationPageLayout } from '@/features/evaluation/components/common/EvaluationPageLayout'
 import { respondentGetTopic, respondentListQuestions, getMyProgress } from '@wecode/api/evaluation'
 import type { Topic, Question, RespondentProgress } from '@wecode/types/evaluation'
 import { TopicVisibility, getVisibilityLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
-import '@/app/tasks/tasks.css'
-import '@/features/common/scrollbar.css'
 
 function RespondentTopicDetailContent() {
   const router = useRouter()
@@ -199,52 +191,9 @@ function RespondentTopicDetailContent() {
 }
 
 export default function RespondentTopicDetailPage() {
-  const isMobile = useIsMobile()
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
-
-  if (isMobile) {
-    return (
-      <div className="flex h-dvh flex-col">
-        <TaskSidebar
-          isMobileSidebarOpen={isMobileSidebarOpen}
-          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-          pageType="evaluation"
-        />
-        <RespondentTopicDetailContent />
-      </div>
-    )
-  }
-
   return (
-    <div className="flex h-dvh overflow-hidden">
-      {isSidebarCollapsed ? (
-        <CollapsedSidebarButtons
-          onExpand={() => setIsSidebarCollapsed(false)}
-          onNewTask={() => {}}
-        />
-      ) : (
-        <ResizableSidebar
-          minWidth={220}
-          maxWidth={400}
-          defaultWidth={280}
-          storageKey="evaluation-sidebar-width"
-        >
-          <TaskSidebar
-            isMobileSidebarOpen={isMobileSidebarOpen}
-            setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-            pageType="evaluation"
-            isCollapsed={isSidebarCollapsed}
-            onToggleCollapsed={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          />
-        </ResizableSidebar>
-      )}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <TopNavigation activePage="evaluation" />
-        <main className="flex-1 overflow-auto">
-          <RespondentTopicDetailContent />
-        </main>
-      </div>
-    </div>
+    <EvaluationPageLayout>
+      <RespondentTopicDetailContent />
+    </EvaluationPageLayout>
   )
 }
