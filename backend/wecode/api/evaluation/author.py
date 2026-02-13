@@ -22,6 +22,8 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from wecode.schemas.evaluation import (
+    GradingConfigResponse,
+    GradingConfigUpdate,
     PermissionCreate,
     PermissionInDB,
     PermissionListResponse,
@@ -145,7 +147,15 @@ def _question_to_response(question, include_criteria: bool = True) -> QuestionIn
     }
 
     if include_criteria:
-        q_dict["criteria_data"] = (question.content_data or {}).get("_criteria", {})
+        raw_criteria = (question.content_data or {}).get("_criteria", {})
+        # Handle both old format (dict directly) and new format ({"type": ..., "data": ...})
+        if isinstance(raw_criteria, dict) and "type" in raw_criteria:
+            q_dict["criteria_type"] = raw_criteria.get("type", "text")
+            q_dict["criteria_data"] = raw_criteria.get("data", {})
+        else:
+            # Old format - treat as text type
+            q_dict["criteria_type"] = "text"
+            q_dict["criteria_data"] = raw_criteria
 
     return QuestionInDB(**q_dict)
 
@@ -393,6 +403,7 @@ def add_question(
         title=question_create.title,
         content_type=question_create.content_type,
         content_data=question_create.content_data,
+        criteria_type=question_create.criteria_type,
         criteria_data=question_create.criteria_data,
         order_index=question_create.order_index or 0,
     )
@@ -466,6 +477,7 @@ def update_question(
         title=question_update.title,
         content_type=question_update.content_type,
         content_data=question_update.content_data,
+        criteria_type=question_update.criteria_type,
         criteria_data=question_update.criteria_data,
         order_index=question_update.order_index,
     )
@@ -543,15 +555,61 @@ def publish_question(
 # ============================================================================
 
 
-@router.put("/topics/{topic_id}/permissions", response_model=PermissionInDB)
-def set_permission(
+@router.post(
+    "/topics/{topic_id}/permissions",
+    response_model=PermissionInDB,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_permission(
     topic_id: int,
     permission_create: PermissionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Set (grant or update) permission for a user on a topic.
+    Create a new permission for a user on a topic.
+
+    Only the topic creator can manage permissions.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    # Validate role
+    if permission_create.role not in ("respondent", "grader"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Role must be 'respondent' or 'grader'",
+        )
+
+    permission_service = get_permission_service()
+    permission = permission_service.grant_permission(
+        db=db,
+        topic_id=topic_id,
+        user_id=permission_create.user_id,
+        role=permission_create.role,
+        granted_by=current_user.id,
+    )
+    db.commit()
+
+    return PermissionInDB(
+        id=permission.id,
+        topic_id=permission.topic_id,
+        user_id=permission.user_id,
+        role=permission.role,
+        granted_by=permission.granted_by,
+        granted_at=permission.granted_at,
+    )
+
+
+@router.put("/topics/{topic_id}/permissions", response_model=PermissionInDB)
+def update_permission(
+    topic_id: int,
+    permission_create: PermissionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update permission for a user on a topic.
 
     Only the topic creator can manage permissions.
     """
@@ -624,3 +682,255 @@ def get_permissions(
     ]
 
     return PermissionListResponse(total=total, items=items)
+
+
+@router.delete(
+    "/topics/{topic_id}/permissions/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_permission(
+    topic_id: int,
+    user_id: int,
+    role: Optional[str] = Query(None, description="Role to revoke (optional)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Delete/revoke permission for a user on a topic.
+
+    Only the topic creator can manage permissions.
+    If role is specified, only revoke that specific role.
+    If role is not specified, revoke all permissions for that user.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    permission_service = get_permission_service()
+    revoked = permission_service.revoke_permission(
+        db=db,
+        topic_id=topic_id,
+        user_id=user_id,
+        role=role,
+    )
+    db.commit()
+
+    if not revoked:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission not found",
+        )
+
+
+@router.get("/topics/{topic_id}/graders", response_model=PermissionListResponse)
+def get_graders(
+    topic_id: int,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get list of graders for a topic.
+
+    Only the topic creator can view graders.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    permission_service = get_permission_service()
+    permissions, total = permission_service.list_permissions(
+        db=db,
+        topic_id=topic_id,
+        role="grader",
+        page=page,
+        limit=limit,
+    )
+
+    items = [
+        PermissionInDB(
+            id=perm.id,
+            topic_id=perm.topic_id,
+            user_id=perm.user_id,
+            role=perm.role,
+            granted_by=perm.granted_by,
+            granted_at=perm.granted_at,
+        )
+        for perm in permissions
+    ]
+
+    return PermissionListResponse(total=total, items=items)
+
+
+# ============================================================================
+# Grading Configuration Endpoints
+# ============================================================================
+
+
+@router.get("/topics/{topic_id}/grading-config", response_model=GradingConfigResponse)
+def get_grading_config(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get grading configuration for a topic.
+
+    Only the topic creator can view grading configuration.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    config = topic.grading_team_config or {}
+
+    # Try to get team name if team_id is configured
+    team_name = None
+    team_valid = True
+    team_id = config.get("team_id")
+    if team_id:
+        from app.models.kind import Kind
+
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if team:
+            team_name = team.name
+        else:
+            team_valid = False
+
+    return GradingConfigResponse(
+        team_id=config.get("team_id"),
+        auto_trigger=config.get("auto_trigger", False),
+        trigger_condition=config.get("trigger_condition", "manual"),
+        prompt_template=config.get("prompt_template", "default"),
+        custom_prompt=config.get("custom_prompt"),
+        grading_timeout=config.get("grading_timeout", 3600),
+        team_name=team_name,
+        team_valid=team_valid,
+    )
+
+
+@router.put("/topics/{topic_id}/grading-config", response_model=GradingConfigResponse)
+def update_grading_config(
+    topic_id: int,
+    config_update: GradingConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update grading configuration for a topic.
+
+    Only the topic creator can update grading configuration.
+
+    Constraints:
+    - Team must be of type ClaudeCode (for AI grading)
+    - Team must belong to the user or be a public team
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    # Validate team_id if provided
+    team_name = None
+    team_valid = True
+    if config_update.team_id:
+        from app.models.kind import Kind
+
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == config_update.team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not team:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Team not found",
+            )
+
+        # Check ownership or public access
+        if team.user_id != current_user.id and not team.spec.get("is_public", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this team",
+            )
+
+        # Verify team shell type is ClaudeCode (optional validation)
+        # This ensures the team can be used for AI grading
+        team_name = team.name
+        team_valid = True
+
+    # Update grading config
+    if not topic.grading_team_config:
+        topic.grading_team_config = {}
+
+    topic.grading_team_config.update(
+        {
+            "team_id": config_update.team_id,
+            "auto_trigger": config_update.auto_trigger,
+            "trigger_condition": config_update.trigger_condition,
+            "prompt_template": config_update.prompt_template,
+            "custom_prompt": config_update.custom_prompt,
+            "grading_timeout": config_update.grading_timeout,
+        }
+    )
+
+    db.commit()
+
+    return GradingConfigResponse(
+        team_id=config_update.team_id,
+        auto_trigger=config_update.auto_trigger,
+        trigger_condition=config_update.trigger_condition,
+        prompt_template=config_update.prompt_template,
+        custom_prompt=config_update.custom_prompt,
+        grading_timeout=config_update.grading_timeout,
+        team_name=team_name,
+        team_valid=team_valid,
+    )
+
+
+# ============================================================================
+# Topic Rollback Endpoint
+# ============================================================================
+
+
+@router.post("/topics/{topic_id}/rollback", response_model=TopicInDB)
+def rollback_topic(
+    topic_id: int,
+    version: str = Query(..., description="Version to rollback to"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Rollback a topic to a specific version.
+
+    This updates the current_version to the specified previous version.
+    Only the topic creator can rollback.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    topic_service = get_topic_service()
+
+    # Verify the version exists
+    topic_version = topic_service.get_version(db, topic_id, version)
+    if not topic_version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Version not found",
+        )
+
+    # Update current version
+    topic.current_version = version
+    db.commit()
+
+    return _topic_to_response(topic)
+

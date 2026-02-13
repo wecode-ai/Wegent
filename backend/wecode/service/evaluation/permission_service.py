@@ -284,6 +284,7 @@ class PermissionService:
         db: Session,
         topic_id: int,
         user_id: int,
+        role: Optional[str] = None,
     ) -> bool:
         """
         Revoke permission from a user for a topic.
@@ -292,18 +293,20 @@ class PermissionService:
             db: Database session
             topic_id: Topic ID
             user_id: User ID to revoke permission
+            role: Specific role to revoke (optional, revokes all if not specified)
 
         Returns:
             True if permission was revoked, False if not found
         """
-        permission = (
-            db.query(EvalPermission)
-            .filter(
-                EvalPermission.topic_id == topic_id,
-                EvalPermission.user_id == user_id,
-            )
-            .first()
+        query = db.query(EvalPermission).filter(
+            EvalPermission.topic_id == topic_id,
+            EvalPermission.user_id == user_id,
         )
+
+        if role:
+            query = query.filter(EvalPermission.role == role)
+
+        permission = query.first()
 
         if not permission:
             return False

@@ -48,7 +48,7 @@ from wecode.service.evaluation import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/respondent", tags=["respondent"])
+router = APIRouter()
 
 
 # ============================================================================

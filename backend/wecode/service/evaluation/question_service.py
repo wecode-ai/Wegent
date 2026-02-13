@@ -36,6 +36,7 @@ class QuestionService:
         title: str,
         content_type: str = "text",
         content_data: Optional[Dict] = None,
+        criteria_type: Optional[str] = None,
         criteria_data: Optional[Dict] = None,
         order_index: int = 0,
     ) -> EvalQuestion:
@@ -49,6 +50,7 @@ class QuestionService:
             title: Question title
             content_type: Content type (text/url/attachment/mixed)
             content_data: Question content
+            criteria_type: Criteria type (text/url/attachment/mixed), independent from content_type
             criteria_data: Grading criteria (stored in draft)
             order_index: Sort order
 
@@ -59,8 +61,12 @@ class QuestionService:
             content_data = {}
 
         # Store criteria in content_data under "_criteria" key for draft
-        if criteria_data:
-            content_data["_criteria"] = criteria_data
+        # Include both criteria_type and criteria_data
+        if criteria_data or criteria_type:
+            content_data["_criteria"] = {
+                "type": criteria_type or "text",
+                "data": criteria_data or {},
+            }
 
         question = EvalQuestion(
             topic_id=topic_id,
@@ -145,6 +151,7 @@ class QuestionService:
         title: Optional[str] = None,
         content_type: Optional[str] = None,
         content_data: Optional[Dict] = None,
+        criteria_type: Optional[str] = None,
         criteria_data: Optional[Dict] = None,
         order_index: Optional[int] = None,
     ) -> EvalQuestion:
@@ -160,6 +167,7 @@ class QuestionService:
             title: New title
             content_type: New content type
             content_data: New content data
+            criteria_type: New criteria type (text/url/attachment/mixed)
             criteria_data: New criteria data
             order_index: New order index
 
@@ -179,10 +187,26 @@ class QuestionService:
             if "_criteria" not in question.content_data and existing_criteria:
                 question.content_data["_criteria"] = existing_criteria
 
-        if criteria_data is not None:
+        # Update criteria (both type and data)
+        if criteria_data is not None or criteria_type is not None:
             if not question.content_data:
                 question.content_data = {}
-            question.content_data["_criteria"] = criteria_data
+
+            existing_criteria = question.content_data.get("_criteria", {})
+            # Support both old format (dict directly) and new format ({"type": ..., "data": ...})
+            if isinstance(existing_criteria, dict) and "type" in existing_criteria:
+                # New format
+                new_criteria = {
+                    "type": criteria_type if criteria_type is not None else existing_criteria.get("type", "text"),
+                    "data": criteria_data if criteria_data is not None else existing_criteria.get("data", {}),
+                }
+            else:
+                # Old format or empty - migrate to new format
+                new_criteria = {
+                    "type": criteria_type or "text",
+                    "data": criteria_data if criteria_data is not None else existing_criteria,
+                }
+            question.content_data["_criteria"] = new_criteria
 
         if order_index is not None:
             question.order_index = order_index
@@ -223,7 +247,15 @@ class QuestionService:
         """
         # Extract criteria from content_data
         content_data = dict(question.content_data)
-        criteria_data = content_data.pop("_criteria", {})
+        raw_criteria = content_data.pop("_criteria", {})
+
+        # Handle both old format (dict directly) and new format ({"type": ..., "data": ...})
+        if isinstance(raw_criteria, dict) and "type" in raw_criteria:
+            # New format - extract data
+            criteria_data = raw_criteria
+        else:
+            # Old format - wrap in new format
+            criteria_data = {"type": "text", "data": raw_criteria}
 
         # Generate new version
         version = generate_version()
