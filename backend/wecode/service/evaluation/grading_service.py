@@ -557,7 +557,6 @@ class GradingService:
             SubtaskContext,
         )
         from app.models.task import TaskResource
-        from app.services.adapters.task_kinds import task_kinds_service
         from app.services.chat.adapters.http import HTTPAdapter
         from app.services.chat.adapters.interface import ChatEventType, ChatRequest
         from app.services.chat.config.chat_config import ChatConfigBuilder
@@ -676,10 +675,68 @@ class GradingService:
                 question.title if question else f"Question #{grading_task.question_id}"
             )
 
-            # Create Task ID
-            new_task_id = task_kinds_service.create_task_id(db, user_id)
+            # Create Task first (without ID - let database auto-generate)
+            # We'll update the metadata.name after getting the generated ID
+            task_title = f"[Grading] {question_title}"
+            task_json = {
+                "kind": "Task",
+                "spec": {
+                    "title": task_title,
+                    "prompt": prompt,
+                    "teamRef": {
+                        "name": team.name,
+                        "namespace": team.namespace,
+                        "user_id": team.user_id,
+                    },
+                    "workspaceRef": {"name": "temp-workspace", "namespace": "default"},
+                    "is_group_chat": False,
+                    # Mark as grading task for filtering
+                    "grading_task_id": grading_task_id,
+                },
+                "status": {
+                    "state": "Available",
+                    "status": "RUNNING",
+                    "progress": 0,
+                    "result": None,
+                    "errorMessage": "",
+                    "createdAt": datetime.now().isoformat(),
+                    "updatedAt": datetime.now().isoformat(),
+                    "completedAt": None,
+                },
+                "metadata": {
+                    "name": "temp-task",
+                    "namespace": "default",
+                    "labels": {
+                        "type": "online",
+                        "taskType": "grading",
+                        "autoDeleteExecutor": "false",
+                        "source": "evaluation",
+                    },
+                },
+                "apiVersion": "agent.wecode.io/v1",
+            }
+            wegent_task = TaskResource(
+                # Don't specify id - let database auto-generate to avoid conflicts
+                user_id=user_id,
+                kind="Task",
+                name="temp-task",
+                namespace="default",
+                json=task_json,
+                is_active=True,
+            )
+            db.add(wegent_task)
+            db.flush()  # Get auto-generated task ID
 
-            # Create Workspace
+            # Now we have the real task ID
+            new_task_id = wegent_task.id
+
+            # Update task metadata with real task ID
+            task_json["metadata"]["name"] = f"task-{new_task_id}"
+            task_json["spec"]["workspaceRef"]["name"] = f"workspace-{new_task_id}"
+            wegent_task.name = f"task-{new_task_id}"
+            wegent_task.json = task_json
+
+            # Create Workspace with the real task ID
             workspace_name = f"workspace-{new_task_id}"
             workspace_json = {
                 "kind": "Workspace",
@@ -697,57 +754,7 @@ class GradingService:
                 is_active=True,
             )
             db.add(workspace)
-
-            # Create Task
-            task_title = f"[Grading] {question_title}"
-            task_json = {
-                "kind": "Task",
-                "spec": {
-                    "title": task_title,
-                    "prompt": prompt,
-                    "teamRef": {
-                        "name": team.name,
-                        "namespace": team.namespace,
-                        "user_id": team.user_id,
-                    },
-                    "workspaceRef": {"name": workspace_name, "namespace": "default"},
-                    "is_group_chat": False,
-                    # Mark as grading task for filtering
-                    "grading_task_id": grading_task_id,
-                },
-                "status": {
-                    "state": "Available",
-                    "status": "RUNNING",
-                    "progress": 0,
-                    "result": None,
-                    "errorMessage": "",
-                    "createdAt": datetime.now().isoformat(),
-                    "updatedAt": datetime.now().isoformat(),
-                    "completedAt": None,
-                },
-                "metadata": {
-                    "name": f"task-{new_task_id}",
-                    "namespace": "default",
-                    "labels": {
-                        "type": "online",
-                        "taskType": "grading",
-                        "autoDeleteExecutor": "false",
-                        "source": "evaluation",
-                    },
-                },
-                "apiVersion": "agent.wecode.io/v1",
-            }
-            wegent_task = TaskResource(
-                id=new_task_id,
-                user_id=user_id,
-                kind="Task",
-                name=f"task-{new_task_id}",
-                namespace="default",
-                json=task_json,
-                is_active=True,
-            )
-            db.add(wegent_task)
-            db.flush()  # Get task ID
+            db.flush()
 
             # Update grading task with wegent_task_id
             grading_task.wegent_task_id = new_task_id
