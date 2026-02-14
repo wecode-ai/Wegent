@@ -266,9 +266,13 @@ async def _stream_response(
     # for cancellation support. The cancel_event is managed by session_manager.
     chat_task = asyncio.create_task(chat_service.chat(execution_request, emitter))
 
+    # Track if chat task has completed to avoid repeated checks
+    chat_task_completed_logged = False
+
     try:
         # Yield events from transport queue as they arrive
-        while not transport.is_done() or not chat_task.done():
+        # Loop continues while transport is not done
+        while not transport.is_done():
             # Check for cancellation via session_manager
             if session_manager.is_cancelled(subtask_id):
                 chat_task.cancel()
@@ -297,12 +301,28 @@ async def _stream_response(
                         event_type,
                     )
                     transport.mark_done()
+                    break  # Exit loop immediately after terminal event
 
-            # Check if chat task completed with error
-            if chat_task.done() and chat_task.exception():
-                raise chat_task.exception()
+            # Check if chat task completed (with or without error)
+            if chat_task.done() and not chat_task_completed_logged:
+                chat_task_completed_logged = True
+                exc = chat_task.exception()
+                if exc:
+                    raise exc
+                # Chat task completed but no terminal event received yet
+                # This can happen if chat_service.chat() completes without
+                # sending a terminal event (e.g., due to an unhandled edge case)
+                # Log warning and force mark transport as done
+                logger.warning(
+                    "[RESPONSE] Chat task completed without terminal event: "
+                    "task_id=%d, subtask_id=%d, forcing transport done",
+                    task_id,
+                    subtask_id,
+                )
+                # Force mark done to exit loop - any remaining events will be drained below
+                transport.mark_done()
 
-        # Drain remaining events
+        # Drain remaining events after loop exits
         while True:
             event = await transport.get_event()
             if event is None:
@@ -310,8 +330,9 @@ async def _stream_response(
             event_type, data = event
             yield _create_sse_event(event_type, data)
 
-        # Wait for chat task to complete
-        await chat_task
+        # Wait for chat task to complete if not already done
+        if not chat_task.done():
+            await chat_task
 
     except asyncio.CancelledError:
         chat_task.cancel()
