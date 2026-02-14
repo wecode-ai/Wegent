@@ -27,7 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
-import { useTheme } from '@/contexts/ThemeContext'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
