@@ -430,6 +430,12 @@ class Settings(BaseSettings):
     # When enabled, chunk content is also saved to knowledge_documents.chunks column
     CHUNK_STORAGE_ENABLED: bool = False
 
+    # Knowledge base Excel upload configuration
+    # Enable/disable Excel file upload support in knowledge base
+    # When enabled (default), users can upload Excel files (.xls, .xlsx, .csv)
+    # When disabled, only PDF, Word, PPT, TXT, MD files are supported
+    KNOWLEDGE_EXCEL_UPLOAD_ENABLED: bool = True
+
     # Long-term memory configuration (mem0)
     # Enable/disable long-term memory feature
     MEMORY_ENABLED: bool = False
