@@ -111,6 +111,10 @@ dependencies = [
     "llama-index-core>=0.12.0",
     "llama-index-vector-stores-elasticsearch>=0.4.0",
     "llama-index-vector-stores-qdrant>=0.9.0", # Includes qdrant-client as dependency
+    "llama-index-vector-stores-milvus>=0.4.0",
+    # Pin pymilvus<2.6.4 due to AsyncMilvusClient event loop bug
+    # See: https://github.com/run-llama/llama_index/issues/20313
+    "pymilvus>=2.4.0,<2.6.4",
     "llama-index-embeddings-openai>=0.3.0",
     "llama-index-readers-file>=0.4.0",
     "docx2txt>=0.8", # Required by llama-index-readers-file for Word document parsing

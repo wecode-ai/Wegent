@@ -6,14 +6,19 @@
 Base storage backend interface for RAG functionality.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 from llama_index.core.schema import BaseNode
+
+if TYPE_CHECKING:
+    from app.services.rag.storage.chunk_metadata import ChunkMetadata
 
 
 class BaseStorageBackend(ABC):
@@ -230,22 +235,25 @@ class BaseStorageBackend(ABC):
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
-        knowledge_id: str,
-        doc_ref: str,
-        source_file: str,
-        created_at: str,
+        chunk_metadata: ChunkMetadata,
         embed_model,
         **kwargs,
     ) -> Dict:
         """
-        Add metadata to nodes and index them into storage.
+        Index nodes into storage.
+
+        Note: Metadata is already applied to nodes by the indexer layer via
+        chunk_metadata.apply_to_nodes() before calling this method. Storage
+        backends should NOT apply metadata to nodes again.
 
         Args:
-            nodes: List of nodes to index
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID (doc_xxx format)
-            source_file: Source file name
-            created_at: Creation timestamp
+            nodes: List of nodes to index (metadata already applied)
+            chunk_metadata: ChunkMetadata instance containing:
+                - knowledge_id: Knowledge base ID
+                - doc_ref: Document reference ID (doc_xxx format)
+                - source_file: Source file name
+                - created_at: Creation timestamp (ISO 8601)
+                - chunk_index: Set per node during apply_to_nodes()
             embed_model: Embedding model
             **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 

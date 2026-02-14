@@ -19,6 +19,7 @@ from app.schemas.rag import SplitterConfig
 from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.storage.chunk_metadata import ChunkMetadata
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ class DocumentIndexer:
         self.splitter = create_splitter(splitter_config, embed_model, file_extension)
 
     def index_document(
-        self, knowledge_id: str, file_path: str, doc_ref: str, **kwargs
+        self, file_path: str, chunk_metadata: ChunkMetadata, **kwargs
     ) -> Dict:
         """
         Index a document from file path (synchronous).
@@ -101,9 +102,8 @@ class DocumentIndexer:
         in DocumentService to avoid event loop conflicts with LlamaIndex.
 
         Args:
-            knowledge_id: Knowledge base ID
             file_path: Path to document file
-            doc_ref: Document reference ID
+            chunk_metadata: Metadata for the document chunks (created at service layer)
             **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 
         Returns:
@@ -114,23 +114,18 @@ class DocumentIndexer:
         """
         # Load document from file
         documents = SimpleDirectoryReader(input_files=[file_path]).load_data()
-        source_file = Path(file_path).name
 
         return self._index_documents(
             documents=documents,
-            knowledge_id=knowledge_id,
-            doc_ref=doc_ref,
-            source_file=source_file,
+            chunk_metadata=chunk_metadata,
             **kwargs,
         )
 
     def index_from_binary(
         self,
-        knowledge_id: str,
         binary_data: bytes,
-        source_file: str,
         file_extension: str,
-        doc_ref: str,
+        chunk_metadata: ChunkMetadata,
         **kwargs,
     ) -> Dict:
         """
@@ -143,11 +138,9 @@ class DocumentIndexer:
         Supports MySQL and external storage (S3/MinIO) binary data.
 
         Args:
-            knowledge_id: Knowledge base ID
             binary_data: Original file binary data from attachment storage
-            source_file: Original filename (used for metadata)
             file_extension: File extension (e.g., '.pdf', '.docx')
-            doc_ref: Document reference ID
+            chunk_metadata: Metadata for the document chunks (created at service layer)
             **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 
         Returns:
@@ -166,7 +159,7 @@ class DocumentIndexer:
 
         try:
             logger.info(
-                f"Indexing document from binary: source_file={source_file}, "
+                f"Indexing document from binary: source_file={chunk_metadata.source_file}, "
                 f"extension={file_extension}, size={len(binary_data)} bytes"
             )
 
@@ -174,15 +167,13 @@ class DocumentIndexer:
             documents = SimpleDirectoryReader(input_files=[tmp_file_path]).load_data()
 
             # Update metadata with original filename (without extension)
-            filename_without_ext = Path(source_file).stem
+            filename_without_ext = Path(chunk_metadata.source_file).stem
             for doc in documents:
                 doc.metadata["filename"] = filename_without_ext
 
             return self._index_documents(
                 documents=documents,
-                knowledge_id=knowledge_id,
-                doc_ref=doc_ref,
-                source_file=source_file,
+                chunk_metadata=chunk_metadata,
                 **kwargs,
             )
         finally:
@@ -195,9 +186,7 @@ class DocumentIndexer:
     def _index_documents(
         self,
         documents: List[Document],
-        knowledge_id: str,
-        doc_ref: str,
-        source_file: str,
+        chunk_metadata: ChunkMetadata,
         **kwargs,
     ) -> Dict:
         """
@@ -205,9 +194,7 @@ class DocumentIndexer:
 
         Args:
             documents: List of LlamaIndex Document objects
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID
-            source_file: Source filename
+            chunk_metadata: Metadata for the document chunks (passed from service layer)
             **kwargs: Additional parameters
 
         Returns:
@@ -216,9 +203,9 @@ class DocumentIndexer:
         add_span_event(
             "rag.indexer.documents.received",
             {
-                "knowledge_id": knowledge_id,
-                "doc_ref": doc_ref,
-                "source_file": source_file,
+                "knowledge_id": chunk_metadata.knowledge_id,
+                "doc_ref": chunk_metadata.doc_ref,
+                "source_file": chunk_metadata.source_file,
                 "document_count": str(len(documents)),
             },
         )
@@ -230,11 +217,15 @@ class DocumentIndexer:
 
         # Split documents into nodes
         nodes = self.splitter.split_documents(documents)
+
+        # Apply chunk metadata to all nodes immediately after splitting
+        chunk_metadata.apply_to_nodes(nodes)
+
         add_span_event(
             "rag.indexer.documents.split",
             {
-                "knowledge_id": knowledge_id,
-                "doc_ref": doc_ref,
+                "knowledge_id": chunk_metadata.knowledge_id,
+                "doc_ref": chunk_metadata.doc_ref,
                 "node_count": str(len(nodes)),
                 "splitter_type": type(self.splitter).__name__,
             },
@@ -243,33 +234,27 @@ class DocumentIndexer:
         # Build chunk metadata for storage in database
         chunks_data = self._build_chunks_metadata(nodes)
 
-        # Prepare metadata
-        created_at = datetime.now(timezone.utc).isoformat()
-
-        # Delegate to storage backend for metadata addition and indexing
+        # Delegate to storage backend for indexing (metadata already applied to nodes)
         add_span_event(
             "rag.indexer.vector_store.indexing_started",
             {
-                "knowledge_id": knowledge_id,
-                "doc_ref": doc_ref,
+                "knowledge_id": chunk_metadata.knowledge_id,
+                "doc_ref": chunk_metadata.doc_ref,
                 "node_count": str(len(nodes)),
                 "storage_backend": type(self.storage_backend).__name__,
             },
         )
         result = self.storage_backend.index_with_metadata(
             nodes=nodes,
-            knowledge_id=knowledge_id,
-            doc_ref=doc_ref,
-            source_file=source_file,
-            created_at=created_at,
+            chunk_metadata=chunk_metadata,
             embed_model=self.embed_model,
             **kwargs,
         )
         add_span_event(
             "rag.indexer.vector_store.indexing_completed",
             {
-                "knowledge_id": knowledge_id,
-                "doc_ref": doc_ref,
+                "knowledge_id": chunk_metadata.knowledge_id,
+                "doc_ref": chunk_metadata.doc_ref,
                 "indexed_count": str(result.get("indexed_count", 0)),
                 "index_name": result.get("index_name", "unknown"),
                 "status": result.get("status", "unknown"),
@@ -279,11 +264,11 @@ class DocumentIndexer:
         # Add document info to result
         result.update(
             {
-                "doc_ref": doc_ref,
-                "knowledge_id": knowledge_id,
-                "source_file": source_file,
+                "doc_ref": chunk_metadata.doc_ref,
+                "knowledge_id": chunk_metadata.knowledge_id,
+                "source_file": chunk_metadata.source_file,
                 "chunk_count": len(nodes),
-                "created_at": created_at,
+                "created_at": chunk_metadata.created_at,
                 "chunks_data": chunks_data,  # Include chunk metadata for DB storage
             }
         )
