@@ -205,6 +205,28 @@ class GradingService:
             .all()
         )
 
+    def get_by_answer(
+        self,
+        db: Session,
+        answer_id: int,
+    ) -> Optional[EvalGradingTask]:
+        """
+        Get the latest grading task for an answer.
+
+        Args:
+            db: Database session
+            answer_id: Answer ID
+
+        Returns:
+            The latest grading task if found, None otherwise
+        """
+        return (
+            db.query(EvalGradingTask)
+            .filter(EvalGradingTask.answer_id == answer_id)
+            .order_by(EvalGradingTask.created_at.desc())
+            .first()
+        )
+
     def _build_grading_prompt_and_attachments(
         self,
         db: Session,
