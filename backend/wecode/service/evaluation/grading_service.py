@@ -46,6 +46,7 @@ from wecode.models.evaluation import (
 )
 
 if TYPE_CHECKING:
+    from app.models.kind import Kind
     from wecode.service.evaluation.storage_service import EvalStorageService
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,9 @@ class GradingService:
         db.add(task)
         db.flush()
 
-        logger.info(f"[Evaluation] Created grading task {task.id} for answer {answer.id}")
+        logger.info(
+            f"[Evaluation] Created grading task {task.id} for answer {answer.id}"
+        )
         return task
 
     def get(self, db: Session, task_id: int) -> Optional[EvalGradingTask]:
@@ -439,7 +442,9 @@ class GradingService:
                 f"(length: {len(prompt)} chars)"
             )
         except Exception as e:
-            logger.error(f"[Evaluation] Failed to build grading prompt for task {task.id}: {e}")
+            logger.error(
+                f"[Evaluation] Failed to build grading prompt for task {task.id}: {e}"
+            )
             task.status = GradingTaskStatus.FAILED
             task.error_message = f"Failed to build grading prompt: {str(e)[:200]}"
             task.completed_at = datetime.now()
@@ -501,11 +506,22 @@ class GradingService:
         from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
         from app.models.task import TaskResource
         from app.models.user import User
+        from app.schemas.kind import Team as TeamSchema
+        from app.services.readers.kinds import KindType, kindReader
 
         # Get Team by ID directly (no permission check - intentional)
         team = db.query(Kind).filter(Kind.id == team_id, Kind.is_active == True).first()
         if not team:
             raise ValueError(f"Team {team_id} not found")
+
+        # Validate Team has valid bot members BEFORE creating any resources
+        # This prevents the "Unable to get or create agent" error in executor
+        bot_ids = self._get_bot_ids_for_team(db, team)
+        if not bot_ids:
+            raise ValueError(
+                f"Team '{team.name}' (id={team_id}) has no valid bot members. "
+                "Please ensure the team has at least one bot with a valid shell configuration."
+            )
 
         # Get user
         user = db.query(User).filter(User.id == user_id).first()
@@ -514,13 +530,11 @@ class GradingService:
 
         # Allocate task ID using the same logic as task_kinds_service
         existing_placeholder = db.execute(
-            text(
-                """
+            text("""
             SELECT id FROM tasks
             WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
             LIMIT 1
-        """
-            ),
+        """),
             {"user_id": user_id},
         ).fetchone()
 
@@ -537,12 +551,10 @@ class GradingService:
                 "status": {"state": "Reserved"},
             }
             result = db.execute(
-                text(
-                    """
+                text("""
                 INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
                 VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, NOW(), NOW())
-            """
-                ),
+            """),
                 {"user_id": user_id, "json": json_lib.dumps(placeholder_json)},
             )
             task_id = result.lastrowid
@@ -632,30 +644,8 @@ class GradingService:
         )
         db.add(wegent_task)
 
-        # Get bot_ids from team configuration
-        from app.schemas.kind import Team as TeamSchema
-        from app.services.readers.kinds import KindType, kindReader
-
-        bot_ids = []
-        try:
-            team_crd = TeamSchema.model_validate(team.json)
-            if team_crd.spec.members:
-                for member in team_crd.spec.members:
-                    bot = kindReader.get_by_name_and_namespace(
-                        db,
-                        team.user_id,
-                        KindType.BOT,
-                        member.botRef.namespace,
-                        member.botRef.name,
-                    )
-                    if bot:
-                        bot_ids.append(bot.id)
-        except Exception as e:
-            logger.warning(f"[Evaluation] Failed to get bot_ids from team: {e}")
-
-        if not bot_ids:
-            # Fallback: use team_id as bot_ids (not ideal but prevents error)
-            bot_ids = [team_id]
+        # bot_ids was already validated at the beginning of this method
+        # No need to re-fetch here
 
         # Create subtasks (user message and assistant placeholder)
         # Using the correct Subtask model fields based on shared/models/db/subtask.py
@@ -948,9 +938,13 @@ class GradingService:
                 content=report_content,
                 is_draft=False,  # Human-reviewed is not draft
             )
-            logger.info(f"[Evaluation] Saved human-reviewed report to S3: {human_s3_path}")
+            logger.info(
+                f"[Evaluation] Saved human-reviewed report to S3: {human_s3_path}"
+            )
         except Exception as e:
-            logger.warning(f"[Evaluation] Failed to save human-reviewed report to S3: {e}")
+            logger.warning(
+                f"[Evaluation] Failed to save human-reviewed report to S3: {e}"
+            )
 
         # Update report_data while preserving AI report
         report_data = task.report_data or {}
@@ -1021,3 +1015,48 @@ class GradingService:
                 tasks.append(updated)
 
         return tasks
+
+    def _get_bot_ids_for_team(self, db: Session, team: "Kind") -> List[int]:
+        """
+        Get bot IDs for a team, ensuring all bots are valid Bot kind resources.
+
+        This method validates that the team has valid bot members before
+        creating any grading tasks. It prevents the "Unable to get or create agent"
+        error in executor by catching invalid configurations early.
+
+        Args:
+            db: Database session
+            team: Team Kind resource
+
+        Returns:
+            List of valid Bot kind IDs
+
+        Raises:
+            No exceptions - returns empty list if no valid bots found
+        """
+        from app.schemas.kind import Team as TeamSchema
+        from app.services.readers.kinds import KindType, kindReader
+
+        bot_ids = []
+        try:
+            team_crd = TeamSchema.model_validate(team.json)
+            if team_crd.spec.members:
+                for member in team_crd.spec.members:
+                    bot = kindReader.get_by_name_and_namespace(
+                        db,
+                        team.user_id,
+                        KindType.BOT,
+                        member.botRef.namespace,
+                        member.botRef.name,
+                    )
+                    if bot:
+                        bot_ids.append(bot.id)
+                    else:
+                        logger.warning(
+                            f"[Evaluation] Bot not found: namespace={member.botRef.namespace}, "
+                            f"name={member.botRef.name}, team_user_id={team.user_id}"
+                        )
+        except Exception as e:
+            logger.warning(f"[Evaluation] Failed to get bot_ids from team: {e}")
+
+        return bot_ids
