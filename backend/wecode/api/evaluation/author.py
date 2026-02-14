@@ -975,17 +975,16 @@ def update_grading_config(
         team_valid = True
 
     # Update grading config
-    if not topic.grading_team_config:
-        topic.grading_team_config = {}
-
-    topic.grading_team_config.update(
-        {
-            "team_id": config_update.team_id,
-            "auto_trigger": config_update.auto_trigger,
-            "trigger_condition": config_update.trigger_condition,
-            "grading_timeout": config_update.grading_timeout,
-        }
-    )
+    # Note: Must reassign the entire dict for SQLAlchemy to detect changes on JSON fields
+    existing_config = topic.grading_team_config or {}
+    updated_config = {
+        **existing_config,
+        "team_id": config_update.team_id,
+        "auto_trigger": config_update.auto_trigger,
+        "trigger_condition": config_update.trigger_condition,
+        "grading_timeout": config_update.grading_timeout,
+    }
+    topic.grading_team_config = updated_config
 
     db.commit()
 
