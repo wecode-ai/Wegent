@@ -531,7 +531,7 @@ class GradingService:
         # Extract task ID for logging (use grading task ID as reference)
         grading_task_id = task.id
         team_user_id = team.user_id
-        user_name_for_task = user.name
+        user_name_for_task = user.user_name
 
         # Start background thread to run async chat_shell execution
         # We use threading because this is called from a sync context (FastAPI sync endpoint)
