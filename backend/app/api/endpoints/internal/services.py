@@ -21,7 +21,10 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.dependencies import get_db
 from app.models.task import TaskResource
-from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+from app.services.chat.webpage_ws_chat_emitter import (
+    get_extended_emitter,
+    get_main_event_loop,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,18 +130,17 @@ def update_task_services(
     logger.info(f"Updated task {request.task_id} services: {list(update_data.keys())}")
 
     # Emit WebSocket event to notify frontend about app update
-    ws_emitter = get_ws_emitter()
-    if ws_emitter:
-        loop = get_main_event_loop()
-        if loop and loop.is_running():
-            asyncio.run_coroutine_threadsafe(
-                ws_emitter.emit_task_app_update(request.task_id, app_data),
-                loop,
-            )
-        else:
-            logger.warning(
-                f"Cannot emit task:app_update for task {request.task_id}: event loop not running"
-            )
+    extended_emitter = get_extended_emitter()
+    loop = get_main_event_loop()
+    if loop and loop.is_running():
+        asyncio.run_coroutine_threadsafe(
+            extended_emitter.emit_task_app_update(request.task_id, app_data),
+            loop,
+        )
+    else:
+        logger.warning(
+            f"Cannot emit task:app_update for task {request.task_id}: event loop not running"
+        )
 
     return ServiceResponse(success=True, app=app_data)
 

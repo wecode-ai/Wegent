@@ -336,15 +336,17 @@ def extract_and_process_model_config(
     return model_config
 
 
-def get_model_config_for_bot(
+def _resolve_model_for_bot(
     db: Session,
     bot: Kind,
     user_id: int,
     override_model_name: Optional[str] = None,
     force_override: bool = False,
-) -> Dict[str, Any]:
+) -> tuple[Optional[Kind], Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
     """
-    Get model configuration for a Bot.
+    Resolve model Kind and spec for a bot.
+
+    Shared logic for build_agent_config_for_bot and get_model_config_for_bot.
 
     Resolution priority:
     1. override_model_name with force_override=True (task-level override)
@@ -360,6 +362,105 @@ def get_model_config_for_bot(
         force_override: If True, override_model_name takes highest priority
 
     Returns:
+        Tuple of (model_kind, model_spec, model_name, raw_agent_config).
+        model_kind/model_spec/model_name may be None if no model is found.
+    """
+    bot_crd = Bot.model_validate(bot.json)
+    bot_json = bot.json or {}
+    bot_spec = bot_json.get("spec", {})
+    raw_agent_config = bot_spec.get("agent_config", {})
+
+    model_name = None
+
+    # Priority 1: Force override from task
+    if force_override and override_model_name:
+        model_name = override_model_name
+        logger.info(f"Using task model (force override): {model_name}")
+    else:
+        # Priority 2: Bot's agent_config.bind_model
+        bind_model = raw_agent_config.get("bind_model")
+        if bind_model and isinstance(bind_model, str) and bind_model.strip():
+            model_name = bind_model.strip()
+            logger.info(f"Using bot bound model: {model_name}")
+
+        # Priority 3: Bot's modelRef (legacy)
+        if not model_name and bot_crd.spec.modelRef:
+            model_name = bot_crd.spec.modelRef.name
+            logger.info(f"Using bot modelRef: {model_name}")
+
+        # Priority 4: Task-level override (fallback)
+        if not model_name and override_model_name:
+            model_name = override_model_name
+            logger.info(f"Using task model (fallback): {model_name}")
+
+    if not model_name:
+        return None, None, None, raw_agent_config
+
+    # Find the model Kind object
+    model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    return model_kind, model_spec, model_name, raw_agent_config
+
+
+def build_agent_config_for_bot(
+    db: Session,
+    bot: Kind,
+    user_id: int,
+    override_model_name: Optional[str] = None,
+    force_override: bool = False,
+) -> Dict[str, Any]:
+    """
+    Build agent_config for a bot based on its model binding.
+
+    Resolves the model and returns agent_config in the format that
+    downstream executors expect: {"env": {"model": "...", "api_key": "...", ...}}.
+    """
+    # Short-circuit: if raw agent_config already has inline model config, use it
+    bot_json = bot.json or {}
+    raw_agent_config = bot_json.get("spec", {}).get("agent_config", {})
+    if not (force_override and override_model_name):
+        raw_env = raw_agent_config.get("env", {})
+        if raw_env.get("model") and raw_env.get("api_key"):
+            return raw_agent_config
+
+    model_kind, model_spec, model_name, raw_agent_config = _resolve_model_for_bot(
+        db, bot, user_id, override_model_name, force_override
+    )
+
+    if not model_spec:
+        if model_name:
+            logger.warning(
+                "[build_agent_config_for_bot] Model '%s' not found, "
+                "returning raw agent_config",
+                model_name,
+            )
+        return raw_agent_config
+
+    # Return the model's modelConfig directly - this contains the "env" dict
+    # that executors expect (e.g., {"env": {"model": "claude", "api_key": "...", ...}})
+    model_config_dict = model_spec.get("modelConfig", {})
+    if not model_config_dict:
+        return raw_agent_config
+
+    # Include protocol if present in the model spec
+    protocol = model_spec.get("protocol")
+    if protocol:
+        model_config_dict = dict(model_config_dict)
+        model_config_dict["protocol"] = protocol
+
+    return model_config_dict
+
+
+def get_model_config_for_bot(
+    db: Session,
+    bot: Kind,
+    user_id: int,
+    override_model_name: Optional[str] = None,
+    force_override: bool = False,
+) -> Dict[str, Any]:
+    """
+    Get model configuration for a Bot (flat format for Chat Shell).
+
+    Returns:
         Dict containing model configuration:
         {
             "api_key": "sk-xxx",
@@ -373,54 +474,20 @@ def get_model_config_for_bot(
     Raises:
         ValueError: If no model is configured or model not found
     """
-    bot_crd = Bot.model_validate(bot.json)
-    model_name = None
-    model_namespace = "default"
-
-    # Priority 1: Force override from task
-    if force_override and override_model_name:
-        model_name = override_model_name
-        logger.info(f"Using task model (force override): {model_name}")
-    else:
-        # Priority 2: Bot's agent_config.bind_model
-        # Note: Bot CRD doesn't have agent_config directly, check if it's in the JSON
-        bot_json = bot.json or {}
-        spec = bot_json.get("spec", {})
-        agent_config = spec.get("agent_config", {})
-        bind_model = agent_config.get("bind_model")
-        bind_model_namespace = agent_config.get("bind_model_namespace", "default")
-
-        if bind_model and isinstance(bind_model, str) and bind_model.strip():
-            model_name = bind_model.strip()
-            model_namespace = bind_model_namespace
-            logger.info(
-                f"Using bot bound model: {model_name} (namespace: {model_namespace})"
-            )
-
-        # Priority 3: Bot's modelRef (legacy)
-        if not model_name and bot_crd.spec.modelRef:
-            model_name = bot_crd.spec.modelRef.name
-            model_namespace = bot_crd.spec.modelRef.namespace or "default"
-            logger.info(
-                f"Using bot modelRef: {model_name} (namespace: {model_namespace})"
-            )
-
-        # Priority 4: Task-level override (fallback)
-        if not model_name and override_model_name:
-            model_name = override_model_name
-            logger.info(f"Using task model (fallback): {model_name}")
+    model_kind, model_spec, model_name, _ = _resolve_model_for_bot(
+        db, bot, user_id, override_model_name, force_override
+    )
 
     if not model_name:
         raise ValueError(f"Bot {bot.name} has no model configured")
 
-    # Find the model and get its namespace
-    model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
     if not model_spec:
         raise ValueError(f"Model {model_name} not found")
 
     # Use the actual namespace from the found model
-    if model_kind:
-        model_namespace = model_kind.namespace or "default"
+    model_namespace = (
+        model_kind.namespace if model_kind and model_kind.namespace else "default"
+    )
 
     # Extract configuration and add model_name/model_namespace
     config = _extract_model_config(model_spec)

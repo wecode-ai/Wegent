@@ -17,7 +17,6 @@ export const paths = {
     },
     login: {
       getHref: () => {
-        console.log(typeof window === 'undefined')
         // Always return local login page in SSR/Node environment
         return paths.auth.password_login.getHref()
       },
@@ -34,6 +33,9 @@ export const paths = {
   },
   devices: {
     getHref: () => '/devices',
+  },
+  evaluation: {
+    getHref: () => '/evaluation',
   },
   feed: {
     getHref: () => '/feed',

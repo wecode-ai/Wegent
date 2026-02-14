@@ -20,6 +20,7 @@ from executor_manager.common.config import get_config
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.models.sandbox import Execution, Sandbox
 from shared.logger import setup_logger
+from shared.utils.http_client import traced_async_client
 
 logger = setup_logger(__name__)
 
@@ -141,7 +142,7 @@ class ExecutionRunner(metaclass=SingletonMeta):
                 timeout,
             )
 
-            async with httpx.AsyncClient(timeout=request_timeout) as client:
+            async with traced_async_client(timeout=request_timeout) as client:
                 response = await client.post(execute_url, json=task_data)
 
                 logger.info(

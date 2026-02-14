@@ -37,7 +37,7 @@ from app.services.channels.telegram.keyboard import (
     TelegramKeyboardBuilder,
 )
 from app.services.channels.telegram.user_resolver import TelegramUserResolver
-from app.services.chat.trigger.emitter import ChatEventEmitter
+from app.services.execution.emitters import ResultEmitter
 
 if TYPE_CHECKING:
     from telegram import Bot, Message, Update
@@ -267,7 +267,7 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
 
     async def create_streaming_emitter(
         self, message_context: MessageContext
-    ) -> Optional[ChatEventEmitter]:
+    ) -> Optional[ResultEmitter]:
         """Create a streaming emitter for Telegram message editing.
 
         Args:

@@ -21,6 +21,10 @@ import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 sto
 from app.api.router import api_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
+from wecode.api.evaluation import router as evaluation_router
 
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
-api_router.include_router(cloud_devices_router, prefix="/cloud-devices", tags=["cloud-devices"])
+api_router.include_router(
+    cloud_devices_router, prefix="/cloud-devices", tags=["cloud-devices"]
+)
+api_router.include_router(evaluation_router, tags=["evaluation"])

@@ -13,7 +13,7 @@ Flow (both create and update):
 
 from typing import Any, Dict, List, Optional
 
-from shared.models.task import User
+from shared.models.db import User
 
 try:
     from app.schemas.user import UserCreate, UserUpdate

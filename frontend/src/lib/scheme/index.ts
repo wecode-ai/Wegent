@@ -68,6 +68,4 @@ export function initializeSchemeSystem(): void {
   initializeFormMappings()
   initializeActionMappings()
   initializeModalMappings()
-
-  console.log('[SchemeURL] Scheme URL system initialized')
 }

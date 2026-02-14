@@ -23,7 +23,6 @@ import type { ThemeMode } from '@/features/theme/ThemeProvider'
 function safeDefineEx(shortName: string, fullName: string, callback: () => void): void {
   try {
     Vim.defineEx(shortName, fullName, callback)
-    console.log(`[CodeMirrorEditor] Successfully defined Ex command: ${shortName}`)
   } catch (error) {
     // Command already exists, ignore the error
     // This can happen during HMR or when multiple editors are mounted

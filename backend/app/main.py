@@ -60,6 +60,10 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for FastAPI application.
     Handles startup and shutdown events.
     """
+    # Re-apply logging configuration after uvicorn's default config
+    # uvicorn applies its LOGGING_CONFIG which overrides our setup_logging()
+    setup_logging()
+
     logger = _logger
 
     # ==================== MCP SERVER LIFESPAN ====================
@@ -220,7 +224,7 @@ async def lifespan(app: FastAPI):
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
     from app.core.socketio import get_sio
-    from app.services.chat.ws_emitter import init_ws_emitter
+    from app.services.chat.webpage_ws_chat_emitter import init_ws_emitter
 
     sio = get_sio()
     init_ws_emitter(sio)
@@ -231,9 +235,18 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing event bus and registering handlers...")
     from app.core.events import init_event_bus
     from app.services.pet.event_handlers import register_pet_event_handlers
+    from app.services.subscription.task_completion_handler import (
+        TaskCompletedEvent,
+        handle_task_completed,
+    )
 
-    init_event_bus()
+    event_bus = init_event_bus()
     register_pet_event_handlers()
+
+    # Register subscription task completion handler
+    event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
+    logger.info("✓ Subscription task completion handler registered")
+
     logger.info("✓ Event bus initialized and handlers registered")
 
     # Initialize PendingRequestRegistry for skill frontend interactions
@@ -437,10 +450,8 @@ def create_app():
         if request.url.path == "/":
             return await call_next(request)
 
-        # Generate a unique request ID
-        request_id = str(uuid.uuid4())[
-            :8
-        ]  # Use first 8 characters of UUID as request ID
+        # Reuse X-Request-ID from upstream if present, otherwise generate new one
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
         request.state.request_id = request_id
 
         start_time = time.time()

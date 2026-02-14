@@ -1,0 +1,1121 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+WebSocket emitter for Socket.IO events.
+
+This module provides a unified interface for emitting Socket.IO events
+to clients. It wraps the Socket.IO server and provides typed methods
+for all event types.
+"""
+
+import asyncio
+import concurrent.futures
+import logging
+from datetime import datetime
+from typing import Any, Callable, Dict, Optional
+
+import socketio
+
+from app.api.ws.events import ServerEvents
+
+logger = logging.getLogger(__name__)
+
+# Public API exports
+__all__ = [
+    # Classes
+    "WebPageSocketEmitter",
+    "ExtendedEventEmitter",  # Re-exported from extended_emitter module
+    # Functions
+    "get_extended_emitter",  # Re-exported from extended_emitter module
+    "get_main_event_loop",
+    "init_ws_emitter",
+    "safe_emit_in_main_loop",
+    # Deprecated - for backward compatibility only
+    "get_webpage_ws_emitter",
+]
+
+# Re-export ExtendedEventEmitter from dedicated module
+from app.services.chat.webpage_ws_extended_emitter import (
+    ExtendedEventEmitter,
+    get_extended_emitter,
+)
+
+
+class WebPageSocketEmitter:
+    """
+    WebSocket emitter for broadcasting Socket.IO events.
+
+    Provides typed methods for emitting events to task rooms and user rooms.
+    Supports cross-worker communication via Redis adapter.
+    """
+
+    def __init__(self, sio: socketio.AsyncServer, namespace: str = "/chat"):
+        """
+        Initialize the WebSocket emitter.
+
+        Args:
+            sio: Socket.IO server instance
+            namespace: Socket.IO namespace (default: /chat)
+        """
+        self.sio = sio
+        self.namespace = namespace
+
+    # ============================================================
+    # Chat Streaming Events (to task room)
+    # ============================================================
+
+    async def emit_chat_start(
+        self,
+        task_id: int,
+        subtask_id: int,
+        bot_name: Optional[str] = None,
+        shell_type: str = "Chat",
+        message_id: Optional[int] = None,
+    ) -> None:
+        """
+        Emit chat:start event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            bot_name: Optional bot name
+            shell_type: Shell type for frontend display logic (default: "Chat")
+            message_id: Optional message ID for ordering
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_START,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "bot_name": bot_name,
+                "shell_type": shell_type,
+                "message_id": message_id,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit chat:start task={task_id} subtask={subtask_id} shell_type={shell_type}"
+        )
+
+    async def emit_chat_chunk(
+        self,
+        task_id: int,
+        subtask_id: int,
+        content: str,
+        offset: int,
+        result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
+    ) -> None:
+        """
+        Emit chat:chunk event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            content: Content chunk (for text streaming)
+            offset: Current offset in the full response
+            result: Optional full result data (for executor tasks with thinking/workbench)
+            block_id: Optional block ID for text block streaming (append content to specific block)
+            block_offset: Optional character offset within the current text block
+        """
+        payload = {
+            "subtask_id": subtask_id,
+            "content": content,
+            "offset": offset,
+            "task_id": task_id,  # Add task_id for page refresh recovery
+        }
+        # Include block_id if provided (for text block streaming)
+        if block_id is not None:
+            payload["block_id"] = block_id
+
+        # Include block_offset if provided (for incremental rendering)
+        if block_offset is not None:
+            payload["block_offset"] = block_offset
+
+        # Include full result if provided (for executor tasks)
+        if result is not None:
+            payload["result"] = result
+
+        await self.sio.emit(
+            ServerEvents.CHAT_CHUNK,
+            payload,
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+
+    async def emit_chat_done(
+        self,
+        task_id: int,
+        subtask_id: int,
+        offset: int,
+        result: Optional[Dict[str, Any]] = None,
+        message_id: Optional[int] = None,
+    ) -> None:
+        """
+        Emit chat:done event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            offset: Final offset
+            result: Optional result data
+            message_id: Message ID for ordering (primary sort key)
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_DONE,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "offset": offset,
+                "result": result or {},
+                "message_id": message_id,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit chat:done task={task_id} subtask={subtask_id} message_id={message_id}"
+        )
+
+    async def emit_chat_error(
+        self,
+        task_id: int,
+        subtask_id: int,
+        error: str,
+        error_type: Optional[str] = None,
+        message_id: Optional[int] = None,
+    ) -> None:
+        """
+        Emit chat:error event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            error: Error message
+            error_type: Optional error type
+            message_id: Message ID for ordering (primary sort key)
+        """
+        payload = {
+            "subtask_id": subtask_id,
+            "error": error,
+            "task_id": task_id,  # Add task_id for page refresh recovery
+        }
+        if error_type is not None:
+            payload["type"] = error_type
+        if message_id is not None:
+            payload["message_id"] = message_id
+
+        await self.sio.emit(
+            ServerEvents.CHAT_ERROR,
+            payload,
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.warning(
+            f"[WS] emit chat:error task={task_id} subtask={subtask_id} message_id={message_id} error={error}"
+        )
+
+    async def emit_chat_cancelled(
+        self,
+        task_id: int,
+        subtask_id: int,
+    ) -> None:
+        """
+        Emit chat:cancelled event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_CANCELLED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.info(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
+
+    # ============================================================
+    # Block Events for Mixed Content Rendering (to task room)
+    # ============================================================
+
+    async def emit_block_created(
+        self,
+        task_id: int,
+        subtask_id: int,
+        block: Dict[str, Any],
+    ) -> None:
+        """
+        Emit chat:block_created event to task room.
+
+        Used when a new tool block is created during streaming.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            block: Block data containing id, type, tool_name, tool_input, status, etc.
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_BLOCK_CREATED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "block": block,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit chat:block_created task={task_id} subtask={subtask_id} "
+            f"block_id={block.get('id')} tool_name={block.get('tool_name')}"
+        )
+
+    async def emit_block_updated(
+        self,
+        task_id: int,
+        subtask_id: int,
+        block_id: str,
+        content: Optional[str] = None,
+        tool_output: Optional[Any] = None,
+        status: Optional[str] = None,
+    ) -> None:
+        """
+        Emit chat:block_updated event to task room.
+
+        Used when a tool block is updated (e.g., tool execution completed).
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            block_id: Block ID to update
+            content: Optional text content update
+            tool_output: Optional tool output data
+            status: Optional status update (pending, streaming, done, error)
+        """
+        payload: Dict[str, Any] = {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "block_id": block_id,
+        }
+        if content is not None:
+            payload["content"] = content
+        if tool_output is not None:
+            payload["tool_output"] = tool_output
+        if status is not None:
+            payload["status"] = status
+
+        await self.sio.emit(
+            ServerEvents.CHAT_BLOCK_UPDATED,
+            payload,
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit chat:block_updated task={task_id} subtask={subtask_id} "
+            f"block_id={block_id} status={status}"
+        )
+
+    # ============================================================
+    # Non-streaming Messages (to task room, exclude sender)
+    # ============================================================
+
+    async def emit_chat_message(
+        self,
+        task_id: int,
+        subtask_id: int,
+        message_id: int,
+        role: str,
+        content: str,
+        sender: Dict[str, Any],
+        created_at: datetime,
+        skip_sid: Optional[str] = None,
+    ) -> None:
+        """
+        Emit chat:message event to task room (excluding sender).
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            message_id: Message ID for ordering (primary sort key)
+            role: Message role (user/assistant/system)
+            content: Message content
+            sender: Sender info dict
+            created_at: Message creation time
+            skip_sid: Socket ID to exclude (sender)
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_MESSAGE,
+            {
+                "subtask_id": subtask_id,
+                "task_id": task_id,
+                "message_id": message_id,
+                "role": role,
+                "content": content,
+                "sender": sender,
+                "created_at": created_at.isoformat(),
+            },
+            room=f"task:{task_id}",
+            skip_sid=skip_sid,
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit chat:message task={task_id} role={role}")
+
+    async def emit_chat_bot_complete(
+        self,
+        user_id: int,
+        task_id: int,
+        subtask_id: int,
+        content: str,
+        result: Dict[str, Any],
+    ) -> None:
+        """
+        Emit chat:bot_complete event to user room.
+
+        This notifies all devices of the user about a completed AI response,
+        even if they don't have the task page open.
+
+        Args:
+            user_id: User ID
+            task_id: Task ID
+            subtask_id: Subtask ID
+            content: Full response content
+            result: Result data
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_BOT_COMPLETE,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "content": content,
+                "result": result,
+                "created_at": datetime.now().isoformat(),
+            },
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit chat:bot_complete user={user_id} task={task_id}")
+
+    async def emit_chat_system(
+        self,
+        task_id: int,
+        msg_type: str,
+        content: str,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Emit chat:system event to task room.
+
+        Args:
+            task_id: Task ID
+            msg_type: System message type
+            content: Message content
+            data: Optional additional data
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_SYSTEM,
+            {
+                "task_id": task_id,
+                "type": msg_type,
+                "content": content,
+                "data": data,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit chat:system task={task_id} type={msg_type}")
+
+    # ============================================================
+    # Task List Events (to user room)
+    # ============================================================
+
+    async def emit_task_created(
+        self,
+        user_id: int,
+        task_id: int,
+        title: str,
+        team_id: int,
+        team_name: str,
+        is_group_chat: bool = False,
+    ) -> None:
+        """
+        Emit task:created event to user room.
+
+        Args:
+            user_id: User ID
+            task_id: Task ID
+            title: Task title
+            team_id: Team ID
+            team_name: Team name
+            is_group_chat: Whether this is a group chat task
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_CREATED,
+            {
+                "task_id": task_id,
+                "title": title,
+                "team_id": team_id,
+                "team_name": team_name,
+                "created_at": datetime.now().isoformat(),
+                "is_group_chat": is_group_chat,
+            },
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit task:created user={user_id} task={task_id}")
+
+    async def emit_task_deleted(self, user_id: int, task_id: int) -> None:
+        """
+        Emit task:deleted event to user room.
+
+        Args:
+            user_id: User ID
+            task_id: Task ID
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_DELETED,
+            {"task_id": task_id},
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit task:deleted user={user_id} task={task_id}")
+
+    async def emit_task_renamed(self, user_id: int, task_id: int, title: str) -> None:
+        """
+        Emit task:renamed event to user room.
+
+        Args:
+            user_id: User ID
+            task_id: Task ID
+            title: New title
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_RENAMED,
+            {"task_id": task_id, "title": title},
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit task:renamed user={user_id} task={task_id}")
+
+    async def emit_task_status(
+        self,
+        user_id: int,
+        task_id: int,
+        status: str,
+        progress: Optional[int] = None,
+        completed_at: Optional[str] = None,
+    ) -> None:
+        """
+        Emit task:status event to user room.
+
+        Args:
+            user_id: User ID
+            task_id: Task ID
+            status: New status
+            progress: Optional progress percentage
+            completed_at: Optional completion timestamp (for terminal states)
+        """
+        payload = {
+            "task_id": task_id,
+            "status": status,
+            "progress": progress,
+        }
+        # Include completed_at for terminal states
+        if completed_at is not None:
+            payload["completed_at"] = completed_at
+        elif status in ("COMPLETED", "FAILED", "CANCELLED"):
+            # Auto-generate completed_at for terminal states if not provided
+            payload["completed_at"] = datetime.now().isoformat()
+
+        await self.sio.emit(
+            ServerEvents.TASK_STATUS,
+            payload,
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit task:status user={user_id} task={task_id} status={status}"
+        )
+
+    async def emit_task_shared(
+        self,
+        user_id: int,
+        task_id: int,
+        title: str,
+        shared_by: Dict[str, Any],
+    ) -> None:
+        """
+        Emit task:shared event to user room.
+
+        Args:
+            user_id: Target user ID (who receives the shared task)
+            task_id: Task ID
+            title: Task title
+            shared_by: Info about who shared the task
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_SHARED,
+            {
+                "task_id": task_id,
+                "title": title,
+                "shared_by": shared_by,
+            },
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit task:shared user={user_id} task={task_id}")
+
+    async def emit_task_invited(
+        self,
+        user_id: int,
+        task_id: int,
+        title: str,
+        team_id: int,
+        team_name: str,
+        invited_by: Dict[str, Any],
+    ) -> None:
+        """
+        Emit task:invited event to user room when user is invited to a group chat.
+
+        Args:
+            user_id: Target user ID (who is invited)
+            task_id: Task ID
+            title: Task title
+            team_id: Team ID
+            team_name: Team name
+            invited_by: Info about who invited the user
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_INVITED,
+            {
+                "task_id": task_id,
+                "title": title,
+                "team_id": team_id,
+                "team_name": team_name,
+                "invited_by": invited_by,
+                "is_group_chat": True,
+                "created_at": datetime.now().isoformat(),
+            },
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit task:invited user={user_id} task={task_id}")
+
+    async def emit_unread_count(self, user_id: int, count: int) -> None:
+        """
+        Emit unread:count event to user room.
+
+        Args:
+            user_id: User ID
+            count: Unread count
+        """
+        await self.sio.emit(
+            ServerEvents.UNREAD_COUNT,
+            {"count": count},
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
+
+    async def emit_task_app_update(
+        self,
+        task_id: int,
+        app: Dict[str, Any],
+    ) -> None:
+        """
+        Emit task:app_update event to task room.
+
+        This notifies clients viewing this task about app data changes.
+        Used by expose_service tool when app preview becomes available.
+
+        Args:
+            task_id: Task ID
+            app: App data (name, address, previewUrl)
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_APP_UPDATE,
+            {
+                "task_id": task_id,
+                "app": app,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.info(f"[WS] emit task:app_update task={task_id} app={app}")
+
+    # ============================================================
+    # Generic Skill Events
+    # ============================================================
+
+    async def emit_skill_request(
+        self,
+        task_id: int,
+        request_id: str,
+        skill_name: str,
+        action: str,
+        data: Dict[str, Any],
+    ) -> None:
+        """
+        Emit a generic skill request to frontend.
+
+        Args:
+            task_id: Task ID (used to determine the room)
+            request_id: Unique identifier for this request
+            skill_name: Name of the skill
+            action: Action to perform (e.g., "render")
+            data: Skill-specific data payload
+        """
+        from app.api.ws.events import ServerEvents, SkillRequestPayload
+
+        payload = SkillRequestPayload(
+            request_id=request_id,
+            skill_name=skill_name,
+            action=action,
+            data=data,
+        )
+
+        await self.sio.emit(
+            ServerEvents.SKILL_REQUEST,
+            payload.to_dict(),
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit skill:request task={task_id} skill={skill_name} "
+            f"action={action} request={request_id}"
+        )
+
+    # ============================================================
+    # Correction Events (to task room)
+    # ============================================================
+
+    async def emit_correction_start(
+        self,
+        task_id: int,
+        subtask_id: int,
+        correction_model: str,
+    ) -> None:
+        """
+        Emit correction:start event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID (AI message being corrected)
+            correction_model: Model ID used for correction
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_START,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "correction_model": correction_model,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit correction:start task={task_id} subtask={subtask_id} model={correction_model}"
+        )
+
+    async def emit_correction_progress(
+        self,
+        task_id: int,
+        subtask_id: int,
+        stage: str,
+        tool_name: Optional[str] = None,
+    ) -> None:
+        """
+        Emit correction:progress event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            stage: Current stage (verifying_facts, evaluating, generating_improvement)
+            tool_name: Optional tool name being used
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_PROGRESS,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "stage": stage,
+                "tool_name": tool_name,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit correction:progress task={task_id} subtask={subtask_id} stage={stage}"
+        )
+
+    async def emit_correction_chunk(
+        self,
+        task_id: int,
+        subtask_id: int,
+        field: str,
+        content: str,
+        offset: int,
+    ) -> None:
+        """
+        Emit correction:chunk event to task room for streaming content.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            field: Field being streamed (summary or improved_answer)
+            content: Content chunk
+            offset: Current offset
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_CHUNK,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "field": field,
+                "content": content,
+                "offset": offset,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+
+    async def emit_correction_done(
+        self,
+        task_id: int,
+        subtask_id: int,
+        result: Dict[str, Any],
+    ) -> None:
+        """
+        Emit correction:done event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            result: Correction result data
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_DONE,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "result": result,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit correction:done task={task_id} subtask={subtask_id}")
+
+    async def emit_correction_error(
+        self,
+        task_id: int,
+        subtask_id: int,
+        error: str,
+    ) -> None:
+        """
+        Emit correction:error event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            error: Error message
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_ERROR,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "error": error,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.warning(
+            f"[WS] emit correction:error task={task_id} subtask={subtask_id} error={error}"
+        )
+
+    # ============================================================
+    # Flow Events (to user room)
+    # ============================================================
+
+    async def emit_flow_execution_update(
+        self,
+        user_id: int,
+        execution_id: int,
+        flow_id: int,
+        status: str,
+        flow_name: str | None = None,
+        flow_display_name: str | None = None,
+        team_name: str | None = None,
+        task_id: int | None = None,
+        task_type: str | None = None,
+        prompt: str | None = None,
+        result_summary: str | None = None,
+        error_message: str | None = None,
+        trigger_reason: str | None = None,
+        created_at: str | None = None,
+        updated_at: str | None = None,
+    ) -> None:
+        """
+        Emit flow:execution_update event to user room.
+
+        Args:
+            user_id: User ID (owner of the flow)
+            execution_id: Flow execution ID
+            flow_id: Flow ID
+            status: Execution status (PENDING, RUNNING, COMPLETED, FAILED, etc.)
+            flow_name: Flow name
+            flow_display_name: Flow display name
+            team_name: Team name
+            task_id: Associated task ID
+            task_type: Task type (execution/collection)
+            prompt: Prompt used
+            result_summary: Result summary
+            error_message: Error message if failed
+            trigger_reason: Trigger reason
+            created_at: Creation timestamp
+            updated_at: Last update timestamp
+        """
+        payload = {
+            "execution_id": execution_id,
+            "flow_id": flow_id,
+            "status": status,
+            "created_at": created_at or datetime.now().isoformat(),
+            "updated_at": updated_at or datetime.now().isoformat(),
+        }
+        if flow_name is not None:
+            payload["flow_name"] = flow_name
+        if flow_display_name is not None:
+            payload["flow_display_name"] = flow_display_name
+        if team_name is not None:
+            payload["team_name"] = team_name
+        if task_id is not None:
+            payload["task_id"] = task_id
+        if task_type is not None:
+            payload["task_type"] = task_type
+        if prompt is not None:
+            payload["prompt"] = prompt
+        if result_summary is not None:
+            payload["result_summary"] = result_summary
+        if error_message is not None:
+            payload["error_message"] = error_message
+        if trigger_reason is not None:
+            payload["trigger_reason"] = trigger_reason
+
+        logger.debug(
+            f"[WS] emit_flow_execution_update called: user={user_id} execution={execution_id} status={status} room=user:{user_id}"
+        )
+
+        await self.sio.emit(
+            ServerEvents.FLOW_EXECUTION_UPDATE,
+            payload,
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit flow:execution_update SENT to room user:{user_id} execution={execution_id} status={status}"
+        )
+
+    # ============================================================
+    # Custom Events (for Block Architecture and other extensions)
+    # ============================================================
+
+    async def emit_custom_event(
+        self,
+        task_id: int,
+        event_type: str,
+        data: Dict[str, Any],
+        skip_sid: Optional[str] = None,
+    ) -> None:
+        """
+        Emit a custom event to task room.
+
+        This is a generic method for emitting custom event types that don't have
+        dedicated methods. Primarily used for Block architecture events
+        (chat:block_created, chat:block_updated).
+
+        Args:
+            task_id: Task ID
+            event_type: Event type (e.g., "chat:block_created", "chat:block_updated")
+            data: Event payload data
+            skip_sid: Optional socket ID to exclude
+        """
+        await self.sio.emit(
+            event_type,
+            data,
+            room=f"task:{task_id}",
+            skip_sid=skip_sid,
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit {event_type} task={task_id}")
+
+
+# Global emitter instance (lazy initialized)
+_ws_emitter: Optional[WebPageSocketEmitter] = None
+# Global reference to the main event loop (set during initialization)
+_main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_ws_emitter() -> Optional[WebPageSocketEmitter]:
+    """
+    Get the global WebSocket emitter instance.
+
+    This is a private function for internal use only.
+    External code should use ExtendedEventEmitter via get_extended_emitter().
+
+    Returns:
+        WebSocketEmitter or None if not initialized
+    """
+    return _ws_emitter
+
+
+# Backward compatibility alias - will be removed in future versions
+def get_webpage_ws_emitter() -> Optional[WebPageSocketEmitter]:
+    """
+    Get the global WebSocket emitter instance.
+
+    DEPRECATED: This function is deprecated and will be removed.
+    Use get_extended_emitter() for extended events, or use the execution
+    dispatcher for task-related events.
+
+    Returns:
+        WebSocketEmitter or None if not initialized
+    """
+    return _get_ws_emitter()
+
+
+def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
+    """
+    Get the main event loop reference.
+
+    Returns:
+        The main event loop or None if not initialized
+    """
+    return _main_event_loop
+    return _main_event_loop
+
+
+def init_ws_emitter(sio: socketio.AsyncServer) -> WebPageSocketEmitter:
+    """
+    Initialize the global WebSocket emitter.
+
+    This should be called during application startup from within an async context.
+
+    Args:
+        sio: Socket.IO server instance
+
+    Returns:
+        WebSocketEmitter: Initialized emitter instance
+    """
+    global _ws_emitter, _main_event_loop
+    _ws_emitter = WebPageSocketEmitter(sio)
+
+    # Capture the main event loop reference - only use get_running_loop()
+    # as get_event_loop() is deprecated in Python 3.10+
+    try:
+        _main_event_loop = asyncio.get_running_loop()
+        logger.info(
+            "[WS_LOOP] WebSocket emitter initialized with main event loop reference"
+        )
+    except RuntimeError:
+        # No running loop during initialization - this is expected if called
+        # before the async context starts. The loop will be set later.
+        logger.warning(
+            "[WS_LOOP] WebSocket emitter initialized without event loop reference "
+            "(will be set when async context starts)"
+        )
+
+    # Also set the main loop in async_utils for consistency
+    if _main_event_loop is not None:
+        from app.core.async_utils import set_main_event_loop
+
+        set_main_event_loop(_main_event_loop)
+
+    return _ws_emitter
+
+
+async def safe_emit_in_main_loop(
+    emit_func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> None:
+    """Safely execute an emit function in the main event loop.
+
+    This function handles the case where the current event loop is different
+    from the main event loop (which can happen when event handlers run in
+    background threads or different async contexts). Redis connections are
+    bound to the event loop they were created in, so we must ensure emits
+    happen in the main loop.
+
+    Args:
+        emit_func: The emit function to execute (e.g., ws_emitter.sio.emit)
+        *args: Positional arguments for the emit function
+        **kwargs: Keyword arguments for the emit function
+    """
+    global _main_event_loop
+
+    def _make_done_callback(
+        context: str,
+    ) -> Callable[["concurrent.futures.Future[Any]"], None]:
+        """Create a done callback that logs exceptions from the scheduled emit."""
+
+        def done_callback(future: "concurrent.futures.Future[Any]") -> None:
+            try:
+                future.result()
+            except Exception:
+                logger.warning(
+                    "[WS_LOOP] Emit failed in main loop (%s): %s",
+                    context,
+                    future.exception(),
+                )
+
+        return done_callback
+
+    # Try to get current running loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop, try to schedule in main loop
+        if _main_event_loop is not None and _main_event_loop.is_running():
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    emit_func(*args, **kwargs), _main_event_loop
+                )
+                future.add_done_callback(_make_done_callback("no current loop"))
+                logger.info("[WS_LOOP] Scheduled emit in main loop (no current loop)")
+            except Exception as e:
+                logger.warning("[WS_LOOP] Failed to schedule emit in main loop: %s", e)
+            return
+        # No main loop available, skip emit
+        logger.warning(
+            "[WS_LOOP] Cannot emit: no current loop and main loop not available"
+        )
+        return
+
+    # If we're already in the main loop, execute directly
+    if _main_event_loop is None or current_loop is _main_event_loop:
+        try:
+            await emit_func(*args, **kwargs)
+        except Exception as e:
+            logger.warning("[WS_LOOP] Direct emit failed: %s", e)
+        return
+
+    # We're in a different loop, schedule in main loop
+    if _main_event_loop.is_running():
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                emit_func(*args, **kwargs), _main_event_loop
+            )
+            future.add_done_callback(_make_done_callback("cross-loop"))
+            logger.info("[WS_LOOP] Scheduled emit in main loop from different loop")
+        except Exception as e:
+            logger.warning("[WS_LOOP] Failed to schedule emit in main loop: %s", e)
+    else:
+        # Main loop not running, log warning and skip
+        # Don't try to execute in current loop as it will likely fail with Redis
+        logger.warning(
+            "[WS_LOOP] Main loop not running, skipping emit (would fail with Redis)"
+        )

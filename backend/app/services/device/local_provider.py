@@ -70,6 +70,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         socket_id: Optional[str] = None,
         executor_version: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
+        client_ip: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register a local device.
 
@@ -83,6 +84,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             socket_id: WebSocket session ID
             executor_version: Executor version string
             capabilities: Device capability tags
+            client_ip: Device's client IP address
 
         Returns:
             Dict with device 'id' and 'is_default'
@@ -110,6 +112,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             device_json["spec"]["connectionMode"] = DeviceConnectionMode.WEBSOCKET.value
             if capabilities is not None:
                 device_json["spec"]["capabilities"] = capabilities
+            if client_ip is not None:
+                device_json["spec"]["clientIp"] = client_ip
             device_kind.json = device_json
             device_kind.updated_at = datetime.now()
             device_kind.is_active = True
@@ -149,6 +153,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "connectionMode": DeviceConnectionMode.WEBSOCKET.value,
                     "isDefault": is_first_device,
                     "capabilities": capabilities,
+                    "clientIp": client_ip,
                 },
                 "status": {
                     "state": "Available",
@@ -277,6 +282,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "executor_version": executor_version,
             "latest_version": latest_version,
             "update_available": update_available,
+            "client_ip": spec.get("clientIp"),
         }
 
     async def _get_online_info(
@@ -369,6 +375,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "executor_version": executor_version,
                     "latest_version": latest_version,
                     "update_available": update_available,
+                    "client_ip": spec.get("clientIp"),
                 }
             )
 

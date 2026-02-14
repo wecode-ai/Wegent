@@ -480,6 +480,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Handle chat:send event.
 
         Creates task/subtasks and starts streaming response.
+        Also handles pipeline stage confirmation when action='pipeline:confirm'.
 
         Args:
             sid: Socket ID
@@ -487,6 +488,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         Returns:
             {"task_id": int, "subtask_id": int} or {"error": "..."}
+            For pipeline:confirm action: {"task_id": int, "current_stage": int, ...}
         """
         logger.info(f"[WS] chat:send received sid={sid} data={data}")
 
@@ -496,7 +498,8 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         payload = data  # Already validated by decorator
         logger.info(
-            f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
+            f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, "
+            f"message_len={len(payload.message) if payload.message else 0}, action={payload.action}"
         )
 
         session = await self.get_session(sid)
@@ -508,6 +511,49 @@ class ChatNamespace(socketio.AsyncNamespace):
         if not user_id:
             logger.error("[WS] chat:send error: Not authenticated")
             return {"error": "Not authenticated"}
+
+        # Handle pipeline stage confirmation action
+        # Pipeline confirm is essentially "user sends message, AI responds"
+        # So we use prepare_pipeline_confirm for preprocessing, then continue with normal flow
+        pipeline_info = None
+        if payload.action == "pipeline:confirm":
+            from app.services.adapters.pipeline_stage import pipeline_stage_service
+
+            db_for_pipeline = SessionLocal()
+            try:
+                pipeline_info = pipeline_stage_service.pipeline_confirm(
+                    db=db_for_pipeline,
+                    task_id=payload.task_id,
+                    user_id=user_id,
+                )
+
+                if not pipeline_info.get("success"):
+                    logger.error(
+                        f"[WS] pipeline:confirm preparation failed: {pipeline_info.get('error')}"
+                    )
+                    return {
+                        "error": pipeline_info.get("error", "Pipeline confirm failed")
+                    }
+
+                # If pipeline is complete, return immediately
+                if pipeline_info.get("is_pipeline_complete"):
+                    logger.info(
+                        f"[WS] pipeline:confirm: Pipeline completed for task {payload.task_id}"
+                    )
+                    return {
+                        "task_id": payload.task_id,
+                        "current_stage": pipeline_info.get("total_stages", 0) - 1,
+                        "total_stages": pipeline_info.get("total_stages", 0),
+                        "next_stage_name": None,
+                        "pipeline_completed": True,
+                    }
+
+                logger.info(
+                    f"[WS] pipeline:confirm: Prepared for next stage {pipeline_info.get('next_stage_index')} "
+                    f"(bot_id={pipeline_info.get('next_stage_bot_id')}) for task {payload.task_id}"
+                )
+            finally:
+                db_for_pipeline.close()
 
         db = SessionLocal()
         try:
@@ -538,10 +584,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
-            from app.services.chat.config import (
-                is_deep_research_protocol,
-                should_use_direct_chat,
-            )
+            from app.services.chat.config import is_deep_research_protocol
             from app.services.chat.storage import (
                 TaskCreationParams,
                 create_chat_task,
@@ -558,10 +601,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 return {
                     "error": "Deep Research does not support follow-up questions. Please start a new conversation."
                 }
-
-            # Check if team supports direct chat
-            supports_direct_chat = should_use_direct_chat(db, team, user_id)
-            logger.info(f"[WS] chat:send supports_direct_chat={supports_direct_chat}")
 
             # Get task JSON for group chat check
             task_json = {}
@@ -595,35 +634,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 f"should_trigger_ai={should_trigger_ai}"
             )
 
-            # Create StreamChatRequest
-            request = StreamChatRequest(
-                message=payload.message,
-                team_id=payload.team_id,
-                task_id=payload.task_id,
-                title=payload.title,
-                attachment_id=(
-                    payload.attachment_ids[0]
-                    if payload.attachment_ids
-                    else payload.attachment_id
-                ),
-                enable_web_search=payload.enable_web_search,
-                search_engine=payload.search_engine,
-                enable_clarification=payload.enable_clarification,
-                model_id=payload.force_override_bot_model,
-                force_override_bot_model=payload.force_override_bot_model is not None,
-                is_group_chat=payload.is_group_chat,
-                # Repository info for code tasks
-                git_url=payload.git_url,
-                git_repo=payload.git_repo,
-                git_repo_id=payload.git_repo_id,
-                git_domain=payload.git_domain,
-                branch_name=payload.branch_name,
-            )
-            logger.info(f"[WS] chat:send StreamChatRequest created")
-
             # Process context metadata and RAG based on chat version
             # Uses service module for RAG processing
-            context_metadata, rag_prompt = await process_context_and_rag(
+            _, rag_prompt = await process_context_and_rag(
                 message=payload.message,
                 contexts=payload.contexts,
                 should_trigger_ai=should_trigger_ai,
@@ -633,9 +646,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Create task and subtasks using unified function
             # Automatically handles Chat Shell vs Executor path based on team configuration
-            logger.info(
-                f"[WS] chat:send calling create_chat_task (supports_direct_chat={supports_direct_chat})..."
-            )
+            logger.info(f"[WS] chat:send calling create_chat_task...")
 
             # Build TaskCreationParams from request
             # Convert additional_skills to list of dicts if present
@@ -645,6 +656,14 @@ class ChatNamespace(socketio.AsyncNamespace):
                     {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
                     for s in payload.additional_skills
                 ]
+
+            # For pipeline confirm, use the next stage bot_id from pipeline_info
+            pipeline_bot_ids = None
+            if pipeline_info and pipeline_info.get("next_stage_bot_id"):
+                pipeline_bot_ids = [pipeline_info["next_stage_bot_id"]]
+                logger.info(
+                    f"[WS] chat:send pipeline:confirm using pipeline_bot_ids={pipeline_bot_ids}"
+                )
 
             params = TaskCreationParams(
                 message=payload.message,
@@ -661,6 +680,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 task_type=payload.task_type,
                 knowledge_base_id=payload.knowledge_base_id,
                 additional_skills=additional_skills_dicts,
+                pipeline_bot_ids=pipeline_bot_ids,
             )
 
             result = await create_chat_task(
@@ -742,34 +762,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             await self.enter_room(sid, task_room)
             logger.info(f"[WS] chat:send joined task room: {task_room}")
 
-            # Emit task:created event to user room for task list update
-            from app.api.ws.events import ServerEvents
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter:
-                team_crd = Team.model_validate(team.json)
-                team_name = team_crd.metadata.name if team_crd.metadata else team.name
-                task_crd = Task.model_validate(task.json)
-                task_title = task_crd.spec.title or ""
-                # Get is_group_chat from task spec, with fallback to payload
-                task_is_group_chat = (
-                    task_crd.spec.is_group_chat
-                    if task_crd.spec
-                    else payload.is_group_chat
-                )
-
-                await ws_emitter.emit_task_created(
-                    user_id=user_id,
-                    task_id=task.id,
-                    title=task_title,
-                    team_id=team.id,
-                    team_name=team_name,
-                    is_group_chat=task_is_group_chat,
-                )
-                logger.info(
-                    f"[WS] chat:send emitted task:created event for task_id={task.id}"
-                )
+            # Note: task:created event is now emitted by WebSocketResultEmitter
+            # when the START event is processed. This ensures consistent event
+            # emission through the ExecutionDispatcher chain.
 
             # Broadcast user message to room (exclude sender)
             if user_subtask:
@@ -797,35 +792,68 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Trigger AI response if needed
             # Uses unified trigger from chat.trigger module
             # enable_deep_thinking controls whether tools are enabled in chat_shell
+            # IMPORTANT: Use asyncio.create_task to trigger AI response asynchronously
+            # This allows the ACK response to be returned immediately, so the frontend
+            # can update the user message with subtaskId and messageId before chat:start arrives
             if should_trigger_ai and assistant_subtask:
-                from app.services.chat.trigger import trigger_ai_response
+                from sqlalchemy.orm import make_transient
+
+                from app.services.chat.trigger import trigger_ai_response_unified
 
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
                 )
                 # Note: knowledge_base_ids is no longer passed separately.
-                # The unified context processing in trigger_ai_response will
+                # The unified context processing in trigger_ai_response_unified will
                 # retrieve both attachments and knowledge bases from the
                 # user_subtask's associated contexts.
-                await trigger_ai_response(
-                    task=task,
-                    assistant_subtask=assistant_subtask,
-                    team=team,
-                    user=user,
-                    message=payload.message,  # Original message
-                    payload=payload,
-                    task_room=task_room,
-                    supports_direct_chat=supports_direct_chat,
-                    namespace=self,
-                    user_subtask_id=(
-                        user_subtask_for_context.id
-                        if user_subtask_for_context
-                        else None
-                    ),  # Pass user subtask ID for unified context processing
-                    auth_token=auth_token,  # Pass original JWT token from WebSocket session
+
+                # Refresh objects to load all attributes before making them transient
+                # This ensures all lazy-loaded attributes are loaded from the database
+                db.refresh(task)
+                db.refresh(team)
+                db.refresh(assistant_subtask)
+                db.refresh(user)
+
+                # Make objects transient so they can be used after session is closed
+                make_transient(task)
+                make_transient(team)
+                make_transient(assistant_subtask)
+                make_transient(user)
+
+                # Extract user_subtask_id and device_id before closing session
+                user_subtask_id_for_context = (
+                    user_subtask_for_context.id if user_subtask_for_context else None
                 )
+                device_id = payload.device_id
+
+                # Create async task for AI response - don't await it
+                # This ensures the ACK is returned before chat:start is sent
+                async def _trigger_ai():
+                    try:
+                        await trigger_ai_response_unified(
+                            task=task,
+                            assistant_subtask=assistant_subtask,
+                            team=team,
+                            user=user,
+                            message=payload.message,  # Original message
+                            payload=payload,
+                            task_room=task_room,
+                            device_id=device_id,
+                            namespace=self,
+                            user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
+                            auth_token=auth_token,  # Pass original JWT token from WebSocket session
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"[WS] chat:send AI trigger failed: task_id={task.id}, error={e}"
+                        )
+
+                asyncio.create_task(_trigger_ai())
 
             # Return unified response - same structure for all modes
+            # IMPORTANT: Return immediately so frontend can update user message
+            # with subtaskId and messageId before chat:start arrives
             return {
                 "task_id": task.id,
                 "subtask_id": user_subtask.id if user_subtask else None,
@@ -977,169 +1005,56 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "error": f"Cannot cancel subtask in {subtask.status.value} state"
                 }
 
-            # Check if this is a Chat Shell task, Device task, or Executor task
-            # Shell type "Chat" uses session_manager (direct chat)
-            # Device tasks (executor_name starts with "device-") use WebSocket to device
-            # Other shell types (ClaudeCode, Agno, etc.) use executor_manager
-            is_chat_shell = (
-                payload.shell_type == "Chat" if payload.shell_type else False
-            )
+            # Use ExecutionDispatcher to handle cancel request
+            # This ensures unified cancel logic across all execution modes
+            from app.services.execution.dispatcher import execution_dispatcher
+            from shared.models import ExecutionRequest
+
+            # Determine device_id if this is a device task
+            device_id = None
             is_device_task = subtask.executor_name and subtask.executor_name.startswith(
                 "device-"
             )
+            if is_device_task:
+                device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+
+            # Build minimal ExecutionRequest for cancel routing
+            # Router only needs bot[0].shell_type and user.id
+            cancel_request = ExecutionRequest(
+                task_id=subtask.task_id,
+                subtask_id=payload.subtask_id,
+                bot=[{"shell_type": payload.shell_type or "Chat"}],
+                user={"id": user_id},
+            )
 
             logger.info(
-                f"[WS] chat:cancel task_id={subtask.task_id}, shell_type={payload.shell_type}, "
-                f"is_chat_shell={is_chat_shell}, is_device_task={is_device_task}, "
+                f"[WS] chat:cancel Dispatching cancel via ExecutionDispatcher: "
+                f"task_id={subtask.task_id}, subtask_id={payload.subtask_id}, "
+                f"shell_type={payload.shell_type}, device_id={device_id}, "
                 f"executor_name={subtask.executor_name}"
             )
 
-            if is_chat_shell:
-                # For Chat Shell tasks, determine which session_manager to use
-                # based on the version map created at stream registration
-                stream_version = self._stream_versions.get(payload.subtask_id, "v1")
-
-                if stream_version == "v2":
-                    # Use chat session_manager (v2)
-                    logger.info(
-                        f"[WS] chat:cancel Using chat session_manager (v2) for subtask_id={payload.subtask_id}"
-                    )
-                    from app.services.chat.storage import (
-                        session_manager as session_manager_v2,
-                    )
-
-                    await session_manager_v2.cancel_stream(payload.subtask_id)
-                else:
-                    # Use chat session_manager (v1)
-                    logger.info(
-                        f"[WS] chat:cancel Using chat session_manager (v1) for subtask_id={payload.subtask_id}"
-                    )
-                    await session_manager.cancel_stream(payload.subtask_id)
-            elif is_device_task:
-                # For Device tasks, send task:cancel event via WebSocket to the device
-                # Extract device_id from executor_name (format: "device-{device_id}")
-                device_id = subtask.executor_name[7:]  # Remove "device-" prefix
-                device_room = f"device:{user_id}:{device_id}"
-
-                logger.info(
-                    f"[WS] chat:cancel Sending task:cancel to device: "
-                    f"device_id={device_id}, room={device_room}, subtask_id={payload.subtask_id}"
-                )
-
-                from app.core.socketio import get_sio
-
-                sio = get_sio()
-                await sio.emit(
-                    "task:cancel",
-                    {"subtask_id": payload.subtask_id, "task_id": subtask.task_id},
-                    room=device_room,
-                    namespace="/local-executor",
-                )
-            else:
-                # For Executor tasks, call executor_manager API
-                await call_executor_cancel(subtask.task_id)
-
-            # Refresh subtask to get latest state from database
-            # This is critical because during the await above, executor callbacks
-            # may have already updated the subtask in another database connection
-            db.refresh(subtask)
-
-            # Update subtask
-            subtask.status = SubtaskStatus.CANCELLED
-            subtask.progress = 100
-            subtask.completed_at = datetime.now()
-            subtask.updated_at = datetime.now()
-
-            # Preserve existing thinking and workbench data from database
-            # During streaming, these are saved by _update_subtask_progress
-            existing_result = subtask.result or {}
-            thinking = existing_result.get("thinking")
-            workbench = existing_result.get("workbench")
-
-            # Update result with partial content while preserving thinking/workbench
-            subtask.result = {
-                "value": payload.partial_content or "",
-                **({"thinking": thinking} if thinking is not None else {}),
-                **({"workbench": workbench} if workbench is not None else {}),
-            }
-
-            # Update task status
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == subtask.task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
-                )
-                .first()
+            # Send cancel request via dispatcher
+            # For SSE mode (Chat Shell): calls /v1/responses/cancel API
+            # For WebSocket mode (Device): sends task:cancel event
+            # For HTTP mode (Executor): calls /v1/cancel API
+            cancel_success = await execution_dispatcher.cancel(
+                cancel_request, device_id
             )
 
-            if task:
-                from sqlalchemy.orm.attributes import flag_modified
-
-                task_crd = Task.model_validate(task.json)
-                if task_crd.status:
-                    task_crd.status.status = "CANCELLED"
-                    task_crd.status.errorMessage = ""
-                    task_crd.status.updatedAt = datetime.now()
-                    task_crd.status.completedAt = datetime.now()
-
-                task.json = task_crd.model_dump(mode="json")
-                task.updated_at = datetime.now()
-                flag_modified(task, "json")
-
-            db.commit()
-
-            # Broadcast chat:cancelled event to all task room members via WebSocket
-            # This ensures all group chat members see the streaming has stopped
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter:
-                logger.info(
-                    f"[WS] chat:cancel Broadcasting chat:cancelled event for task={subtask.task_id} subtask={payload.subtask_id}"
-                )
-                await ws_emitter.emit_chat_cancelled(
-                    task_id=subtask.task_id, subtask_id=payload.subtask_id
-                )
-
-                # Also emit chat:done with message_id for proper message ordering
-                # This ensures the cancelled message has message_id set for correct sorting
-                await ws_emitter.emit_chat_done(
-                    task_id=subtask.task_id,
-                    subtask_id=payload.subtask_id,
-                    offset=(
-                        len(payload.partial_content) if payload.partial_content else 0
-                    ),
-                    result=subtask.result or {},
-                    message_id=subtask.message_id,
-                )
-
-                # Emit task:status to notify frontend of task cancellation
-                # This ensures the task status in the frontend is updated from PENDING to CANCELLED
-                await ws_emitter.emit_task_status(
-                    user_id=user_id,
-                    task_id=subtask.task_id,
-                    status="CANCELLED",
-                    progress=100,
-                )
-            else:
+            if not cancel_success:
                 logger.warning(
-                    f"[WS] chat:cancel WebSocket emitter not available, cannot broadcast events"
+                    f"[WS] chat:cancel Cancel request failed for subtask_id={payload.subtask_id}"
                 )
+                # Even if cancel request failed, we should still return success
+                # The executor may have already completed or the connection may be lost
 
-            # Notify group chat members about the status change
-            # This ensures all members see the streaming has stopped and status updated
-            if task:
-                if task:
-                    # Import helper function from service layer
-                    from app.services.chat.trigger import (
-                        notify_group_members_task_updated,
-                    )
-
-                    await notify_group_members_task_updated(
-                        db=db, task=task, sender_user_id=user_id
-                    )
+            # Note: Database updates and WebSocket events are handled by StatusUpdatingEmitter
+            # when the executor sends response.incomplete event through the dispatcher chain.
+            # This ensures unified status update logic across all execution modes.
+            logger.info(
+                f"[WS] chat:cancel Cancel request sent, status updates will be handled by StatusUpdatingEmitter"
+            )
             return {"success": True}
 
         except Exception as e:
@@ -1352,16 +1267,12 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Trigger AI response using unified trigger
             from app.models.user import User
-            from app.services.chat.config import should_use_direct_chat
-            from app.services.chat.trigger import trigger_ai_response
+            from app.services.chat.trigger import trigger_ai_response_unified
 
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 logger.error(f"[WS] chat:retry error: User not found id={user_id}")
                 return {"error": "User not found"}
-
-            supports_direct_chat = should_use_direct_chat(db, team, user_id)
-            logger.info(f"[WS] chat:retry supports_direct_chat={supports_direct_chat}")
 
             # Determine model to use for retry:
             # Use the SAME logic as normal message sending (ChatSendPayload handling):
@@ -1429,9 +1340,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 is_group_chat=False,
             )
 
-            # Trigger AI response
+            device_id = get_device_id(task)
+            # Trigger AI response using unified trigger
             task_room = f"task:{payload.task_id}"
-            await trigger_ai_response(
+            await trigger_ai_response_unified(
                 task=task,
                 assistant_subtask=failed_ai_subtask,  # Reuse the same subtask
                 team=team,
@@ -1439,7 +1351,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=user_subtask.prompt or "",
                 payload=retry_payload,
                 task_room=task_room,
-                supports_direct_chat=supports_direct_chat,
+                device_id=device_id,
                 namespace=self,
                 user_subtask_id=user_subtask.id,  # Pass user subtask ID for unified context processing
             )
@@ -1455,36 +1367,17 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
             db.rollback()
 
-            # Broadcast error to all clients in task room
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter and payload.subtask_id:
-                await ws_emitter.emit_chat_error(
-                    task_id=payload.task_id,
-                    subtask_id=payload.subtask_id,
-                    error=f"Invalid data: {str(e)}",
-                    message_id=None,  # Will use subtask's message_id
-                )
-
+            # Broadcast error via ExecutionDispatcher
+            # Note: We don't pass emitter here since this is a validation error
+            # that doesn't need frontend notification through the emitter chain.
+            # The error is returned directly to the caller via WebSocket ACK.
             return {"error": f"Invalid data: {str(e)}"}
         except PermissionError as e:
             # Permission/access errors
             logger.error(f"[WS] chat:retry permission error: {e}", exc_info=True)
             db.rollback()
 
-            # Broadcast error to all clients in task room
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter and payload.subtask_id:
-                await ws_emitter.emit_chat_error(
-                    task_id=payload.task_id,
-                    subtask_id=payload.subtask_id,
-                    error=f"Access denied: {str(e)}",
-                    message_id=None,
-                )
-
+            # Permission errors are returned directly to the caller
             return {"error": f"Access denied: {str(e)}"}
         except Exception as e:
             # Catch SQLAlchemy errors and other unexpected exceptions
@@ -1493,22 +1386,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
             db.rollback()
 
-            # Broadcast error to all clients in task room
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
+            # Return error directly to the caller
             error_msg = (
                 "Database error occurred"
                 if isinstance(e, SQLAlchemyError)
                 else f"Internal server error: {str(e)}"
             )
-            if ws_emitter and payload.subtask_id:
-                await ws_emitter.emit_chat_error(
-                    task_id=payload.task_id,
-                    subtask_id=payload.subtask_id,
-                    error=error_msg,
-                    message_id=None,
-                )
 
             if isinstance(e, SQLAlchemyError):
                 return {"error": "Database error occurred"}
@@ -1700,3 +1583,8 @@ def register_chat_namespace(sio: socketio.AsyncServer):
     chat_ns = ChatNamespace("/chat")
     sio.register_namespace(chat_ns)
     logger.info("Chat namespace registered at /chat")
+
+
+def get_device_id(task):
+    task_crd = Task.model_validate(task.json)
+    return task_crd.spec.device_id if task_crd.spec else None

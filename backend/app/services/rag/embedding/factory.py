@@ -167,6 +167,15 @@ def create_embedding_model_from_crd(
             f"Processed custom_headers placeholders for embedding_model '{model_name}'"
         )
 
+    # Extract embedding dimensions from embeddingConfig
+    # This is used by Milvus to create collections with the correct dimension
+    embedding_config = spec.get("embeddingConfig", {})
+    dimensions = embedding_config.get("dimensions") if embedding_config else None
+    if dimensions:
+        logger.info(
+            f"[EmbeddingFactory] Model '{model_name}' has configured dimensions: {dimensions}"
+        )
+
     # Build embedding config based on protocol
     if protocol == "openai":
         # OpenAI protocol (supports custom headers for internal gateways)
@@ -188,11 +197,14 @@ def create_embedding_model_from_crd(
                 model=model_id or "text-embedding-3-small",
                 headers=custom_headers,
                 api_key=api_key,
+                dimensions=dimensions,
             )
         else:
             # Standard OpenAI embedding
             from llama_index.embeddings.openai import OpenAIEmbedding
 
+            # Note: OpenAIEmbedding doesn't support dimensions parameter
+            # The dimension is determined by the model itself
             return OpenAIEmbedding(
                 model=model_id or "text-embedding-3-small",
                 api_key=api_key,
@@ -216,6 +228,7 @@ def create_embedding_model_from_crd(
             model=model_id,
             headers=custom_headers if isinstance(custom_headers, dict) else {},
             api_key=api_key,
+            dimensions=dimensions,
         )
     else:
         raise ValueError(

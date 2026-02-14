@@ -92,14 +92,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         throw new Error('Selected team not found')
       }
 
-      console.log('[CreateGroupChatDialog] Creating group chat with ChatStreamContext', {
-        teamId: selectedTeam.id,
-        teamName: selectedTeam.name,
-        title: title,
-        modelName: selectedModel?.name || null,
-        forceOverride: forceOverride,
-      })
-
       // Use ChatStreamContext to send the message
       // This ensures the stream is registered globally and the task page can display it
       void sendMessage(

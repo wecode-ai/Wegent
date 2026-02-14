@@ -2,17 +2,26 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Database handler for Chat Shell."""
+"""Database handler for Chat Shell.
+
+Note: This module is responsible ONLY for database operations.
+WebSocket notifications should be handled by the emitter chain (WebSocketResultEmitter),
+not by database operations. This follows the Single Responsibility Principle.
+"""
 
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Callable, Generator, Optional, TypeVar
+from typing import Any, Callable, Generator, TypeVar
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+
+from app.models.subtask import Subtask
+from app.schemas.kind import TaskStatus
+from app.services.adapters.collaboration_strategy import CollaborationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -23,36 +32,6 @@ _db_executor = ThreadPoolExecutor(max_workers=10)
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
 
 T = TypeVar("T")
-
-
-async def emit_task_status_update(
-    user_id: int, task_id: int, status: str, progress: Optional[int] = None
-) -> None:
-    """
-    Emit task:status WebSocket event to notify frontend of task status changes.
-
-    Args:
-        user_id: User ID who owns the task
-        task_id: Task ID
-        status: New task status
-        progress: Optional progress percentage
-    """
-    try:
-        from app.services.chat.ws_emitter import get_ws_emitter
-
-        ws_emitter = get_ws_emitter()
-        if ws_emitter:
-            await ws_emitter.emit_task_status(
-                user_id=user_id,
-                task_id=task_id,
-                status=status,
-                progress=progress,
-            )
-            logger.debug(
-                f"[WS] Emitted task:status event for task={task_id} status={status}"
-            )
-    except Exception as e:
-        logger.warning(f"Failed to emit task:status event: {e}")
 
 
 @contextmanager
@@ -84,10 +63,18 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        executor_name: str | None = None,
+        executor_namespace: str | None = None,
     ) -> None:
         """Update subtask status asynchronously."""
         await self._run_in_executor(
-            self._update_subtask_sync, subtask_id, status, result, error
+            self._update_subtask_sync,
+            subtask_id,
+            status,
+            result,
+            error,
+            executor_name,
+            executor_namespace,
         )
 
     def _update_subtask_sync(
@@ -96,6 +83,8 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        executor_name: str | None = None,
+        executor_namespace: str | None = None,
     ) -> None:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import Subtask, SubtaskStatus
@@ -160,6 +149,19 @@ class DatabaseHandler:
                 if status in _TERMINAL_STATUSES:
                     subtask.completed_at = datetime.now()
 
+                # Save executor info for container reuse in follow-up tasks
+                # Only update if provided and subtask doesn't already have executor_name
+                if executor_name and not subtask.executor_name:
+                    subtask.executor_name = executor_name
+                    subtask.executor_namespace = executor_namespace or ""
+                    logger.info(
+                        "[DB] Saved executor info for subtask %s: "
+                        "executor_name=%s, executor_namespace=%s",
+                        subtask_id,
+                        executor_name,
+                        executor_namespace,
+                    )
+
                 task_id = subtask.task_id
             # Context manager commits here, then update task status
             self._update_task_status_sync(task_id)
@@ -167,14 +169,14 @@ class DatabaseHandler:
             logger.exception("Error updating subtask %s status", subtask_id)
 
     def _update_task_status_sync(self, task_id: int) -> None:
-        """Update task status based on subtask status."""
+        """Update task status based on subtask status using collaboration strategy."""
         from app.models.subtask import Subtask, SubtaskRole
         from app.models.task import TaskResource
         from app.schemas.kind import Task
-
-        user_id = None
-        new_status = None
-        progress = None
+        from app.services.adapters.collaboration_strategy import (
+            CollaborationStrategy,
+            CollaborationStrategyFactory,
+        )
 
         try:
             with _db_session() as db:
@@ -189,9 +191,6 @@ class DatabaseHandler:
                 )
                 if not task:
                     return
-
-                # Get user_id for WebSocket notification
-                user_id = task.user_id
 
                 subtasks = (
                     db.query(Subtask)
@@ -209,84 +208,61 @@ class DatabaseHandler:
                 last_subtask = subtasks[-1]
 
                 if task_crd.status:
-                    self._apply_status_update(task_crd.status, last_subtask)
+                    # Use collaboration strategy to determine task status
+                    strategy: CollaborationStrategy = (
+                        CollaborationStrategyFactory.get_strategy_for_task(db, task_id)
+                    )
+                    self._apply_status_update(
+                        db, task_id, task_crd.status, last_subtask, strategy
+                    )
                     task_crd.status.updatedAt = datetime.now()
-                    # Capture status for WebSocket notification
-                    new_status = task_crd.status.status
-                    progress = task_crd.status.progress
 
                 task.json = task_crd.model_dump(mode="json")
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
 
-            # After commit, emit WebSocket event for task status update
-            if user_id and new_status:
-                self._schedule_ws_emit(user_id, task_id, new_status, progress)
-
         except Exception:
             logger.exception("Error updating task %s status", task_id)
 
-    def _schedule_ws_emit(
-        self, user_id: int, task_id: int, status: str, progress: Optional[int]
+    def _apply_status_update(
+        self,
+        db: Session,
+        task_id: int,
+        status_obj: TaskStatus,
+        last_subtask: Subtask,
+        strategy: CollaborationStrategy,
     ) -> None:
-        """Schedule WebSocket emit in the event loop."""
-        try:
-            # First try to get the running event loop
-            loop = asyncio.get_running_loop()
-            # We're in an async context, schedule directly
-            asyncio.run_coroutine_threadsafe(
-                emit_task_status_update(user_id, task_id, status, progress), loop
-            )
-            logger.debug(
-                f"[WS] Scheduled task:status via running loop for task={task_id}"
-            )
-        except RuntimeError:
-            # No running event loop in current thread
-            # Try to use the main event loop reference from ws_emitter
-            try:
-                from app.services.chat.ws_emitter import get_main_event_loop
+        """Apply status update based on last subtask using collaboration strategy.
 
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    # Schedule the coroutine to run in the main event loop
-                    asyncio.run_coroutine_threadsafe(
-                        emit_task_status_update(user_id, task_id, status, progress),
-                        main_loop,
-                    )
-                    logger.debug(
-                        f"[WS] Scheduled task:status via main loop for task={task_id}"
-                    )
-                else:
-                    # No running event loop available - skip emit
-                    logger.warning(
-                        f"Could not emit task:status event - no running event loop available for task={task_id}"
-                    )
-            except RuntimeError:
-                logger.warning(
-                    f"Could not emit task:status event - no event loop available for task={task_id}"
-                )
-
-    def _apply_status_update(self, status_obj, last_subtask) -> None:
-        """Apply status update based on last subtask."""
+        Args:
+            db: Database session
+            task_id: Task ID
+            status_obj: Task status object to update
+            last_subtask: The last assistant subtask
+            strategy: Collaboration strategy to use for status determination
+        """
         from app.models.subtask import SubtaskStatus
 
-        status_map = {
-            SubtaskStatus.COMPLETED: ("COMPLETED", 100, True),
-            SubtaskStatus.FAILED: ("FAILED", None, False),
-            SubtaskStatus.RUNNING: ("RUNNING", None, False),
-        }
+        # Get the status string from subtask status enum
+        subtask_status_str = last_subtask.status.value
 
-        if last_subtask.status in status_map:
-            new_status, progress, is_completed = status_map[last_subtask.status]
-            status_obj.status = new_status
-            status_obj.result = last_subtask.result
+        # Use strategy to determine task status
+        new_status, progress = strategy.get_task_status_on_subtask_complete(
+            db, task_id, last_subtask.id, subtask_status_str
+        )
 
-            if progress is not None:
-                status_obj.progress = progress
-            if is_completed:
-                status_obj.completedAt = datetime.now()
-            if last_subtask.status == SubtaskStatus.FAILED:
-                status_obj.errorMessage = last_subtask.error_message
+        status_obj.status = new_status
+        status_obj.result = last_subtask.result
+
+        if progress is not None:
+            status_obj.progress = progress
+
+        # Set completedAt for terminal statuses
+        if new_status in ("COMPLETED", "CANCELLED", "PENDING_CONFIRMATION"):
+            status_obj.completedAt = datetime.now()
+
+        if last_subtask.status == SubtaskStatus.FAILED:
+            status_obj.errorMessage = last_subtask.error_message
 
     async def save_partial_response(
         self, subtask_id: int, content: str, is_streaming: bool = True

@@ -181,7 +181,7 @@ async def _load_history_from_remote(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
     """
-    logger.debug(
+    logger.info(
         "[history] _load_history_from_remote: START task_id=%d, is_group_chat=%s, "
         "exclude_after=%s, limit=%s",
         task_id,
@@ -229,7 +229,26 @@ async def _load_history_from_remote(
             msg_dict = msg.to_dict()
             history.append(msg_dict)
 
-        logger.debug(
+        # Log message content length for debugging attachment loading
+        for i, msg in enumerate(history):
+            content = msg.get("content", "")
+            content_len = (
+                len(content) if isinstance(content, str) else len(str(content))
+            )
+            logger.info(
+                "[history] _load_history_from_remote: message[%d] role=%s, content_len=%d, "
+                "content_preview='%s'",
+                i,
+                msg.get("role"),
+                content_len,
+                (
+                    (content[:200] + "...")
+                    if isinstance(content, str) and len(content) > 200
+                    else str(content)[:200]
+                ),
+            )
+
+        logger.info(
             "[history] _load_history_from_remote: SUCCESS loaded %d messages "
             "for task_id=%d, is_group_chat=%s",
             len(history),
@@ -382,6 +401,20 @@ def _build_history_message(
             for c in all_contexts
             if c.context_type == ContextType.KNOWLEDGE_BASE.value
         ]
+
+        # Log loaded contexts for debugging
+        logger.info(
+            f"[history] _build_history_message: subtask_id={subtask.id}, "
+            f"total_contexts={len(all_contexts)}, "
+            f"attachments={len(attachments)}, kb_contexts={len(kb_contexts)}"
+        )
+        for ctx in attachments:
+            logger.info(
+                f"[history] Attachment context: id={ctx.id}, name={ctx.name}, "
+                f"mime_type={ctx.mime_type}, "
+                f"extracted_text_len={len(ctx.extracted_text) if ctx.extracted_text else 0}, "
+                f"binary_data_len={len(ctx.binary_data) if ctx.binary_data else 0}"
+            )
 
         # Process attachments first (they have priority)
         vision_parts: list[dict[str, Any]] = []

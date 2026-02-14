@@ -384,6 +384,42 @@ def daily_notification_worker(stop_event: threading.Event):
             logger.error(f"[job] Daily notification worker error: {e}")
 
 
+def evaluation_grading_monitor_worker(stop_event: threading.Event):
+    """
+    Background worker for monitoring and recovering stuck evaluation grading tasks.
+
+    This worker periodically checks for grading tasks that have been in RUNNING
+    status for too long (stuck), and recovers them by checking the actual
+    Wegent Task status.
+
+    Args:
+        stop_event: Event to signal the worker to stop
+    """
+    from wecode.service.evaluation.grading_monitor import GradingTaskMonitor
+
+    monitor = GradingTaskMonitor(
+        stuck_timeout_minutes=settings.EVAL_GRADING_STUCK_TIMEOUT_MINUTES
+    )
+
+    while not stop_event.is_set():
+        try:
+            db = SessionLocal()
+            try:
+                recovered_count = monitor.run_check(db)
+                if recovered_count > 0:
+                    db.commit()
+                    logger.info(
+                        f"[job] Evaluation grading monitor recovered {recovered_count} stuck tasks"
+                    )
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[job] Evaluation grading monitor error: {e}")
+
+        # Wait with wake-up capability
+        stop_event.wait(timeout=settings.EVAL_GRADING_MONITOR_INTERVAL_SECONDS)
+
+
 def start_background_jobs(app):
     """
     Start all background jobs
@@ -443,6 +479,24 @@ def start_background_jobs(app):
     else:
         logger.info("[job] daily email summary worker disabled by configuration")
 
+    # Start evaluation grading task monitor (if enabled)
+    if settings.EVAL_GRADING_MONITOR_ENABLED:
+        app.state.eval_grading_monitor_stop_event = threading.Event()
+        app.state.eval_grading_monitor_thread = threading.Thread(
+            target=evaluation_grading_monitor_worker,
+            args=(app.state.eval_grading_monitor_stop_event,),
+            name="eval-grading-monitor-worker",
+            daemon=True,
+        )
+        app.state.eval_grading_monitor_thread.start()
+        logger.info(
+            f"[job] evaluation grading monitor started "
+            f"(interval: {settings.EVAL_GRADING_MONITOR_INTERVAL_SECONDS}s, "
+            f"timeout: {settings.EVAL_GRADING_STUCK_TIMEOUT_MINUTES}min)"
+        )
+    else:
+        logger.info("[job] evaluation grading monitor disabled by configuration")
+
 
 def stop_background_jobs(app):
     """
@@ -486,3 +540,14 @@ def stop_background_jobs(app):
     if daily_thread:
         daily_thread.join(timeout=5.0)
         logger.info("[job] daily notification worker stopped")
+
+    # Stop evaluation grading monitor thread gracefully
+    eval_grading_stop_event = getattr(
+        app.state, "eval_grading_monitor_stop_event", None
+    )
+    eval_grading_thread = getattr(app.state, "eval_grading_monitor_thread", None)
+    if eval_grading_stop_event:
+        eval_grading_stop_event.set()
+    if eval_grading_thread:
+        eval_grading_thread.join(timeout=5.0)
+        logger.info("[job] evaluation grading monitor worker stopped")

@@ -88,26 +88,26 @@ class TestStreamingResponseEmitter:
         assert emitter._message_id is None
 
     @pytest.mark.asyncio
-    async def test_emit_chat_start(self, emitter, mock_bot):
-        """Test emit_chat_start creates message."""
+    async def test_emit_start(self, emitter, mock_bot):
+        """Test emit_start creates message."""
         mock_message = MagicMock()
         mock_message.message_id = 999
         mock_bot.send_message.return_value = mock_message
 
-        await emitter.emit_chat_start(task_id=1, subtask_id=2)
+        await emitter.emit_start(task_id=1, subtask_id=2)
 
         assert emitter._message_id == 999
         mock_bot.send_message.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_emit_chat_chunk(self, emitter, mock_bot):
-        """Test emit_chat_chunk sends update."""
+    async def test_emit_chunk(self, emitter, mock_bot):
+        """Test emit_chunk sends update."""
         # First create the message
         mock_message = MagicMock()
         mock_message.message_id = 999
         mock_bot.send_message.return_value = mock_message
 
-        await emitter.emit_chat_start(task_id=1, subtask_id=2)
+        await emitter.emit_start(task_id=1, subtask_id=2)
 
         # Reset mock to check chunk call
         mock_bot.edit_message_text.reset_mock()
@@ -115,7 +115,7 @@ class TestStreamingResponseEmitter:
         # Force send by setting last_update_time to past
         emitter._last_update_time = 0
 
-        await emitter.emit_chat_chunk(
+        await emitter.emit_chunk(
             task_id=1,
             subtask_id=2,
             content="Hello, world!",
@@ -129,9 +129,9 @@ class TestStreamingResponseEmitter:
         )
 
     @pytest.mark.asyncio
-    async def test_emit_chat_chunk_empty_content(self, emitter, mock_bot):
-        """Test emit_chat_chunk with empty content."""
-        await emitter.emit_chat_chunk(
+    async def test_emit_chunk_empty_content(self, emitter, mock_bot):
+        """Test emit_chunk with empty content."""
+        await emitter.emit_chunk(
             task_id=1,
             subtask_id=2,
             content="",
@@ -142,40 +142,40 @@ class TestStreamingResponseEmitter:
         mock_bot.edit_message_text.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_emit_chat_done(self, emitter, mock_bot):
-        """Test emit_chat_done finalizes message."""
+    async def test_emit_done(self, emitter, mock_bot):
+        """Test emit_done finalizes message."""
         # Setup
         mock_message = MagicMock()
         mock_message.message_id = 999
         mock_bot.send_message.return_value = mock_message
-        await emitter.emit_chat_start(task_id=1, subtask_id=2)
+        await emitter.emit_start(task_id=1, subtask_id=2)
 
         emitter._full_content = "Test content"
 
-        await emitter.emit_chat_done(task_id=1, subtask_id=2, offset=12)
+        await emitter.emit_done(task_id=1, subtask_id=2, offset=12)
 
         assert emitter._finished is True
         mock_bot.edit_message_text.assert_called()
 
     @pytest.mark.asyncio
-    async def test_emit_chat_done_already_finished(self, emitter, mock_bot):
-        """Test emit_chat_done when already finished."""
+    async def test_emit_done_already_finished(self, emitter, mock_bot):
+        """Test emit_done when already finished."""
         emitter._finished = True
 
-        await emitter.emit_chat_done(task_id=1, subtask_id=2, offset=0)
+        await emitter.emit_done(task_id=1, subtask_id=2, offset=0)
 
         # Should not do anything
         mock_bot.edit_message_text.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_emit_chat_error(self, emitter, mock_bot):
-        """Test emit_chat_error shows error message."""
+    async def test_emit_error(self, emitter, mock_bot):
+        """Test emit_error shows error message."""
         mock_message = MagicMock()
         mock_message.message_id = 999
         mock_bot.send_message.return_value = mock_message
-        await emitter.emit_chat_start(task_id=1, subtask_id=2)
+        await emitter.emit_start(task_id=1, subtask_id=2)
 
-        await emitter.emit_chat_error(
+        await emitter.emit_error(
             task_id=1,
             subtask_id=2,
             error="Something went wrong",
@@ -190,11 +190,11 @@ class TestStreamingResponseEmitter:
         )
 
     @pytest.mark.asyncio
-    async def test_emit_chat_error_already_finished(self, emitter, mock_bot):
-        """Test emit_chat_error when already finished."""
+    async def test_emit_error_already_finished(self, emitter, mock_bot):
+        """Test emit_error when already finished."""
         emitter._finished = True
 
-        await emitter.emit_chat_error(
+        await emitter.emit_error(
             task_id=1,
             subtask_id=2,
             error="Something went wrong",
@@ -203,34 +203,19 @@ class TestStreamingResponseEmitter:
         mock_bot.edit_message_text.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_emit_chat_cancelled(self, emitter, mock_bot):
-        """Test emit_chat_cancelled adds cancellation note."""
+    async def test_emit_cancelled(self, emitter, mock_bot):
+        """Test emit_cancelled adds cancellation note."""
         mock_message = MagicMock()
         mock_message.message_id = 999
         mock_bot.send_message.return_value = mock_message
-        await emitter.emit_chat_start(task_id=1, subtask_id=2)
+        await emitter.emit_start(task_id=1, subtask_id=2)
 
         emitter._full_content = "Partial content"
 
-        await emitter.emit_chat_cancelled(task_id=1, subtask_id=2)
+        await emitter.emit_cancelled(task_id=1, subtask_id=2)
 
         assert emitter._finished is True
         assert "取消" in emitter._full_content
-
-    @pytest.mark.asyncio
-    async def test_emit_chat_bot_complete(self, emitter, mock_bot):
-        """Test emit_chat_bot_complete is a no-op."""
-        await emitter.emit_chat_bot_complete(
-            user_id=1,
-            task_id=2,
-            subtask_id=3,
-            content="Content",
-            result={},
-        )
-
-        # Should not do anything
-        mock_bot.send_message.assert_not_called()
-        mock_bot.edit_message_text.assert_not_called()
 
     def test_max_message_length(self, emitter):
         """Test MAX_MESSAGE_LENGTH constant."""
@@ -246,12 +231,12 @@ class TestStreamingResponseEmitter:
         mock_message = MagicMock()
         mock_message.message_id = 999
         mock_bot.send_message.return_value = mock_message
-        await emitter.emit_chat_start(task_id=1, subtask_id=2)
+        await emitter.emit_start(task_id=1, subtask_id=2)
 
         # Set very long content
         emitter._full_content = "x" * 5000
 
-        await emitter.emit_chat_done(task_id=1, subtask_id=2, offset=5000)
+        await emitter.emit_done(task_id=1, subtask_id=2, offset=5000)
 
         # Should have truncated content with ...
         call_args = mock_bot.edit_message_text.call_args

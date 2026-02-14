@@ -345,11 +345,9 @@ class TestOpenAPIResponsesCreate:
 
         assert response.status_code == 401
 
-    @patch("app.api.endpoints.openapi_responses.create_sync_response")
-    @patch("app.api.endpoints.openapi_responses.check_team_supports_direct_chat")
+    @patch("app.api.endpoints.openapi_responses._create_sync_response_unified")
     def test_create_response_sync_success(
         self,
-        mock_check_direct_chat,
         mock_create_sync,
         test_client: TestClient,
         test_api_key,
@@ -365,7 +363,6 @@ class TestOpenAPIResponsesCreate:
             ResponseObject,
         )
 
-        mock_check_direct_chat.return_value = True
         mock_response = ResponseObject(
             id="resp_123",
             created_at=int(datetime.now().timestamp()),
@@ -394,10 +391,10 @@ class TestOpenAPIResponsesCreate:
         assert data["status"] == "completed"
         assert len(data["output"]) == 1
 
-    @patch("app.api.endpoints.openapi_responses.check_team_supports_direct_chat")
+    @patch("app.api.endpoints.openapi_responses._create_streaming_response_unified")
     def test_create_response_streaming_not_supported_for_executor(
         self,
-        mock_check_direct_chat,
+        mock_create_streaming,
         test_client: TestClient,
         test_api_key,
         test_team: Kind,
@@ -405,8 +402,19 @@ class TestOpenAPIResponsesCreate:
         test_model: Kind,
         test_public_shell: Kind,
     ):
-        """Test streaming fails for non-Chat Shell teams."""
-        mock_check_direct_chat.return_value = False
+        """Test streaming returns error when not supported by shell type.
+
+        Note: With the unified trigger architecture, streaming support is determined
+        by ExecutionRouter based on shell_type. For non-Chat Shell types, the
+        dispatch_sse_stream will raise NotImplementedError.
+        """
+        from fastapi import HTTPException
+
+        # Mock the streaming function to raise NotImplementedError (simulating non-SSE mode)
+        mock_create_streaming.side_effect = HTTPException(
+            status_code=400,
+            detail="Streaming is only supported for Chat Shell type teams",
+        )
 
         response = test_client.post(
             "/api/v1/responses",

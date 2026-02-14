@@ -1,0 +1,595 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Respondent API endpoints.
+
+This module provides endpoints for the respondent role (答题人):
+- View available topics (public + permitted private)
+- View questions (without grading criteria)
+- Submit answers
+- View answer history
+
+NOTE: Respondents CANNOT view any grading status or results.
+This is a business security requirement to ensure evaluation fairness.
+"""
+
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.api.dependencies import get_db
+from app.core import security
+from app.models.user import User
+from wecode.models.evaluation import (
+    QuestionStatus,
+    TopicStatus,
+)
+from wecode.schemas.evaluation import (
+    AnswerCreate,
+    AnswerInDB,
+    AnswerListResponse,
+    QuestionInDB,
+    QuestionListResponse,
+    RespondentProgress,
+    TopicInDB,
+    TopicListResponse,
+)
+from wecode.service.evaluation import (
+    get_answer_service,
+    get_permission_service,
+    get_question_service,
+    get_topic_service,
+)
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+# ============================================================================
+# Topic Endpoints
+# ============================================================================
+
+
+@router.get("/topics", response_model=TopicListResponse)
+def list_available_topics(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search by name"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    List topics available to the current respondent.
+
+    Shows:
+    - All published public topics
+    - Private topics where user has 'respondent' permission
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+
+    # Use the existing list_topics method which handles access control
+    # It returns topics the user can access (public + permitted)
+    topics, total = topic_service.list_topics(
+        db=db,
+        user_id=current_user.id,
+        page=page,
+        limit=limit,
+        status=TopicStatus.PUBLISHED,  # Only published topics for respondents
+        search=search,
+        my_only=False,
+    )
+
+    items = []
+    for topic in topics:
+        # Get published question count for each topic
+        _, published_count = question_service.list_questions(
+            db=db,
+            topic_id=topic.id,
+            page=1,
+            limit=1,
+            status=QuestionStatus.PUBLISHED,
+        )
+
+        topic_dict = {
+            "id": topic.id,
+            "name": topic.name,
+            "creator_id": topic.creator_id,
+            "visibility": topic.visibility,
+            "status": topic.status,
+            "current_version": topic.current_version,
+            "extra_data": topic.extra_data or {},
+            "grading_team_config": {},  # Hide grading config from respondents
+            "created_at": topic.created_at,
+            "updated_at": topic.updated_at,
+            "is_active": topic.is_active,
+            "description": (topic.extra_data or {}).get("description"),
+            "question_count": published_count,
+            "published_question_count": published_count,
+        }
+        items.append(TopicInDB(**topic_dict))
+
+    return TopicListResponse(total=total, items=items)
+
+
+@router.get("/topics/{topic_id}", response_model=TopicInDB)
+def get_topic_detail(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get topic detail for respondent view.
+
+    Hides grading team configuration from respondents.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    permission_service = get_permission_service()
+
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    # Check if respondent can view this topic
+    if not permission_service.can_view_topic(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this topic",
+        )
+
+    # For respondents, only show published topics unless they're the creator
+    if topic.status != TopicStatus.PUBLISHED and topic.creator_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This topic is not yet available",
+        )
+
+    # Get published question count
+    _, published_count = question_service.list_questions(
+        db=db,
+        topic_id=topic_id,
+        page=1,
+        limit=1,
+        status=QuestionStatus.PUBLISHED,
+    )
+
+    return TopicInDB(
+        id=topic.id,
+        name=topic.name,
+        creator_id=topic.creator_id,
+        visibility=topic.visibility,
+        status=topic.status,
+        current_version=topic.current_version,
+        extra_data=topic.extra_data or {},
+        grading_team_config={},  # Hide grading config from respondents
+        created_at=topic.created_at,
+        updated_at=topic.updated_at,
+        is_active=topic.is_active,
+        description=(topic.extra_data or {}).get("description"),
+        question_count=published_count,
+        published_question_count=published_count,
+    )
+
+
+@router.get("/topics/{topic_id}/progress", response_model=RespondentProgress)
+def get_my_progress(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get current user's progress for a topic.
+
+    Returns:
+    - Total questions in the topic
+    - Number of questions answered by user
+    - Completion rate (0-1)
+
+    NOTE: Does NOT return any grading-related information.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    permission_service = get_permission_service()
+
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    if not permission_service.can_view_topic(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this topic",
+        )
+
+    # Get total published questions
+    questions, total_questions = question_service.list_questions(
+        db=db,
+        topic_id=topic_id,
+        page=1,
+        limit=1000,  # Get all questions
+        status=QuestionStatus.PUBLISHED,
+    )
+    question_ids = [q.id for q in questions]
+
+    # Count answered questions
+    from wecode.models.evaluation import EvalAnswer
+
+    answered_count = 0
+    if question_ids:
+        answered_count = (
+            db.query(EvalAnswer.question_id)
+            .filter(
+                EvalAnswer.question_id.in_(question_ids),
+                EvalAnswer.respondent_id == current_user.id,
+                EvalAnswer.is_latest,
+            )
+            .distinct()
+            .count()
+        )
+
+    # Calculate completion rate
+    completion_rate = answered_count / total_questions if total_questions > 0 else 0.0
+
+    # NOTE: published_reports is always 0 for respondents
+    # Respondents cannot see any grading information
+    return RespondentProgress(
+        total_questions=total_questions,
+        answered_questions=answered_count,
+        published_reports=0,  # Always 0 - respondents cannot see grading info
+        completion_rate=completion_rate,
+    )
+
+
+@router.get("/topics/{topic_id}/questions", response_model=QuestionListResponse)
+def list_topic_questions(
+    topic_id: int,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    List published questions for a topic.
+
+    Only shows published questions and hides grading criteria from respondents.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    permission_service = get_permission_service()
+
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    if not permission_service.can_view_topic(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this topic",
+        )
+
+    # Respondents can only see published questions
+    questions, total = question_service.list_questions(
+        db=db,
+        topic_id=topic_id,
+        page=page,
+        limit=limit,
+        status=QuestionStatus.PUBLISHED,
+        include_criteria=False,  # Never include criteria for respondents
+    )
+
+    items = []
+    for q in questions:
+        # Remove criteria from content_data if present
+        content_data = {
+            k: v for k, v in (q.content_data or {}).items() if k != "_criteria"
+        }
+        q_dict = {
+            "id": q.id,
+            "topic_id": q.topic_id,
+            "title": q.title,
+            "content_type": q.content_type,
+            "content_data": content_data,
+            "status": q.status,
+            "current_version": q.current_version,
+            "order_index": q.order_index,
+            "creator_id": q.creator_id,
+            "created_at": q.created_at,
+            "updated_at": q.updated_at,
+            "is_active": q.is_active,
+            # Explicitly exclude criteria_data for respondents
+        }
+        items.append(QuestionInDB(**q_dict))
+
+    return QuestionListResponse(total=total, items=items)
+
+
+# ============================================================================
+# Question Endpoints
+# ============================================================================
+
+
+@router.get("/questions/{question_id}", response_model=QuestionInDB)
+def get_question_detail(
+    question_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get question detail for respondent view.
+
+    Shows question content but hides grading criteria.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    permission_service = get_permission_service()
+
+    question = question_service.get(db, question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    topic = topic_service.get(db, question.topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    if not permission_service.can_view_topic(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this question",
+        )
+
+    # Respondents can only see published questions
+    if question.status != QuestionStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This question is not yet available",
+        )
+
+    # Remove criteria from content_data
+    content_data = {
+        k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
+    }
+
+    # Check if there's a newer version since user's last answer
+    has_new_version = False
+    from wecode.models.evaluation import EvalAnswer
+
+    latest_answer = (
+        db.query(EvalAnswer)
+        .filter(
+            EvalAnswer.question_id == question_id,
+            EvalAnswer.respondent_id == current_user.id,
+            EvalAnswer.is_latest,
+        )
+        .first()
+    )
+    if latest_answer:
+        # If user has answered and the question version is different
+        if latest_answer.question_version != question.current_version:
+            has_new_version = True
+
+    return QuestionInDB(
+        id=question.id,
+        topic_id=question.topic_id,
+        title=question.title,
+        content_type=question.content_type,
+        content_data=content_data,
+        status=question.status,
+        current_version=question.current_version,
+        order_index=question.order_index,
+        creator_id=question.creator_id,
+        created_at=question.created_at,
+        updated_at=question.updated_at,
+        is_active=question.is_active,
+        has_new_version=has_new_version,
+        latest_version=question.current_version,
+        # Explicitly exclude criteria_data for respondents
+    )
+
+
+# ============================================================================
+# Answer Endpoints
+# ============================================================================
+
+
+@router.post(
+    "/questions/{question_id}/answers",
+    response_model=AnswerInDB,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_answer(
+    question_id: int,
+    answer_create: AnswerCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Submit an answer to a question.
+
+    Requires:
+    - Question must be published
+    - User must have answer permission (for private topics)
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    answer_service = get_answer_service()
+    permission_service = get_permission_service()
+
+    question = question_service.get(db, question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    if question.status != QuestionStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot submit answer to unpublished question",
+        )
+
+    topic = topic_service.get(db, question.topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    if not permission_service.can_answer(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to answer this question",
+        )
+
+    # Build content data
+    content_data = answer_create.content_data or {}
+    if answer_create.content_text:
+        content_data["text"] = answer_create.content_text
+
+    answer = answer_service.submit(
+        db=db,
+        question_id=question_id,
+        user_id=current_user.id,
+        content_type=answer_create.content_type,
+        content_data=content_data,
+        auto_create_grading=True,
+    )
+    db.commit()
+
+    return AnswerInDB(
+        id=answer.id,
+        question_id=answer.question_id,
+        question_version=answer.question_version,
+        respondent_id=answer.respondent_id,
+        content_type=answer.content_type,
+        content_data=answer.content_data,
+        submitted_at=answer.submitted_at,
+        is_latest=answer.is_latest,
+    )
+
+
+@router.get("/history", response_model=AnswerListResponse)
+def list_my_answer_history(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    topic_id: Optional[int] = Query(None, description="Filter by topic"),
+    question_id: Optional[int] = Query(None, description="Filter by question"),
+    latest_only: bool = Query(True, description="Only show latest answers"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    List current user's answer history across all topics.
+    """
+    get_answer_service()
+    from wecode.models.evaluation import EvalAnswer
+
+    query = db.query(EvalAnswer).filter(EvalAnswer.respondent_id == current_user.id)
+
+    if topic_id:
+        # Get all questions for the topic and filter by question IDs
+        question_service = get_question_service()
+        questions, _ = question_service.list_questions(
+            db=db, topic_id=topic_id, page=1, limit=1000
+        )
+        question_ids = [q.id for q in questions]
+        if question_ids:
+            query = query.filter(EvalAnswer.question_id.in_(question_ids))
+        else:
+            # No questions in topic, return empty
+            return AnswerListResponse(total=0, items=[])
+
+    if question_id:
+        query = query.filter(EvalAnswer.question_id == question_id)
+
+    if latest_only:
+        query = query.filter(EvalAnswer.is_latest)
+
+    total = query.count()
+    answers = (
+        query.order_by(EvalAnswer.submitted_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    items = []
+    for answer in answers:
+        items.append(
+            AnswerInDB(
+                id=answer.id,
+                question_id=answer.question_id,
+                question_version=answer.question_version,
+                respondent_id=answer.respondent_id,
+                content_type=answer.content_type,
+                content_data=answer.content_data,
+                submitted_at=answer.submitted_at,
+                is_latest=answer.is_latest,
+            )
+        )
+
+    return AnswerListResponse(total=total, items=items)
+
+
+@router.get("/answers/{answer_id}", response_model=AnswerInDB)
+def get_answer_detail(
+    answer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get answer detail.
+
+    Respondents can only view their own answers.
+    """
+    answer_service = get_answer_service()
+
+    answer = answer_service.get(db, answer_id)
+    if not answer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Answer not found",
+        )
+
+    # Respondents can only view their own answers
+    if answer.respondent_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own answers",
+        )
+
+    return AnswerInDB(
+        id=answer.id,
+        question_id=answer.question_id,
+        question_version=answer.question_version,
+        respondent_id=answer.respondent_id,
+        content_type=answer.content_type,
+        content_data=answer.content_data,
+        submitted_at=answer.submitted_at,
+        is_latest=answer.is_latest,
+    )
+
+
+# NOTE: Grading Report Endpoints have been REMOVED for respondents.
+# Respondents cannot view any grading status or results.
+# This is a business security requirement to ensure evaluation fairness.
+# Grading reports are only visible to Authors and Graders.

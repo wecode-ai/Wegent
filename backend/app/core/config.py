@@ -361,6 +361,8 @@ class Settings(BaseSettings):
     CHAT_SHELL_MODE: str = "http"
     # Chat Shell service URL (only used when CHAT_SHELL_MODE="http")
     CHAT_SHELL_URL: str = "http://localhost:8100"
+    # Executor Manager service URL (for ClaudeCode, Agno, Dify shell types)
+    EXECUTOR_MANAGER_URL: str = "http://localhost:8001/executor-manager"
     # Chat Shell service authentication token (only used when CHAT_SHELL_MODE="http")
     CHAT_SHELL_TOKEN: str = ""
     # Internal service authentication token (for HTTP mode communication)
@@ -495,6 +497,14 @@ class Settings(BaseSettings):
     DAILY_SUMMARY_HOUR: int = 18
     # Morning summary notification hour (0-23, default 9:00)
     MORNING_SUMMARY_HOUR: int = 9
+
+    # Evaluation grading task monitor configuration
+    # Enable/disable the background monitor for stuck grading tasks
+    EVAL_GRADING_MONITOR_ENABLED: bool = True
+    # Monitor check interval in seconds (default: 30 seconds for quick status sync)
+    EVAL_GRADING_MONITOR_INTERVAL_SECONDS: int = 30
+    # Task timeout threshold in minutes (tasks running longer are considered stuck)
+    EVAL_GRADING_STUCK_TIMEOUT_MINUTES: int = 30
 
     DINGTALK_CORP_ID: str = ""
     DINGTALK_CLIENT_ID: str = ""

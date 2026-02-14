@@ -542,7 +542,9 @@ def _schedule_attachment_sync_to_sandbox(
             except RuntimeError:
                 # No event loop running - try main event loop
                 try:
-                    from app.services.chat.ws_emitter import get_main_event_loop
+                    from app.services.chat.webpage_ws_chat_emitter import (
+                        get_main_event_loop,
+                    )
 
                     main_loop = get_main_event_loop()
                     if main_loop and main_loop.is_running():
