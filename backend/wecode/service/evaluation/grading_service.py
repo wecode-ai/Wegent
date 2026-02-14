@@ -43,7 +43,6 @@ from wecode.models.evaluation import (
     EvalAnswer,
     EvalGradingTask,
     EvalQuestion,
-    EvalQuestionVersion,
     GradingTaskStatus,
 )
 
@@ -54,33 +53,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Minimal grading prompt template - only provides the essential content
+# Minimal grading prompt template - only provides respondent info and answer content
 # The AI bot's system prompt (Ghost.systemPrompt) should define:
 # - How to evaluate submissions
 # - Output format requirements
 # - Grading criteria interpretation
-GRADING_PROMPT_TEMPLATE = """## Evaluation Task
-
-**Respondent:** {respondent_name}
-
-### Question Content
-{question_content}
-{question_url}
-{question_attachments}
-
-### Grading Criteria
-{criteria_content}
-{criteria_url}
-{criteria_attachments}
-
-### Student's Answer
-{answer_content}
-{answer_url}
-{answer_attachments}
-
----
-Please evaluate the above submission according to the grading criteria.
-"""
+# Question content and grading criteria are configured in the bot's system prompt
+GRADING_PROMPT_TEMPLATE = """**Respondent:** {respondent_name}
+{answer_content}{answer_url}"""
 
 
 class GradingService:
@@ -233,33 +213,18 @@ class GradingService:
         """
         Build the grading prompt and collect attachments for a task.
 
-        The prompt includes:
-        - Respondent info (name)
-        - Question content (text, URL, attachments)
-        - Grading criteria (text, URL, attachments)
-        - Student answer (text, URL, attachments)
+        Only includes respondent name and their answer attachments.
+        Question content and grading criteria should be configured in the
+        AI bot's system prompt (Ghost.systemPrompt).
 
         Args:
             db: Database session
             task: Grading task
 
         Returns:
-            Tuple of (formatted prompt string, list of attachment info dicts)
+            Tuple of (formatted prompt string, list of answer attachment info dicts)
         """
         from app.models.user import User
-
-        # Get question version
-        question_version = (
-            db.query(EvalQuestionVersion)
-            .filter(
-                EvalQuestionVersion.question_id == task.question_id,
-                EvalQuestionVersion.version == task.question_version,
-            )
-            .first()
-        )
-
-        if not question_version:
-            raise ValueError(f"Question version {task.question_version} not found")
 
         # Get answer
         answer = db.query(EvalAnswer).filter(EvalAnswer.id == task.answer_id).first()
@@ -273,103 +238,25 @@ class GradingService:
             respondent.user_name if respondent else f"User #{task.respondent_id}"
         )
 
-        # Collect all attachment keys for later copying to SubtaskContext
-        all_attachments = []
+        # Get answer content (text and url)
+        answer_text = answer.content_data.get("text", "") or ""
+        answer_url = answer.content_data.get("url", "") or ""
 
-        # Format question content
-        question_content = question_version.content_data.get("text", "") or ""
-        question_url = self._format_url(question_version.content_data.get("url"))
-        q_attachments = question_version.content_data.get("attachments", [])
-        question_attachments = self._format_attachments(q_attachments)
-        all_attachments.extend(self._collect_attachment_keys(q_attachments))
+        # Format answer content for prompt
+        answer_content = f"\n{answer_text}" if answer_text else ""
+        answer_url_str = f"\n**Reference URL:** {answer_url}" if answer_url else ""
 
-        # Format criteria content
-        criteria_content = question_version.criteria_data.get("text", "") or ""
-        criteria_url = self._format_url(question_version.criteria_data.get("url"))
-        c_attachments = question_version.criteria_data.get("attachments", [])
-        criteria_attachments = self._format_attachments(c_attachments)
-        all_attachments.extend(self._collect_attachment_keys(c_attachments))
-
-        # Format answer content
-        answer_content = answer.content_data.get("text", "") or ""
-        answer_url = self._format_url(answer.content_data.get("url"))
-        a_attachments = answer.content_data.get("attachments", [])
-        answer_attachments = self._format_attachments(a_attachments)
-        all_attachments.extend(self._collect_attachment_keys(a_attachments))
+        # Only collect answer attachments (not question or criteria attachments)
+        answer_attachments = answer.content_data.get("attachments", [])
+        all_attachments = self._collect_attachment_keys(answer_attachments)
 
         prompt = GRADING_PROMPT_TEMPLATE.format(
             respondent_name=respondent_name,
-            question_content=question_content,
-            question_url=question_url,
-            question_attachments=question_attachments,
-            criteria_content=criteria_content,
-            criteria_url=criteria_url,
-            criteria_attachments=criteria_attachments,
             answer_content=answer_content,
-            answer_url=answer_url,
-            answer_attachments=answer_attachments,
+            answer_url=answer_url_str,
         )
 
         return prompt, all_attachments
-
-    def _format_url(self, url: Optional[str]) -> str:
-        """
-        Format URL content for prompt.
-
-        Args:
-            url: URL string or None
-
-        Returns:
-            Formatted URL string or empty string
-        """
-        if not url:
-            return ""
-        return f"**Reference URL:** [{url}]({url})"
-
-    def _format_attachments(
-        self,
-        attachments: List[Dict],
-        storage_service: Optional["EvalStorageService"] = None,
-    ) -> str:
-        """
-        Format attachments for prompt display with presigned URLs.
-
-        Generates presigned URLs for each attachment so the AI can access the content.
-        For images, the AI can view them directly. For documents, the AI can
-        reference them via the URL.
-
-        Args:
-            attachments: List of attachment dictionaries with 'key', 'filename', etc.
-            storage_service: Storage service for generating presigned URLs
-
-        Returns:
-            Formatted attachment string with filenames and URLs
-        """
-        if not attachments:
-            return ""
-
-        # Initialize storage service if not provided
-        if storage_service is None:
-            from wecode.service.evaluation.storage_service import EvalStorageService
-
-            storage_service = EvalStorageService()
-
-        lines = ["**Attachments:**"]
-        for att in attachments:
-            filename = att.get("filename", "Unknown")
-            key = att.get("key", "")
-
-            if key and storage_service:
-                # Generate presigned URL for the attachment (valid for 1 hour)
-                url = storage_service.get_presigned_url(key, expires=3600)
-                if url:
-                    lines.append(f"- [{filename}]({url})")
-                else:
-                    lines.append(f"- {filename} (URL unavailable)")
-            else:
-                lines.append(f"- {filename}")
-
-        return "\n".join(lines)
 
     def _collect_attachment_keys(
         self,
