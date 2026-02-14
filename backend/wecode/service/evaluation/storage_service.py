@@ -51,7 +51,9 @@ class EvalStorageService:
 
         # Check if MinIO/S3 is configured
         if settings.ATTACHMENT_STORAGE_BACKEND not in ("minio", "s3"):
-            logger.warning("[Evaluation] MinIO/S3 storage not configured for evaluation module")
+            logger.warning(
+                "[Evaluation] MinIO/S3 storage not configured for evaluation module"
+            )
             return None
 
         if not settings.ATTACHMENT_S3_ENDPOINT:
@@ -424,7 +426,9 @@ class EvalStorageService:
             logger.error(f"[Evaluation] Failed to generate presigned GET URL: {e}")
             return None
         except Exception as e:
-            logger.error(f"[Evaluation] Unexpected error generating presigned GET URL: {e}")
+            logger.error(
+                f"[Evaluation] Unexpected error generating presigned GET URL: {e}"
+            )
             return None
 
     def get_presigned_put_url(
@@ -458,7 +462,9 @@ class EvalStorageService:
             logger.error(f"[Evaluation] Failed to generate presigned PUT URL: {e}")
             return None
         except Exception as e:
-            logger.error(f"[Evaluation] Unexpected error generating presigned PUT URL: {e}")
+            logger.error(
+                f"[Evaluation] Unexpected error generating presigned PUT URL: {e}"
+            )
             return None
 
     def generate_upload_key(
@@ -518,3 +524,114 @@ class EvalStorageService:
                 timestamp,
                 filename,
             )
+
+    def extract_text_from_file(self, key: str) -> Optional[str]:
+        """
+        Extract text content from a file stored in S3.
+
+        Supports:
+        - Plain text files (.txt, .md)
+        - Word documents (.docx)
+        - PDF files (.pdf)
+        - Other binary files (returns a notice that content cannot be extracted)
+
+        Args:
+            key: Storage key in S3
+
+        Returns:
+            Extracted text content, or None if extraction fails
+        """
+        # Get file data from S3
+        data = self.get(key)
+        if not data:
+            logger.warning(f"[Evaluation] Could not get file from S3: {key}")
+            return None
+
+        # Determine file type from key (filename)
+        filename = key.split("/")[-1].lower()
+
+        try:
+            if filename.endswith((".txt", ".md", ".markdown")):
+                return self._extract_text_plain(data)
+            elif filename.endswith(".docx"):
+                return self._extract_text_docx(data)
+            elif filename.endswith(".pdf"):
+                return self._extract_text_pdf(data)
+            else:
+                # For unsupported formats, return a notice
+                return f"[File: {filename} - content extraction not supported for this format]"
+
+        except Exception as e:
+            logger.error(f"[Evaluation] Failed to extract text from {key}: {e}")
+            return f"[File: {filename} - failed to extract content: {str(e)[:100]}]"
+
+    def _extract_text_plain(self, data: bytes) -> str:
+        """Extract text from plain text file."""
+        # Try different encodings
+        for encoding in ["utf-8", "gbk", "gb2312", "latin-1"]:
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        # Fallback with replacement
+        return data.decode("utf-8", errors="replace")
+
+    def _extract_text_docx(self, data: bytes) -> str:
+        """Extract text from DOCX file."""
+        try:
+            from io import BytesIO
+
+            from docx import Document
+
+            doc = Document(BytesIO(data))
+            paragraphs = []
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    paragraphs.append(text)
+
+            # Also extract tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                    if row_text.strip():
+                        paragraphs.append(row_text)
+
+            return "\n\n".join(paragraphs)
+
+        except ImportError:
+            logger.warning(
+                "[Evaluation] python-docx not installed, cannot extract DOCX"
+            )
+            return "[DOCX file - python-docx library not available for extraction]"
+        except Exception as e:
+            logger.error(f"[Evaluation] Failed to extract DOCX: {e}")
+            return f"[DOCX file - extraction failed: {str(e)[:100]}]"
+
+    def _extract_text_pdf(self, data: bytes) -> str:
+        """Extract text from PDF file."""
+        try:
+            from io import BytesIO
+
+            from PyPDF2 import PdfReader
+
+            reader = PdfReader(BytesIO(data))
+            text_parts = []
+
+            for page_num, page in enumerate(reader.pages, 1):
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    text_parts.append(f"--- Page {page_num} ---\n{page_text.strip()}")
+
+            return (
+                "\n\n".join(text_parts)
+                if text_parts
+                else "[PDF file - no extractable text]"
+            )
+
+        except ImportError:
+            logger.warning("[Evaluation] PyPDF2 not installed, cannot extract PDF")
+            return "[PDF file - PyPDF2 library not available for extraction]"
+        except Exception as e:
+            logger.error(f"[Evaluation] Failed to extract PDF: {e}")
+            return f"[PDF file - extraction failed: {str(e)[:100]}]"
