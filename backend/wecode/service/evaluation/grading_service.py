@@ -819,6 +819,9 @@ class GradingService:
         2. A newly provided report_content
         3. An uploaded attachment
 
+        The final report is ALWAYS saved to S3 with a new path to maintain
+        a permanent record of the published content.
+
         Args:
             db: Database session
             task: Grading task
@@ -829,6 +832,8 @@ class GradingService:
         Returns:
             Updated grading task
         """
+        from wecode.service.evaluation.storage_service import EvalStorageService
+
         now = datetime.now()
 
         report_data = task.report_data or {}
@@ -845,13 +850,40 @@ class GradingService:
                 final_content = report_data.get("content", "")
 
         # Determine final S3 path
-        final_s3_path = task.report_s3_path
+        final_s3_path = ""
+
+        # If attachment is provided, use its key
         if attachment and attachment.get("key"):
             final_s3_path = attachment["key"]
-        elif report_data.get("human_report", {}).get("s3_path"):
-            final_s3_path = report_data["human_report"]["s3_path"]
-        elif report_data.get("ai_report", {}).get("s3_path"):
-            final_s3_path = report_data["ai_report"]["s3_path"]
+        elif final_content:
+            # Always save final report content to S3 as a new final version
+            # This ensures we have a permanent record of what was published
+            try:
+                question = (
+                    db.query(EvalQuestion)
+                    .filter(EvalQuestion.id == task.question_id)
+                    .first()
+                )
+                topic_id = question.topic_id if question else 0
+
+                storage_service = EvalStorageService()
+                final_s3_path = storage_service.save_grading_report(
+                    respondent_id=task.respondent_id,
+                    topic_id=topic_id,
+                    question_id=task.question_id,
+                    content=final_content,
+                    is_draft=False,  # Final published version
+                )
+                logger.info(f"[Evaluation] Saved final report to S3: {final_s3_path}")
+            except Exception as e:
+                logger.warning(f"[Evaluation] Failed to save final report to S3: {e}")
+                # Fallback to existing S3 path
+                if report_data.get("human_report", {}).get("s3_path"):
+                    final_s3_path = report_data["human_report"]["s3_path"]
+                elif report_data.get("ai_report", {}).get("s3_path"):
+                    final_s3_path = report_data["ai_report"]["s3_path"]
+                else:
+                    final_s3_path = task.report_s3_path or ""
 
         # Build final_report
         report_data["final_report"] = {

@@ -19,6 +19,7 @@ import {
   FileText,
   ClipboardList,
   Upload,
+  CheckCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -554,9 +555,14 @@ function GraderAnswerContent() {
                       <Upload className="mr-2 h-4 w-4" />
                       {t('grading.upload_report')}
                     </Button>
-                    <Button variant="primary" onClick={handlePublish} disabled={publishing}>
-                      <Send className="mr-2 h-4 w-4" />
-                      {t('grading.publish')}
+                    <Button
+                      variant="primary"
+                      onClick={handlePublish}
+                      disabled={publishing}
+                      title={t('grading.publish_ai_as_final_hint')}
+                    >
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                      {t('grading.publish_ai_as_final')}
                     </Button>
                   </>
                 )}

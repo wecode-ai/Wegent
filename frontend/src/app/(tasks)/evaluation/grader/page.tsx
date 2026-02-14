@@ -46,7 +46,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
   getGraderDashboard,
   type GraderDashboardStats,
@@ -66,6 +68,7 @@ function GraderDashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
+  const { theme } = useTheme()
   const { t } = useTranslation('evaluation')
 
   // Get initial filters from URL
@@ -577,7 +580,8 @@ function GraderDashboardContent() {
                           </Button>
                         )}
                         {(task.status === GradingTaskStatus.FAILED ||
-                          task.status === GradingTaskStatus.RUNNING) && (
+                          task.status === GradingTaskStatus.RUNNING ||
+                          task.status === GradingTaskStatus.COMPLETED) && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -663,13 +667,18 @@ function GraderDashboardContent() {
               <Skeleton className="h-48 w-full" />
             ) : selectedTask?.report_data &&
               Object.keys(selectedTask.report_data).length > 0 ? (
-              <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
-                {typeof selectedTask.report_data === 'string'
-                  ? selectedTask.report_data
-                  : typeof selectedTask.report_data.content === 'string'
-                    ? selectedTask.report_data.content
-                    : JSON.stringify(selectedTask.report_data, null, 2)}
-              </pre>
+              <div className="rounded-lg bg-surface p-4">
+                <EnhancedMarkdown
+                  source={
+                    typeof selectedTask.report_data === 'string'
+                      ? selectedTask.report_data
+                      : typeof selectedTask.report_data.content === 'string'
+                        ? selectedTask.report_data.content
+                        : JSON.stringify(selectedTask.report_data, null, 2)
+                  }
+                  theme={theme === 'dark' ? 'dark' : 'light'}
+                />
+              </div>
             ) : (
               <p className="text-text-secondary">{t('grading.no_report_data')}</p>
             )}

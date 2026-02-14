@@ -197,6 +197,8 @@
     "no_report_data": "暂无报告数据",
     "execute_success": "评分任务已启动",
     "publish_success": "报告发布成功",
+    "publish_ai_as_final": "确认 AI 评分",
+    "publish_ai_as_final_hint": "将 AI 评分结果作为最终报告发布",
     "batch_execute": "批量执行",
     "batch_publish": "批量发布",
     "my_reports": "我的报告",

@@ -197,6 +197,8 @@
     "no_report_data": "No report data available",
     "execute_success": "Grading task started",
     "publish_success": "Report published successfully",
+    "publish_ai_as_final": "Use AI Result",
+    "publish_ai_as_final_hint": "Publish the AI grading result as the final report",
     "batch_execute": "Batch Execute",
     "batch_publish": "Batch Publish",
     "my_reports": "My Reports",
