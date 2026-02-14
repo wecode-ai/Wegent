@@ -99,7 +99,7 @@ function RespondentTopicDetailContent() {
         <div className="mb-2 flex items-center gap-3">
           <h1 className="text-2xl font-semibold text-text-primary">{topic.name}</h1>
           <Badge variant={topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'}>
-            {getVisibilityLabel(topic.visibility)}
+            {getVisibilityLabel(topic.visibility, t)}
           </Badge>
         </div>
         {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}

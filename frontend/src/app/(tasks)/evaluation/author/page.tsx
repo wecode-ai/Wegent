@@ -175,7 +175,7 @@ function AuthorTopicsContent() {
                       ) : (
                         <EyeOff className="mr-1 h-3 w-3" />
                       )}
-                      {getVisibilityLabel(topic.visibility)}
+                      {getVisibilityLabel(topic.visibility, t)}
                     </Badge>
                     <Badge variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}>
                       {getStatusLabel(topic.status, 'topic', t)}

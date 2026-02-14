@@ -125,7 +125,7 @@ function RespondentTopicsContent() {
                   <Badge
                     variant={topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'}
                   >
-                    {getVisibilityLabel(topic.visibility)}
+                    {getVisibilityLabel(topic.visibility, t)}
                   </Badge>
                 </div>
               </CardHeader>

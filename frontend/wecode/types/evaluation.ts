@@ -321,12 +321,12 @@ export function getStatusLabel(
   }
 }
 
-export function getVisibilityLabel(visibility: string): string {
+export function getVisibilityLabel(visibility: string, t?: (key: string) => string): string {
   switch (visibility) {
     case TopicVisibility.PUBLIC:
-      return 'Public'
+      return t ? t('topics.public') : 'Public'
     case TopicVisibility.PRIVATE:
-      return 'Private'
+      return t ? t('topics.private') : 'Private'
     default:
       return visibility
   }
