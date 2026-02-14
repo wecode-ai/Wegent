@@ -41,8 +41,7 @@ import {
   publishGraderTask,
 } from '@wecode/api/evaluation'
 import {
-  graderGetReportUploadUrl,
-  uploadFileToPresignedUrl,
+  graderUploadReportFile,
   graderPublishTaskWithAttachment,
 } from '@wecode/api/evaluation-grader'
 import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
@@ -336,25 +335,15 @@ function GraderAnswerContent() {
 
     setUploading(true)
     try {
-      // Get presigned URL for upload
-      const { upload_url, key } = await graderGetReportUploadUrl(
-        gradingTask.id,
-        file.name,
-        file.type
-      )
-
-      // Upload file to presigned URL
-      const uploadSuccess = await uploadFileToPresignedUrl(upload_url, file)
-      if (!uploadSuccess) {
-        throw new Error('Upload failed')
-      }
+      // Upload file through backend proxy
+      const uploadResponse = await graderUploadReportFile(gradingTask.id, file)
 
       // Publish with attachment
       await graderPublishTaskWithAttachment(gradingTask.id, {
-        key,
-        filename: file.name,
-        size: file.size,
-        contentType: file.type,
+        key: uploadResponse.key,
+        filename: uploadResponse.filename,
+        size: uploadResponse.file_size,
+        contentType: uploadResponse.content_type,
       })
 
       toast({

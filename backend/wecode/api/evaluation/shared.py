@@ -364,6 +364,7 @@ def download_file(
     - Report: Topic creator, grader, or the respondent can download
 
     Returns the file content as a streaming response.
+    Uses streaming to avoid loading entire file into memory.
     """
     storage_service = get_storage_service()
 
@@ -374,9 +375,17 @@ def download_file(
             detail="You don't have permission to download this file",
         )
 
-    # Check if file exists and get content
-    file_data = storage_service.get(s3_path)
-    if file_data is None:
+    # Get file info first to check existence and get size
+    file_info = storage_service.get_file_info(s3_path)
+    if file_info is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
+        )
+
+    # Get file stream
+    file_stream = storage_service.get_stream(s3_path)
+    if file_stream is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
@@ -385,9 +394,9 @@ def download_file(
     # Extract filename from path
     filename = s3_path.split("/")[-1]
 
-    # Try to determine content type based on file extension
-    content_type = "application/octet-stream"
-    if "." in filename:
+    # Try to determine content type based on file extension or use stored content type
+    content_type = file_info.get("content_type", "application/octet-stream")
+    if content_type == "application/octet-stream" and "." in filename:
         ext = filename.rsplit(".", 1)[-1].lower()
         content_type_map = {
             "pdf": "application/pdf",
@@ -417,14 +426,12 @@ def download_file(
         f"filename*=UTF-8''{encoded_filename}"
     )
 
-    # Return file as streaming response
-    from io import BytesIO
-
+    # Return file as streaming response (memory efficient for large files)
     return StreamingResponse(
-        BytesIO(file_data),
+        file_stream,
         media_type=content_type,
         headers={
             "Content-Disposition": content_disposition,
-            "Content-Length": str(len(file_data)),
+            "Content-Length": str(file_info.get("size", 0)),
         },
     )

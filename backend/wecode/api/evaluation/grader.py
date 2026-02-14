@@ -1168,9 +1168,8 @@ def download_report_file(
         version: Report version to download (ai, human, final). Defaults to latest available.
 
     Returns:
-        File content as StreamingResponse
+        File content as StreamingResponse (streaming for better performance)
     """
-    from io import BytesIO
     from urllib.parse import quote
 
     from fastapi.responses import StreamingResponse
@@ -1252,14 +1251,25 @@ def download_report_file(
             detail="Report file not found in storage",
         )
 
-    # Get file content from S3
+    # Get file info and stream from S3
     storage_service = EvalStorageService()
-    file_data = storage_service.get(s3_path)
-    if file_data is None:
+    file_info = storage_service.get_file_info(s3_path)
+    if file_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report file not found in storage",
         )
+
+    file_stream = storage_service.get_stream(s3_path)
+    if file_stream is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report file not found in storage",
+        )
+
+    # Use stored content type if available
+    if file_info.get("content_type") and file_info["content_type"] != "application/octet-stream":
+        content_type = file_info["content_type"]
 
     # RFC 5987 encoding for non-ASCII filenames
     encoded_filename = quote(filename, safe="")
@@ -1269,11 +1279,11 @@ def download_report_file(
     )
 
     return StreamingResponse(
-        BytesIO(file_data),
+        file_stream,
         media_type=content_type,
         headers={
             "Content-Disposition": content_disposition,
-            "Content-Length": str(len(file_data)),
+            "Content-Length": str(file_info.get("size", 0)),
         },
     )
 
