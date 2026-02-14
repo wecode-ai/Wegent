@@ -70,7 +70,8 @@
     "settings": "Settings",
     "docs": "Docs",
     "feedback": "Feedback",
-    "admin": "Admin"
+    "admin": "Admin",
+    "evaluation": "AI Evaluation"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",

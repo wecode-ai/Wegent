@@ -15,6 +15,7 @@ import i18next from 'i18next'
 const supportedLanguages = ['en', 'zh-CN']
 
 // Wecode-specific namespaces that have extension translations
+// Note: evaluation namespace is in src/i18n/locales/, not here
 const wecodeNamespaces = ['devices']
 
 /**
@@ -43,3 +44,6 @@ if (i18next.isInitialized) {
     loadWecodeResources()
   })
 }
+
+// Export the load function for manual invocation if needed
+export { loadWecodeResources }

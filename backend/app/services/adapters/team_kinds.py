@@ -2119,6 +2119,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Raises:
             HTTPException: If team not found or access denied
         """
+        from app.services.group_permission import get_user_groups
+
         # Get team
         team = kindReader.get_by_id(db, KindType.TEAM, team_id)
         if not team:
@@ -2129,9 +2131,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # 1. User is the owner (team.user_id == user_id)
         # 2. Team is public (team.user_id == 0)
         # 3. User has shared access via ResourceMember
+        # 4. Team is a group team and user belongs to that group
         is_public_team = team.user_id == 0
         is_author = team.user_id == user_id
-        if not is_author and not is_public_team:
+        is_group_team = team.namespace not in ("default", "system")
+
+        has_access = is_author or is_public_team
+
+        if not has_access and is_group_team:
+            # Check if user belongs to the team's group (namespace)
+            user_groups = get_user_groups(db, user_id)
+            if team.namespace in user_groups:
+                has_access = True
+
+        if not has_access:
             shared_member = (
                 db.query(ResourceMember)
                 .filter(
@@ -2142,10 +2155,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 .first()
             )
-            if not shared_member:
-                raise HTTPException(
-                    status_code=403, detail="Access denied to this team"
-                )
+            if shared_member:
+                has_access = True
+
+        if not has_access:
+            raise HTTPException(
+                status_code=403, detail="Access denied to this team"
+            )
 
         team_crd = Team.model_validate(team.json)
         all_skills = set()
