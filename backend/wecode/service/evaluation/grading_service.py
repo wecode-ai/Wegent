@@ -412,15 +412,17 @@ class GradingService:
         to SubtaskContext, allowing chat_shell to access them through the standard
         history loading mechanism.
 
-        Task ownership rules:
-        - Auto-triggered tasks: belong to topic creator (team owner)
-        - Manual/retry tasks: belong to grader (user_id)
+        Task ownership rules (determines which user's chat task list shows the task):
+        - Auto-triggered tasks: user_id = topic.creator_id (task visible to creator)
+        - Manual/retry tasks: user_id = grader's ID (task visible to grader)
+
+        The caller is responsible for passing the correct user_id based on trigger type.
 
         Args:
             db: Database session
             task: Grading task to execute
             team_id: Team ID for grading
-            user_id: User ID initiating the grading (grader)
+            user_id: User ID who owns the Wegent Task (determines chat task list visibility)
 
         Returns:
             Updated grading task

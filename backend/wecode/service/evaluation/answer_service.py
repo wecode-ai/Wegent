@@ -133,11 +133,13 @@ class AnswerService:
                         from wecode.service.evaluation.grading_service import GradingService
 
                         grading_service = GradingService()
+                        # For auto-triggered tasks, the task belongs to the topic creator
+                        # So the grading task appears in the creator's chat task list
                         grading_service.execute(
                             db=db,
                             task=grading_task,
                             team_id=team_id,
-                            user_id=user_id,
+                            user_id=topic.creator_id,  # Use topic creator, not respondent
                         )
                         logger.info(
                             f"[Evaluation] Successfully triggered grading task {grading_task.id}"
