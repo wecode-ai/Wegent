@@ -372,18 +372,14 @@ class GradingService:
         storage_service: Optional["EvalStorageService"] = None,
     ) -> str:
         """
-        Format attachments for prompt by extracting and embedding content.
-
-        Instead of using presigned URLs (which may expire or be inaccessible
-        from the executor container), this method downloads and extracts
-        text content from attachments and embeds it directly in the prompt.
+        Format attachments for prompt.
 
         Args:
             attachments: List of attachment dictionaries
-            storage_service: Storage service for file access
+            storage_service: Storage service for presigned URLs
 
         Returns:
-            Formatted attachment content string
+            Formatted attachment string
         """
         if not attachments:
             return ""
@@ -392,20 +388,8 @@ class GradingService:
         for att in attachments:
             filename = att.get("filename", "Unknown")
             if storage_service and att.get("key"):
-                # Extract and embed file content instead of using URL
-                content = storage_service.extract_text_from_file(att["key"])
-                if content:
-                    lines.append(f"\n### {filename}\n")
-                    lines.append(content)
-                else:
-                    # Fallback: still provide URL if extraction fails
-                    url = storage_service.get_presigned_url(att["key"])
-                    if url:
-                        lines.append(
-                            f"- [{filename}]({url}) (content extraction failed)"
-                        )
-                    else:
-                        lines.append(f"- {filename} (unavailable)")
+                url = storage_service.get_presigned_url(att["key"])
+                lines.append(f"- [{filename}]({url})")
             else:
                 lines.append(f"- {filename}")
 
