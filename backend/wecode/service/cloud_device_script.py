@@ -126,10 +126,12 @@ def _generate_user_data_script(
     """
     # Build the full curl download command in Python to avoid
     # shell quoting issues with PRIVATE-TOKEN header in heredoc.
+    # Use URL decoded path for GitLab API
+    download_url = executor_download_url.replace("%2F", "/")
     curl_parts = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "5"]
     if executor_download_token:
         curl_parts.append(f"-H 'PRIVATE-TOKEN: {executor_download_token}'")
-    curl_parts.extend(["-o", '"$EXECUTOR_PATH.tmp"', f'"{executor_download_url}"'])
+    curl_parts.extend(["-o", '"$EXECUTOR_PATH.tmp"', f'"{download_url}"'])
     curl_download_cmd = " ".join(curl_parts)
 
     return f"""#!/bin/bash
@@ -205,12 +207,19 @@ EXECUTOR_PATH="$BIN_DIR/wegent-executor"
 
 # Always download latest executor to ensure version alignment
 echo "Downloading wegent-executor..."
+echo "   URL: {executor_download_url}"
+echo "   Target: $EXECUTOR_PATH.tmp"
+echo "   Bin dir exists: $(ls -ld "$BIN_DIR" 2>/dev/null && echo 'yes' || echo 'no')"
+
+# Download with verbose error output
 if {curl_download_cmd}; then
     mv "$EXECUTOR_PATH.tmp" "$EXECUTOR_PATH"
     chmod +x "$EXECUTOR_PATH"
     echo "   Downloaded successfully"
+    echo "   File size: $(ls -lh "$EXECUTOR_PATH" | awk '{{print $5}}')"
 else
-    echo "   Download failed"
+    echo "   Download failed with exit code: $?"
+    echo "   Curl command was: curl -fsSL --retry 3 --retry-delay 5 -H 'PRIVATE-TOKEN: ***' -o \"$EXECUTOR_PATH.tmp\" \"{executor_download_url}\""
     rm -f "$EXECUTOR_PATH.tmp"
 fi
 
@@ -260,12 +269,8 @@ echo "Starting wegent-executor..."
 LOG_FILE="$LOG_DIR/wegent-executor.log"
 ERROR_LOG_FILE="$LOG_DIR/wegent-executor-error.log"
 
-# Delete old device config to ensure fresh registration with correct DEVICE_ID
-rm -f "$BASE_DIR/device-config.json"
-
 # Set environment variables
 export EXECUTOR_MODE="local"
-export DEVICE_ID="{device_id}"
 export WEGENT_BACKEND_URL="$CALLBACK_URL"
 export WEGENT_AUTH_TOKEN="$AUTH_TOKEN"
 export ANTHROPIC_CUSTOM_HEADERS="wecode-source: wegent-local
