@@ -300,7 +300,7 @@ class _MainLoopStrategy(_DispatchStrategy):
 
     def can_handle(self) -> bool:
         try:
-            from app.services.chat.ws_emitter import get_main_event_loop
+            from app.services.chat.webpage_ws_chat_emitter import get_main_event_loop
 
             main_loop = get_main_event_loop()
             return main_loop is not None and main_loop.is_running()
@@ -309,7 +309,7 @@ class _MainLoopStrategy(_DispatchStrategy):
 
     def execute(self, task_id: int) -> None:
         try:
-            from app.services.chat.ws_emitter import get_main_event_loop
+            from app.services.chat.webpage_ws_chat_emitter import get_main_event_loop
 
             main_loop = get_main_event_loop()
             asyncio.run_coroutine_threadsafe(_dispatch_task_async(task_id), main_loop)

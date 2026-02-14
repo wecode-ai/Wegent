@@ -30,8 +30,6 @@ from shared.models.responses_api_emitter import EventTransport
 router = APIRouter(prefix="/v1", tags=["responses"])
 logger = logging.getLogger(__name__)
 
-# Track active streams for cancellation and health check
-_active_streams: dict[str, asyncio.Event] = {}
 _start_time = time.time()
 
 
@@ -112,7 +110,7 @@ class OpenAIResponsesRequest(BaseModel):
 class CancelRequest(BaseModel):
     """Cancel request schema."""
 
-    request_id: str = Field(..., description="Request ID to cancel")
+    subtask_id: int = Field(..., description="Subtask ID to cancel")
 
 
 class CancelResponse(BaseModel):
@@ -157,7 +155,6 @@ def _create_sse_event(event_type: str, data: dict) -> ServerSentEvent:
 
 def _extract_stream_attributes(
     request: OpenAIResponsesRequest,
-    cancel_event: asyncio.Event,
     request_id: str,
 ) -> dict:
     """Extract attributes from stream request for tracing."""
@@ -187,7 +184,6 @@ from shared.telemetry.decorators import trace_async_generator
 )
 async def _stream_response(
     request: OpenAIResponsesRequest,
-    cancel_event: asyncio.Event,
     request_id: str,
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """
@@ -196,9 +192,12 @@ async def _stream_response(
     Creates SSETransport and emitter, passes to ChatService.
     ChatService streams events directly via emitter.
     This generator yields events from the transport queue.
+
+    Cancellation is handled via session_manager which is used by StreamingCore.
     """
     from chat_shell.core.shutdown import shutdown_manager
     from chat_shell.services.chat_service import chat_service
+    from chat_shell.services.storage.session import session_manager
 
     # Register stream with shutdown manager
     await shutdown_manager.register_stream(request_id)
@@ -263,13 +262,15 @@ async def _stream_response(
     )
 
     # Start chat processing in background task
+    # Note: chat_service.chat() uses StreamingCore which registers with session_manager
+    # for cancellation support. The cancel_event is managed by session_manager.
     chat_task = asyncio.create_task(chat_service.chat(execution_request, emitter))
 
     try:
         # Yield events from transport queue as they arrive
         while not transport.is_done() or not chat_task.done():
-            # Check for cancellation
-            if cancel_event.is_set():
+            # Check for cancellation via session_manager
+            if session_manager.is_cancelled(subtask_id):
                 chat_task.cancel()
                 event_type, data = await emitter.incomplete("cancelled")
                 yield _create_sse_event(event_type, data)
@@ -327,7 +328,6 @@ async def _stream_response(
     finally:
         transport.mark_done()
         await shutdown_manager.unregister_stream(request_id)
-        cleanup_stream(request_id)
 
 
 # ============================================================
@@ -351,11 +351,8 @@ async def create_response(request: OpenAIResponsesRequest, req: Request):
 
     set_request_context(request_id)
 
-    cancel_event = asyncio.Event()
-    _active_streams[request_id] = cancel_event
-
     return EventSourceResponse(
-        _stream_response(request, cancel_event, request_id),
+        _stream_response(request, request_id),
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
@@ -366,26 +363,30 @@ async def create_response(request: OpenAIResponsesRequest, req: Request):
 
 @router.post("/responses/cancel")
 async def cancel_response(request: CancelRequest):
-    """Cancel an ongoing response."""
-    request_id = request.request_id
+    """Cancel an ongoing response by subtask_id."""
+    from chat_shell.services.chat_service import chat_service
 
-    if request_id not in _active_streams:
-        raise HTTPException(
-            status_code=404, detail="Request not found or already completed"
-        )
+    subtask_id = request.subtask_id
 
-    cancel_event = _active_streams.get(request_id)
-    if cancel_event:
-        cancel_event.set()
+    success = await chat_service.cancel(subtask_id)
+    if success:
+        logger.info("[RESPONSE] Cancelled stream for subtask_id=%d", subtask_id)
         return CancelResponse(success=True, message="Request cancelled")
 
-    return CancelResponse(success=False, message="Request not found")
+    # Stream not found - might have already completed
+    logger.warning(
+        "[RESPONSE] Cancel failed - stream not found for subtask_id=%d", subtask_id
+    )
+    raise HTTPException(
+        status_code=404, detail="Request not found or already completed"
+    )
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
     from chat_shell import __version__ as version
+    from chat_shell.services.storage.session import session_manager
 
     uptime = int(time.time() - _start_time)
 
@@ -393,13 +394,7 @@ async def health_check():
         status="healthy",
         version=version,
         uptime_seconds=uptime,
-        active_streams=len(_active_streams),
+        active_streams=session_manager.get_active_stream_count(),
         storage=StorageHealth(type="memory", status="ok"),
         model_providers=None,
     )
-
-
-def cleanup_stream(request_id: str):
-    """Clean up stream resources after completion."""
-    if request_id in _active_streams:
-        del _active_streams[request_id]
