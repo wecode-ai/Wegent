@@ -61,6 +61,7 @@ class NevisSandboxStatus(BaseModel):
         description="Sandbox status (creating, running, stopped, error)",
     )
     ip_address: Optional[str] = Field(None, description="VM IP address if assigned")
+    vnc_url: Optional[str] = Field(None, description="VNC viewer URL if available")
     created_at: Optional[datetime] = Field(
         None,
         description="Sandbox creation timestamp",

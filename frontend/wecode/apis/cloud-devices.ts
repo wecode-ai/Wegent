@@ -10,7 +10,6 @@
  */
 
 import { apiClient } from '@/apis/client'
-import type { DeviceInfo } from '@/apis/devices'
 
 /**
  * Response from cloud device creation
@@ -31,6 +30,7 @@ export interface NevisSandboxStatus {
   sandbox_id: string
   status: 'creating' | 'running' | 'stopped' | 'error' | string
   ip_address?: string
+  vnc_url?: string
   created_at?: string
 }
 

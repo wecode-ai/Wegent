@@ -120,10 +120,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             )
 
         # Generate startup script
-        # Use a placeholder device_id that will be replaced with sandbox_id
-        temp_device_id = f"cloud-{user_id}-pending"
         user_data = generate_simple_startup_script(
-            device_id=temp_device_id,
             user_name=user_name,
             backend_url=backend_url,
             auth_token=auth_token,
@@ -142,7 +139,8 @@ class CloudDeviceProvider(BaseDeviceProvider):
         if not sandbox_id:
             raise NevisClientError("Nevis API did not return sandbox ID")
 
-        # Create Device CRD with sandbox_id as device_id
+        # Create Device CRD with sandbox_id as temporary identifier.
+        # The real device_id will be set when executor registers via WebSocket.
         device_name = f"{user_name}-cloud-{sandbox_id[-8:]}"
         device_kind = await self._create_device_crd(
             db=db,
@@ -155,7 +153,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         logger.info(
             f"[CloudDeviceProvider] Cloud device created: user_id={user_id}, "
-            f"sandbox_id={sandbox_id}, device_id={sandbox_id}"
+            f"sandbox_id={sandbox_id}"
         )
 
         return {
@@ -368,10 +366,16 @@ class CloudDeviceProvider(BaseDeviceProvider):
         """
         result = await self._client.get_sandbox(device_id)
 
+        # Extract IP from details.urls
+        details = result.get("details", {})
+        ip_address = details.get("urls")
+        vnc_url = details.get("vnc_url")
+
         return {
             "sandbox_id": result.get("id", device_id),
             "status": result.get("status", "unknown"),
-            "ip_address": result.get("ip") or result.get("ipAddress"),
+            "ip_address": ip_address,
+            "vnc_url": vnc_url,
             "created_at": result.get("createdAt"),
         }
 

@@ -109,5 +109,12 @@
     "error_desc": "无法更新执行环境保留设置。",
     "tooltip_preserved": "执行环境已保留，不会被清理",
     "tooltip_not_preserved": "点击保留执行环境，防止被清理"
+  },
+  "cloudDevice": {
+    "vncTitle": "云设备桌面",
+    "loadingVnc": "正在加载 VNC 查看器...",
+    "vncError": "无法加载 VNC 查看器",
+    "openVnc": "打开 VNC 面板",
+    "closeVnc": "关闭 VNC 面板"
   }
 }
