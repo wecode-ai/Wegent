@@ -135,6 +135,9 @@ class DeviceRegisterPayload(BaseModel):
         max_length=50,
         description="Self-reported IP address of the executor",
     )
+
+
+class DeviceHeartbeatPayload(BaseModel):
     """Payload for device heartbeat via WebSocket."""
 
     device_id: str = Field(..., description="Device unique identifier")
