@@ -282,39 +282,56 @@ class ExecutionDispatcher:
             device_id: Optional device ID - uses WebSocket mode when specified
             emitter: Optional custom emitter, defaults to WebSocketResultEmitter
         """
-        # Route to execution target
-        target = self.router.route(request, device_id)
-        logger.info(
-            f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
-            f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
-        )
-        # Create default emitter if not provided
-        if emitter is None:
-            emitter = WebSocketResultEmitter(
+        wrapped_emitter = None
+        try:
+            # Route to execution target
+            target = self.router.route(request, device_id)
+            logger.info(
+                f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
+                f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
+            )
+            # Create default emitter if not provided
+            if emitter is None:
+                # Extract team info from request for task:created event
+                team_id = None
+                team_name = None
+                is_group_chat = False
+                if request.bot and len(request.bot) > 0:
+                    team_id = request.bot[0].get("team_id")
+                    team_name = request.bot[0].get("team_name")
+                    is_group_chat = request.bot[0].get("is_group_chat", False)
+
+                # Extract task title from request
+                task_title = request.task_title
+
+                emitter = WebSocketResultEmitter(
+                    task_id=request.task_id,
+                    subtask_id=request.subtask_id,
+                    user_id=request.user.get("id") if request.user else None,
+                    team_id=team_id,
+                    team_name=team_name,
+                    task_title=task_title,
+                    is_group_chat=is_group_chat,
+                )
+
+            # Wrap emitter with StatusUpdatingEmitter for unified status updates
+            # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
+            # when terminal events are received, regardless of execution mode
+            wrapped_emitter = StatusUpdatingEmitter(
+                wrapped=emitter,
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
-                user_id=request.user.get("id") if request.user else None,
             )
 
-        # Wrap emitter with StatusUpdatingEmitter for unified status updates
-        # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
-        # when terminal events are received, regardless of execution mode
-        wrapped_emitter = StatusUpdatingEmitter(
-            wrapped=emitter,
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-        )
+            logger.info(
+                f"[ExecutionDispatcher] Dispatching: task_id={request.task_id}, "
+                f"subtask_id={request.subtask_id}, mode={target.mode.value}"
+            )
 
-        logger.info(
-            f"[ExecutionDispatcher] Dispatching: task_id={request.task_id}, "
-            f"subtask_id={request.subtask_id}, mode={target.mode.value}"
-        )
+            # Update subtask status to RUNNING before dispatching
+            # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
+            await self._update_subtask_to_running(request.subtask_id)
 
-        # Update subtask status to RUNNING before dispatching
-        # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
-        await self._update_subtask_to_running(request.subtask_id)
-
-        try:
             if target.mode == CommunicationMode.SSE:
                 await self._dispatch_sse(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.WEBSOCKET:
@@ -322,14 +339,32 @@ class ExecutionDispatcher:
             else:
                 await self._dispatch_http_callback(request, target, wrapped_emitter)
         except Exception as e:
-            logger.exception("[ExecutionDispatcher] Error")
-            await wrapped_emitter.emit_error(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                error=str(e),
+            logger.exception(
+                f"[ExecutionDispatcher] Dispatch error: task_id={request.task_id}, "
+                f"subtask_id={request.subtask_id}, error={e}"
             )
+            # Try to emit error to frontend if emitter is available
+            if wrapped_emitter is not None:
+                try:
+                    await wrapped_emitter.emit_error(
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        error=str(e),
+                    )
+                except Exception as emit_error:
+                    logger.error(
+                        f"[ExecutionDispatcher] Failed to emit error: {emit_error}"
+                    )
+            # Re-raise the exception so the caller knows dispatch failed
+            raise
         finally:
-            await wrapped_emitter.close()
+            if wrapped_emitter is not None:
+                try:
+                    await wrapped_emitter.close()
+                except Exception as close_error:
+                    logger.error(
+                        f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
+                    )
 
     async def _update_subtask_to_running(self, subtask_id: int) -> None:
         """Update subtask status to RUNNING in database.
@@ -453,11 +488,16 @@ class ExecutionDispatcher:
         Converts ExecutionRequest to OpenAI format, sends request, and processes
         streaming events.
 
+        Supports distributed cancellation via Redis: periodically checks Redis
+        cancellation flag and breaks out of stream loop if cancelled.
+
         Args:
             request: Execution request
             target: Execution target configuration
             emitter: Result emitter for event emission
         """
+        from app.services.chat.storage.session import session_manager
+
         # OpenAI client appends /responses to base_url, so we need to include /v1
         # e.g., base_url=http://127.0.0.1:8100/v1 -> POST http://127.0.0.1:8100/v1/responses
         base_url = f"{target.url}/v1"
@@ -465,6 +505,9 @@ class ExecutionDispatcher:
         logger.info(
             f"[ExecutionDispatcher] SSE dispatch via OpenAI client: base_url={base_url}"
         )
+
+        # Register stream for cancellation tracking
+        cancel_event = await session_manager.register_stream(request.subtask_id)
 
         # Send START event
         await emitter.emit_start(
@@ -483,6 +526,12 @@ class ExecutionDispatcher:
 
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
+
+        # Ensure request_id is set in metadata for cancellation support
+        # This must match the format used in _cancel_sse: f"req_{subtask_id}"
+        metadata = openai_request.get("metadata", {})
+        metadata["request_id"] = f"req_{request.subtask_id}"
+        openai_request["metadata"] = metadata
 
         # Get tools from openai_request (includes MCP servers converted to tools)
         tools = openai_request.get("tools", [])
@@ -516,59 +565,100 @@ class ExecutionDispatcher:
         )
 
         event_count = 0
-        # Process streaming events
-        async for event in stream:
-            event_count += 1
-            # Get event type from the event object
-            event_type = getattr(event, "type", None)
-            if not event_type:
-                continue
+        last_cancel_check = 0
+        cancelled = False
 
-            # Log every event for debugging
-            if event_count <= 5 or event_type in ("response.completed", "error"):
-                logger.info(
-                    f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
-                    f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        try:
+            # Process streaming events
+            async for event in stream:
+                event_count += 1
+
+                # Check for cancellation every 10 events (to avoid too frequent Redis calls)
+                if event_count - last_cancel_check >= 10:
+                    last_cancel_check = event_count
+                    if await session_manager.is_cancelled(request.subtask_id):
+                        logger.info(
+                            f"[ExecutionDispatcher] Cancellation detected via Redis, "
+                            f"breaking stream loop: task_id={request.task_id}, "
+                            f"subtask_id={request.subtask_id}"
+                        )
+                        cancelled = True
+                        break
+
+                # Also check local event (fast path, no Redis call)
+                if cancel_event.is_set():
+                    logger.info(
+                        f"[ExecutionDispatcher] Cancellation detected via local event, "
+                        f"breaking stream loop: task_id={request.task_id}, "
+                        f"subtask_id={request.subtask_id}"
+                    )
+                    cancelled = True
+                    break
+
+                # Get event type from the event object
+                event_type = getattr(event, "type", None)
+                if not event_type:
+                    continue
+
+                # Log every event for debugging
+                if event_count <= 5 or event_type in ("response.completed", "error"):
+                    logger.info(
+                        f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
+                        f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+                    )
+
+                # Convert event to dict for parsing
+                event_data = (
+                    event.model_dump() if hasattr(event, "model_dump") else vars(event)
                 )
 
-            # Convert event to dict for parsing
-            event_data = (
-                event.model_dump() if hasattr(event, "model_dump") else vars(event)
-            )
-
-            # Parse event using shared parser
-            parsed_event = self.event_parser.parse(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                message_id=request.message_id,
-                event_type=event_type,
-                data=event_data,
-            )
-
-            if parsed_event:
-                await emitter.emit(parsed_event)
-
-            # Break out of loop on terminal events
-            # OpenAI SDK's stream iterator doesn't auto-exit after response.completed,
-            # so we need to manually break to avoid hanging
-            if event_type in (
-                ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-                ResponsesAPIStreamEvents.ERROR.value,
-                ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-            ):
-                logger.info(
-                    f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
-                    f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-                    f"event_type={event_type}"
+                # Parse event using shared parser
+                parsed_event = self.event_parser.parse(
+                    task_id=request.task_id,
+                    subtask_id=request.subtask_id,
+                    message_id=request.message_id,
+                    event_type=event_type,
+                    data=event_data,
                 )
-                break
 
-        # Log when stream iteration completes
-        logger.info(
-            f"[ExecutionDispatcher] SSE stream completed: "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-            f"total_events={event_count}"
-        )
+                if parsed_event:
+                    await emitter.emit(parsed_event)
+
+                # Break out of loop on terminal events
+                # OpenAI SDK's stream iterator doesn't auto-exit after response.completed,
+                # so we need to manually break to avoid hanging
+                if event_type in (
+                    ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+                    ResponsesAPIStreamEvents.ERROR.value,
+                    ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+                ):
+                    logger.info(
+                        f"[ExecutionDispatcher] Terminal event received, breaking stream loop: "
+                        f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+                        f"event_type={event_type}"
+                    )
+                    break
+
+            # If cancelled, emit CANCELLED event
+            if cancelled:
+                await emitter.emit(
+                    ExecutionEvent(
+                        type=EventType.CANCELLED,
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        message_id=request.message_id,
+                    )
+                )
+
+            # Log when stream iteration completes
+            logger.info(
+                f"[ExecutionDispatcher] SSE stream completed: "
+                f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+                f"total_events={event_count}, cancelled={cancelled}"
+            )
+        finally:
+            # Unregister stream to clean up
+            await session_manager.unregister_stream(request.subtask_id)
 
     async def _dispatch_websocket(
         self,
@@ -756,23 +846,34 @@ class ExecutionDispatcher:
         request: ExecutionRequest,
         target: ExecutionTarget,
     ) -> bool:
-        """Cancel SSE task.
+        """Cancel SSE task via Redis.
+
+        Uses Redis-based cancellation for distributed multi-instance support.
+        The cancellation flag is set in Redis, and the _dispatch_sse method
+        periodically checks this flag and breaks out of the stream loop.
 
         Args:
             request: Execution request
-            target: Execution target configuration
+            target: Execution target configuration (not used, kept for interface consistency)
 
         Returns:
-            True if cancel request was sent successfully
+            True if cancel flag was set successfully
         """
-        url = f"{target.url}/v1/responses/cancel"
+        from app.services.chat.storage.session import session_manager
+
         try:
-            response = await self.http_client.post(
-                url,
-                json={"request_id": f"req_{request.subtask_id}"},
+            success = await session_manager.cancel_stream(request.subtask_id)
+            if success:
+                logger.info(
+                    f"[ExecutionDispatcher] SSE cancel flag set via Redis: "
+                    f"subtask_id={request.subtask_id}"
+                )
+            return success
+        except Exception as e:
+            logger.error(
+                f"[ExecutionDispatcher] Failed to set SSE cancel flag: "
+                f"subtask_id={request.subtask_id}, error={e}"
             )
-            return response.status_code == 200
-        except Exception:
             return False
 
     async def _cancel_websocket(
@@ -823,6 +924,122 @@ class ExecutionDispatcher:
             return response.status_code == 200
         except Exception:
             return False
+
+    async def error(
+        self,
+        request: ExecutionRequest,
+        error_message: str,
+        device_id: Optional[str] = None,
+        emitter: Optional[ResultEmitter] = None,
+    ) -> None:
+        """Send error event for a task.
+
+        This is used for errors that occur before or outside of task execution,
+        such as validation errors in retry/cancel handlers.
+
+        Routes to the appropriate channel based on the request configuration,
+        similar to dispatch and cancel methods.
+
+        Args:
+            request: Execution request (used for routing and task info)
+            error_message: Error message to send
+            device_id: Optional device ID for routing
+            emitter: Optional emitter for frontend notification. If not provided,
+                     only the execution service is notified (no frontend callback).
+        """
+        # Route to execution target
+        target = self.router.route(request, device_id)
+
+        logger.info(
+            f"[ExecutionDispatcher] Sending error: task_id={request.task_id}, "
+            f"subtask_id={request.subtask_id}, mode={target.mode.value}, "
+            f"error={error_message}"
+        )
+
+        # Notify execution service based on communication mode
+        if target.mode == CommunicationMode.SSE:
+            await self._error_sse(request, target, error_message)
+        elif target.mode == CommunicationMode.WEBSOCKET:
+            await self._error_websocket(request, target, error_message)
+        # HTTP mode doesn't need explicit error notification to executor
+
+        # If emitter is provided, also emit error event to frontend
+        if emitter is not None:
+            # Wrap with StatusUpdatingEmitter for unified status updates
+            wrapped_emitter = StatusUpdatingEmitter(
+                wrapped=emitter,
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+            )
+            try:
+                await wrapped_emitter.emit_error(
+                    task_id=request.task_id,
+                    subtask_id=request.subtask_id,
+                    error=error_message,
+                    message_id=request.message_id,
+                )
+            finally:
+                await wrapped_emitter.close()
+
+    async def _error_sse(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        error_message: str,
+    ) -> None:
+        """Send error to SSE service.
+
+        For SSE mode, we notify the chat_shell service about the error
+        so it can clean up any pending state.
+
+        Args:
+            request: Execution request
+            target: Execution target configuration
+            error_message: Error message
+        """
+        url = f"{target.url}/v1/responses/error"
+        try:
+            await self.http_client.post(
+                url,
+                json={
+                    "request_id": f"req_{request.subtask_id}",
+                    "error": error_message,
+                },
+            )
+        except Exception as e:
+            # Error notification to chat_shell is best-effort
+            logger.warning(
+                f"[ExecutionDispatcher] Failed to notify SSE service about error: {e}"
+            )
+
+    async def _error_websocket(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        error_message: str,
+    ) -> None:
+        """Send error via WebSocket.
+
+        For WebSocket mode, we send an error event to the device room.
+
+        Args:
+            request: Execution request
+            target: Execution target configuration
+            error_message: Error message
+        """
+        from app.core.socketio import get_sio
+
+        sio = get_sio()
+        await sio.emit(
+            "task:error",
+            {
+                "task_id": request.task_id,
+                "subtask_id": request.subtask_id,
+                "error": error_message,
+            },
+            room=target.room,
+            namespace=target.namespace,
+        )
 
 
 # Global instance

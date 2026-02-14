@@ -22,8 +22,10 @@ from typing import Optional
 
 from app.core.distributed_lock import distributed_lock
 from app.db.session import SessionLocal
-from app.services.chat.ws_emitter import get_ws_emitter
 from app.services.device_service import device_service
+from app.services.execution.dispatcher import execution_dispatcher
+from app.services.execution.emitters import WebSocketResultEmitter
+from shared.models import ExecutionRequest
 from shared.models.db.subtask import Subtask, SubtaskStatus
 
 logger = logging.getLogger(__name__)
@@ -95,25 +97,35 @@ async def check_and_mark_failed_subtasks() -> int:
                     f"user_id={user_id}, device_id={device_id}, subtask_id={subtask.id}"
                 )
 
-                # Mark subtask as failed
+                # Mark subtask as failed in database
                 subtask.status = SubtaskStatus.FAILED
                 subtask.error_message = "Device connection lost (heartbeat timeout)"
                 subtask.completed_at = datetime.now()
 
-                # Emit error to task room
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    try:
-                        await ws_emitter.emit_chat_error(
-                            task_id=subtask.task_id,
-                            subtask_id=subtask.id,
-                            error="Device connection lost",
-                            message_id=subtask.message_id,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[DeviceMonitor] Failed to emit chat:error for subtask {subtask.id}: {e}"
-                        )
+                # Emit error via ExecutionDispatcher
+                # Create minimal request for routing and emitter creation
+                try:
+                    request = ExecutionRequest(
+                        task_id=subtask.task_id,
+                        subtask_id=subtask.id,
+                        prompt="",  # Not used for error
+                        user_id=user_id,
+                        message_id=subtask.message_id,
+                    )
+                    emitter = WebSocketResultEmitter(
+                        task_id=subtask.task_id,
+                        subtask_id=subtask.id,
+                        user_id=user_id,
+                    )
+                    await execution_dispatcher.error(
+                        request=request,
+                        error_message="Device connection lost",
+                        emitter=emitter,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[DeviceMonitor] Failed to emit error for subtask {subtask.id}: {e}"
+                    )
 
                 marked_count += 1
 

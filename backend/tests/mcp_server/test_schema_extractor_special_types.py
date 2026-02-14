@@ -26,6 +26,7 @@ class TestIsDependency:
 
     def test_depends_marker(self):
         """Test detection of Depends() marker."""
+
         def get_db():
             pass
 
@@ -38,6 +39,7 @@ class TestIsDependency:
 
     def test_common_dependency_names(self):
         """Test detection of common dependency parameter names."""
+
         def func(db=None, current_user=None, background_tasks=None):
             pass
 
@@ -49,6 +51,7 @@ class TestIsDependency:
 
     def test_regular_parameter_not_dependency(self):
         """Test that regular parameters are not detected as dependencies."""
+
         def func(name: str, count: int = 10):
             pass
 
@@ -89,6 +92,7 @@ class TestExtractToolParametersWithSpecialTypes:
 
     def test_filters_background_tasks(self):
         """Test BackgroundTasks parameter is filtered out."""
+
         def endpoint(
             name: str,
             background_tasks: BackgroundTasks,
@@ -105,6 +109,7 @@ class TestExtractToolParametersWithSpecialTypes:
 
     def test_filters_request_response(self):
         """Test Request and Response parameters are filtered out."""
+
         def endpoint(
             name: str,
             request: Request,
@@ -121,6 +126,7 @@ class TestExtractToolParametersWithSpecialTypes:
 
     def test_filters_all_fastapi_special_types(self):
         """Test all FastAPI special types are filtered in combination."""
+
         def get_db():
             pass
 
@@ -132,7 +138,7 @@ class TestExtractToolParametersWithSpecialTypes:
             name: str = Query(default="default"),
             background_tasks: BackgroundTasks = None,
             db: Session = Depends(get_db),
-            current_user = Depends(get_user),
+            current_user=Depends(get_user),
         ):
             pass
 
@@ -161,6 +167,7 @@ class TestExtractToolParametersWithPydanticBody:
 
     def test_flattens_pydantic_body(self):
         """Test Pydantic body model is flattened into parameters."""
+
         def endpoint(
             knowledge_base_id: int,
             data: TestBodyModel,

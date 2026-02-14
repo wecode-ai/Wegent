@@ -74,14 +74,11 @@ async def notify_group_members_task_updated(
     """
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
-    from app.services.chat.ws_emitter import get_ws_emitter
+    from backend.app.services.chat.webpage_ws_extended_emitter import (
+        get_extended_emitter,
+    )
 
-    ws_emitter = get_ws_emitter()
-    if not ws_emitter:
-        logger.warning(
-            f"[notify_group_members_task_updated] WebSocket emitter not available"
-        )
-        return
+    emitter = get_extended_emitter()
 
     try:
         # Get all active members of this group chat using ResourceMember
@@ -109,7 +106,7 @@ async def notify_group_members_task_updated(
                 # Skip the sender - they already know about their own message
                 continue
 
-            await ws_emitter.emit_task_status(
+            await emitter.emit_group_chat_new_message(
                 user_id=member_user_id,
                 task_id=task.id,
                 status=current_status,

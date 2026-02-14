@@ -733,34 +733,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             await self.enter_room(sid, task_room)
             logger.info(f"[WS] chat:send joined task room: {task_room}")
 
-            # Emit task:created event to user room for task list update
-            from app.api.ws.events import ServerEvents
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter:
-                team_crd = Team.model_validate(team.json)
-                team_name = team_crd.metadata.name if team_crd.metadata else team.name
-                task_crd = Task.model_validate(task.json)
-                task_title = task_crd.spec.title or ""
-                # Get is_group_chat from task spec, with fallback to payload
-                task_is_group_chat = (
-                    task_crd.spec.is_group_chat
-                    if task_crd.spec
-                    else payload.is_group_chat
-                )
-
-                await ws_emitter.emit_task_created(
-                    user_id=user_id,
-                    task_id=task.id,
-                    title=task_title,
-                    team_id=team.id,
-                    team_name=team_name,
-                    is_group_chat=task_is_group_chat,
-                )
-                logger.info(
-                    f"[WS] chat:send emitted task:created event for task_id={task.id}"
-                )
+            # Note: task:created event is now emitted by WebSocketResultEmitter
+            # when the START event is processed. This ensures consistent event
+            # emission through the ExecutionDispatcher chain.
 
             # Broadcast user message to room (exclude sender)
             if user_subtask:
@@ -1001,169 +976,56 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "error": f"Cannot cancel subtask in {subtask.status.value} state"
                 }
 
-            # Check if this is a Chat Shell task, Device task, or Executor task
-            # Shell type "Chat" uses session_manager (direct chat)
-            # Device tasks (executor_name starts with "device-") use WebSocket to device
-            # Other shell types (ClaudeCode, Agno, etc.) use executor_manager
-            is_chat_shell = (
-                payload.shell_type == "Chat" if payload.shell_type else False
-            )
+            # Use ExecutionDispatcher to handle cancel request
+            # This ensures unified cancel logic across all execution modes
+            from app.services.execution.dispatcher import execution_dispatcher
+            from shared.models import ExecutionRequest
+
+            # Determine device_id if this is a device task
+            device_id = None
             is_device_task = subtask.executor_name and subtask.executor_name.startswith(
                 "device-"
             )
+            if is_device_task:
+                device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+
+            # Build minimal ExecutionRequest for cancel routing
+            # Router only needs bot[0].shell_type and user.id
+            cancel_request = ExecutionRequest(
+                task_id=subtask.task_id,
+                subtask_id=payload.subtask_id,
+                bot=[{"shell_type": payload.shell_type or "Chat"}],
+                user={"id": user_id},
+            )
 
             logger.info(
-                f"[WS] chat:cancel task_id={subtask.task_id}, shell_type={payload.shell_type}, "
-                f"is_chat_shell={is_chat_shell}, is_device_task={is_device_task}, "
+                f"[WS] chat:cancel Dispatching cancel via ExecutionDispatcher: "
+                f"task_id={subtask.task_id}, subtask_id={payload.subtask_id}, "
+                f"shell_type={payload.shell_type}, device_id={device_id}, "
                 f"executor_name={subtask.executor_name}"
             )
 
-            if is_chat_shell:
-                # For Chat Shell tasks, determine which session_manager to use
-                # based on the version map created at stream registration
-                stream_version = self._stream_versions.get(payload.subtask_id, "v1")
-
-                if stream_version == "v2":
-                    # Use chat session_manager (v2)
-                    logger.info(
-                        f"[WS] chat:cancel Using chat session_manager (v2) for subtask_id={payload.subtask_id}"
-                    )
-                    from app.services.chat.storage import (
-                        session_manager as session_manager_v2,
-                    )
-
-                    await session_manager_v2.cancel_stream(payload.subtask_id)
-                else:
-                    # Use chat session_manager (v1)
-                    logger.info(
-                        f"[WS] chat:cancel Using chat session_manager (v1) for subtask_id={payload.subtask_id}"
-                    )
-                    await session_manager.cancel_stream(payload.subtask_id)
-            elif is_device_task:
-                # For Device tasks, send task:cancel event via WebSocket to the device
-                # Extract device_id from executor_name (format: "device-{device_id}")
-                device_id = subtask.executor_name[7:]  # Remove "device-" prefix
-                device_room = f"device:{user_id}:{device_id}"
-
-                logger.info(
-                    f"[WS] chat:cancel Sending task:cancel to device: "
-                    f"device_id={device_id}, room={device_room}, subtask_id={payload.subtask_id}"
-                )
-
-                from app.core.socketio import get_sio
-
-                sio = get_sio()
-                await sio.emit(
-                    "task:cancel",
-                    {"subtask_id": payload.subtask_id, "task_id": subtask.task_id},
-                    room=device_room,
-                    namespace="/local-executor",
-                )
-            else:
-                # For Executor tasks, call executor_manager API
-                await call_executor_cancel(subtask.task_id)
-
-            # Refresh subtask to get latest state from database
-            # This is critical because during the await above, executor callbacks
-            # may have already updated the subtask in another database connection
-            db.refresh(subtask)
-
-            # Update subtask
-            subtask.status = SubtaskStatus.CANCELLED
-            subtask.progress = 100
-            subtask.completed_at = datetime.now()
-            subtask.updated_at = datetime.now()
-
-            # Preserve existing thinking and workbench data from database
-            # During streaming, these are saved by _update_subtask_progress
-            existing_result = subtask.result or {}
-            thinking = existing_result.get("thinking")
-            workbench = existing_result.get("workbench")
-
-            # Update result with partial content while preserving thinking/workbench
-            subtask.result = {
-                "value": payload.partial_content or "",
-                **({"thinking": thinking} if thinking is not None else {}),
-                **({"workbench": workbench} if workbench is not None else {}),
-            }
-
-            # Update task status
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == subtask.task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
-                )
-                .first()
+            # Send cancel request via dispatcher
+            # For SSE mode (Chat Shell): calls /v1/responses/cancel API
+            # For WebSocket mode (Device): sends task:cancel event
+            # For HTTP mode (Executor): calls /v1/cancel API
+            cancel_success = await execution_dispatcher.cancel(
+                cancel_request, device_id
             )
 
-            if task:
-                from sqlalchemy.orm.attributes import flag_modified
-
-                task_crd = Task.model_validate(task.json)
-                if task_crd.status:
-                    task_crd.status.status = "CANCELLED"
-                    task_crd.status.errorMessage = ""
-                    task_crd.status.updatedAt = datetime.now()
-                    task_crd.status.completedAt = datetime.now()
-
-                task.json = task_crd.model_dump(mode="json")
-                task.updated_at = datetime.now()
-                flag_modified(task, "json")
-
-            db.commit()
-
-            # Broadcast chat:cancelled event to all task room members via WebSocket
-            # This ensures all group chat members see the streaming has stopped
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter:
-                logger.info(
-                    f"[WS] chat:cancel Broadcasting chat:cancelled event for task={subtask.task_id} subtask={payload.subtask_id}"
-                )
-                await ws_emitter.emit_chat_cancelled(
-                    task_id=subtask.task_id, subtask_id=payload.subtask_id
-                )
-
-                # Also emit chat:done with message_id for proper message ordering
-                # This ensures the cancelled message has message_id set for correct sorting
-                await ws_emitter.emit_chat_done(
-                    task_id=subtask.task_id,
-                    subtask_id=payload.subtask_id,
-                    offset=(
-                        len(payload.partial_content) if payload.partial_content else 0
-                    ),
-                    result=subtask.result or {},
-                    message_id=subtask.message_id,
-                )
-
-                # Emit task:status to notify frontend of task cancellation
-                # This ensures the task status in the frontend is updated from PENDING to CANCELLED
-                await ws_emitter.emit_task_status(
-                    user_id=user_id,
-                    task_id=subtask.task_id,
-                    status="CANCELLED",
-                    progress=100,
-                )
-            else:
+            if not cancel_success:
                 logger.warning(
-                    f"[WS] chat:cancel WebSocket emitter not available, cannot broadcast events"
+                    f"[WS] chat:cancel Cancel request failed for subtask_id={payload.subtask_id}"
                 )
+                # Even if cancel request failed, we should still return success
+                # The executor may have already completed or the connection may be lost
 
-            # Notify group chat members about the status change
-            # This ensures all members see the streaming has stopped and status updated
-            if task:
-                if task:
-                    # Import helper function from service layer
-                    from app.services.chat.trigger import (
-                        notify_group_members_task_updated,
-                    )
-
-                    await notify_group_members_task_updated(
-                        db=db, task=task, sender_user_id=user_id
-                    )
+            # Note: Database updates and WebSocket events are handled by StatusUpdatingEmitter
+            # when the executor sends response.incomplete event through the dispatcher chain.
+            # This ensures unified status update logic across all execution modes.
+            logger.info(
+                f"[WS] chat:cancel Cancel request sent, status updates will be handled by StatusUpdatingEmitter"
+            )
             return {"success": True}
 
         except Exception as e:
@@ -1476,36 +1338,17 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
             db.rollback()
 
-            # Broadcast error to all clients in task room
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter and payload.subtask_id:
-                await ws_emitter.emit_chat_error(
-                    task_id=payload.task_id,
-                    subtask_id=payload.subtask_id,
-                    error=f"Invalid data: {str(e)}",
-                    message_id=None,  # Will use subtask's message_id
-                )
-
+            # Broadcast error via ExecutionDispatcher
+            # Note: We don't pass emitter here since this is a validation error
+            # that doesn't need frontend notification through the emitter chain.
+            # The error is returned directly to the caller via WebSocket ACK.
             return {"error": f"Invalid data: {str(e)}"}
         except PermissionError as e:
             # Permission/access errors
             logger.error(f"[WS] chat:retry permission error: {e}", exc_info=True)
             db.rollback()
 
-            # Broadcast error to all clients in task room
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
-            if ws_emitter and payload.subtask_id:
-                await ws_emitter.emit_chat_error(
-                    task_id=payload.task_id,
-                    subtask_id=payload.subtask_id,
-                    error=f"Access denied: {str(e)}",
-                    message_id=None,
-                )
-
+            # Permission errors are returned directly to the caller
             return {"error": f"Access denied: {str(e)}"}
         except Exception as e:
             # Catch SQLAlchemy errors and other unexpected exceptions
@@ -1514,22 +1357,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
             db.rollback()
 
-            # Broadcast error to all clients in task room
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            ws_emitter = get_ws_emitter()
+            # Return error directly to the caller
             error_msg = (
                 "Database error occurred"
                 if isinstance(e, SQLAlchemyError)
                 else f"Internal server error: {str(e)}"
             )
-            if ws_emitter and payload.subtask_id:
-                await ws_emitter.emit_chat_error(
-                    task_id=payload.task_id,
-                    subtask_id=payload.subtask_id,
-                    error=error_msg,
-                    message_id=None,
-                )
 
             if isinstance(e, SQLAlchemyError):
                 return {"error": "Database error occurred"}
