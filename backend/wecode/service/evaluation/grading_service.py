@@ -400,25 +400,42 @@ class GradingService:
         storage_service: Optional["EvalStorageService"] = None,
     ) -> str:
         """
-        Format attachments for prompt display (filenames only).
+        Format attachments for prompt display with presigned URLs.
 
-        Note: Actual file access is handled via SubtaskContext system.
-        The AI Agent will access files through the standard attachment mechanism.
+        Generates presigned URLs for each attachment so the AI can access the content.
+        For images, the AI can view them directly. For documents, the AI can
+        reference them via the URL.
 
         Args:
-            attachments: List of attachment dictionaries
-            storage_service: Not used (kept for compatibility)
+            attachments: List of attachment dictionaries with 'key', 'filename', etc.
+            storage_service: Storage service for generating presigned URLs
 
         Returns:
-            Formatted attachment string with filenames
+            Formatted attachment string with filenames and URLs
         """
         if not attachments:
             return ""
 
+        # Initialize storage service if not provided
+        if storage_service is None:
+            from wecode.service.evaluation.storage_service import EvalStorageService
+
+            storage_service = EvalStorageService()
+
         lines = ["**Attachments:**"]
         for att in attachments:
             filename = att.get("filename", "Unknown")
-            lines.append(f"- {filename}")
+            key = att.get("key", "")
+
+            if key and storage_service:
+                # Generate presigned URL for the attachment (valid for 1 hour)
+                url = storage_service.get_presigned_url(key, expires=3600)
+                if url:
+                    lines.append(f"- [{filename}]({url})")
+                else:
+                    lines.append(f"- {filename} (URL unavailable)")
+            else:
+                lines.append(f"- {filename}")
 
         return "\n".join(lines)
 
