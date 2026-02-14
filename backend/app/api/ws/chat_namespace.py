@@ -480,6 +480,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Handle chat:send event.
 
         Creates task/subtasks and starts streaming response.
+        Also handles pipeline stage confirmation when action='pipeline:confirm'.
 
         Args:
             sid: Socket ID
@@ -487,6 +488,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         Returns:
             {"task_id": int, "subtask_id": int} or {"error": "..."}
+            For pipeline:confirm action: {"task_id": int, "current_stage": int, ...}
         """
         logger.info(f"[WS] chat:send received sid={sid} data={data}")
 
@@ -496,7 +498,8 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         payload = data  # Already validated by decorator
         logger.info(
-            f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
+            f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, "
+            f"message_len={len(payload.message) if payload.message else 0}, action={payload.action}"
         )
 
         session = await self.get_session(sid)
@@ -508,6 +511,49 @@ class ChatNamespace(socketio.AsyncNamespace):
         if not user_id:
             logger.error("[WS] chat:send error: Not authenticated")
             return {"error": "Not authenticated"}
+
+        # Handle pipeline stage confirmation action
+        # Pipeline confirm is essentially "user sends message, AI responds"
+        # So we use prepare_pipeline_confirm for preprocessing, then continue with normal flow
+        pipeline_info = None
+        if payload.action == "pipeline:confirm":
+            from app.services.adapters.pipeline_stage import pipeline_stage_service
+
+            db_for_pipeline = SessionLocal()
+            try:
+                pipeline_info = pipeline_stage_service.pipeline_confirm(
+                    db=db_for_pipeline,
+                    task_id=payload.task_id,
+                    user_id=user_id,
+                )
+
+                if not pipeline_info.get("success"):
+                    logger.error(
+                        f"[WS] pipeline:confirm preparation failed: {pipeline_info.get('error')}"
+                    )
+                    return {
+                        "error": pipeline_info.get("error", "Pipeline confirm failed")
+                    }
+
+                # If pipeline is complete, return immediately
+                if pipeline_info.get("is_pipeline_complete"):
+                    logger.info(
+                        f"[WS] pipeline:confirm: Pipeline completed for task {payload.task_id}"
+                    )
+                    return {
+                        "task_id": payload.task_id,
+                        "current_stage": pipeline_info.get("total_stages", 0) - 1,
+                        "total_stages": pipeline_info.get("total_stages", 0),
+                        "next_stage_name": None,
+                        "pipeline_completed": True,
+                    }
+
+                logger.info(
+                    f"[WS] pipeline:confirm: Prepared for next stage {pipeline_info.get('next_stage_index')} "
+                    f"(bot_id={pipeline_info.get('next_stage_bot_id')}) for task {payload.task_id}"
+                )
+            finally:
+                db_for_pipeline.close()
 
         db = SessionLocal()
         try:
@@ -588,35 +634,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 f"should_trigger_ai={should_trigger_ai}"
             )
 
-            # Create StreamChatRequest
-            request = StreamChatRequest(
-                message=payload.message,
-                team_id=payload.team_id,
-                task_id=payload.task_id,
-                title=payload.title,
-                attachment_id=(
-                    payload.attachment_ids[0]
-                    if payload.attachment_ids
-                    else payload.attachment_id
-                ),
-                enable_web_search=payload.enable_web_search,
-                search_engine=payload.search_engine,
-                enable_clarification=payload.enable_clarification,
-                model_id=payload.force_override_bot_model,
-                force_override_bot_model=payload.force_override_bot_model is not None,
-                is_group_chat=payload.is_group_chat,
-                # Repository info for code tasks
-                git_url=payload.git_url,
-                git_repo=payload.git_repo,
-                git_repo_id=payload.git_repo_id,
-                git_domain=payload.git_domain,
-                branch_name=payload.branch_name,
-            )
-            logger.info(f"[WS] chat:send StreamChatRequest created")
-
             # Process context metadata and RAG based on chat version
             # Uses service module for RAG processing
-            context_metadata, rag_prompt = await process_context_and_rag(
+            _, rag_prompt = await process_context_and_rag(
                 message=payload.message,
                 contexts=payload.contexts,
                 should_trigger_ai=should_trigger_ai,
@@ -637,6 +657,14 @@ class ChatNamespace(socketio.AsyncNamespace):
                     for s in payload.additional_skills
                 ]
 
+            # For pipeline confirm, use the next stage bot_id from pipeline_info
+            pipeline_bot_ids = None
+            if pipeline_info and pipeline_info.get("next_stage_bot_id"):
+                pipeline_bot_ids = [pipeline_info["next_stage_bot_id"]]
+                logger.info(
+                    f"[WS] chat:send pipeline:confirm using pipeline_bot_ids={pipeline_bot_ids}"
+                )
+
             params = TaskCreationParams(
                 message=payload.message,
                 title=payload.title,
@@ -652,6 +680,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 task_type=payload.task_type,
                 knowledge_base_id=payload.knowledge_base_id,
                 additional_skills=additional_skills_dicts,
+                pipeline_bot_ids=pipeline_bot_ids,
             )
 
             result = await create_chat_task(

@@ -120,6 +120,10 @@ class ChatSendPayload(BaseModel):
     team_id: int = Field(..., description="Team ID")
     message: str = Field(..., description="User message content")
     title: Optional[str] = Field(None, description="Custom title for new tasks")
+    action: Optional[str] = Field(
+        None,
+        description="Action type. 'pipeline:confirm' for pipeline stage confirmation.",
+    )
     attachment_id: Optional[int] = Field(
         None, description="Optional attachment ID (deprecated, use attachment_ids)"
     )
@@ -544,6 +548,16 @@ class ChatSendAck(BaseModel):
     subtask_id: Optional[int] = None
     message_id: Optional[int] = None  # Message ID for the user's subtask
     error: Optional[str] = None
+    # Pipeline confirmation response fields
+    current_stage: Optional[int] = Field(
+        None, description="Current stage number (for pipeline:confirm action)"
+    )
+    total_stages: Optional[int] = Field(
+        None, description="Total number of stages (for pipeline:confirm action)"
+    )
+    next_stage_name: Optional[str] = Field(
+        None, description="Name of the next stage (for pipeline:confirm action)"
+    )
 
 
 class TaskJoinAck(BaseModel):

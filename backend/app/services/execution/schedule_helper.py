@@ -108,7 +108,8 @@ async def _dispatch_task_async(task_id: int) -> None:
     from app.models.subtask import Subtask, SubtaskStatus
     from app.models.task import TaskResource
     from app.schemas.kind import Task as TaskCRD
-    from shared.models.db import Kind, User
+    from app.services.readers.kinds import KindType, kindReader
+    from shared.models.db import User
 
     from .dispatcher import execution_dispatcher
     from .request_builder import TaskRequestBuilder
@@ -153,17 +154,13 @@ async def _dispatch_task_async(task_id: int) -> None:
             logger.error(f"[schedule_dispatch] Task {task_id} has no teamRef")
             return
 
-        # Query team
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == task.user_id,
-                Kind.kind == "Team",
-                Kind.name == team_ref.name,
-                Kind.namespace == team_ref.namespace,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
+        # Query team using kindReader which supports:
+        # - Personal teams (owned by user)
+        # - Shared teams (via ResourceMember table)
+        # - Public teams (user_id=0)
+        # - Group teams (namespace != 'default')
+        team = kindReader.get_by_name_and_namespace(
+            db, task.user_id, KindType.TEAM, team_ref.namespace, team_ref.name
         )
 
         if not team:

@@ -338,142 +338,6 @@ class PipelineStageService:
             "stages": stages,
         }
 
-    def confirm_stage(
-        self,
-        db: Session,
-        task: TaskResource,
-        task_crd: Task,
-        team_crd: Team,
-        confirmed_prompt: str,
-        action: str = "continue",
-    ) -> Dict[str, Any]:
-        """
-        Confirm a pipeline stage and proceed to the next stage or retry.
-
-        Args:
-            db: Database session
-            task: Task resource object
-            task_crd: Task CRD object
-            team_crd: Team CRD object
-            confirmed_prompt: The confirmed/edited prompt to pass to next stage
-            action: "continue" to proceed to next stage, "retry" to stay at current stage
-
-        Returns:
-            Dict with confirmation result info
-        """
-        # Get current pipeline stage info
-        stage_info = self.get_stage_info(db, task.id, team_crd)
-
-        if action == "retry":
-            # Stay at current stage - update status to COMPLETED so user can send new messages
-            # The user will continue chatting with the current bot until a new final_prompt is generated
-            task_crd.status.status = "COMPLETED"
-            task_crd.status.updatedAt = datetime.now()
-            task.json = task_crd.model_dump(mode="json", exclude_none=True)
-            task.updated_at = datetime.now()
-            flag_modified(task, "json")
-            db.commit()
-
-            return {
-                "message": "Stage retry initiated",
-                "task_id": task.id,
-                "current_stage": stage_info["current_stage"],
-                "total_stages": stage_info["total_stages"],
-                "next_stage_name": None,
-            }
-
-        # action == "continue": Proceed to next stage
-        # Find the next pending subtask (next stage)
-        current_stage = stage_info["current_stage"]
-        next_stage = current_stage + 1
-
-        if next_stage >= stage_info["total_stages"]:
-            # No more stages, mark task as completed
-            task_crd.status.status = "COMPLETED"
-            task_crd.status.progress = 100
-            task_crd.status.updatedAt = datetime.now()
-            task.json = task_crd.model_dump(mode="json", exclude_none=True)
-            task.updated_at = datetime.now()
-            task.completed_at = datetime.now()
-            flag_modified(task, "json")
-            db.commit()
-
-            return {
-                "message": "Pipeline completed",
-                "task_id": task.id,
-                "current_stage": current_stage,
-                "total_stages": stage_info["total_stages"],
-                "next_stage_name": None,
-            }
-
-        # Find the next stage's subtask and update with confirmed prompt
-        next_subtask = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task.id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                Subtask.status == SubtaskStatus.PENDING,
-            )
-            .order_by(Subtask.message_id.asc())
-            .first()
-        )
-
-        if next_subtask:
-            # Store the confirmed prompt in the next subtask's result field
-            # This will be used by executor_kinds to pass to the next bot
-            next_subtask.result = {
-                "confirmed_prompt": confirmed_prompt,
-                "from_stage_confirmation": True,
-            }
-            next_subtask.updated_at = datetime.now()
-        else:
-            # No pending subtask found - need to create one for the next stage
-            # This happens when pipeline mode creates subtasks one at a time
-            next_subtask = self._create_next_stage_subtask(
-                db, task, task_crd, team_crd, next_stage, confirmed_prompt
-            )
-            if not next_subtask:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to create subtask for next pipeline stage",
-                )
-
-        # Update task status back to PENDING to allow executor_manager to pick up the task
-        # Note: We use PENDING instead of RUNNING because the subtask is PENDING
-        # and executor_manager will update task to RUNNING when it dispatches the subtask
-        task_crd.status.status = "PENDING"
-        task_crd.status.updatedAt = datetime.now()
-        task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
-        flag_modified(task, "json")
-        db.commit()
-
-        # Push mode: dispatch the next stage subtask to executor_manager
-        # This ensures pipeline stage confirmation works correctly in push mode
-        try:
-            from app.services.execution import schedule_dispatch
-
-            schedule_dispatch(task.id)
-            logger.info(
-                f"Pipeline confirm_stage: scheduled dispatch for task {task.id} in push mode"
-            )
-        except Exception as e:
-            logger.warning(f"Pipeline confirm_stage: push mode dispatch failed: {e}")
-
-        # Get next stage name
-        next_stage_name = None
-        if next_stage < len(team_crd.spec.members):
-            next_bot_ref = team_crd.spec.members[next_stage].botRef
-            next_stage_name = next_bot_ref.name
-
-        return {
-            "message": "Stage confirmed, proceeding to next stage",
-            "task_id": task.id,
-            "current_stage": next_stage,
-            "total_stages": stage_info["total_stages"],
-            "next_stage_name": next_stage_name,
-        }
-
     def _create_next_stage_subtask(
         self,
         db: Session,
@@ -486,6 +350,9 @@ class PipelineStageService:
         """
         Create a subtask for the next pipeline stage.
 
+        This method creates both a USER subtask (containing the confirmed prompt)
+        and an ASSISTANT subtask for the next stage bot to process.
+
         Args:
             db: Database session
             task: Task resource object
@@ -495,7 +362,7 @@ class PipelineStageService:
             confirmed_prompt: The confirmed prompt to pass to the next stage
 
         Returns:
-            The created Subtask object, or None if creation failed
+            The created ASSISTANT Subtask object, or None if creation failed
         """
         if next_stage_index >= len(team_crd.spec.members):
             return None
@@ -553,8 +420,50 @@ class PipelineStageService:
             logger.error(f"No existing subtasks found for task {task.id}")
             return None
 
-        next_message_id = last_subtask.message_id + 1
-        parent_id = last_subtask.message_id
+        # Get all bot_ids from team members for the USER subtask
+        from app.services.readers.kinds import KindType, kindReader
+
+        bot_ids = []
+        for member in team_crd.spec.members:
+            member_bot = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
+            )
+            if member_bot:
+                bot_ids.append(member_bot.id)
+
+        # Create USER subtask first (containing the confirmed prompt)
+        user_message_id = last_subtask.message_id + 1
+        user_parent_id = last_subtask.message_id
+
+        user_subtask = Subtask(
+            user_id=last_subtask.user_id,
+            task_id=task.id,
+            team_id=team.id,
+            title=f"{task_crd.spec.title} - User",
+            bot_ids=bot_ids if bot_ids else [bot.id],
+            role=SubtaskRole.USER,
+            executor_namespace="",
+            executor_name="",
+            prompt=confirmed_prompt,
+            status=SubtaskStatus.COMPLETED,
+            progress=0,
+            message_id=user_message_id,
+            parent_id=user_parent_id,
+            error_message="",
+            completed_at=datetime.now(),
+            result=None,
+        )
+        db.add(user_subtask)
+        db.flush()
+
+        logger.info(
+            f"Pipeline confirm_stage: created USER subtask {user_subtask.id} "
+            f"(message_id={user_message_id})"
+        )
 
         # Get executor info from existing assistant subtasks (reuse executor)
         executor_name = ""
@@ -571,7 +480,10 @@ class PipelineStageService:
             executor_name = existing_assistant.executor_name or ""
             executor_namespace = existing_assistant.executor_namespace or ""
 
-        # Create the new subtask for the next stage
+        # Create ASSISTANT subtask for the next stage
+        assistant_message_id = user_message_id + 1
+        assistant_parent_id = user_message_id
+
         new_subtask = Subtask(
             user_id=last_subtask.user_id,
             task_id=task.id,
@@ -579,17 +491,16 @@ class PipelineStageService:
             title=f"{task_crd.spec.title} - {bot.name}",
             bot_ids=[bot.id],
             role=SubtaskRole.ASSISTANT,
-            prompt="",
+            prompt=confirmed_prompt,
             status=SubtaskStatus.PENDING,
             progress=0,
-            message_id=next_message_id,
-            parent_id=parent_id,
+            message_id=assistant_message_id,
+            parent_id=assistant_parent_id,
             executor_name=executor_name,
             executor_namespace=executor_namespace,
             error_message="",
             completed_at=None,
             result={
-                "confirmed_prompt": confirmed_prompt,
                 "from_stage_confirmation": True,
             },
         )
@@ -598,8 +509,8 @@ class PipelineStageService:
         db.flush()  # Get the new subtask ID
 
         logger.info(
-            f"Pipeline confirm_stage: created subtask {new_subtask.id} for stage {next_stage_index} "
-            f"(bot={bot.name}, message_id={next_message_id})"
+            f"Pipeline confirm_stage: created ASSISTANT subtask {new_subtask.id} for stage {next_stage_index} "
+            f"(bot={bot.name}, message_id={assistant_message_id})"
         )
 
         return new_subtask
@@ -637,6 +548,279 @@ class PipelineStageService:
         return kindReader.get_by_name_and_namespace(
             db, task.user_id, KindType.TEAM, team_namespace, team_name
         )
+
+    def pipeline_confirm(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Prepare for pipeline stage confirmation.
+
+        This method validates the task state and returns information needed
+        to proceed with the next stage. It does NOT dispatch the task - that
+        is handled by the normal on_chat_send flow.
+
+        This is called from chat:send with action='pipeline:confirm' before
+        the normal message processing flow.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+
+        Returns:
+            Dict with:
+            - success: True if ready to proceed
+            - next_stage_bot_id: Bot ID for the next stage
+            - next_stage_index: Index of the next stage
+            - total_stages: Total number of stages
+            - next_stage_name: Name of the next stage bot
+            - is_pipeline_complete: True if this is the last stage
+            - error: Error message if validation failed
+        """
+        from app.services.task_member_service import task_member_service
+
+        # Get the task
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            logger.error(
+                f"[Pipeline] prepare_pipeline_confirm: Task not found id={task_id}"
+            )
+            return {"success": False, "error": "Task not found"}
+
+        # Check if user is a member of this task
+        if not task_member_service.is_member(db, task_id, user_id):
+            logger.error(
+                f"[Pipeline] prepare_pipeline_confirm: Access denied user={user_id} task={task_id}"
+            )
+            return {"success": False, "error": "Task not found"}
+
+        task_crd = Task.model_validate(task.json)
+
+        # Check task status
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+        if current_status != "PENDING_CONFIRMATION":
+            logger.error(
+                f"[Pipeline] prepare_pipeline_confirm: Task not awaiting confirmation, "
+                f"status={current_status}"
+            )
+            return {
+                "success": False,
+                "error": f"Task is not awaiting confirmation. Current status: {current_status}",
+            }
+
+        # Get the team
+        team = self.get_team_for_task(db, task, task_crd)
+        if not team:
+            logger.error(f"[Pipeline] prepare_pipeline_confirm: Team not found")
+            return {"success": False, "error": "Team not found"}
+
+        team_crd = Team.model_validate(team.json)
+
+        # Check if team is pipeline mode
+        if team_crd.spec.collaborationModel != "pipeline":
+            logger.error(
+                f"[Pipeline] prepare_pipeline_confirm: Not a pipeline team, "
+                f"collaborationModel={team_crd.spec.collaborationModel}"
+            )
+            return {
+                "success": False,
+                "error": "Stage confirmation is only available for pipeline teams",
+            }
+
+        # Get current stage info
+        stage_info = self.get_stage_info(db, task.id, team_crd)
+        current_stage = stage_info["current_stage"]
+        next_stage = current_stage + 1
+        total_stages = stage_info["total_stages"]
+
+        # Check if pipeline is complete
+        if next_stage >= total_stages:
+            # Mark task as completed
+            task_crd.status.status = "COMPLETED"
+            task_crd.status.progress = 100
+            task_crd.status.updatedAt = datetime.now()
+            task.json = task_crd.model_dump(mode="json", exclude_none=True)
+            task.updated_at = datetime.now()
+            task.completed_at = datetime.now()
+            flag_modified(task, "json")
+            db.commit()
+
+            logger.info(
+                f"[Pipeline] prepare_pipeline_confirm: Pipeline completed for task {task_id}"
+            )
+            return {
+                "success": True,
+                "is_pipeline_complete": True,
+                "next_stage_bot_id": None,
+                "next_stage_index": None,
+                "total_stages": total_stages,
+                "next_stage_name": None,
+            }
+
+        # Get the next stage's bot
+        next_member = team_crd.spec.members[next_stage]
+
+        # Find the bot for the next stage
+        from app.services.readers.kinds import KindType, kindReader
+
+        next_bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            next_member.botRef.namespace,
+            next_member.botRef.name,
+        )
+
+        if not next_bot:
+            logger.error(
+                f"[Pipeline] prepare_pipeline_confirm: Bot not found for next stage: "
+                f"{next_member.botRef.namespace}/{next_member.botRef.name}"
+            )
+            return {"success": False, "error": "Bot not found for next stage"}
+
+        # Update task status to PENDING (ready for next stage)
+        task_crd.status.status = "PENDING"
+        task_crd.status.updatedAt = datetime.now()
+        task.json = task_crd.model_dump(mode="json", exclude_none=True)
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
+        db.commit()
+
+        logger.info(
+            f"[Pipeline] prepare_pipeline_confirm: Ready for next stage {next_stage} "
+            f"(bot={next_bot.name}, bot_id={next_bot.id}) for task {task_id}"
+        )
+
+        return {
+            "success": True,
+            "is_pipeline_complete": False,
+            "next_stage_bot_id": next_bot.id,
+            "next_stage_index": next_stage,
+            "total_stages": total_stages,
+            "next_stage_name": next_bot.name,
+            "team": team,
+            "team_crd": team_crd,
+        }
+
+    def should_set_pending_confirmation_on_complete(
+        self, db: Session, task_id: int, subtask_id: int
+    ) -> bool:
+        """
+        Determine if task should be set to PENDING_CONFIRMATION instead of COMPLETED.
+
+        In pipeline mode, when a subtask completes and its stage has requireConfirmation=true,
+        the task should be set to PENDING_CONFIRMATION to wait for user confirmation
+        before proceeding to the next stage.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            subtask_id: The subtask that just completed
+
+        Returns:
+            True if task should be set to PENDING_CONFIRMATION, False otherwise
+        """
+        from app.models.kind import Kind
+        from app.models.subtask import Subtask, SubtaskStatus
+        from app.models.task import TaskResource
+        from app.schemas.kind import Task, Team
+
+        try:
+            # Get the task
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active.is_(True),
+                )
+                .first()
+            )
+            if not task:
+                return False
+
+            task_crd = Task.model_validate(task.json)
+
+            # Get the team
+            team = self.get_team_for_task(db, task, task_crd)
+            if not team:
+                return False
+
+            team_crd = Team.model_validate(team.json)
+
+            # Only applies to pipeline mode
+            if team_crd.spec.collaborationModel != "pipeline":
+                return False
+
+            # Get the subtask that just completed
+            subtask = db.get(Subtask, subtask_id)
+            if not subtask or subtask.status != SubtaskStatus.COMPLETED:
+                return False
+
+            # Find which stage this subtask belongs to by matching bot_id
+            if not subtask.bot_ids:
+                return False
+
+            bot_id = subtask.bot_ids[0]
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == bot_id,
+                    Kind.kind == "Bot",
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+            if not bot:
+                return False
+
+            # Find the stage index for this bot
+            current_stage_index = None
+            for i, member in enumerate(team_crd.spec.members):
+                if (
+                    member.botRef.name == bot.name
+                    and member.botRef.namespace == bot.namespace
+                ):
+                    current_stage_index = i
+                    break
+
+            if current_stage_index is None:
+                return False
+
+            # Check if this stage has requireConfirmation
+            current_member = team_crd.spec.members[current_stage_index]
+            if not current_member.requireConfirmation:
+                return False
+
+            # Check if there are more stages after this one
+            # If this is the last stage, no need for confirmation
+            if current_stage_index >= len(team_crd.spec.members) - 1:
+                return False
+
+            logger.info(
+                f"Pipeline: stage {current_stage_index} ({current_member.botRef.name}) "
+                f"completed with requireConfirmation=True, setting task to PENDING_CONFIRMATION"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"Error checking pipeline confirmation for task {task_id}: {e}",
+                exc_info=True,
+            )
+            return False
 
 
 # Singleton instance

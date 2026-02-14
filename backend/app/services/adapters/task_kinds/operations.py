@@ -829,66 +829,6 @@ class TaskOperationsMixin:
                 f"Error cancelling Chat Shell stream for subtask {subtask_id}: {str(e)}"
             )
 
-    def confirm_pipeline_stage(
-        self,
-        db: Session,
-        *,
-        task_id: int,
-        user_id: int,
-        confirmed_prompt: str,
-        action: str = "continue",
-    ) -> Dict[str, Any]:
-        """
-        Confirm a pipeline stage and proceed to the next stage.
-        """
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
-            )
-            .first()
-        )
-
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-
-        from app.services.task_member_service import task_member_service
-
-        if not task_member_service.is_member(db, task_id, user_id):
-            raise HTTPException(status_code=404, detail="Task not found")
-
-        task_crd = Task.model_validate(task.json)
-
-        current_status = task_crd.status.status if task_crd.status else "PENDING"
-        if current_status != "PENDING_CONFIRMATION":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Task is not awaiting confirmation. Current status: {current_status}",
-            )
-
-        team = pipeline_stage_service.get_team_for_task(db, task, task_crd)
-        if not team:
-            raise HTTPException(status_code=404, detail="Team not found")
-
-        team_crd = Team.model_validate(team.json)
-
-        if team_crd.spec.collaborationModel != "pipeline":
-            raise HTTPException(
-                status_code=400,
-                detail="Stage confirmation is only available for pipeline teams",
-            )
-
-        return pipeline_stage_service.confirm_stage(
-            db=db,
-            task=task,
-            task_crd=task_crd,
-            team_crd=team_crd,
-            confirmed_prompt=confirmed_prompt,
-            action=action,
-        )
-
     def get_pipeline_stage_info(
         self,
         db: Session,
