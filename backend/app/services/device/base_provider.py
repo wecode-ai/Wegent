@@ -51,6 +51,7 @@ class BaseDeviceProvider(ABC):
         socket_id: Optional[str] = None,
         executor_version: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
+        client_ip: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register a device.
 
@@ -65,6 +66,7 @@ class BaseDeviceProvider(ABC):
             socket_id: WebSocket session ID (for WebSocket-connected devices)
             executor_version: Executor version string
             capabilities: List of capability tags
+            client_ip: Device's client IP address
 
         Returns:
             Dict containing device info including 'id' and 'is_default'
