@@ -38,6 +38,7 @@ ENV REDIS_URL=redis://:fpxsHjf3m0Bh4SIA@rm48958.eos.grid.sina.com.cn:48958/0
 ENV E2B_API_KEY=kucvaN-qowmax-kyvni7
 ENV EXECUTOR_MANAGER_EXTERNAL_URL=http://wegent-executor-manager-web.wb-plat-ide.svc.cluster.local:8080
 ENV PYTHONPATH=/app
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 COPY executor_manager /app/executor_manager
 COPY shared /app/shared
 
