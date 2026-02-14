@@ -220,11 +220,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   // This handles the case where WebSocket events might have been missed while the page was in background
   usePageVisibility({
     minHiddenTime: 3000, // Recover if page was hidden for more than 3 seconds
-    onVisible: (wasHiddenFor: number) => {
+    onVisible: (_: number) => {
       if (taskStateManager.isInitialized() && isConnected) {
-        console.log(
-          `[ChatStreamContext] Page became visible after ${wasHiddenFor}ms, recovering all tasks`
-        )
         taskStateManager.recoverAll().catch(err => {
           console.error('[ChatStreamContext] Error recovering tasks after page visible:', err)
         })
@@ -252,11 +249,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Handle chat:start event from WebSocket
    */
   const handleChatStart = useCallback((data: ChatStartPayload) => {
-    const { task_id, subtask_id, shell_type } = data
+    const { task_id, subtask_id, shell_type, message_id } = data
 
     // Get or create state machine and dispatch event
     const machine = taskStateManager.getOrCreate(task_id)
-    machine.handleChatStart(subtask_id, shell_type)
+    machine.handleChatStart(subtask_id, shell_type, message_id)
   }, [])
 
   /**

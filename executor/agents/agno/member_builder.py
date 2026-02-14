@@ -93,7 +93,9 @@ class MemberBuilder:
             # Get member-specific configuration
             member_name = self._get_member_name(member_config)
             member_description = self._get_member_description(member_config)
-            member_model = ModelFactory.create_model(agent_config, default_headers)
+            # Use model_config from task_data (contains decrypted api_key)
+            model_config = task_data.get("model_config", {})
+            member_model = ModelFactory.create_model(model_config, default_headers)
 
             # Create the team member
             member = AgnoSdkAgent(
@@ -168,9 +170,11 @@ class MemberBuilder:
             )
 
             # Create the default member
+            # Use model_config from task_data (contains decrypted api_key)
+            model_config = task_data.get("model_config", {})
             member = AgnoSdkAgent(
                 name="DefaultAgent",
-                model=ModelFactory.create_model(agent_config, default_headers),
+                model=ModelFactory.create_model(model_config, default_headers),
                 tools=all_tools if all_tools else [],
                 description="Default team member",
                 add_name_to_context=True,

@@ -10,7 +10,7 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
-export type KnowledgeResourceScope = 'personal' | 'group' | 'all'
+export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 
 // Retrieval Config types
 export interface RetrievalConfig {

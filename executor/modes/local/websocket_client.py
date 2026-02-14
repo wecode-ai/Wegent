@@ -17,6 +17,10 @@ Cross-platform support:
 - Device ID generation works on macOS, Linux, and Windows
 - File permissions use platform abstraction for security
 
+Configuration:
+- Preferred: Use DeviceConfig from device-config.json
+- Fallback: Environment variables (backward compatibility)
+
 Example:
     # Using JWT Token
     export WEGENT_AUTH_TOKEN="eyJhbG..."
@@ -33,7 +37,7 @@ import re
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import socketio
 
@@ -41,6 +45,9 @@ from executor.config import config
 from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
 from shared.logger import setup_logger
+
+if TYPE_CHECKING:
+    from executor.config.device_config import DeviceConfig
 
 logger = setup_logger("websocket_client")
 
@@ -70,6 +77,7 @@ class WebSocketClient:
         reconnection_attempts: int = 0,  # 0 = infinite
         reconnection_delay: Optional[int] = None,
         reconnection_delay_max: Optional[int] = None,
+        device_config: Optional["DeviceConfig"] = None,
     ):
         """Initialize the WebSocket client.
 
@@ -81,13 +89,32 @@ class WebSocketClient:
             reconnection_attempts: Max reconnection attempts (0 for infinite).
             reconnection_delay: Initial reconnection delay in seconds.
             reconnection_delay_max: Maximum reconnection delay in seconds.
+            device_config: Optional DeviceConfig instance from config file.
         """
-        self.backend_url = backend_url or config.WEGENT_BACKEND_URL
-        self.auth_token = self._normalize_token(auth_token or config.WEGENT_AUTH_TOKEN)
+        self._device_config = device_config
 
-        # Device identification
-        self.device_id = self._generate_device_id()
-        self.device_name = self._get_device_name()
+        # Use device_config if provided, otherwise fall back to env vars
+        if device_config:
+            self.backend_url = (
+                backend_url
+                or device_config.connection.backend_url
+                or config.WEGENT_BACKEND_URL
+            )
+            self.auth_token = self._normalize_token(
+                auth_token
+                or device_config.connection.auth_token
+                or config.WEGENT_AUTH_TOKEN
+            )
+            # Use device_id and device_name from config if provided
+            self.device_id = device_config.device_id or self._generate_device_id()
+            self.device_name = device_config.device_name or self._get_device_name()
+        else:
+            self.backend_url = backend_url or config.WEGENT_BACKEND_URL
+            self.auth_token = self._normalize_token(
+                auth_token or config.WEGENT_AUTH_TOKEN
+            )
+            self.device_id = self._generate_device_id()
+            self.device_name = self._get_device_name()
 
         # Reconnection settings
         reconnection_delay = reconnection_delay or config.LOCAL_RECONNECT_DELAY

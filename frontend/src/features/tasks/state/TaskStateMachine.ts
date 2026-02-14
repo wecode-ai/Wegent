@@ -130,7 +130,7 @@ type Event =
   | { type: 'SYNC_DONE' }
   | { type: 'SYNC_DONE_STREAMING'; subtaskId: number }
   | { type: 'SYNC_ERROR'; error: string }
-  | { type: 'CHAT_START'; subtaskId: number; shellType?: string }
+  | { type: 'CHAT_START'; subtaskId: number; shellType?: string; messageId?: number }
   | {
       type: 'CHAT_CHUNK'
       subtaskId: number
@@ -273,8 +273,8 @@ export class TaskStateMachine {
   /**
    * Handle chat:start event
    */
-  handleChatStart(subtaskId: number, shellType?: string): void {
-    this.dispatch({ type: 'CHAT_START', subtaskId, shellType })
+  handleChatStart(subtaskId: number, shellType?: string, messageId?: number): void {
+    this.dispatch({ type: 'CHAT_START', subtaskId, shellType, messageId })
   }
 
   /**
@@ -562,6 +562,9 @@ export class TaskStateMachine {
   /**
    * Sync messages from backend subtasks
    */
+  /**
+   * Sync messages from backend subtasks
+   */
   private async doSync(subtasks?: TaskDetailSubtask[]): Promise<void> {
     try {
       if (subtasks && subtasks.length > 0) {
@@ -672,6 +675,10 @@ export class TaskStateMachine {
       }
 
       // Handle blocks
+      // Handle blocks
+      // CRITICAL: Always call mergeBlocksFromPendingChunk and update result.blocks
+      // This ensures text blocks are created for ClaudeCode executor
+      // which sends chat:chunk without block_id or result
       const mergedBlocks = this.mergeBlocksFromPendingChunk(existingMessage, chunk)
 
       if (chunk.result) {
@@ -684,13 +691,15 @@ export class TaskStateMachine {
             chunk.result.reasoning_content || existingMessage.result?.reasoning_content,
           shell_type: chunk.result.shell_type || existingMessage.result?.shell_type,
         }
-      } else if (chunk.blockId && chunk.content) {
+      } else {
+        // CRITICAL FIX: Always update blocks even when no chunk.result
+        // This handles ClaudeCode executor which sends text content without block_id
+        // The mergeBlocksFromPendingChunk method will create text blocks to maintain chronological order
         updatedMessage.result = {
           ...existingMessage.result,
           blocks: mergedBlocks,
         }
       }
-
       if (chunk.sources) {
         updatedMessage.sources = chunk.sources
       }
@@ -706,6 +715,15 @@ export class TaskStateMachine {
 
   /**
    * Merge blocks for pending chunk (similar to mergeBlocks but for PendingChunkEvent)
+   *
+   * Handles four cases:
+   * 1. Text block streaming with blockId: blockId + content -> append content to existing text block
+   * 2. Text content without blockId: Create/update a text block to maintain chronological order
+   * 3. No incoming blocks and no content: keep existing blocks unchanged
+   * 4. Tool/other blocks: merge by block.id, preserving existing fields for partial updates
+   *
+   * CRITICAL: For ClaudeCode executor, text content arrives via chat:chunk without block_id.
+   * We need to create text blocks on-the-fly to maintain tool-text-tool-text order.
    */
   private mergeBlocksFromPendingChunk(
     existingMessage: UnifiedMessage,
@@ -714,7 +732,7 @@ export class TaskStateMachine {
     const existingBlocks = existingMessage.result?.blocks || []
     const incomingBlocks = chunk.result?.blocks || []
 
-    // Case 1: block_id with content - text block update
+    // Case 1: block_id with content - text block update (explicit block_id from backend)
     if (chunk.blockId && chunk.content) {
       const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
       const targetBlock = blocksMap.get(chunk.blockId)
@@ -739,15 +757,60 @@ export class TaskStateMachine {
       return Array.from(blocksMap.values())
     }
 
-    // Case 2: No incoming blocks - keep existing
+    // Case 2: Text content without block_id (ClaudeCode executor)
+    // Create or update a text block to maintain chronological order
+    if (chunk.content && !chunk.blockId && incomingBlocks.length === 0) {
+      const blocksArray = [...existingBlocks]
+
+      // Find the last text block that is still streaming
+      const lastBlock = blocksArray[blocksArray.length - 1]
+      if (lastBlock && lastBlock.type === 'text' && lastBlock.status === 'streaming') {
+        // Append to existing streaming text block
+        lastBlock.content = (lastBlock.content || '') + chunk.content
+        return blocksArray
+      }
+
+      // Create a new text block (after tool blocks or at the start)
+      const newTextBlock: MessageBlock = {
+        id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'text',
+        content: chunk.content,
+        status: 'streaming',
+        timestamp: Date.now(),
+      }
+      blocksArray.push(newTextBlock)
+      return blocksArray
+    }
+
+    // Case 3: No incoming blocks and no content - keep existing
     if (incomingBlocks.length === 0) {
       return existingBlocks
     }
 
-    // Case 3: Tool blocks - merge by block.id
-    const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+    // Case 4: Tool/other blocks - merge by block.id
+    // CRITICAL: For partial updates (e.g., block_updated with only status),
+    // we must merge with existing block to preserve all fields
+    // Also: Finalize any streaming text block before adding tool block
+    const blocksArray = [...existingBlocks]
+
+    // Finalize any streaming text block before adding new blocks
+    for (const block of blocksArray) {
+      if (block.type === 'text' && block.status === 'streaming') {
+        block.status = 'done'
+      }
+    }
+
+    const blocksMap = new Map(blocksArray.map(b => [b.id, b]))
     incomingBlocks.forEach(incomingBlock => {
-      blocksMap.set(incomingBlock.id, incomingBlock)
+      const existingBlock = blocksMap.get(incomingBlock.id)
+      if (existingBlock) {
+        // Merge: existing fields + incoming updates
+        // This preserves tool_name, tool_use_id, etc. when only status is updated
+        blocksMap.set(incomingBlock.id, { ...existingBlock, ...incomingBlock })
+      } else {
+        // New block - add as-is
+        blocksMap.set(incomingBlock.id, incomingBlock)
+      }
     })
 
     return Array.from(blocksMap.values())
@@ -932,6 +995,7 @@ export class TaskStateMachine {
       content: '',
       timestamp: Date.now(),
       subtaskId: event.subtaskId,
+      messageId: event.messageId, // Set messageId from chat:start event for proper ordering
       result: initialResult,
     })
 
@@ -963,9 +1027,15 @@ export class TaskStateMachine {
   private handleChatChunkEvent(event: Extract<Event, { type: 'CHAT_CHUNK' }>): void {
     const aiMessageId = generateMessageId('ai', event.subtaskId)
 
-    // If in joining/syncing state, queue the chunk for later processing
+    // If in idle/joining/syncing state, queue the chunk for later processing
     // This handles the race condition where chunks arrive before sync completes
-    if (this.state.status === 'joining' || this.state.status === 'syncing') {
+    // CRITICAL FIX: Also queue chunks when in 'idle' state, because after page refresh,
+    // WebSocket reconnects and starts receiving chunks before recover() is called
+    if (
+      this.state.status === 'idle' ||
+      this.state.status === 'joining' ||
+      this.state.status === 'syncing'
+    ) {
       this.pendingChunks.push({
         subtaskId: event.subtaskId,
         content: event.content,
@@ -1014,6 +1084,9 @@ export class TaskStateMachine {
     }
 
     // Handle blocks
+    // CRITICAL: Always call mergeBlocks and update result.blocks
+    // This ensures text blocks are created for ClaudeCode executor
+    // which sends chat:chunk without block_id or result
     const mergedBlocks = this.mergeBlocks(existingMessage, event)
 
     if (event.result) {
@@ -1026,7 +1099,10 @@ export class TaskStateMachine {
           event.result.reasoning_content || existingMessage.result?.reasoning_content,
         shell_type: event.result.shell_type || existingMessage.result?.shell_type,
       }
-    } else if (event.blockId && event.content) {
+    } else {
+      // CRITICAL FIX: Always update blocks even when no event.result
+      // This handles ClaudeCode executor which sends text content without block_id
+      // The mergeBlocks method will create text blocks to maintain chronological order
       updatedMessage.result = {
         ...existingMessage.result,
         blocks: mergedBlocks,
@@ -1047,6 +1123,15 @@ export class TaskStateMachine {
 
   /**
    * Merge blocks for incremental updates
+   *
+   * Handles four cases:
+   * 1. Text block streaming with blockId: blockId + content -> append content to existing text block
+   * 2. Text content without blockId: Create/update a text block to maintain chronological order
+   * 3. No incoming blocks and no content: keep existing blocks unchanged
+   * 4. Tool/other blocks: merge by block.id, preserving existing fields for partial updates
+   *
+   * CRITICAL: For ClaudeCode executor, text content arrives via chat:chunk without block_id.
+   * We need to create text blocks on-the-fly to maintain tool-text-tool-text order.
    */
   private mergeBlocks(
     existingMessage: UnifiedMessage,
@@ -1055,7 +1140,7 @@ export class TaskStateMachine {
     const existingBlocks = existingMessage.result?.blocks || []
     const incomingBlocks = event.result?.blocks || []
 
-    // Case 1: block_id with content - text block update
+    // Case 1: block_id with content - text block update (explicit block_id from backend)
     if (event.blockId && event.content) {
       const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
       const targetBlock = blocksMap.get(event.blockId)
@@ -1080,15 +1165,60 @@ export class TaskStateMachine {
       return Array.from(blocksMap.values())
     }
 
-    // Case 2: No incoming blocks - keep existing
+    // Case 2: Text content without block_id (ClaudeCode executor)
+    // Create or update a text block to maintain chronological order
+    if (event.content && !event.blockId && incomingBlocks.length === 0) {
+      const blocksArray = [...existingBlocks]
+
+      // Find the last text block that is still streaming
+      const lastBlock = blocksArray[blocksArray.length - 1]
+      if (lastBlock && lastBlock.type === 'text' && lastBlock.status === 'streaming') {
+        // Append to existing streaming text block
+        lastBlock.content = (lastBlock.content || '') + event.content
+        return blocksArray
+      }
+
+      // Create a new text block (after tool blocks or at the start)
+      const newTextBlock: MessageBlock = {
+        id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: 'text',
+        content: event.content,
+        status: 'streaming',
+        timestamp: Date.now(),
+      }
+      blocksArray.push(newTextBlock)
+      return blocksArray
+    }
+
+    // Case 3: No incoming blocks and no content - keep existing
     if (incomingBlocks.length === 0) {
       return existingBlocks
     }
 
-    // Case 3: Tool blocks - merge by block.id
-    const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+    // Case 4: Tool/other blocks - merge by block.id
+    // CRITICAL: For partial updates (e.g., block_updated with only status),
+    // we must merge with existing block to preserve all fields
+    // Also: Finalize any streaming text block before adding tool block
+    const blocksArray = [...existingBlocks]
+
+    // Finalize any streaming text block before adding new blocks
+    for (const block of blocksArray) {
+      if (block.type === 'text' && block.status === 'streaming') {
+        block.status = 'done'
+      }
+    }
+
+    const blocksMap = new Map(blocksArray.map(b => [b.id, b]))
     incomingBlocks.forEach(incomingBlock => {
-      blocksMap.set(incomingBlock.id, incomingBlock)
+      const existingBlock = blocksMap.get(incomingBlock.id)
+      if (existingBlock) {
+        // Merge: existing fields + incoming updates
+        // This preserves tool_name, tool_use_id, etc. when only status is updated
+        blocksMap.set(incomingBlock.id, { ...existingBlock, ...incomingBlock })
+      } else {
+        // New block - add as-is
+        blocksMap.set(incomingBlock.id, incomingBlock)
+      }
     })
 
     return Array.from(blocksMap.values())
@@ -1121,21 +1251,38 @@ export class TaskStateMachine {
     const finalStatus = event.hasError ? 'error' : 'completed'
     const finalSubtaskStatus = event.hasError ? 'FAILED' : 'COMPLETED'
 
+    // CRITICAL FIX: Preserve accumulated content from streaming
+    // Only use event.content if existingMessage.content is empty
+    // This prevents losing mixed content (tool-text-tool-text) when chat:done arrives
+    // because event.content (result.value) may only contain the final text segment
+    const finalContent =
+      existingMessage.content && existingMessage.content.length > 0
+        ? existingMessage.content
+        : event.content || ''
+
+    // CRITICAL FIX: Merge blocks instead of replacing
+    // Preserve blocks accumulated during streaming (tool blocks and text blocks)
+    // event.result.blocks may be incomplete or only contain final state
+    const mergedBlocks = this.mergeBlocksForDone(existingMessage, event)
+
     const newMessages = new Map(this.state.messages)
     newMessages.set(aiMessageId, {
       ...existingMessage,
       status: finalStatus,
       subtaskStatus: finalSubtaskStatus,
-      content: event.content || existingMessage.content,
+      content: finalContent,
       error: event.hasError ? event.errorMessage : existingMessage.error,
-      messageId: event.messageId,
+      // CRITICAL FIX: Only update messageId if event.messageId is defined
+      // Otherwise preserve the existing messageId from chat:start
+      // This prevents messageId from being overwritten with undefined/null
+      messageId: event.messageId ?? existingMessage.messageId,
       sources: event.sources || existingMessage.sources,
       result: event.result
         ? {
             ...existingMessage.result,
             ...event.result,
             thinking: event.result.thinking || existingMessage.result?.thinking,
-            blocks: event.result.blocks || existingMessage.result?.blocks,
+            blocks: mergedBlocks,
           }
         : existingMessage.result,
     })
@@ -1183,6 +1330,62 @@ export class TaskStateMachine {
       error: event.error,
       isStopping: false,
     }
+  }
+
+  /**
+   * Merge blocks for CHAT_DONE event
+   *
+   * Handles the merge of blocks accumulated during streaming with blocks from chat:done event.
+   *
+   * Key insight: During streaming, text blocks are created with IDs like `text-{timestamp}-xxx`.
+   * When chat:done arrives, it may contain text blocks with different IDs (e.g., `text-{timestamp2}`).
+   * If we simply merge by ID, both text blocks would be kept, causing duplicate content display.
+   *
+   * Strategy:
+   * 1. Preserve the original order from incomingBlocks (backend returns correct order: text-tool-text-tool)
+   * 2. For tool blocks: merge with existing tool blocks to preserve streaming state
+   * 3. For text blocks: use incoming text blocks (they are authoritative)
+   * 4. If no incoming blocks, keep existing blocks
+   * 5. If no existing blocks, use incoming blocks
+   */
+  private mergeBlocksForDone(
+    existingMessage: UnifiedMessage,
+    event: Extract<Event, { type: 'CHAT_DONE' }>
+  ): MessageBlock[] {
+    const existingBlocks = existingMessage.result?.blocks || []
+    const incomingBlocks = event.result?.blocks || []
+
+    // If no existing blocks, use incoming blocks
+    if (existingBlocks.length === 0) {
+      return incomingBlocks
+    }
+
+    // If no incoming blocks, keep existing blocks
+    if (incomingBlocks.length === 0) {
+      return existingBlocks
+    }
+
+    // Build a map of existing tool blocks for merging
+    const existingToolBlocksMap = new Map(
+      existingBlocks.filter(b => b.type !== 'text').map(b => [b.id, b])
+    )
+
+    // CRITICAL FIX: Preserve the original order from incomingBlocks
+    // The backend returns blocks in correct chronological order: text-tool-text-tool-text
+    // We should NOT reorder them (previous bug: put all tools first, then all text)
+    return incomingBlocks.map(incomingBlock => {
+      if (incomingBlock.type === 'text') {
+        // Text blocks: use incoming directly (authoritative)
+        return incomingBlock
+      } else {
+        // Tool blocks: merge with existing to preserve streaming state
+        const existingBlock = existingToolBlocksMap.get(incomingBlock.id)
+        if (existingBlock) {
+          return { ...existingBlock, ...incomingBlock }
+        }
+        return incomingBlock
+      }
+    })
   }
 
   /**

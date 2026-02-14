@@ -17,6 +17,7 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from executor.config.config import get_wegent_mcp_url
 from shared.logger import setup_logger
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
@@ -222,6 +223,55 @@ def create_claude_model_config(
     return final_claude_code_config
 
 
+def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
+    """Convert MCP servers from list format to dict format.
+
+    Claude Code SDK expects mcp_servers in dict format:
+    {
+        "serverName": {
+            "type": "http",
+            "url": "...",
+            "headers": {...}
+        }
+    }
+
+    But some configurations provide list format:
+    [
+        {"name": "serverName", "url": "...", "type": "http", "headers": {...}}
+    ]
+
+    This function converts list format to dict format.
+
+    Args:
+        mcp_servers: MCP servers configuration (list or dict)
+
+    Returns:
+        Dict format MCP servers configuration
+    """
+    if mcp_servers is None:
+        return {}
+
+    if isinstance(mcp_servers, dict):
+        return mcp_servers
+
+    if isinstance(mcp_servers, list):
+        result = {}
+        for item in mcp_servers:
+            if isinstance(item, dict) and "name" in item:
+                server_name = item["name"]
+                # Create a copy without the "name" key for the server config
+                server_config = {k: v for k, v in item.items() if k != "name"}
+                # Rename "headers" to "auth" if present (for Claude Code SDK compatibility)
+                # Note: Claude Code SDK uses different key names
+                result[server_name] = server_config
+        return result
+
+    logger.warning(
+        f"Unexpected mcp_servers type: {type(mcp_servers)}, returning empty dict"
+    )
+    return {}
+
+
 def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
@@ -255,13 +305,16 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         "permission_prompt_tool_name",
         "cwd",
         "max_buffer_size",
+        "include_partial_messages",
     ]
 
     # Collect all non-None configuration parameters
     # Set max_buffer_size to 50MB to handle large file reads (default is 1MB)
+    # Enable include_partial_messages for streaming output (StreamEvent)
     options: Dict[str, Any] = {
         "setting_sources": ["user", "project", "local"],
         "max_buffer_size": 50 * 1024 * 1024,  # 50MB
+        "include_partial_messages": True,  # Enable streaming output for real-time text updates
     }
 
     bots = task_data.get("bot", [])
@@ -273,12 +326,12 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         if mcp_servers:
             # Replace placeholders in MCP servers config with actual values
             mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
+            # Convert list format to dict format for Claude Code SDK
+            mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
             bot_config["mcp_servers"] = mcp_servers
 
         # Add wegent MCP server for subscription tasks
         if task_data.get("is_subscription"):
-            from executor.mcp_servers.wegent.server import get_wegent_mcp_url
-
             wegent_mcp_url = get_wegent_mcp_url()
             wegent_mcp = {
                 "wegent": {
@@ -286,9 +339,17 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
                     "url": wegent_mcp_url,
                 }
             }
-            if "mcp_servers" not in bot_config:
+            if "mcp_servers" not in bot_config or bot_config["mcp_servers"] is None:
                 bot_config["mcp_servers"] = {}
-            bot_config["mcp_servers"].update(wegent_mcp)
+            # Handle both dict and list formats for mcp_servers
+            mcp_servers = bot_config["mcp_servers"]
+            if isinstance(mcp_servers, dict):
+                mcp_servers.update(wegent_mcp)
+            elif isinstance(mcp_servers, list):
+                # Convert list to dict format
+                mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
+                mcp_servers.update(wegent_mcp)
+                bot_config["mcp_servers"] = mcp_servers
             logger.info(
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
             )

@@ -242,7 +242,7 @@ export function QuickAccessCards({
         <TeamCreationWizard
           open={showWizard}
           onClose={() => setShowWizard(false)}
-          onSuccess={async (teamId, teamName) => {
+          onSuccess={async (teamId, _) => {
             // Refresh teams list first to get the new team
             if (onRefreshTeams) {
               const refreshedTeams = await onRefreshTeams()
@@ -258,7 +258,6 @@ export function QuickAccessCards({
                 onTeamSelect(newTeam)
               }
             }
-            console.log(`Created team: ${teamName} (ID: ${teamId})`)
           }}
         />
       </>
@@ -576,7 +575,7 @@ export function QuickAccessCards({
         <TeamCreationWizard
           open={showWizard}
           onClose={() => setShowWizard(false)}
-          onSuccess={async (teamId, teamName) => {
+          onSuccess={async (teamId, _) => {
             // Refresh teams list first to get the new team
             if (onRefreshTeams) {
               const refreshedTeams = await onRefreshTeams()
@@ -592,7 +591,6 @@ export function QuickAccessCards({
                 onTeamSelect(newTeam)
               }
             }
-            console.log(`Created team: ${teamName} (ID: ${teamId})`)
           }}
         />
       )}

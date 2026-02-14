@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from executor.agents.base import Agent
 from shared.logger import setup_logger
+from shared.models import ResponsesAPIEmitter
 from shared.status import TaskStatus
 
 logger = setup_logger("image_validator")
@@ -71,8 +72,12 @@ class ImageValidatorAgent(Agent):
         ],
     }
 
-    def __init__(self, task_data: Dict[str, Any]):
-        super().__init__(task_data)
+    def __init__(
+        self,
+        task_data: Dict[str, Any],
+        emitter: ResponsesAPIEmitter,
+    ):
+        super().__init__(task_data, emitter)
         self.task_data = task_data
 
         # Get validation parameters from task data
@@ -151,6 +156,9 @@ class ImageValidatorAgent(Agent):
         }
 
         logger.info(f"Validation completed: valid={all_passed}, checks={len(results)}")
+
+        # Store for retrieval by task_processor to include in done_event
+        self.validation_result = validation_result
 
         # Send result via callback with result data including validation_id
         self.report_progress(

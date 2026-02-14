@@ -44,7 +44,6 @@ DEFAULT_EXCLUDED_URLS = [
     "/api/docs",
     "/api/openapi.json",
     "/api/quota/*",
-    "/api/executors/tasks/dispatch",  # Task dispatch endpoint - uses internal trace
     "/favicon.ico",
     # Heartbeat endpoints - high frequency, low diagnostic value
     "/executor-manager/sandboxes/.*/heartbeat$",

@@ -19,8 +19,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { updateGroup } from '@/apis/groups'
+import { useUser } from '@/features/common/UserContext'
 import { toast } from 'sonner'
-import type { Group, GroupUpdate, GroupVisibility } from '@/types/group'
+import type { Group, GroupUpdate, GroupVisibility, GroupLevel } from '@/types/group'
 
 interface EditGroupDialogProps {
   isOpen: boolean
@@ -31,10 +32,14 @@ interface EditGroupDialogProps {
 
 export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroupDialogProps) {
   const { t } = useTranslation()
+  const { user } = useUser()
+  const isAdmin = user?.role === 'admin'
+
   const [formData, setFormData] = useState<GroupUpdate>({
     display_name: '',
     visibility: 'private',
     description: '',
+    level: 'group',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -45,6 +50,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         display_name: group.display_name || '',
         visibility: group.visibility,
         description: group.description || '',
+        level: group.level || 'group',
       })
     }
   }, [isOpen, group])
@@ -73,6 +79,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         display_name: formData.display_name?.trim() || undefined,
         visibility: formData.visibility,
         description: formData.description?.trim() || undefined,
+        level: formData.level,
       }
 
       await updateGroup(group.name, payload)
@@ -170,6 +177,42 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
             {formData.visibility === 'internal' && t('groups:groupCreate.visibilityInternalHint')}
           </p>
         </div>
+
+        {/* Level - Admin Only */}
+        {isAdmin && (
+          <div>
+            <Label htmlFor="level">{t('groups:groups.level')}</Label>
+            <Select
+              value={formData.level}
+              onValueChange={(value: GroupLevel) => {
+                if (value) {
+                  setFormData(prev => ({ ...prev, level: value }))
+                }
+              }}
+              disabled={isSubmitting}
+            >
+              <SelectTrigger id="level" data-testid="level-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="group">
+                  <div className="flex flex-col">
+                    <span>{t('groups:groups.levels.group')}</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="organization">
+                  <div className="flex flex-col">
+                    <span>{t('groups:groups.levels.organization')}</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-text-muted mt-1">
+              {formData.level === 'organization' && t('groups:groupCreate.levelOrganizationHint')}
+              {formData.level === 'group' && t('groups:groupCreate.levelGroupHint')}
+            </p>
+          </div>
+        )}
 
         {/* Description */}
         <div>

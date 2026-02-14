@@ -25,9 +25,6 @@ export default function OidcCallbackPage() {
 
       loginWithOidcToken(accessToken)
         .then(() => {
-          console.log(
-            'OIDC callback page - token processed successfully, determining redirect target'
-          )
           let redirectTarget = paths.chat.getHref()
           if (typeof window !== 'undefined') {
             const loginPath = paths.auth.login.getHref()

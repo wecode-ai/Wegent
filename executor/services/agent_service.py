@@ -7,6 +7,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -15,9 +16,10 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
-from executor.callback.callback_handler import send_status_callback
+from executor.config import config
 from executor.tasks.task_state_manager import TaskStateManager
 from shared.logger import setup_logger
+from shared.models import EmitterBuilder, TransportFactory
 from shared.status import TaskStatus
 
 logger = setup_logger("agent_service")
@@ -92,7 +94,20 @@ class AgentService:
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{shell_type}'"
             )
-            agent = AgentFactory.get_agent(shell_type, task_data)
+
+            # Create emitter with throttled CallbackTransport for Docker mode
+            emitter = (
+                EmitterBuilder()
+                .with_task(task_id, subtask_id)
+                .with_transport(
+                    TransportFactory.create_callback_throttled(
+                        callback_url=config.CALLBACK_URL
+                    )
+                )
+                .build()
+            )
+
+            agent = AgentFactory.get_agent(shell_type, task_data, emitter)
 
             if not agent:
                 logger.error(
@@ -269,8 +284,8 @@ class AgentService:
 
     async def send_cancel_callback_async(self, task_id: int) -> None:
         """
-        Asynchronously send cancel task callback
-        This method is called in a background task and will not block the cancel API response
+        Asynchronously send cancel task callback using unified ExecutionEvent format.
+        This method is called in a background task and will not block the cancel API response.
 
         Args:
             task_id: Task ID
@@ -288,31 +303,33 @@ class AgentService:
 
             # Get task information
             subtask_id = task_data.get("subtask_id", -1)
-            task_title = task_data.get("task_title", "")
-            subtask_title = task_data.get("subtask_title", "")
 
             logger.info(
-                f"[{_format_task_log(task_id, subtask_id)}] Sending cancel callback asynchronously"
+                f"[{_format_task_log(task_id, subtask_id)}] Sending cancel event asynchronously"
             )
 
-            # Send CANCELLED status callback (not COMPLETED)
-            result = send_status_callback(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                task_title=task_title,
-                subtask_title=subtask_title,
-                status=TaskStatus.CANCELLED.value,
-                message="${{tasks.cancel_task}}",
-                progress=100,
+            # Create emitter and send CANCELLED event
+            emitter = (
+                EmitterBuilder()
+                .with_task(task_id, subtask_id)
+                .with_transport(
+                    TransportFactory.create_callback(callback_url=config.CALLBACK_URL)
+                )
+                .with_executor_info(
+                    name=os.getenv("EXECUTOR_NAME"),
+                    namespace=os.getenv("EXECUTOR_NAMESPACE"),
+                )
+                .build()
             )
+            result = await emitter.incomplete(reason="cancelled")
 
             if result and result.get("status") == TaskStatus.SUCCESS.value:
                 logger.info(
-                    f"[{_format_task_log(task_id, subtask_id)}] Cancel callback sent successfully"
+                    f"[{_format_task_log(task_id, subtask_id)}] Cancel event sent successfully"
                 )
             else:
                 logger.error(
-                    f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel callback: {result}"
+                    f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel event: {result}"
                 )
 
             # DO NOT cleanup task state here - SDK interrupt messages still need to be processed

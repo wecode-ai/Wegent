@@ -14,9 +14,20 @@ import os
 import stat
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+def create_mock_emitter():
+    """Create a mock emitter for testing."""
+    emitter = MagicMock()
+    emitter.in_progress = AsyncMock()
+    emitter.start = AsyncMock()
+    emitter.done = AsyncMock()
+    emitter.error = AsyncMock()
+    emitter.text_delta = AsyncMock()
+    return emitter
 
 
 class TestSaveClaudeConfigFiles:
@@ -57,7 +68,8 @@ class TestSaveClaudeConfigFiles:
         """Create ClaudeCodeAgent instance with mocked dependencies."""
         from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 
-        return ClaudeCodeAgent(task_data)
+        mock_emitter = create_mock_emitter()
+        return ClaudeCodeAgent(task_data, mock_emitter)
 
     def test_local_mode_does_not_write_settings_json(
         self, task_data, agent_config_with_sensitive_data, temp_workspace
@@ -352,7 +364,8 @@ class TestCreateAndConnectClientEnvPassing:
                 "executor.config.config.get_workspace_root", return_value=temp_workspace
             ),
         ):
-            agent = ClaudeCodeAgent(task_data)
+            mock_emitter = create_mock_emitter()
+            agent = ClaudeCodeAgent(task_data, mock_emitter)
 
             # Simulate what _save_claude_config_files does
             agent._claude_config_dir = os.path.join(

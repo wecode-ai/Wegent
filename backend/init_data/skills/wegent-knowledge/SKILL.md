@@ -31,14 +31,13 @@ You now have access to Wegent Knowledge Base management tools.
 
 - **list_documents**: List all documents in a knowledge base
   - knowledge_base_id: ID of the knowledge base
-  - status: "enabled", "disabled", or "all" (default)
 
 - **create_knowledge_base**: Create a new knowledge base
   - name: Knowledge base display name
   - description: Optional description
   - namespace: "default" (personal) or a group namespace (requires Maintainer+)
   - kb_type: "notebook" (default) or "classic"
-  - summary_enabled: Enable automatic summary generation (default: false)
+  - summary_enabled: Enable automatic summary generation (default: true)
 
 - **create_document**: Create a new document in a knowledge base
   - knowledge_base_id: Target knowledge base ID
@@ -48,14 +47,13 @@ You now have access to Wegent Knowledge Base management tools.
   - file_base64: Base64 encoded file when source_type="file"
   - file_extension: File extension when source_type="file"
   - url: URL to fetch when source_type="web"
+  - trigger_indexing: Whether to trigger RAG indexing (default: true)
+  - trigger_summary: Whether to trigger summary generation (default: true)
 
-- **delete_document**: Delete a document from a knowledge base
-  - document_id: Document ID to delete
-
-- **update_document**: Update a document's content
+- **update_document_content**: Update a document's content (TEXT type documents only)
   - document_id: Document ID to update
-  - content: New content
-  - mode: "replace" (default) or "append"
+  - content: New content (replaces existing content)
+  - trigger_reindex: Whether to trigger RAG re-indexing (default: true)
 
 ## Usage Notes
 
@@ -98,16 +96,11 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-5. Append content to an existing document:
+5. Update document content:
    ```
-   update_document(
+   update_document_content(
      document_id=456,
-     content="Additional notes...",
-     mode="append"
+     content="Updated notes with new information...",
+     trigger_reindex=true
    )
-   ```
-
-6. Delete a document:
-   ```
-   delete_document(document_id=456)
    ```

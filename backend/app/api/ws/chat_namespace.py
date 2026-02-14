@@ -538,10 +538,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
-            from app.services.chat.config import (
-                is_deep_research_protocol,
-                should_use_direct_chat,
-            )
+            from app.services.chat.config import is_deep_research_protocol
             from app.services.chat.storage import (
                 TaskCreationParams,
                 create_chat_task,
@@ -558,10 +555,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 return {
                     "error": "Deep Research does not support follow-up questions. Please start a new conversation."
                 }
-
-            # Check if team supports direct chat
-            supports_direct_chat = should_use_direct_chat(db, team, user_id)
-            logger.info(f"[WS] chat:send supports_direct_chat={supports_direct_chat}")
 
             # Get task JSON for group chat check
             task_json = {}
@@ -633,9 +626,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Create task and subtasks using unified function
             # Automatically handles Chat Shell vs Executor path based on team configuration
-            logger.info(
-                f"[WS] chat:send calling create_chat_task (supports_direct_chat={supports_direct_chat})..."
-            )
+            logger.info(f"[WS] chat:send calling create_chat_task...")
 
             # Build TaskCreationParams from request
             # Convert additional_skills to list of dicts if present
@@ -797,35 +788,68 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Trigger AI response if needed
             # Uses unified trigger from chat.trigger module
             # enable_deep_thinking controls whether tools are enabled in chat_shell
+            # IMPORTANT: Use asyncio.create_task to trigger AI response asynchronously
+            # This allows the ACK response to be returned immediately, so the frontend
+            # can update the user message with subtaskId and messageId before chat:start arrives
             if should_trigger_ai and assistant_subtask:
-                from app.services.chat.trigger import trigger_ai_response
+                from sqlalchemy.orm import make_transient
+
+                from app.services.chat.trigger import trigger_ai_response_unified
 
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
                 )
                 # Note: knowledge_base_ids is no longer passed separately.
-                # The unified context processing in trigger_ai_response will
+                # The unified context processing in trigger_ai_response_unified will
                 # retrieve both attachments and knowledge bases from the
                 # user_subtask's associated contexts.
-                await trigger_ai_response(
-                    task=task,
-                    assistant_subtask=assistant_subtask,
-                    team=team,
-                    user=user,
-                    message=payload.message,  # Original message
-                    payload=payload,
-                    task_room=task_room,
-                    supports_direct_chat=supports_direct_chat,
-                    namespace=self,
-                    user_subtask_id=(
-                        user_subtask_for_context.id
-                        if user_subtask_for_context
-                        else None
-                    ),  # Pass user subtask ID for unified context processing
-                    auth_token=auth_token,  # Pass original JWT token from WebSocket session
+
+                # Refresh objects to load all attributes before making them transient
+                # This ensures all lazy-loaded attributes are loaded from the database
+                db.refresh(task)
+                db.refresh(team)
+                db.refresh(assistant_subtask)
+                db.refresh(user)
+
+                # Make objects transient so they can be used after session is closed
+                make_transient(task)
+                make_transient(team)
+                make_transient(assistant_subtask)
+                make_transient(user)
+
+                # Extract user_subtask_id and device_id before closing session
+                user_subtask_id_for_context = (
+                    user_subtask_for_context.id if user_subtask_for_context else None
                 )
+                device_id = payload.device_id
+
+                # Create async task for AI response - don't await it
+                # This ensures the ACK is returned before chat:start is sent
+                async def _trigger_ai():
+                    try:
+                        await trigger_ai_response_unified(
+                            task=task,
+                            assistant_subtask=assistant_subtask,
+                            team=team,
+                            user=user,
+                            message=payload.message,  # Original message
+                            payload=payload,
+                            task_room=task_room,
+                            device_id=device_id,
+                            namespace=self,
+                            user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
+                            auth_token=auth_token,  # Pass original JWT token from WebSocket session
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"[WS] chat:send AI trigger failed: task_id={task.id}, error={e}"
+                        )
+
+                asyncio.create_task(_trigger_ai())
 
             # Return unified response - same structure for all modes
+            # IMPORTANT: Return immediately so frontend can update user message
+            # with subtaskId and messageId before chat:start arrives
             return {
                 "task_id": task.id,
                 "subtask_id": user_subtask.id if user_subtask else None,
@@ -1352,16 +1376,12 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Trigger AI response using unified trigger
             from app.models.user import User
-            from app.services.chat.config import should_use_direct_chat
-            from app.services.chat.trigger import trigger_ai_response
+            from app.services.chat.trigger import trigger_ai_response_unified
 
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 logger.error(f"[WS] chat:retry error: User not found id={user_id}")
                 return {"error": "User not found"}
-
-            supports_direct_chat = should_use_direct_chat(db, team, user_id)
-            logger.info(f"[WS] chat:retry supports_direct_chat={supports_direct_chat}")
 
             # Determine model to use for retry:
             # Use the SAME logic as normal message sending (ChatSendPayload handling):
@@ -1429,9 +1449,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 is_group_chat=False,
             )
 
-            # Trigger AI response
+            device_id = get_device_id(task)
+            # Trigger AI response using unified trigger
             task_room = f"task:{payload.task_id}"
-            await trigger_ai_response(
+            await trigger_ai_response_unified(
                 task=task,
                 assistant_subtask=failed_ai_subtask,  # Reuse the same subtask
                 team=team,
@@ -1439,7 +1460,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=user_subtask.prompt or "",
                 payload=retry_payload,
                 task_room=task_room,
-                supports_direct_chat=supports_direct_chat,
+                device_id=device_id,
                 namespace=self,
                 user_subtask_id=user_subtask.id,  # Pass user subtask ID for unified context processing
             )
@@ -1700,3 +1721,8 @@ def register_chat_namespace(sio: socketio.AsyncServer):
     chat_ns = ChatNamespace("/chat")
     sio.register_namespace(chat_ns)
     logger.info("Chat namespace registered at /chat")
+
+
+def get_device_id(task):
+    task_crd = Task.model_validate(task.json)
+    return task_crd.spec.device_id if task_crd.spec else None

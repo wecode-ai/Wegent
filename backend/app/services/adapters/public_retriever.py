@@ -6,6 +6,7 @@
 Public Retriever service for managing system-level retriever configurations.
 Public retrievers are stored in the kinds table with user_id=0.
 """
+
 import logging
 from typing import Any, Dict, List, Optional
 

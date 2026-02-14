@@ -32,7 +32,7 @@ interface CreateKnowledgeBaseDialogProps {
     exempt_calls_before_check: number
   }) => Promise<void>
   loading?: boolean
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'organization' | 'all'
   groupName?: string
   /** Knowledge base type selected from dropdown menu (read-only in dialog) */
   kbType?: KnowledgeBaseType

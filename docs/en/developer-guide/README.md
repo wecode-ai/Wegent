@@ -24,6 +24,10 @@ Welcome to the Wegent Developer Guide! This guide will help you understand how t
 
 - [Responsive Development](./responsive-development.md) - Responsive design guidelines
 
+### 🔧 Backend Development
+
+- [MCP Refactoring Guide](./mcp-refactoring-guide.md) - Knowledge MCP tool refactoring architecture
+
 ### 📊 Observability
 
 - [OpenTelemetry](./opentelemetry.md) - Tracing and observability setup

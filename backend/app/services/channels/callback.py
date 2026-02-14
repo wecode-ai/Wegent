@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
 from app.core.cache import cache_manager
 
 if TYPE_CHECKING:
-    from app.services.chat.trigger.emitter import ChatEventEmitter
+    from app.services.execution.emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +100,8 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             channel_type: The type of channel this service handles
         """
         self._channel_type = channel_type
-        # Cache of active streaming emitters: task_id -> ChatEventEmitter
-        self._active_emitters: Dict[int, "ChatEventEmitter"] = {}
+        # Cache of active streaming emitters: task_id -> ResultEmitter
+        self._active_emitters: Dict[int, "ResultEmitter"] = {}
         # Locks for each task to prevent concurrent emitter creation
         self._emitter_locks: Dict[int, asyncio.Lock] = {}
         # Global lock for accessing _emitter_locks dict
@@ -133,7 +133,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
     @abstractmethod
     async def _create_emitter(
         self, task_id: int, subtask_id: int, callback_info: T
-    ) -> Optional["ChatEventEmitter"]:
+    ) -> Optional["ResultEmitter"]:
         """Create a streaming emitter for the channel.
 
         This method should be implemented by each channel to create
@@ -145,7 +145,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             callback_info: Channel-specific callback information
 
         Returns:
-            ChatEventEmitter instance or None if creation failed
+            ResultEmitter instance or None if creation failed
         """
         pass
 
@@ -181,7 +181,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
 
     async def _get_or_create_emitter(
         self, task_id: int, subtask_id: int
-    ) -> Optional["ChatEventEmitter"]:
+    ) -> Optional["ResultEmitter"]:
         """Get existing emitter or create a new one for streaming.
 
         Uses per-task locking to prevent concurrent creation of multiple emitters
@@ -192,7 +192,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             subtask_id: Subtask ID
 
         Returns:
-            ChatEventEmitter or None if callback info not found
+            ResultEmitter or None if callback info not found
         """
         # Quick check without lock - if emitter exists, return it
         if task_id in self._active_emitters:
@@ -228,10 +228,9 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     return None
 
                 # Start the emitter
-                await emitter.emit_chat_start(
+                await emitter.emit_start(
                     task_id=task_id,
                     subtask_id=subtask_id,
-                    shell_type="ClaudeCode",
                 )
 
                 # Cache the emitter
@@ -327,7 +326,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 self._last_emitted_offsets[task_id] = len(content)
 
             # Send chunk update with delta content
-            await emitter.emit_chat_chunk(
+            await emitter.emit_chunk(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 content=chunk_to_send,
@@ -435,16 +434,15 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             if emitter:
                 # Streaming was active, just finish it
                 if status == "FAILED":
-                    await emitter.emit_chat_error(
+                    await emitter.emit_error(
                         task_id=task_id,
                         subtask_id=subtask_id,
                         error=error_message or "Task failed",
                     )
                 else:
-                    await emitter.emit_chat_done(
+                    await emitter.emit_done(
                         task_id=task_id,
                         subtask_id=subtask_id,
-                        offset=len(content),
                     )
                 logger.info(
                     f"[{self._channel_type.value}Callback] Finished streaming for task {task_id}"
@@ -459,15 +457,16 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     return False
 
                 # Build message content
+                # Build message content
                 if status == "FAILED":
                     message = f"❌ 任务执行失败\n\n任务 ID: {task_id}\n错误: {error_message or '未知错误'}"
-                    await emitter.emit_chat_chunk(
+                    await emitter.emit_chunk(
                         task_id=task_id,
                         subtask_id=subtask_id,
                         content=message,
                         offset=0,
                     )
-                    await emitter.emit_chat_error(
+                    await emitter.emit_error(
                         task_id=task_id,
                         subtask_id=subtask_id,
                         error=error_message or "Task failed",
@@ -478,18 +477,16 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     if len(content) > max_length:
                         content = content[:max_length] + "\n\n... (内容已截断)"
 
-                    await emitter.emit_chat_chunk(
+                    await emitter.emit_chunk(
                         task_id=task_id,
                         subtask_id=subtask_id,
                         content=content,
                         offset=0,
                     )
-                    await emitter.emit_chat_done(
+                    await emitter.emit_done(
                         task_id=task_id,
                         subtask_id=subtask_id,
-                        offset=len(content),
                     )
-
                 logger.info(
                     f"[{self._channel_type.value}Callback] Sent result for task {task_id}"
                 )

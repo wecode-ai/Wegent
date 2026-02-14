@@ -10,12 +10,15 @@
 Executor main entry point.
 
 Supports two modes:
-- Local mode (EXECUTOR_MODE=local): WebSocket-based executor for local deployment
+- Local mode: WebSocket-based executor for local deployment
+  - Configured via device-config.json (preferred)
+  - Falls back to EXECUTOR_MODE=local env var (deprecated)
 - Docker mode (default): FastAPI server for container deployment
 
 CLI options:
 - --version, -v: Print version and exit
-  Note: In PyInstaller builds, this is handled by hooks/rthook_version.py
+- --config <path>: Specify config file path (default: ~/.wegent-executor/device-config.json)
+  Note: In PyInstaller builds, --version is handled by hooks/rthook_version.py
   to avoid module initialization issues.
 """
 
@@ -70,23 +73,53 @@ def main() -> None:
     """
     Main function for running the executor.
 
-    In local mode (EXECUTOR_MODE=local), starts the WebSocket-based local runner.
+    Configuration is loaded from:
+    1. --config argument (if provided)
+    2. ~/.wegent-executor/device-config.json (default path)
+    3. EXECUTOR_MODE environment variable (deprecated, for backward compatibility)
+
+    In local mode, starts the WebSocket-based local runner.
     In Docker mode (default), starts the FastAPI server.
     """
     # Handle version flag first (before any heavy initialization)
     _handle_version_flag()
 
-    from executor.config import config
+    from executor.config.device_config import (
+        get_config_path_from_args,
+        load_device_config,
+        should_use_local_mode,
+    )
 
-    if config.EXECUTOR_MODE == "local":
+    # Get config path from command line arguments
+    config_path = get_config_path_from_args()
+
+    # Determine if we should run in local mode
+    if should_use_local_mode(config_path):
         # Local mode: Run WebSocket-based executor
         import asyncio
 
         from executor.modes.local.runner import LocalRunner
 
-        logger.info("Starting executor in LOCAL mode")
-        runner = LocalRunner()
-        asyncio.run(runner.start())
+        # Load full configuration for local mode
+        try:
+            device_config = load_device_config(config_path)
+            logger.info("Starting executor in LOCAL mode")
+            logger.info(f"Device ID: {device_config.device_id}")
+            logger.info(f"Device Name: {device_config.device_name}")
+            logger.info(f"Backend URL: {device_config.connection.backend_url}")
+            logger.info(
+                f"Auth Token: {'***' if device_config.connection.auth_token else 'NOT SET'}"
+            )
+
+            # Pass config to runner
+            runner = LocalRunner(device_config=device_config)
+            asyncio.run(runner.start())
+        except FileNotFoundError as e:
+            logger.error(f"Configuration error: {e}")
+            sys.exit(1)
+        except Exception as e:
+            logger.exception(f"Failed to start local mode: {e}")
+            sys.exit(1)
     else:
         # Docker mode (default): Run FastAPI server
         # Import FastAPI dependencies only in Docker mode

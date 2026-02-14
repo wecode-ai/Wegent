@@ -7,20 +7,22 @@
 # -*- coding: utf-8 -*-
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 from executor.agents import Agent, AgentFactory
-from executor.callback.callback_handler import (
-    send_status_callback,
-    send_task_completed_callback,
-    send_task_failed_callback,
-    send_task_started_callback,
-)
 from executor.config import config
 from executor.services.agent_service import AgentService
 from shared.logger import setup_logger
+from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
+from shared.models.execution import ExecutionRequest
+from shared.models.openai_converter import get_metadata_field
 from shared.status import TaskStatus
-from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_async,
+    trace_sync,
+)
 
 logger = setup_logger("task_processor")
 
@@ -59,47 +61,121 @@ def execute_task(agent: Agent) -> Tuple[TaskStatus, Optional[str]]:
     return agent_service.execute_agent_task(agent)
 
 
-def _get_callback_params(task_data: Dict[str, Any]) -> Dict[str, str]:
+def _create_emitter(
+    request: Union[ExecutionRequest, Dict[str, Any]],
+) -> ResponsesAPIEmitter:
     """
-    Extract common callback parameters from task data
+    Create an emitter for the task from execution request or task data.
+
+    Supports ExecutionRequest, OpenAI format dict, and legacy dict.
 
     Args:
-        task_data (dict): Task data
+        request: ExecutionRequest object or task data dict
 
     Returns:
-        dict: Common callback parameters
+        ResponsesAPIEmitter: Configured emitter for the task
     """
-    params = {
-        "task_id": task_data.get("task_id", -1),
-        "subtask_id": task_data.get("subtask_id", -1),
-        "task_title": task_data.get("task_title", ""),
-        "subtask_title": task_data.get("subtask_title", ""),
-        "executor_name": os.getenv("EXECUTOR_NAME"),
-        "executor_namespace": os.getenv("EXECUTOR_NAMESPACE"),
-    }
-    task_type = task_data.get("type")
-    if task_type:
-        params["task_type"] = task_type
-    return params
+    from executor.config import config
+
+    if isinstance(request, ExecutionRequest):
+        task_id = request.task_id
+        subtask_id = request.subtask_id
+    else:
+        task_id = get_metadata_field(request, "task_id", -1)
+        subtask_id = get_metadata_field(request, "subtask_id", -1)
+
+    return (
+        EmitterBuilder()
+        .with_task(task_id, subtask_id)
+        .with_transport(
+            TransportFactory.create_callback(callback_url=config.CALLBACK_URL)
+        )
+        .with_executor_info(
+            name=os.getenv("EXECUTOR_NAME"),
+            namespace=os.getenv("EXECUTOR_NAMESPACE"),
+        )
+        .build()
+    )
 
 
-def _extract_task_attributes(task_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract trace attributes from task data."""
-    attrs = {
-        "task.id": str(task_data.get("task_id", -1)),
-        "task.subtask_id": str(task_data.get("subtask_id", -1)),
-        "task.title": task_data.get("task_title", ""),
-        "task.type": task_data.get("type", "online"),
-        "executor.name": os.getenv("EXECUTOR_NAME", ""),
-    }
-    # Extract user info if available
-    user_data = task_data.get("user", {})
-    if user_data:
-        if user_data.get("id"):
-            attrs["user.id"] = str(user_data.get("id"))
-        if user_data.get("name"):
-            attrs["user.name"] = user_data.get("name")
+def _extract_task_attributes(
+    request: Union[ExecutionRequest, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Extract trace attributes from execution request or task data."""
+    if isinstance(request, ExecutionRequest):
+        attrs = {
+            "task.id": str(request.task_id),
+            "task.subtask_id": str(request.subtask_id),
+            "task.title": request.task_title or "",
+            "task.type": request.type or "online",
+            "executor.name": os.getenv("EXECUTOR_NAME", ""),
+        }
+        # Extract user info if available
+        user_data = request.user
+        if user_data:
+            if user_data.get("id"):
+                attrs["user.id"] = str(user_data.get("id"))
+            if user_data.get("name"):
+                attrs["user.name"] = user_data.get("name")
+    else:
+        attrs = {
+            "task.id": str(get_metadata_field(request, "task_id", -1)),
+            "task.subtask_id": str(get_metadata_field(request, "subtask_id", -1)),
+            "task.title": get_metadata_field(request, "task_title", ""),
+            "task.type": get_metadata_field(request, "type", "online"),
+            "executor.name": os.getenv("EXECUTOR_NAME", ""),
+        }
+        # Extract user info if available
+        user_data = get_metadata_field(request, "user", {})
+        if user_data:
+            if user_data.get("id"):
+                attrs["user.id"] = str(user_data.get("id"))
+            if user_data.get("name"):
+                attrs["user.name"] = user_data.get("name")
     return attrs
+
+
+def _normalize_request(
+    request: Union[ExecutionRequest, Dict[str, Any]],
+) -> ExecutionRequest:
+    """
+    Normalize input to ExecutionRequest.
+
+    Supports:
+    - ExecutionRequest objects (returned as-is)
+    - OpenAI Responses API format dicts (detected by "model" + "metadata" keys)
+    - Legacy ExecutionRequest dict format
+
+    Args:
+        request: ExecutionRequest object or task data dict
+
+    Returns:
+        ExecutionRequest: Normalized request object
+    """
+    if isinstance(request, ExecutionRequest):
+        return request
+    # Detect OpenAI format by checking for "model" + "metadata" keys
+    if isinstance(request, dict) and "model" in request and "metadata" in request:
+        from shared.models import OpenAIRequestConverter
+
+        return OpenAIRequestConverter.to_execution_request(request)
+    return ExecutionRequest.from_dict(request)
+
+
+def _run_async(coro):
+    """Run an async coroutine in sync context."""
+    import asyncio
+    import concurrent.futures
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(coro)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(asyncio.run, coro)
+        return future.result()
 
 
 @trace_sync(
@@ -107,7 +183,7 @@ def _extract_task_attributes(task_data: Dict[str, Any]) -> Dict[str, Any]:
     tracer_name="executor.tasks",
     extract_attributes=_extract_task_attributes,
 )
-def process(task_data: Dict[str, Any]) -> TaskStatus:
+def process(request: Union[ExecutionRequest, Dict[str, Any]]) -> TaskStatus:
     """
     Process task and send callback with distributed tracing support.
 
@@ -116,32 +192,61 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
     executions that don't need to keep the container running.
 
     Args:
-        task_data (dict): Task data
+        request: ExecutionRequest object or task data dict (for backward compatibility)
 
     Returns:
         TaskStatus: Processing status
     """
-    callback_params = _get_callback_params(task_data)
+    return _run_async(process_async(request))
+
+
+@trace_async(
+    span_name="execute_task",
+    tracer_name="executor.tasks",
+    extract_attributes=_extract_task_attributes,
+)
+async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> TaskStatus:
+    """
+    Process task and send callback with distributed tracing support (async version).
+
+    This is the async version of process() that should be used when called from
+    an async context (e.g., FastAPI lifespan).
+
+    For subscription tasks, the container will exit after task completion
+    (success or failure) since subscription tasks are one-time background
+    executions that don't need to keep the container running.
+
+    Args:
+        request: ExecutionRequest object or task data dict (for backward compatibility)
+
+    Returns:
+        TaskStatus: Processing status
+    """
+    # Normalize to ExecutionRequest for type safety
+    exec_request = _normalize_request(request)
+
+    # Convert to dict for AgentService (which still uses dict internally)
+    task_data = exec_request.to_dict()
+
+    # Create emitter for the task lifecycle
+    emitter = _create_emitter(exec_request)
 
     # Check if this is a subscription task
-    is_subscription = task_data.get("is_subscription", False)
+    is_subscription = exec_request.is_subscription
 
     # Extract validation_id for validation tasks
+    # Note: validation_params is not in ExecutionRequest, check task_data for backward compatibility
     validation_params = task_data.get("validation_params", {})
     validation_id = (
         validation_params.get("validation_id") if validation_params else None
     )
 
-    started_result = None
-    if validation_id:
-        started_result = {"validation_id": validation_id, "stage": "running"}
-
-    # Send task started callback
-    result = send_task_started_callback(result=started_result, **callback_params)
+    # Send task started event using emitter
+    result = await emitter.start()
     if not result or result.get("status") != TaskStatus.SUCCESS.value:
-        logger.error("Failed to send 'running' status callback")
+        logger.error("Failed to send 'start' event")
         set_span_attribute("error", True)
-        set_span_attribute("error.message", "Failed to send running status callback")
+        set_span_attribute("error.message", "Failed to send start event")
         # For subscription tasks, exit container on failure
         if is_subscription:
             logger.info(
@@ -150,7 +255,7 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
             os._exit(1)
         return TaskStatus.FAILED
 
-    add_span_event("task_started_callback_sent")
+    add_span_event("task_started_event_sent")
 
     # Execute task using AgentService
     try:
@@ -180,26 +285,26 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
         set_span_attribute("error", True)
         set_span_attribute("error.message", error_msg)
 
-    # Send task completion or failure callback
+    # Send task completion or failure event using emitter
     if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
-        send_task_completed_callback(message=message, **callback_params)
-        add_span_event("task_completed_callback_sent")
-    elif status == TaskStatus.FAILED:
-        fail_result = None
+        done_content = ""
         if validation_id:
-            fail_result = {
-                "validation_id": validation_id,
-                "stage": "failed",
-                "validation_result": {
-                    "valid": False,
-                    "checks": [],
-                    "errors": [message] if message else [],
-                },
-            }
-        send_task_failed_callback(
-            error_message=message, result=fail_result, **callback_params
-        )
-        add_span_event("task_failed_callback_sent")
+            import json
+
+            done_result = {"validation_id": validation_id, "stage": "completed"}
+            # Try to retrieve detailed validation results from the agent
+            try:
+                agent = agent_service.get_agent(f"{exec_request.task_id}")
+                if agent and hasattr(agent, "validation_result"):
+                    done_result["value"] = json.dumps(agent.validation_result)
+            except Exception as e:
+                logger.warning(f"Failed to retrieve validation result: {e}")
+            done_content = json.dumps(done_result)
+        await emitter.done(content=done_content)
+        add_span_event("task_done_event_sent")
+    elif status == TaskStatus.FAILED:
+        await emitter.error(message or "Unknown error")
+        add_span_event("task_error_event_sent")
 
     # For subscription tasks, exit container after completion
     # Subscription tasks are one-time background executions that don't need
@@ -228,3 +333,17 @@ def run_task() -> TaskStatus:
     """
     task_data = read_task_data()
     return process(task_data)
+
+
+async def run_task_async() -> TaskStatus:
+    """
+    Main function (async version), used to read task data and process it.
+
+    This is the async version of run_task() that should be used when called from
+    an async context (e.g., FastAPI lifespan).
+
+    Returns:
+        TaskStatus: Processing status
+    """
+    task_data = read_task_data()
+    return await process_async(task_data)

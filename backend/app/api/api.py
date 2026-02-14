@@ -33,7 +33,6 @@ from app.api.endpoints.adapter import (
     bots,
     chat,
     dify,
-    executors,
     models,
     retrievers,
     shells,
@@ -47,6 +46,7 @@ from app.api.endpoints.adapter import (
 )
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
+    callback_router,
     chat_storage_router,
     rag_router,
     services_router,
@@ -103,7 +103,6 @@ api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
 )
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
-api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
@@ -157,4 +156,7 @@ api_router.include_router(
 )
 api_router.include_router(
     subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]
+)
+api_router.include_router(
+    callback_router, prefix="/internal", tags=["internal-callback"]
 )

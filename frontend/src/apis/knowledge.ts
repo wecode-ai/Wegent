@@ -288,6 +288,22 @@ export async function getKnowledgeConfig(): Promise<KnowledgeConfig> {
   return apiClient.get<KnowledgeConfig>('/knowledge-bases/config')
 }
 
+/**
+ * Organization namespace response
+ */
+export interface OrganizationNamespaceResponse {
+  namespace: string | null
+}
+
+/**
+ * Get the organization-level namespace name
+ * Returns the namespace name that has level='organization'
+ * This is used when creating organization knowledge bases
+ */
+export async function getOrganizationNamespace(): Promise<OrganizationNamespaceResponse> {
+  return apiClient.get<OrganizationNamespaceResponse>('/knowledge-bases/organization-namespace')
+}
+
 // ============== Chunk APIs ==============
 
 /**

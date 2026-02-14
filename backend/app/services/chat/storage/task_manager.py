@@ -446,6 +446,24 @@ def create_assistant_subtask(
     Returns:
         Created Subtask
     """
+    # Resolve executor_name from previous subtasks for container reuse
+    executor_name = ""
+    executor_namespace = ""
+    previous = (
+        db.query(Subtask.executor_name, Subtask.executor_namespace)
+        .filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+            Subtask.executor_name != "",
+            Subtask.executor_name.isnot(None),
+        )
+        .order_by(Subtask.id.desc())
+        .first()
+    )
+    if previous:
+        executor_name = previous.executor_name or ""
+        executor_namespace = previous.executor_namespace or ""
+
     # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
     # It will be updated when the stream completes
     assistant_subtask = Subtask(
@@ -455,8 +473,8 @@ def create_assistant_subtask(
         title="Assistant response",
         bot_ids=bot_ids,
         role=SubtaskRole.ASSISTANT,
-        executor_namespace="",
-        executor_name="",
+        executor_namespace=executor_namespace,
+        executor_name=executor_name,
         prompt="",
         status=SubtaskStatus.PENDING,
         progress=0,
@@ -824,9 +842,8 @@ async def create_chat_task(
     """
     Unified chat task creation entry point.
 
-    Automatically determines whether to use Chat Shell or Executor path
-    based on team configuration. This eliminates duplicate code between
-    WebSocket chat:send and Flow task execution.
+    Uses unified execution architecture - all tasks go through the same path.
+    ExecutionDispatcher automatically routes based on shell_type configuration.
 
     Args:
         db: Database session
@@ -842,153 +859,25 @@ async def create_chat_task(
     Returns:
         TaskCreationResult with task and subtask information
     """
-    from app.models.subtask import SubtaskRole
-    from app.models.task import TaskResource
-    from app.schemas.task import TaskCreate
-    from app.services.adapters.task_kinds import task_kinds_service
-    from app.services.chat.config import should_use_direct_chat
-
     # Log input parameters for debugging (DEBUG level to avoid log noise)
     logger.debug(
         f"[create_chat_task] Entry: team_id={team.id}, user_id={user.id}, "
         f"task_id={task_id}, source={source}, should_trigger_ai={should_trigger_ai}"
     )
 
-    supports_direct_chat = should_use_direct_chat(db, team, user.id)
-    logger.debug(f"[create_chat_task] supports_direct_chat={supports_direct_chat}")
-
-    if supports_direct_chat:
-        # Chat Shell path - use create_task_and_subtasks
-        logger.debug("[create_chat_task] Using Chat Shell path")
-        result = await create_task_and_subtasks(
-            db=db,
-            user=user,
-            team=team,
-            message=message,
-            params=params,
-            task_id=task_id,
-            should_trigger_ai=should_trigger_ai,
-            rag_prompt=rag_prompt,
-        )
-        logger.debug(
-            f"[create_chat_task] Chat Shell result: task_id={result.task.id if result.task else None}"
-        )
-        return result
-    else:
-        # Executor path - use task_kinds_service.create_task_or_append
-        logger.debug("[create_chat_task] Using Executor path")
-
-        # Use provided task_type, or auto-detect based on git_url presence
-        task_type = params.task_type
-        if not task_type:
-            task_type = "code" if params.git_url else "chat"
-
-        # Convert additional_skills from list of dicts to list of SkillRef objects
-        additional_skills_refs = None
-        if params.additional_skills:
-            from app.schemas.task import SkillRef
-
-            # Filter out entries with empty or missing names
-            valid_skills = [s for s in params.additional_skills if s.get("name")]
-            if len(valid_skills) < len(params.additional_skills):
-                logger.warning(
-                    f"[create_chat_task] Filtered out {len(params.additional_skills) - len(valid_skills)} "
-                    f"skills with empty/missing names"
-                )
-
-            additional_skills_refs = [
-                SkillRef(
-                    name=s.get("name", ""),
-                    namespace=s.get("namespace", "default"),
-                    is_public=s.get("is_public", False),
-                )
-                for s in valid_skills
-            ]
-            logger.info(
-                f"[create_chat_task] Passing {len(additional_skills_refs)} additional_skills to executor: "
-                f"{[s.name for s in additional_skills_refs]}"
-            )
-
-        # Build TaskCreate object
-        task_create = TaskCreate(
-            title=params.title,
-            team_id=team.id,
-            team_name=team.name,
-            team_namespace=team.namespace,
-            git_url=params.git_url or "",
-            git_repo=params.git_repo or "",
-            git_repo_id=params.git_repo_id or 0,
-            git_domain=params.git_domain or "",
-            branch_name=params.branch_name or "",
-            prompt=message,
-            type="online",
-            task_type=task_type,
-            auto_delete_executor="false",
-            source=source,
-            model_id=params.model_id,
-            force_override_bot_model=params.force_override_bot_model,
-            force_override_bot_model_type=params.force_override_bot_model_type,
-            additional_skills=additional_skills_refs,
-        )
-
-        # Call create_task_or_append (synchronous method)
-        task_dict = task_kinds_service.create_task_or_append(
-            db=db,
-            obj_in=task_create,
-            user=user,
-            task_id=task_id,
-        )
-
-        created_task_id = task_dict["id"]
-
-        # Get the task TaskResource object from database
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == created_task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-            )
-            .first()
-        )
-
-        logger.debug(
-            f"[create_chat_task] Executor task created: task_id={created_task_id}"
-        )
-
-        # Query the created subtasks from database
-        # Get the latest USER subtask for this task
-        user_subtask = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == created_task_id,
-                Subtask.role == SubtaskRole.USER,
-            )
-            .order_by(Subtask.id.desc())
-            .first()
-        )
-
-        # Get the latest ASSISTANT subtask for this task (if should_trigger_ai)
-        assistant_subtask = None
-        if should_trigger_ai:
-            assistant_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == created_task_id,
-                    Subtask.role == SubtaskRole.ASSISTANT,
-                )
-                .order_by(Subtask.id.desc())
-                .first()
-            )
-
-        logger.debug(
-            f"[create_chat_task] Executor result: task_id={task.id if task else None}"
-        )
-
-        return TaskCreationResult(
-            task=task,
-            user_subtask=user_subtask,
-            assistant_subtask=assistant_subtask,
-            ai_triggered=should_trigger_ai,
-            rag_prompt=rag_prompt,
-        )
+    # Unified path - use create_task_and_subtasks for all cases
+    # ExecutionDispatcher will automatically route based on shell_type
+    result = await create_task_and_subtasks(
+        db=db,
+        user=user,
+        team=team,
+        message=message,
+        params=params,
+        task_id=task_id,
+        should_trigger_ai=should_trigger_ai,
+        rag_prompt=rag_prompt,
+    )
+    logger.debug(
+        f"[create_chat_task] Task created: task_id={result.task.id if result.task else None}"
+    )
+    return result

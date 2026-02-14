@@ -34,8 +34,6 @@ export default function SchemeURLDialogBridge() {
       const dialogType = detail?.type
       const params = detail?.params || {}
 
-      console.log('[SchemeURLDialogBridge] Opening dialog:', dialogType, params)
-
       // Forms - redirect to appropriate pages
       if (dialogType === 'create-team') {
         router.push(paths.settings.team.getHref())

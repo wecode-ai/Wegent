@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from executor.services.agent_service import AgentService
 from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
-from executor.tasks import process, run_task
+from executor.tasks import process, process_async, run_task, run_task_async
 
 # Import the shared logger
 from shared.logger import setup_logger
@@ -106,7 +106,8 @@ async def lifespan(app: FastAPI):
             set_request_context(startup_request_id)
 
             logger.info("TASK_INFO environment variable found, attempting to run task")
-            status = run_task()
+            # Use async version to avoid "event loop already running" error
+            status = await run_task_async()
             logger.info(f"Task execution status: {status}")
         else:
             logger.info(
@@ -126,21 +127,39 @@ async def lifespan(app: FastAPI):
     # This allows sandbox containers to download skills at startup
     try:
         # Use env_reader to support both env vars and file-based config
-        from executor.config.env_reader import get_auth_token, get_task_id
+        from executor.config.env_reader import (
+            get_auth_token,
+            get_task_id,
+            get_task_info,
+        )
 
         auth_token = get_auth_token()
         task_id = get_task_id()
+
+        # If AUTH_TOKEN env var is not set, try to extract from TASK_INFO
+        # This handles non-sandbox tasks where auth_token is in the task data
+        if not auth_token:
+            task_info = get_task_info()
+            if task_info:
+                # Support both OpenAI format (metadata.auth_token) and legacy format (auth_token)
+                metadata = task_info.get("metadata", {})
+                auth_token = metadata.get("auth_token") or task_info.get("auth_token")
+                if not task_id:
+                    task_id = str(
+                        metadata.get("task_id") or task_info.get("task_id", "")
+                    )
+
         if auth_token and task_id:
             logger.info(
-                f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}..."
+                f"AUTH_TOKEN found, initializing Claude Code for task {task_id}..."
             )
             _initialize_sandbox_claude(auth_token, task_id)
 
             # Pre-download all attachments for the task
-            logger.info(f"Pre-downloading attachments for sandbox {task_id}...")
+            logger.info(f"Pre-downloading attachments for task {task_id}...")
             _predownload_task_attachments(auth_token, task_id)
     except Exception as e:
-        logger.warning(f"Failed to initialize Claude Code for sandbox: {e}")
+        logger.warning(f"Failed to initialize Claude Code for task: {e}")
 
     yield  # Application runs here
 
@@ -273,8 +292,8 @@ async def _maybe_initialize_skills_from_env() -> None:
     """Initialize skills on first HTTP request (for preload sandbox mode).
 
     This function is called by HTTP middleware when the first request arrives.
-    It reads auth_token and task_id from environment variables or Downward API files,
-    then downloads and deploys skills.
+    It reads auth_token and task_id from environment variables, Downward API files,
+    or TASK_INFO, then downloads and deploys skills.
 
     Only applies to sandbox mode. For non-sandbox tasks, skills are downloaded
     automatically during agent initialization.
@@ -292,11 +311,21 @@ async def _maybe_initialize_skills_from_env() -> None:
         _skills_initialized = True  # Preload mode not enabled, skip
         return
 
-    # Read auth_token and task_id from env vars or Downward API files
-    from executor.config.env_reader import get_auth_token, get_task_id
+    # Read auth_token and task_id from env vars, Downward API files, or TASK_INFO
+    from executor.config.env_reader import get_auth_token, get_task_id, get_task_info
 
     auth_token = get_auth_token()
     task_id = get_task_id()
+
+    # If AUTH_TOKEN env var is not set, try to extract from TASK_INFO
+    if not auth_token:
+        task_info = get_task_info()
+        if task_info:
+            # Support both OpenAI format (metadata.auth_token) and legacy format (auth_token)
+            metadata = task_info.get("metadata", {})
+            auth_token = metadata.get("auth_token") or task_info.get("auth_token")
+            if not task_id:
+                task_id = str(metadata.get("task_id") or task_info.get("task_id", ""))
 
     if not auth_token or not task_id:
         logger.debug(
@@ -516,67 +545,93 @@ async def health_check():
     return {"status": "healthy", "service": "task_executor"}
 
 
-class TaskResponse(BaseModel):
-    """Response model for task execution"""
+class OpenAIBackgroundResponse(BaseModel):
+    """Response model for OpenAI background mode"""
 
-    task_id: int
-    subtask_id: int
+    id: str
     status: str
-    message: str
-    progress: int = 0
+    message: str = ""
 
 
-@app.post("/api/tasks/execute", response_model=TaskResponse)
-async def execute_task(request: Request):
+@app.post("/v1/responses", response_model=OpenAIBackgroundResponse)
+async def openai_responses(request: Request):
     """
-    Execute a task with the specified agent
-    If the agent session already exists for the task_id, it will be reused
+    OpenAI Responses API endpoint for background mode execution.
 
-    Data is read directly from request.body
+    This endpoint accepts OpenAI Responses API format requests with background=true.
+    It converts the request to ExecutionRequest format and processes the task.
+
+    Request format:
+    {
+        "model": "...",
+        "input": "..." or [...],
+        "instructions": "...",
+        "stream": false,
+        "background": true,
+        "metadata": {
+            "task_id": 123,
+            "subtask_id": 456,
+            ...
+        },
+        "model_config": {...}
+    }
+
+    Returns:
+        OpenAI background response with queued status
     """
     # Read raw JSON data from request body
     body_bytes = await request.body()
-    task_data = json.loads(body_bytes)
-    task_id = task_data.get("task_id", -1)
-    subtask_id = task_data.get("subtask_id", -1)
+    openai_request = json.loads(body_bytes)
+
+    # Extract task identification from metadata
+    metadata = openai_request.get("metadata", {})
+    task_id = metadata.get("task_id", -1)
+    subtask_id = metadata.get("subtask_id", -1)
+    background = openai_request.get("background", False)
+
+    logger.info(
+        f"[v1/responses] Received OpenAI request: task_id={task_id}, "
+        f"subtask_id={subtask_id}, background={background}"
+    )
 
     # Set task and user context for tracing
     otel_config = get_otel_config()
     if otel_config.enabled and is_telemetry_enabled():
         set_task_context(task_id=task_id, subtask_id=subtask_id)
-        # Extract user info from task data
-        user_data = task_data.get("user", {})
-        if user_data:
+        user_id = metadata.get("user_id")
+        user_name = metadata.get("user_name")
+        if user_id or user_name:
             set_user_context(
-                user_id=str(user_data.get("id", "")) if user_data.get("id") else None,
-                user_name=user_data.get("name"),
+                user_id=str(user_id) if user_id else None,
+                user_name=user_name,
             )
 
     try:
-        # Use process function to handle task uniformly
-        status = process(task_data)
+        # Convert OpenAI request to ExecutionRequest format
+        from shared.models import OpenAIRequestConverter
 
-        # Prepare response
-        message = f"Task execution status  : {status.value}"
+        execution_request = OpenAIRequestConverter.to_execution_request(openai_request)
+        task_data = execution_request.to_dict()
 
-        # Set progress value
-        if status == TaskStatus.COMPLETED:
-            progress = 100
-        elif status == TaskStatus.RUNNING:
-            progress = 50  # Task in progress, progress is 50
-        else:
-            progress = 0
+        # Use async process function to handle task uniformly
+        # IMPORTANT: Must use await process_async() instead of sync process()
+        # because this endpoint is async and runs in FastAPI's event loop.
+        # Using sync process() would cause _run_async() to create a new thread
+        # with a temporary event loop, and any background tasks created in
+        # execute() would be abandoned when that temporary loop closes.
+        status = await process_async(task_data)
 
-        return TaskResponse(
-            task_id=task_id,
-            subtask_id=subtask_id,
-            status=status.value,
-            message=message,
-            progress=progress,
+        logger.info(f"[v1/responses] Task {task_id} submitted, status={status.value}")
+
+        # Return OpenAI background response format
+        return OpenAIBackgroundResponse(
+            id=f"resp_{subtask_id}",
+            status="queued" if background else status.value,
+            message=f"Task execution status: {status.value}",
         )
 
     except Exception as e:
-        logger.exception(f"Error executing task {task_id}: {str(e)}")
+        logger.exception(f"[v1/responses] Error executing task {task_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error executing task: {str(e)}")
 
 

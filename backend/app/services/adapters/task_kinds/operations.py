@@ -94,9 +94,9 @@ class TaskOperationsMixin:
         # Push mode: dispatch task to executor_manager immediately after commit
         # Skip dispatch for device tasks - they are routed via WebSocket to local devices
         if obj_in.task_type != "task":
-            from app.services.task_dispatcher import task_dispatcher
+            from app.services.execution import schedule_dispatch
 
-            task_dispatcher.schedule_dispatch(task.id)
+            schedule_dispatch(task.id)
 
         return convert_to_task_dict(task, db, user.id)
 
@@ -777,7 +777,7 @@ class TaskOperationsMixin:
             if background_task_runner:
                 background_task_runner(self._call_chat_shell_cancel, running_subtask.id)
 
-            running_subtask.status = SubtaskStatus.COMPLETED
+            running_subtask.status = SubtaskStatus.CANCELLED
             running_subtask.progress = 100
             running_subtask.completed_at = datetime.now()
             running_subtask.updated_at = datetime.now()
@@ -788,17 +788,17 @@ class TaskOperationsMixin:
                 self.update_task(
                     db=db,
                     task_id=task_id,
-                    obj_in=TaskUpdate(status="COMPLETED"),
+                    obj_in=TaskUpdate(status="CANCELLED"),
                     user_id=user_id,
                 )
                 logger.info(
-                    f"Chat Shell task {task_id} cancelled and marked as COMPLETED"
+                    f"Chat Shell task {task_id} cancelled and marked as CANCELLED"
                 )
             except Exception as e:
                 logger.error(
                     f"Failed to update Chat Shell task {task_id} status: {str(e)}"
                 )
-            return {"message": "Chat stopped successfully", "status": "COMPLETED"}
+            return {"message": "Chat stopped successfully", "status": "CANCELLED"}
         else:
             try:
                 self.update_task(
@@ -1242,3 +1242,81 @@ class TaskOperationsMixin:
                     )
             except Exception as e:
                 logger.warning("[delete_task] Failed to schedule close-session: %s", e)
+
+    def set_preserve_executor(
+        self, db: Session, *, task_id: int, user_id: int, preserve: bool
+    ) -> Dict[str, Any]:
+        """
+        Set or cancel the preserve executor flag for a task.
+
+        When preserve=True, the executor pod for this task will not be cleaned up
+        by the cleanup_stale_executors job even after the task is completed.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID requesting the change
+            preserve: True to preserve executor, False to allow normal cleanup
+
+        Returns:
+            Dict with task_id and preserve_executor status
+
+        Raises:
+            HTTPException: If task not found or user doesn't have permission
+        """
+        from app.services.task_member_service import task_member_service
+
+        # Check if user is a member of this task (owner or group member)
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(
+                status_code=404, detail="Task not found or no permission"
+            )
+
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        task_crd = Task.model_validate(task.json)
+
+        # Initialize labels if not exists
+        if task_crd.metadata.labels is None:
+            task_crd.metadata.labels = {}
+
+        # Set the preserveExecutor label (use "true"/"false" for consistency with autoDeleteExecutor)
+        if preserve:
+            task_crd.metadata.labels["preserveExecutor"] = "true"
+            logger.info(
+                f"[set_preserve_executor] User {user_id} set preserveExecutor=true for task {task_id}"
+            )
+        else:
+            task_crd.metadata.labels["preserveExecutor"] = "false"
+            logger.info(
+                f"[set_preserve_executor] User {user_id} set preserveExecutor=false for task {task_id}"
+            )
+
+        # Save changes
+        task.json = task_crd.model_dump(mode="json", exclude_none=True)
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
+
+        db.commit()
+        db.refresh(task)
+
+        return {
+            "task_id": task_id,
+            "preserve_executor": preserve,
+            "message": (
+                "Executor will be preserved for this task"
+                if preserve
+                else "Executor cleanup enabled for this task"
+            ),
+        }

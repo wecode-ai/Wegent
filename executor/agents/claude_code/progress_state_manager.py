@@ -84,17 +84,23 @@ class ProgressStateManager:
 
         logger.info(f"Initialized workbench data with status: {status}")
 
-    def update_workbench_summary(self, summary: str) -> None:
+    def update_workbench_summary(self, summary: str, append: bool = False) -> None:
         """
         Update workbench summary (partial result content)
 
         Args:
             summary: Summary text to update
+            append: If True, append to existing summary instead of replacing
         """
         if self.workbench_data:
-            self.workbench_data["summary"] = summary
+            if append and self.workbench_data.get("summary"):
+                self.workbench_data["summary"] += summary
+            else:
+                self.workbench_data["summary"] = summary
             self.workbench_data["lastUpdated"] = datetime.now().isoformat()
-            logger.debug(f"Updated workbench summary: {len(summary)} chars")
+            logger.debug(
+                f"Updated workbench summary: {len(self.workbench_data['summary'])} chars (append={append})"
+            )
 
     def update_workbench_status(self, status: str, result_value: str = None) -> None:
         """

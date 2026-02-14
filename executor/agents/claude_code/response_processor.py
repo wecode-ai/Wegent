@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import json
+import os
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -9,6 +10,7 @@ from claude_agent_sdk.types import (
     AssistantMessage,
     Message,
     ResultMessage,
+    StreamEvent,
     SystemMessage,
     TextBlock,
     ToolResultBlock,
@@ -17,6 +19,7 @@ from claude_agent_sdk.types import (
 )
 
 from shared.logger import setup_logger
+from shared.models import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult
 from shared.status import TaskStatus
 from shared.utils.sensitive_data_masker import mask_sensitive_data
@@ -48,6 +51,7 @@ def contains_api_error(text: str) -> bool:
 async def process_response(
     client: ClaudeSDKClient,
     state_manager,
+    emitter: ResponsesAPIEmitter,
     thinking_manager=None,
     task_state_manager=None,
     session_id: str = None,
@@ -58,6 +62,7 @@ async def process_response(
     Args:
         client: Claude SDK client
         state_manager: ProgressStateManager instance for managing state and reporting progress
+        emitter: ResponsesAPIEmitter instance for sending events via unified transport
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
         task_state_manager: Optional TaskStateManager instance for checking cancellation
         session_id: Optional session ID for retry operations
@@ -74,6 +79,9 @@ async def process_response(
     cancellation_in_progress = False
     # Track if we've seen SDK interrupt messages (for resume detection)
     saw_sdk_interrupt_messages = False
+    # Track if StreamEvent has sent any content
+    # If True, AssistantMessage will skip sending events to avoid duplicates
+    stream_event_sent = False
     try:
         while True:
             retry_requested = False
@@ -128,8 +136,8 @@ async def process_response(
 
                 elif isinstance(msg, UserMessage):
                     # Handle UserMessage and check for silent_exit in tool results
-                    is_silent, reason = _handle_user_message(
-                        msg, thinking_manager, state_manager
+                    is_silent, reason = await _handle_user_message(
+                        msg, emitter, thinking_manager, state_manager
                     )
                     if is_silent:
                         silent_exit_detected = True
@@ -138,10 +146,20 @@ async def process_response(
                             f"🔇 Silent exit detected in UserMessage, will propagate to result: reason={reason}"
                         )
 
+                elif isinstance(msg, StreamEvent):
+                    # Handle streaming events for real-time text updates
+                    # Returns True if any content was sent via streaming
+                    sent = await _handle_stream_event(msg, emitter, state_manager)
+                    if sent:
+                        stream_event_sent = True
+
                 elif isinstance(msg, AssistantMessage):
                     # Handle assistant message and detect API errors
                     # Note: Retry logic is handled in ResultMessage processing to avoid duplicate retries
-                    _handle_assistant_message(msg, state_manager, thinking_manager)
+                    # Pass stream_event_sent to skip emitting events if streaming already sent them
+                    await _handle_assistant_message(
+                        msg, emitter, state_manager, thinking_manager, stream_event_sent
+                    )
 
                 elif isinstance(msg, ResultMessage):
 
@@ -167,9 +185,9 @@ async def process_response(
                                 logger.warning(
                                     f"Failed to save session ID: {save_error}"
                                 )
-
                     result_status = await _process_result_message(
                         msg,
+                        emitter,
                         state_manager,
                         thinking_manager,
                         client,
@@ -244,13 +262,13 @@ async def process_response(
 
 
 def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=None):
-    """处理系统消息，提取详细信息"""
+    """Handle system messages and extract detailed information."""
 
-    # 构建系统消息的详细信息，符合目标格式
+    # Build system message details in target format
     system_detail = {
         "type": "system",
         "subtype": msg.subtype,
-        **msg.data,  # 包含原有的系统消息数据
+        **msg.data,  # Include original system message data
     }
 
     # Mask sensitive data in system details before sending
@@ -290,13 +308,16 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
         )
 
 
-def _handle_user_message(
-    msg: UserMessage, thinking_manager=None, state_manager=None
+async def _handle_user_message(
+    msg: UserMessage,
+    emitter: ResponsesAPIEmitter,
+    thinking_manager=None,
+    state_manager=None,
 ) -> tuple[bool, str]:
-    """处理用户消息，提取详细信息
-
+    """
     Args:
         msg: UserMessage to process
+        emitter: ResponsesAPIEmitter instance for sending events
         thinking_manager: Optional ThinkingStepManager instance
         state_manager: Optional ProgressStateManager instance
 
@@ -309,7 +330,7 @@ def _handle_user_message(
     silent_exit_detected = False
     silent_exit_reason = ""
 
-    # 构建用户消息的详细信息，符合目标格式
+    # Build user message details in target format
     message_details = {
         "type": "user",
         "message": {
@@ -320,25 +341,17 @@ def _handle_user_message(
         },
     }
 
-    # 处理内容（可能是字符串或内容块列表）
+    # Process content (can be string or list of content blocks)
     if isinstance(msg.content, str):
-        # 如果是字符串，直接作为文本内容
+        # If string, use directly as text content
         text_detail = {"type": "text", "text": msg.content}
         message_details["message"]["content"].append(text_detail)
         logger.info(f"UserMessage: text content, length = {len(msg.content)}")
     else:
-        # 如果是内容块列表，处理每个块
+        # If list of content blocks, process each block
         logger.info(f"UserMessage: {len(msg.content)} content blocks")
 
         for block in msg.content:
-            # 添加调试日志：打印 block 的类型和内容
-            logger.info(
-                f"Processing UserMessage block type: {type(block).__name__}, isinstance checks: "
-                f"ToolUseBlock={isinstance(block, ToolUseBlock)}, "
-                f"TextBlock={isinstance(block, TextBlock)}, "
-                f"ToolResultBlock={isinstance(block, ToolResultBlock)}"
-            )
-
             # Mask sensitive data in block content for logging
             block_dict = (
                 asdict(block) if hasattr(block, "__dataclass_fields__") else block
@@ -347,7 +360,7 @@ def _handle_user_message(
             logger.info(f"UserMessage Block content: {masked_block_dict}")
 
             if isinstance(block, ToolUseBlock):
-                # 工具使用详情，符合目标格式
+                # Tool use details in target format
                 tool_detail = {
                     "type": "tool_use",
                     "id": block.id,
@@ -369,7 +382,7 @@ def _handle_user_message(
                     )
                     continue  # Skip this interruption message
 
-                # 文本内容详情，符合目标格式
+                # Text content details in target format
                 text_detail = {"type": "text", "text": block.text}
                 message_details["message"]["content"].append(text_detail)
 
@@ -387,7 +400,7 @@ def _handle_user_message(
                     )
                     continue  # Skip processing this error block
 
-                # 工具结果详情，符合目标格式
+                # Tool result details in target format
                 result_detail = {
                     "type": "tool_result",
                     "tool_use_id": block.tool_use_id,
@@ -399,6 +412,26 @@ def _handle_user_message(
                 logger.info(
                     f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}"
                 )
+
+                # Send tool_result event (response.output_item.done) via emitter
+                try:
+                    # Convert content to string for output
+                    tool_output = (
+                        json.dumps(block.content, ensure_ascii=False)
+                        if isinstance(block.content, (dict, list))
+                        else str(block.content)
+                    )
+                    await emitter.tool_done(
+                        call_id=block.tool_use_id,
+                        name="",  # Tool name not available in ToolResultBlock
+                        arguments=None,  # Arguments not available in ToolResultBlock
+                        output=tool_output,
+                    )
+                    logger.info(
+                        f"Sent tool_result event for tool_use_id {block.tool_use_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send tool_result event: {e}")
 
                 # Check for silent_exit marker in tool result content
                 # The content can be a string or a list of content blocks
@@ -426,7 +459,7 @@ def _handle_user_message(
                         )
 
             else:
-                # 未知块类型，符合目标格式
+                # Unknown block type in target format
                 unknown_detail = {
                     "type": "unknown",
                     "block_type": type(block).__name__,
@@ -441,7 +474,7 @@ def _handle_user_message(
     # Mask sensitive data in message details before sending
     masked_message_details = mask_sensitive_data(message_details)
 
-    # 记录整体消息
+    # Log the overall message
     if thinking_manager:
         thinking_manager.add_thinking_step(
             title="thinking.user_message_received",
@@ -453,21 +486,31 @@ def _handle_user_message(
     return silent_exit_detected, silent_exit_reason
 
 
-def _handle_assistant_message(
-    msg: AssistantMessage, state_manager, thinking_manager=None
+async def _handle_assistant_message(
+    msg: AssistantMessage,
+    emitter: ResponsesAPIEmitter,
+    state_manager,
+    thinking_manager=None,
+    stream_event_sent: bool = False,
 ) -> bool:
-    """处理助手消息，提取详细信息
+    """
+    Handle AssistantMessage from Claude SDK.
+
+    If stream_event_sent is True, skip sending events via emitter because
+    StreamEvent has already sent them. This avoids duplicate tool blocks.
 
     Args:
         msg: AssistantMessage to process
+        emitter: ResponsesAPIEmitter instance for sending events
         state_manager: ProgressStateManager instance
         thinking_manager: Optional ThinkingStepManager instance
+        stream_event_sent: If True, skip emitting events (streaming already sent them)
 
     Returns:
         bool: True if API error detected and retry is needed, False otherwise
     """
 
-    # 收集所有内容块的详细信息，符合目标格式
+    # Collect all content block details in target format
     message_details = {
         "type": "assistant",
         "message": {
@@ -499,10 +542,10 @@ def _handle_assistant_message(
     # Mask sensitive data in message for logging
     masked_msg_dict = mask_sensitive_data(msg_dict)
     logger.info(
-        f"AssistantMessage: {len(msg.content)} content blocks, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
+        f"AssistantMessage: {len(msg.content)} content blocks, stream_event_sent={stream_event_sent}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
 
-    # 处理每个内容块
+    # Process each content block
     for block in msg.content:
         # Mask sensitive data in block for logging
         block_dict = asdict(block) if hasattr(block, "__dataclass_fields__") else block
@@ -510,7 +553,7 @@ def _handle_assistant_message(
         logger.info(f"Block content: {masked_block_dict}")
 
         if isinstance(block, ToolUseBlock):
-            # 工具使用详情，符合目标格式
+            # Tool use details in target format
             tool_detail = {
                 "type": "tool_use",
                 "id": block.id,
@@ -521,8 +564,31 @@ def _handle_assistant_message(
 
             logger.info(f"ToolUseBlock: tool = {block.name}")
 
+            # Skip sending tool_start if streaming already sent it
+            if not stream_event_sent:
+                # Send tool_start event (response.output_item.added) via emitter
+                try:
+                    # Flush any buffered text_delta events before sending tool_start
+                    # This ensures text content is sent before tool events
+                    await emitter.flush()
+
+                    # Convert tool input to JSON string for arguments
+                    arguments = (
+                        json.dumps(block.input, ensure_ascii=False)
+                        if isinstance(block.input, (dict, list))
+                        else str(block.input) if block.input else "{}"
+                    )
+                    await emitter.tool_start(
+                        call_id=block.id,
+                        name=block.name,
+                        arguments=arguments,
+                    )
+                    logger.info(f"Sent tool_start event for tool {block.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to send tool_start event: {e}")
+
         elif isinstance(block, TextBlock):
-            # 文本内容详情，符合目标格式
+            # Text content details in target format
             text_detail = {"type": "text", "text": block.text}
             message_details["message"]["content"].append(text_detail)
 
@@ -530,8 +596,17 @@ def _handle_assistant_message(
 
             logger.info(f"TextBlock: {len(block.text)} chars")
 
+            # Skip sending text_delta if streaming already sent it
+            if not stream_event_sent:
+                # Send chunk event (response.output_text.delta) via emitter
+                try:
+                    await emitter.text_delta(block.text)
+                    logger.info(f"Sent chunk event with {len(block.text)} chars")
+                except Exception as e:
+                    logger.warning(f"Failed to send chunk event: {e}")
+
         elif isinstance(block, ToolResultBlock):
-            # 工具结果详情，符合目标格式
+            # Tool result details in target format
             result_detail = {
                 "type": "tool_result",
                 "tool_use_id": block.tool_use_id,
@@ -545,7 +620,7 @@ def _handle_assistant_message(
             )
 
         else:
-            # 未知块类型，符合目标格式
+            # Unknown block type in target format
             unknown_detail = {
                 "type": "unknown",
                 "block_type": type(block).__name__,
@@ -560,7 +635,7 @@ def _handle_assistant_message(
     # Mask sensitive data in message details before sending
     masked_message_details = mask_sensitive_data(message_details)
 
-    # 记录整体消息
+    # Log the overall message
     if thinking_manager:
         thinking_manager.add_thinking_step(
             title="thinking.assistant_message_received",
@@ -570,6 +645,113 @@ def _handle_assistant_message(
         )
 
     return needs_retry
+
+
+async def _handle_stream_event(
+    msg: StreamEvent,
+    emitter: ResponsesAPIEmitter,
+    state_manager,
+) -> bool:
+    """
+    Handle streaming events for real-time text updates.
+
+    StreamEvent contains raw Anthropic API stream events that provide
+    incremental text updates during response generation.
+
+    Args:
+        msg: StreamEvent containing the raw stream event data
+        emitter: ResponsesAPIEmitter instance for sending events
+        state_manager: ProgressStateManager instance for updating workbench
+
+    Returns:
+        bool: True if any content was sent via streaming, False otherwise.
+              When True, AssistantMessage should skip sending duplicate events.
+    """
+    event = msg.event
+    event_type = event.get("type", "")
+    sent_content = False
+
+    # Handle content_block_delta events which contain text deltas
+    if event_type == "content_block_delta":
+        delta = event.get("delta", {})
+        delta_type = delta.get("type", "")
+
+        if delta_type == "text_delta":
+            text = delta.get("text", "")
+            if text:
+                # Send text delta to frontend immediately
+                try:
+                    await emitter.text_delta(text)
+                    logger.debug(f"StreamEvent: sent text_delta with {len(text)} chars")
+                    sent_content = True
+                except Exception as e:
+                    logger.warning(f"Failed to send stream text_delta: {e}")
+
+                # Update workbench summary with streaming text
+                if state_manager:
+                    state_manager.update_workbench_summary(text, append=True)
+
+        elif delta_type == "input_json_delta":
+            # Tool input streaming - could be used for showing tool arguments being built
+            partial_json = delta.get("partial_json", "")
+            logger.debug(
+                f"StreamEvent: input_json_delta with {len(partial_json)} chars"
+            )
+
+    elif event_type == "content_block_start":
+        # A new content block is starting
+        content_block = event.get("content_block", {})
+        block_type = content_block.get("type", "")
+        logger.debug(f"StreamEvent: content_block_start, type={block_type}")
+
+        if block_type == "tool_use":
+            # Tool use is starting - send tool_start event
+            tool_id = content_block.get("id", "")
+            tool_name = content_block.get("name", "")
+            if tool_id and tool_name:
+                try:
+                    # Flush any buffered text_delta events before sending tool_start
+                    # This ensures text content is sent before tool events
+                    await emitter.flush()
+
+                    await emitter.tool_start(
+                        call_id=tool_id,
+                        name=tool_name,
+                        arguments="{}",  # Arguments will be streamed via input_json_delta
+                    )
+                    logger.debug(f"StreamEvent: sent tool_start for {tool_name}")
+                    sent_content = True
+                except Exception as e:
+                    logger.warning(f"Failed to send stream tool_start: {e}")
+
+        elif block_type == "text":
+            # Text block is starting - mark as sent to avoid duplicate in AssistantMessage
+            sent_content = True
+
+    elif event_type == "content_block_stop":
+        # A content block has finished
+        logger.debug(f"StreamEvent: content_block_stop, index={event.get('index', -1)}")
+
+    elif event_type == "message_start":
+        # Message is starting
+        logger.debug(f"StreamEvent: message_start")
+
+    elif event_type == "message_delta":
+        # Message metadata update (e.g., stop_reason)
+        delta = event.get("delta", {})
+        stop_reason = delta.get("stop_reason")
+        if stop_reason:
+            logger.debug(f"StreamEvent: message_delta, stop_reason={stop_reason}")
+
+    elif event_type == "message_stop":
+        # Message has finished
+        logger.debug(f"StreamEvent: message_stop")
+
+    else:
+        # Log unknown event types for debugging
+        logger.debug(f"StreamEvent: unknown type={event_type}, event={event}")
+
+    return sent_content
 
 
 def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
@@ -613,6 +795,7 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
 
 async def _process_result_message(
     msg: ResultMessage,
+    emitter: ResponsesAPIEmitter,
     state_manager,
     thinking_manager=None,
     client=None,
@@ -630,6 +813,7 @@ async def _process_result_message(
 
     Args:
         msg: The ResultMessage to process
+        emitter: ResponsesAPIEmitter instance for sending events
         state_manager: ProgressStateManager instance for managing state and reporting progress
         thinking_manager: Optional ThinkingStepManager instance
         client: ClaudeSDKClient for sending retry messages
@@ -698,11 +882,14 @@ async def _process_result_message(
             f"🔇 Silent exit will be added to result: reason={silent_exit_reason}"
         )
 
-    # If it's a successful result message, send the result back via callback
+    # If it's a successful result message, send the result back via emitter
     if msg.subtype == "success" and not msg.is_error:
+        # Get task info from state_manager
+        task_id = state_manager.task_data.get("task_id", -1) if state_manager else -1
+
         # Ensure result is string type
         result_str = str(msg.result) if msg.result is not None else "No result"
-        logger.info(f"Sending successful result via callback: {result_str}")
+        logger.info(f"Sending successful result via emitter: {result_str}")
 
         # Add thinking step for successful result
         if thinking_manager:
@@ -713,7 +900,7 @@ async def _process_result_message(
                 details=masked_result_details,
             )
 
-        # If there's a result, pass it as result parameter to report_progress
+        # If there's a result, pass it as result parameter to emitter.done
         if msg.result is not None:
             try:
                 # Try to parse result as dict, wrap as dict if not
@@ -736,15 +923,29 @@ async def _process_result_message(
                 # Update task status to completed
                 state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
-                # Report progress using state manager
-                state_manager.report_progress(
-                    progress=100,
-                    status=TaskStatus.COMPLETED.value,
-                    message=result_str,
-                    extra_result=result_dict,
+                # Get content string from result
+                content = (
+                    result_value
+                    if isinstance(result_value, str)
+                    else (
+                        json.dumps(result_value, ensure_ascii=False)
+                        if result_value
+                        else result_str
+                    )
                 )
+
+                # Send done event (response.completed) via emitter
+                await emitter.done(
+                    content=content,
+                    usage=msg.usage,
+                    silent_exit=silent_exit_detected if silent_exit_detected else None,
+                    silent_exit_reason=(
+                        silent_exit_reason if silent_exit_reason else None
+                    ),
+                )
+                logger.info(f"Sent done event for task {task_id}")
             except Exception as e:
-                logger.error(f"Failed to parse result as dict: {e}")
+                logger.error(f"Failed to send done event: {e}")
                 if thinking_manager:
                     thinking_manager.add_thinking_step(
                         title="thinking.result_parsing_error",
@@ -755,18 +956,18 @@ async def _process_result_message(
                 # Update task status to failed
                 state_manager.set_task_status(TaskStatus.FAILED.value)
 
-                # Report error using state manager
-                state_manager.report_progress(
-                    progress=100, status=TaskStatus.FAILED.value, message=result_str
-                )
+                # Send error event via emitter
+                await emitter.error(str(e))
         else:
             # Update task status to completed
             state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
-            # Report progress using state manager
-            state_manager.report_progress(
-                progress=100, status=TaskStatus.COMPLETED.value, message=result_str
+            # Send done event (response.completed) via emitter
+            await emitter.done(
+                content=result_str,
+                usage=msg.usage,
             )
+            logger.info(f"Sent done event for task {task_id}")
         return TaskStatus.COMPLETED
 
     if msg.is_error:

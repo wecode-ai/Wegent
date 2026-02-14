@@ -14,6 +14,7 @@ from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.image_validator.image_validator_agent import ImageValidatorAgent
 from shared.logger import setup_logger
+from shared.models import ResponsesAPIEmitter
 
 logger = setup_logger("agent_factory")
 
@@ -36,20 +37,26 @@ class AgentFactory:
     }
 
     @classmethod
-    def get_agent(cls, agent_type: str, task_data: Dict[str, Any]) -> Optional[Agent]:
+    def get_agent(
+        cls,
+        agent_type: str,
+        task_data: Dict[str, Any],
+        emitter: ResponsesAPIEmitter,
+    ) -> Optional[Agent]:
         """
         Get an agent instance based on agent_type
 
         Args:
             agent_type: The type of agent to create
             task_data: The task data to pass to the agent
+            emitter: Emitter instance for sending events
 
         Returns:
             An instance of the requested agent, or None if the agent_type is not supported
         """
         agent_class = cls._agents.get(agent_type.lower())
         if agent_class:
-            return agent_class(task_data)
+            return agent_class(task_data, emitter=emitter)
         else:
             logger.error(f"Unsupported agent type: {agent_type}")
             return None

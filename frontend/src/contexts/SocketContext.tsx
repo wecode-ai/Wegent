@@ -228,7 +228,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     // Connection event handlers
     newSocket.on('connect', () => {
-      console.log('[Socket.IO] Connected to server')
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
@@ -236,24 +235,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // If we were previously connected and this is a reconnect, rejoin tasks
       // This handles both manual reconnects and transport upgrade scenarios
       if (socketRef.current && joinedTasksRef.current.size > 0) {
-        console.log('[Socket.IO] Connection restored, rejoining task rooms...')
         const tasksToRejoin = Array.from(joinedTasksRef.current)
-        console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin)
 
         tasksToRejoin.forEach(taskId => {
           newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
             if (response?.error) {
               console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error)
-            } else {
-              console.log(`[Socket.IO] Successfully rejoined task ${taskId}`)
             }
           })
         })
       }
     })
 
-    newSocket.on('disconnect', (reason: string) => {
-      console.log('[Socket.IO] Disconnected from server, reason:', reason)
+    newSocket.on('disconnect', (_: string) => {
       setIsConnected(false)
       // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
     })
@@ -263,7 +257,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     })
 
     newSocket.io.on('reconnect', (_attempt: number) => {
-      console.log('[Socket.IO] Reconnected successfully, rejoining task rooms...')
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
@@ -271,14 +264,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
       // Rejoin all previously joined task rooms
       const tasksToRejoin = Array.from(joinedTasksRef.current)
-      console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin)
 
       tasksToRejoin.forEach(taskId => {
         newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
           if (response?.error) {
             console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error)
-          } else {
-            console.log(`[Socket.IO] Successfully rejoined task ${taskId}`)
           }
         })
       })
@@ -308,9 +298,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     })
 
     // Handle authentication errors (token expired during session)
-    newSocket.on(ServerEvents.AUTH_ERROR, (data: AuthErrorPayload) => {
-      console.log('[Socket.IO] Auth error received:', data.error, 'code:', data.code)
-
+    newSocket.on(ServerEvents.AUTH_ERROR, (_: AuthErrorPayload) => {
       // Remove token and redirect to login
       removeToken()
       newSocket.disconnect()
@@ -340,7 +328,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         errorMsg.includes('authentication')
 
       if (isAuthError) {
-        console.log('[Socket.IO] Auth error on connect, redirecting to login')
         removeToken()
 
         const loginPath = paths.auth.login.getHref()
@@ -437,7 +424,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         alreadyJoined && !hasReconnectedRef.current && !forceRefresh && afterMessageId === undefined
 
       if (shouldSkip) {
-        console.log('[Socket.IO] joinTask skipped - already joined, taskId:', taskId)
         return {}
       }
 
@@ -455,9 +441,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       const payload: { task_id: number; after_message_id?: number } = { task_id: taskId }
       if (afterMessageId !== undefined) {
         payload.after_message_id = afterMessageId
-        console.log(
-          `[Socket.IO] joinTask with incremental sync: taskId=${taskId}, afterMessageId=${afterMessageId}`
-        )
       }
 
       return new Promise(resolve => {

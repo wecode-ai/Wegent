@@ -37,7 +37,7 @@ from app.services.channels.dingtalk.callback import (
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
 from app.services.channels.handler import BaseChannelHandler, MessageContext
-from app.services.chat.trigger.emitter import ChatEventEmitter
+from app.services.execution.emitters import ResultEmitter
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -227,7 +227,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
 
     async def create_streaming_emitter(
         self, message_context: MessageContext
-    ) -> Optional[ChatEventEmitter]:
+    ) -> Optional[ResultEmitter]:
         """Create a streaming emitter for DingTalk AI Card updates.
 
         Args:

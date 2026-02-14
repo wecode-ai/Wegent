@@ -7,6 +7,7 @@ Project schemas for API request/response validation.
 
 Projects are containers for organizing tasks. Each task can belong to one project.
 """
+
 from datetime import datetime
 from typing import Optional
 

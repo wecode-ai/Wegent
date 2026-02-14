@@ -11,36 +11,12 @@ Configuration module, stores application configuration parameters
 """
 
 # API Configuration
-# API Configuration
 import os
 
 TASK_API_DOMAIN = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
 
-# Task fetch parameters
-TASK_FETCH_LIMIT = 1
-TASK_FETCH_STATUS = "PENDING"
-OFFLINE_TASK_FETCH_LIMIT = 5
-
-# API URLs
-FETCH_TASK_API_BASE_URL = TASK_API_DOMAIN + "/api/executors/tasks/dispatch"
-CALLBACK_TASK_API_URL = TASK_API_DOMAIN + "/api/executors/tasks"
+# API timeout
 API_TIMEOUT = 3  # API request timeout (seconds)
-API_MAX_RETRIES = 3  # Maximum number of retry attempts
-API_RETRY_DELAY = 1  # Initial delay between retries (seconds)
-API_RETRY_BACKOFF = 2  # Backoff multiplier for retry delay
-
-# Scheduler Configuration
-TASK_FETCH_INTERVAL = 5  # Task fetch interval (seconds)
-TIME_LOG_INTERVAL = 5  # Time log interval (seconds)
-SCHEDULER_SLEEP_TIME = 1  # Scheduler sleep time (seconds)
-
-# Offline task scheduling time configuration
-# Evening time range for offline tasks (default: 21-23)
-OFFLINE_TASK_EVENING_HOURS = os.getenv("OFFLINE_TASK_EVENING_HOURS", "21-23")
-
-# Early morning time range for offline tasks (default: 0-8)
-OFFLINE_TASK_MORNING_HOURS = os.getenv("OFFLINE_TASK_MORNING_HOURS", "0-8")
-
 
 # Define port range for Docker containers
 PORT_RANGE_MIN = int(os.getenv("EXECUTOR_PORT_RANGE_MIN", 10000))
@@ -64,6 +40,12 @@ SANDBOX_DEFAULT_TIMEOUT = int(os.getenv("SANDBOX_DEFAULT_TIMEOUT", "600"))
 SANDBOX_REDIS_TTL = int(os.getenv("SANDBOX_REDIS_TTL", "86400"))
 # Maximum concurrent Sandbox tasks per user
 SANDBOX_MAX_CONCURRENT = int(os.getenv("SANDBOX_MAX_CONCURRENT", "5"))
+
+# Offline task queue time window configuration
+# Evening hours: 21-23 means hours 21, 22, 23 (9 PM - 11:59 PM)
+OFFLINE_TASK_EVENING_HOURS = os.getenv("OFFLINE_TASK_EVENING_HOURS", "21-23")
+# Morning hours: 0-8 means hours 0, 1, 2, 3, 4, 5, 6, 7, 8 (12 AM - 8:59 AM)
+OFFLINE_TASK_MORNING_HOURS = os.getenv("OFFLINE_TASK_MORNING_HOURS", "0-8")
 
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py
 # Use: from shared.telemetry.config import get_otel_config
