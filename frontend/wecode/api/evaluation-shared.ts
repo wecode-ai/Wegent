@@ -4,7 +4,7 @@
 
 /**
  * Shared API functions for evaluation module.
- * Includes file upload/download with presigned URLs.
+ * File upload/download through backend proxy (no S3 URL exposure).
  */
 
 import { fetchJson, getEvaluationUrl } from './evaluation-client'
@@ -16,23 +16,11 @@ import { getToken } from '@/apis/user'
 
 export type EvalFileType = 'question_content' | 'question_criteria' | 'answer_attachment'
 
-export interface FileUploadRequest {
-  file_type: EvalFileType
-  filename: string
-  topic_id: number
-  question_id?: number
-  content_type?: string
-}
-
 export interface FileUploadResponse {
   key: string
-  upload_url: string
-  expires_in: number
-}
-
-export interface FileDownloadResponse {
-  download_url: string
-  expires_in: number
+  filename: string
+  file_size: number
+  content_type: string
 }
 
 export interface EvalAttachment {
@@ -43,79 +31,13 @@ export interface EvalAttachment {
 }
 
 // ============================================================================
-// File Upload API
+// File Upload API (Backend Proxy)
 // ============================================================================
 
 /**
- * Get a presigned URL for uploading a file to S3.
- *
- * @param request - Upload request containing file metadata
- * @returns Presigned PUT URL for uploading
- */
-export async function getUploadUrl(request: FileUploadRequest): Promise<FileUploadResponse> {
-  return fetchJson<FileUploadResponse>(getEvaluationUrl('/shared/files/upload'), {
-    method: 'POST',
-    body: JSON.stringify(request),
-  })
-}
-
-/**
- * Get a presigned URL for downloading a file from S3.
- *
- * @param s3Path - S3 storage path of the file
- * @returns Presigned GET URL for downloading
- */
-export async function getDownloadUrl(s3Path: string): Promise<FileDownloadResponse> {
-  const params = new URLSearchParams({ s3_path: s3Path })
-  return fetchJson<FileDownloadResponse>(getEvaluationUrl(`/shared/files/download?${params}`))
-}
-
-/**
- * Upload a file directly to S3 using the presigned URL.
- *
- * @param uploadUrl - Presigned PUT URL from getUploadUrl
- * @param file - File to upload
- * @param onProgress - Optional progress callback (0-100)
- */
-export async function uploadFileToS3(
-  uploadUrl: string,
-  file: File,
-  onProgress?: (progress: number) => void
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-
-    xhr.upload.addEventListener('progress', event => {
-      if (event.lengthComputable && onProgress) {
-        const progress = Math.round((event.loaded / event.total) * 100)
-        onProgress(progress)
-      }
-    })
-
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve()
-      } else {
-        reject(new Error(`Upload failed: ${xhr.status}`))
-      }
-    })
-
-    xhr.addEventListener('error', () => {
-      reject(new Error('Network error during upload'))
-    })
-
-    xhr.addEventListener('abort', () => {
-      reject(new Error('Upload cancelled'))
-    })
-
-    xhr.open('PUT', uploadUrl)
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-    xhr.send(file)
-  })
-}
-
-/**
- * Complete file upload workflow: get presigned URL and upload file.
+ * Upload a file through backend proxy.
+ * The file is uploaded directly to the backend, which proxies it to S3.
+ * This avoids exposing S3 URLs to the frontend (prevents Mixed Content issues).
  *
  * @param file - File to upload
  * @param fileType - Type of file (question_content, question_criteria, answer_attachment)
@@ -131,45 +53,116 @@ export async function uploadEvaluationFile(
   questionId?: number,
   onProgress?: (progress: number) => void
 ): Promise<FileUploadResponse> {
-  // Step 1: Get presigned URL
-  const uploadResponse = await getUploadUrl({
-    file_type: fileType,
-    filename: file.name,
-    topic_id: topicId,
-    question_id: questionId,
-    content_type: file.type,
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const formData = new FormData()
+
+    // Build form data
+    formData.append('file', file)
+    formData.append('file_type', fileType)
+    formData.append('topic_id', topicId.toString())
+    if (questionId !== undefined) {
+      formData.append('question_id', questionId.toString())
+    }
+
+    // Track upload progress
+    xhr.upload.addEventListener('progress', event => {
+      if (event.lengthComputable && onProgress) {
+        const progress = Math.round((event.loaded / event.total) * 100)
+        onProgress(progress)
+      }
+    })
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const response = JSON.parse(xhr.responseText)
+          resolve(response)
+        } catch {
+          reject(new Error('Invalid response format'))
+        }
+      } else {
+        try {
+          const errorData = JSON.parse(xhr.responseText)
+          reject(new Error(errorData.detail || `Upload failed: ${xhr.status}`))
+        } catch {
+          reject(new Error(`Upload failed: ${xhr.status}`))
+        }
+      }
+    })
+
+    xhr.addEventListener('error', () => {
+      reject(new Error('Network error during upload'))
+    })
+
+    xhr.addEventListener('abort', () => {
+      reject(new Error('Upload cancelled'))
+    })
+
+    // Get auth token and make request
+    const token = getToken()
+    xhr.open('POST', getEvaluationUrl('/shared/files/upload'))
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
+    xhr.send(formData)
   })
-
-  // Step 2: Upload file to S3
-  await uploadFileToS3(uploadResponse.upload_url, file, onProgress)
-
-  return uploadResponse
 }
 
+// ============================================================================
+// File Download API (Backend Proxy)
+// ============================================================================
+
 /**
- * Download a file from S3.
- * Uses fetch + Blob to force download instead of opening in browser.
+ * Download a file through backend proxy.
+ * The file is fetched from the backend, which proxies it from S3.
+ * This avoids exposing S3 URLs to the frontend (prevents Mixed Content issues).
  *
  * @param s3Path - S3 storage path
  * @param filename - Optional filename for download
  */
 export async function downloadEvaluationFile(s3Path: string, filename?: string): Promise<void> {
-  const { download_url } = await getDownloadUrl(s3Path)
+  const token = getToken()
+  const params = new URLSearchParams({ s3_path: s3Path })
+  const url = getEvaluationUrl(`/shared/files/download?${params}`)
 
   try {
-    // Fetch the file content as blob to force download
-    const response = await fetch(download_url)
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+
     if (!response.ok) {
-      throw new Error(`Download failed: ${response.status}`)
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.detail || `Download failed: ${response.status}`)
     }
 
+    // Get the blob from response
     const blob = await response.blob()
     const blobUrl = URL.createObjectURL(blob)
+
+    // Extract filename from Content-Disposition header or use provided filename
+    let downloadFilename = filename
+    if (!downloadFilename) {
+      const contentDisposition = response.headers.get('Content-Disposition')
+      if (contentDisposition) {
+        // Try to extract filename from Content-Disposition
+        const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\s]+)["']?/i)
+        if (match) {
+          downloadFilename = decodeURIComponent(match[1])
+        }
+      }
+    }
+
+    // Fallback to extracting from path
+    if (!downloadFilename) {
+      downloadFilename = s3Path.split('/').pop() || 'download'
+    }
 
     // Create a temporary link to trigger download
     const link = document.createElement('a')
     link.href = blobUrl
-    link.download = filename || 'download'
+    link.download = downloadFilename
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -177,16 +170,7 @@ export async function downloadEvaluationFile(s3Path: string, filename?: string):
     // Clean up the blob URL
     URL.revokeObjectURL(blobUrl)
   } catch (error) {
-    // Fallback to direct link if fetch fails (e.g., CORS issues)
-    const link = document.createElement('a')
-    link.href = download_url
-    if (filename) {
-      link.download = filename
-    }
-    link.target = '_blank'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    console.error('Download failed:', error)
     throw error
   }
 }

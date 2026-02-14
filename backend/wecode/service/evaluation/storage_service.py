@@ -295,6 +295,31 @@ class EvalStorageService:
             logger.error(f"[Evaluation] Unexpected error uploading to S3: {e}")
             return None
 
+    def upload_file(
+        self,
+        key: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+        filename: str = "",
+    ) -> Optional[str]:
+        """
+        Upload file data to S3 (public interface for backend proxy upload).
+
+        Args:
+            key: Storage key
+            data: File data
+            content_type: MIME type
+            filename: Original filename
+
+        Returns:
+            Storage key if successful
+        """
+        if not self.client:
+            logger.warning("[Evaluation] Storage client not configured")
+            return None
+
+        return self._upload(key, data, content_type, filename or key.split("/")[-1])
+
     def get(self, key: str) -> Optional[bytes]:
         """
         Get file data from S3.

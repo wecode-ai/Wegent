@@ -185,55 +185,82 @@ export async function graderListReports(params: {
 }
 
 // ============================================================================
-// Report Upload/Download API (Grader)
+// Report Upload/Download API (Grader) - Backend Proxy Mode
 // ============================================================================
 
+import { getToken } from '@/apis/user'
+
 export interface ReportUploadResponse {
-  upload_url: string
   key: string
-  expires_in: number
-}
-
-export interface ReportDownloadResponse {
-  download_url: string
   filename: string
-  s3_path?: string
+  file_size: number
+  content_type: string
 }
 
 /**
- * Get a presigned URL for uploading a report file.
- * Use this to upload a file as the final report before publishing.
+ * Upload a report file through backend proxy.
+ * The file is uploaded directly to the backend, which proxies it to S3.
+ * This avoids exposing S3 URLs to the frontend (prevents Mixed Content issues).
+ *
+ * @param taskId - Grading task ID
+ * @param file - File to upload
+ * @param onProgress - Optional progress callback (0-100)
+ * @returns Upload response with S3 key
  */
-export async function graderGetReportUploadUrl(
+export async function graderUploadReportFile(
   taskId: number,
-  filename: string,
-  contentType?: string
+  file: File,
+  onProgress?: (progress: number) => void
 ): Promise<ReportUploadResponse> {
-  return fetchJson<ReportUploadResponse>(getGraderUrl(`/tasks/${taskId}/report/upload-url`), {
-    method: 'POST',
-    body: JSON.stringify({
-      filename,
-      content_type: contentType || 'application/octet-stream',
-    }),
-  })
-}
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const formData = new FormData()
 
-/**
- * Upload a file to the presigned URL.
- * Returns true if successful.
- */
-export async function uploadFileToPresignedUrl(
-  uploadUrl: string,
-  file: File
-): Promise<boolean> {
-  const response = await fetch(uploadUrl, {
-    method: 'PUT',
-    body: file,
-    headers: {
-      'Content-Type': file.type || 'application/octet-stream',
-    },
+    // Build form data
+    formData.append('file', file)
+
+    // Track upload progress
+    xhr.upload.addEventListener('progress', event => {
+      if (event.lengthComputable && onProgress) {
+        const progress = Math.round((event.loaded / event.total) * 100)
+        onProgress(progress)
+      }
+    })
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const response = JSON.parse(xhr.responseText)
+          resolve(response)
+        } catch {
+          reject(new Error('Invalid response format'))
+        }
+      } else {
+        try {
+          const errorData = JSON.parse(xhr.responseText)
+          reject(new Error(errorData.detail || `Upload failed: ${xhr.status}`))
+        } catch {
+          reject(new Error(`Upload failed: ${xhr.status}`))
+        }
+      }
+    })
+
+    xhr.addEventListener('error', () => {
+      reject(new Error('Network error during upload'))
+    })
+
+    xhr.addEventListener('abort', () => {
+      reject(new Error('Upload cancelled'))
+    })
+
+    // Get auth token and make request
+    const token = getToken()
+    xhr.open('POST', getGraderUrl(`/tasks/${taskId}/report/upload`))
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
+    xhr.send(formData)
   })
-  return response.ok
 }
 
 /**
@@ -260,19 +287,62 @@ export async function graderPublishTaskWithAttachment(
 }
 
 /**
- * Get a presigned URL for downloading a report file.
+ * Download a report file through backend proxy.
+ * The file is fetched from the backend, which proxies it from S3.
+ * This avoids exposing S3 URLs to the frontend (prevents Mixed Content issues).
+ *
+ * @param taskId - Grading task ID
  * @param version - Report version: ai, human, or final. Defaults to latest available.
  */
-export async function graderGetReportDownloadUrl(
+export async function graderDownloadReportFile(
   taskId: number,
   version?: 'ai' | 'human' | 'final'
-): Promise<ReportDownloadResponse> {
+): Promise<void> {
+  const token = getToken()
   const searchParams = new URLSearchParams()
   if (version) searchParams.set('version', version)
 
-  return fetchJson<ReportDownloadResponse>(
-    getGraderUrl(`/tasks/${taskId}/report/download-url?${searchParams.toString()}`)
-  )
+  const url = getGraderUrl(`/tasks/${taskId}/report/download?${searchParams.toString()}`)
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.detail || `Download failed: ${response.status}`)
+    }
+
+    // Get the blob from response
+    const blob = await response.blob()
+    const blobUrl = URL.createObjectURL(blob)
+
+    // Extract filename from Content-Disposition header
+    let filename = 'report'
+    const contentDisposition = response.headers.get('Content-Disposition')
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\s]+)["']?/i)
+      if (match) {
+        filename = decodeURIComponent(match[1])
+      }
+    }
+
+    // Create a temporary link to trigger download
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    // Clean up the blob URL
+    URL.revokeObjectURL(blobUrl)
+  } catch (error) {
+    console.error('Download failed:', error)
+    throw error
+  }
 }
 
 // ============================================================================
