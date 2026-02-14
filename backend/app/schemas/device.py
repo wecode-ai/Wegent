@@ -90,6 +90,10 @@ class DeviceInfo(BaseModel):
         None, description="Latest available executor version"
     )
     update_available: bool = Field(False, description="Whether an update is available")
+    # Network information
+    client_ip: Optional[str] = Field(
+        None, description="Device's client IP address"
+    )
 
     class Config:
         from_attributes = True
@@ -129,6 +133,11 @@ class DeviceRegisterPayload(BaseModel):
         None,
         max_length=50,
         description="Executor version (e.g., '1.0.0')",
+    )
+    client_ip: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Device's client IP address",
     )
 
 

@@ -253,6 +253,7 @@ class DeviceService:
         user_id: int,
         device_id: str,
         name: str,
+        client_ip: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -264,6 +265,7 @@ class DeviceService:
             user_id: Device owner user ID
             device_id: Device unique identifier (stored in Kind.name)
             name: Device display name (stored in spec.displayName)
+            client_ip: Device's client IP address (stored in spec.clientIp)
 
         Returns:
             Kind model instance for the device
@@ -291,6 +293,9 @@ class DeviceService:
                 device_json["spec"]["deviceType"] = DeviceType.LOCAL.value
             if "connectionMode" not in device_json["spec"]:
                 device_json["spec"]["connectionMode"] = "websocket"
+            # Update client IP if provided
+            if client_ip is not None:
+                device_json["spec"]["clientIp"] = client_ip
             device_kind.json = device_json
             device_kind.updated_at = datetime.now()
             device_kind.is_active = True
@@ -328,6 +333,7 @@ class DeviceService:
                     "connectionMode": "websocket",
                     "isDefault": is_first_device,
                     "capabilities": None,
+                    "clientIp": client_ip,
                 },
                 "status": {
                     "state": "Available",

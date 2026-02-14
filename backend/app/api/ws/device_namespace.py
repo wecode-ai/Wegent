@@ -158,7 +158,7 @@ def _handle_device_disconnect(user_id: int, device_id: str) -> list[FailedSubtas
 
 
 def _register_device(
-    user_id: int, device_id: str, name: str
+    user_id: int, device_id: str, name: str, client_ip: Optional[str] = None
 ) -> tuple[bool, Optional[str]]:
     """
     Register or update device CRD in database.
@@ -167,6 +167,7 @@ def _register_device(
         user_id: Device owner user ID
         device_id: Device unique identifier (stored in Kind.name)
         name: Device display name
+        client_ip: Device's client IP address
 
     Returns (success, error_message).
     """
@@ -177,6 +178,7 @@ def _register_device(
                 user_id=user_id,
                 device_id=device_id,
                 name=name,
+                client_ip=client_ip,
             )
         return True, None
     except Exception as e:
@@ -479,11 +481,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
-            f"name={payload.name}, executor_version={payload.executor_version}"
+            f"name={payload.name}, executor_version={payload.executor_version}, client_ip={payload.client_ip}"
         )
 
         # Database operation: quick in, quick out
-        success, error = _register_device(user_id, payload.device_id, payload.name)
+        success, error = _register_device(user_id, payload.device_id, payload.name, payload.client_ip)
         if not success:
             return {"error": f"Registration failed: {error}"}
 

@@ -1045,10 +1045,64 @@ class TaskRequestBuilder:
     # MCP Servers Configuration
     # =========================================================================
 
+    def _load_system_mcp_servers(self) -> list[dict]:
+        """Load system-level MCP servers from CHAT_MCP_SERVERS setting.
+
+        Returns:
+            List of MCP server configurations in the format:
+            [{"name": "server_name", "url": "...", "type": "...", "auth": {...}}]
+        """
+        import json
+
+        mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
+        if not mcp_servers_config or mcp_servers_config == "{}":
+            return []
+
+        try:
+            config_data = json.loads(mcp_servers_config)
+            # Support both {"mcpServers": {...}} and direct {...} format
+            servers_dict = config_data.get("mcpServers", config_data)
+
+            # Convert dict format to list format
+            servers_list = []
+            for server_name, server_config in servers_dict.items():
+                if isinstance(server_config, dict):
+                    server_entry = {
+                        "name": server_name,
+                        "url": server_config.get("url", ""),
+                        "type": server_config.get(
+                            "type",
+                            server_config.get("transport", "streamable-http"),
+                        ),
+                    }
+                    # Convert "headers" to "auth" for chat_shell compatibility
+                    if "headers" in server_config:
+                        server_entry["auth"] = server_config["headers"]
+                    servers_list.append(server_entry)
+
+            if servers_list:
+                logger.info(
+                    "[TaskRequestBuilder] Loaded %d system MCP servers from CHAT_MCP_SERVERS: %s",
+                    len(servers_list),
+                    [s["name"] for s in servers_list],
+                )
+            return servers_list
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "[TaskRequestBuilder] Failed to parse CHAT_MCP_SERVERS: %s", str(e)
+            )
+            return []
+
     def _build_mcp_servers(self, bot: Kind, team: Kind) -> list[dict]:
         """Build MCP servers configuration.
 
-        Converts Ghost CRD mcpServers dict format to list format expected by chat_shell.
+        Merges MCP servers from two sources:
+        1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
+        2. Bot-level MCP servers (from Ghost CRD mcpServers config)
+
+        Bot-level servers take precedence over system-level servers
+        when there are name conflicts.
 
         Ghost CRD format (dict):
             {"server_name": {"url": "...", "type": "...", "headers": {...}}}
@@ -1063,48 +1117,67 @@ class TaskRequestBuilder:
         Returns:
             List of MCP server configuration dictionaries
         """
+        # Load system-level MCP servers first
+        system_mcp_servers = self._load_system_mcp_servers()
+
+        # Load bot-level MCP servers from Ghost CRD
+        bot_mcp_servers = []
         bot_crd = Bot.model_validate(bot.json)
 
-        if not bot_crd.spec or not bot_crd.spec.ghostRef:
-            return []
-
-        # Query Ghost
-        ghost = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Ghost",
-                Kind.name == bot_crd.spec.ghostRef.name,
-                Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                Kind.is_active,
+        if bot_crd.spec and bot_crd.spec.ghostRef:
+            # Query Ghost
+            ghost = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == team.user_id,
+                    Kind.kind == "Ghost",
+                    Kind.name == bot_crd.spec.ghostRef.name,
+                    Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                    Kind.is_active,
+                )
+                .first()
             )
-            .first()
-        )
 
-        if not ghost or not ghost.json:
-            return []
+            if ghost and ghost.json:
+                ghost_crd = Ghost.model_validate(ghost.json)
+                mcp_servers_dict = ghost_crd.spec.mcpServers
 
-        ghost_crd = Ghost.model_validate(ghost.json)
-        mcp_servers_dict = ghost_crd.spec.mcpServers
+                if mcp_servers_dict:
+                    # Convert dict format to list format for chat_shell compatibility
+                    for server_name, server_config in mcp_servers_dict.items():
+                        if isinstance(server_config, dict):
+                            server_entry = {
+                                "name": server_name,
+                                "url": server_config.get("url", ""),
+                                "type": server_config.get("type", "streamable-http"),
+                            }
+                            # Convert "headers" to "auth" for chat_shell compatibility
+                            if "headers" in server_config:
+                                server_entry["auth"] = server_config["headers"]
+                            bot_mcp_servers.append(server_entry)
 
-        if not mcp_servers_dict:
-            return []
+        # Merge system and bot MCP servers (bot takes precedence)
+        # Build a dict to deduplicate by server name
+        servers_by_name = {}
+        for server in system_mcp_servers:
+            server_name = server.get("name", "server")
+            servers_by_name[server_name] = server
+        for server in bot_mcp_servers:
+            server_name = server.get("name", "server")
+            servers_by_name[server_name] = server
 
-        # Convert dict format to list format for chat_shell compatibility
-        mcp_servers_list = []
-        for server_name, server_config in mcp_servers_dict.items():
-            if isinstance(server_config, dict):
-                server_entry = {
-                    "name": server_name,
-                    "url": server_config.get("url", ""),
-                    "type": server_config.get("type", "streamable-http"),
-                }
-                # Convert "headers" to "auth" for chat_shell compatibility
-                if "headers" in server_config:
-                    server_entry["auth"] = server_config["headers"]
-                mcp_servers_list.append(server_entry)
+        merged_servers = list(servers_by_name.values())
 
-        return mcp_servers_list
+        if merged_servers:
+            logger.info(
+                "[TaskRequestBuilder] Built %d MCP servers (system=%d, bot=%d): %s",
+                len(merged_servers),
+                len(system_mcp_servers),
+                len(bot_mcp_servers),
+                [s["name"] for s in merged_servers],
+            )
+
+        return merged_servers
 
     # =========================================================================
     # Helper Methods
