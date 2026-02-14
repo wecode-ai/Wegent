@@ -11,7 +11,6 @@ The script configures and starts wegent-executor on VM boot.
 
 import base64
 import logging
-from textwrap import dedent
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +20,15 @@ def generate_cloud_init_script(
     user_name: str,
     backend_url: str,
     auth_token: str,
+    executor_download_url: str = "",
+    executor_download_token: str = "",
 ) -> str:
     """Generate Base64 encoded cloud-init startup script.
 
     The script performs the following tasks:
     1. Creates log directory /home/ubuntu/.wegent-executor/logs
     2. Waits for network connectivity
-    3. Downloads wegent-executor binary
+    3. Downloads wegent-executor binary if not pre-installed
     4. Configures environment variables for backend connection
     5. Starts the executor as ubuntu user
 
@@ -36,11 +37,20 @@ def generate_cloud_init_script(
         user_name: User name for logging purposes
         backend_url: Backend WebSocket URL for executor connection
         auth_token: User's authentication token
+        executor_download_url: URL for downloading executor binary.
+        executor_download_token: Private token for authenticated download.
 
     Returns:
         Base64 encoded script string for cloud-init user_data
     """
-    script = _generate_user_data_script(device_id, user_name, backend_url, auth_token)
+    script = _generate_user_data_script(
+        device_id,
+        user_name,
+        backend_url,
+        auth_token,
+        executor_download_url,
+        executor_download_token,
+    )
 
     # Encode to Base64
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
@@ -58,6 +68,8 @@ def generate_simple_startup_script(
     user_name: str,
     backend_url: str,
     auth_token: str,
+    executor_download_url: str = "",
+    executor_download_token: str = "",
 ) -> str:
     """Generate Base64 encoded simple startup script (non-MIME format).
 
@@ -72,11 +84,20 @@ def generate_simple_startup_script(
         user_name: User name for logging purposes
         backend_url: Backend WebSocket URL for executor connection
         auth_token: User's authentication token
+        executor_download_url: URL for downloading executor binary.
+        executor_download_token: Private token for authenticated download.
 
     Returns:
         Base64 encoded script string
     """
-    script = _generate_user_data_script(device_id, user_name, backend_url, auth_token)
+    script = _generate_user_data_script(
+        device_id,
+        user_name,
+        backend_url,
+        auth_token,
+        executor_download_url,
+        executor_download_token,
+    )
 
     # Encode to Base64
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
@@ -94,6 +115,8 @@ def _generate_user_data_script(
     user_name: str,
     backend_url: str,
     auth_token: str,
+    executor_download_url: str = "",
+    executor_download_token: str = "",
 ) -> str:
     """
     Generate startup script (user_data) for cloud device.
@@ -101,6 +124,14 @@ def _generate_user_data_script(
     This script runs when the VM starts and launches the executor.
     Uses sudo -i -u ubuntu to switch to ubuntu user.
     """
+    # Build the full curl download command in Python to avoid
+    # shell quoting issues with PRIVATE-TOKEN header in heredoc.
+    curl_parts = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "5"]
+    if executor_download_token:
+        curl_parts.append(f"-H 'PRIVATE-TOKEN: {executor_download_token}'")
+    curl_parts.extend(["-o", '"$EXECUTOR_PATH.tmp"', f'"{executor_download_url}"'])
+    curl_download_cmd = " ".join(curl_parts)
+
     return f"""#!/bin/bash
 # ===============================
 # Wegent Executor Install & Run (Cloud Device)
@@ -138,14 +169,14 @@ CALLBACK_URL="{backend_url}"
 # ===============================
 # Step 1: Create directories
 # ===============================
-echo "📁 Creating directories..."
+echo "Creating directories..."
 mkdir -p "$BIN_DIR"
 mkdir -p "$LOG_DIR"
 
 # ===============================
 # Step 2: Stop wegent-executor if running (before download)
 # ===============================
-echo "🛑 Checking for running wegent-executor..."
+echo "Checking for running wegent-executor..."
 if [ -f "$PID_FILE" ]; then
     OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -163,40 +194,34 @@ fi
 # ===============================
 # Step 3: Save auth token
 # ===============================
-echo "🔑 Saving auth token..."
+echo "Saving auth token..."
 echo "$AUTH_TOKEN" > "$AUTH_FILE"
 chmod 600 "$AUTH_FILE"
 
 # ===============================
-# Step 4: Check/Download wegent-executor
+# Step 4: Download wegent-executor
 # ===============================
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-
-if [ "$OS" = "linux" ]; then
-    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-        BINARY_NAME="wegent-executor-linux-arm64"
-    else
-        BINARY_NAME="wegent-executor-linux-amd64"
-    fi
-else
-    echo "❌ Error: Unsupported platform: $OS"
-    exit 1
-fi
-
 EXECUTOR_PATH="$BIN_DIR/wegent-executor"
 
-# Check if executor already exists
-if [ -f "$EXECUTOR_PATH" ]; then
-    echo "✅ wegent-executor already exists at $EXECUTOR_PATH"
+# Always download latest executor to ensure version alignment
+echo "Downloading wegent-executor..."
+if {curl_download_cmd}; then
+    mv "$EXECUTOR_PATH.tmp" "$EXECUTOR_PATH"
+    chmod +x "$EXECUTOR_PATH"
+    echo "   Downloaded successfully"
 else
-    echo "📥 wegent-executor not found, please ensure it's pre-installed"
-    # Try alternative paths
+    echo "   Download failed"
+    rm -f "$EXECUTOR_PATH.tmp"
+fi
+
+# Fallback to pre-installed binary if download failed
+if [ ! -f "$EXECUTOR_PATH" ]; then
     if [ -f "/usr/local/bin/wegent-executor" ]; then
-        echo "   Found at /usr/local/bin/wegent-executor, using that"
-        EXECUTOR_PATH="/usr/local/bin/wegent-executor"
+        echo "   Using pre-installed /usr/local/bin/wegent-executor"
+        cp /usr/local/bin/wegent-executor "$EXECUTOR_PATH"
+        chmod +x "$EXECUTOR_PATH"
     else
-        echo "❌ Error: wegent-executor not found!"
+        echo "Error: wegent-executor not found and download failed!"
         exit 1
     fi
 fi
@@ -205,7 +230,7 @@ fi
 # Step 5: Configure PATH
 # ===============================
 echo ""
-echo "📝 Configuring PATH..."
+echo "Configuring PATH..."
 
 # Detect shell config file
 SHELL_NAME=$(basename "$SHELL")
@@ -230,13 +255,17 @@ export PATH="$BIN_DIR:$PATH"
 # Step 6: Start wegent-executor
 # ===============================
 echo ""
-echo "🚀 Starting wegent-executor..."
+echo "Starting wegent-executor..."
 
 LOG_FILE="$LOG_DIR/wegent-executor.log"
 ERROR_LOG_FILE="$LOG_DIR/wegent-executor-error.log"
 
+# Delete old device config to ensure fresh registration with correct DEVICE_ID
+rm -f "$BASE_DIR/device-config.json"
+
 # Set environment variables
 export EXECUTOR_MODE="local"
+export DEVICE_ID="{device_id}"
 export WEGENT_BACKEND_URL="$CALLBACK_URL"
 export WEGENT_AUTH_TOKEN="$AUTH_TOKEN"
 export ANTHROPIC_CUSTOM_HEADERS="wecode-source: wegent-local
@@ -253,11 +282,11 @@ echo "$NEW_PID" > "$PID_FILE"
 # Wait a moment and check if process started successfully
 sleep 1
 if kill -0 "$NEW_PID" 2>/dev/null; then
-    echo "✅ wegent-executor started successfully!"
+    echo "wegent-executor started successfully!"
     echo "   PID: $NEW_PID"
     echo "   Log: $LOG_FILE"
 else
-    echo "❌ wegent-executor failed to start!"
+    echo "wegent-executor failed to start!"
     if [ -f "$ERROR_LOG_FILE" ]; then
         echo "   Error log:"
         cat "$ERROR_LOG_FILE"
@@ -267,7 +296,7 @@ else
 fi
 
 echo ""
-echo "✅ Done!"
+echo "Done!"
 UBUNTU_SCRIPT
 
 echo "[CloudDevice] Setup complete at $(date)"

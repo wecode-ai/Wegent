@@ -29,6 +29,17 @@ class NevisSettings(BaseSettings):
     # Maximum number of cloud devices per user
     NEVIS_MAX_DEVICES_PER_USER: int = 3
 
+    # Executor binary download URL for cloud devices.
+    # Used when executor is not pre-installed on the VM.
+    NEVIS_EXECUTOR_DOWNLOAD_URL: str = (
+        "https://git.intra.weibo.com/api/v4/projects/"
+        "weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/"
+        "repository/files/dist%2Fwegent-executor-linux-amd64/raw?ref=master"
+    )
+
+    # Private token for accessing executor binary download URL
+    NEVIS_EXECUTOR_DOWNLOAD_TOKEN: str = ""
+
     class Config:
         env_file = ".env"
         extra = "ignore"
