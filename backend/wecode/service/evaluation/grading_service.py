@@ -53,14 +53,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Minimal grading prompt template - only provides respondent info
+# Minimal grading prompt template - only provides respondent info and answer content
 # The AI bot's system prompt (Ghost.systemPrompt) should define:
 # - How to evaluate submissions
 # - Output format requirements
 # - Grading criteria interpretation
 # Question content and grading criteria are configured in the bot's system prompt
 GRADING_PROMPT_TEMPLATE = """**Respondent:** {respondent_name}
-"""
+{answer_content}{answer_url}"""
 
 
 class GradingService:
@@ -238,12 +238,22 @@ class GradingService:
             respondent.user_name if respondent else f"User #{task.respondent_id}"
         )
 
+        # Get answer content (text and url)
+        answer_text = answer.content_data.get("text", "") or ""
+        answer_url = answer.content_data.get("url", "") or ""
+
+        # Format answer content for prompt
+        answer_content = f"\n{answer_text}" if answer_text else ""
+        answer_url_str = f"\n**Reference URL:** {answer_url}" if answer_url else ""
+
         # Only collect answer attachments (not question or criteria attachments)
         answer_attachments = answer.content_data.get("attachments", [])
         all_attachments = self._collect_attachment_keys(answer_attachments)
 
         prompt = GRADING_PROMPT_TEMPLATE.format(
             respondent_name=respondent_name,
+            answer_content=answer_content,
+            answer_url=answer_url_str,
         )
 
         return prompt, all_attachments
