@@ -811,9 +811,11 @@ class GradingService:
             # Copy Attachments to SubtaskContext
             # =====================================
             if attachments:
+                from app.services.attachment.parser import DocumentParser, DocumentParseError
                 from wecode.service.evaluation.storage_service import EvalStorageService
 
                 storage_service = EvalStorageService()
+                parser = DocumentParser()
 
                 for att in attachments:
                     s3_key = att.get("key", "")
@@ -822,6 +824,13 @@ class GradingService:
 
                     # Determine if it's an image
                     is_image = content_type.startswith("image/")
+
+                    # Get file extension
+                    file_extension = (
+                        "." + filename.rsplit(".", 1)[-1].lower()
+                        if "." in filename
+                        else ""
+                    )
 
                     # Create SubtaskContext for attachment
                     context = SubtaskContext(
@@ -832,9 +841,7 @@ class GradingService:
                         status=ContextStatus.READY.value,
                         type_data={
                             "original_filename": filename,
-                            "file_extension": (
-                                filename.rsplit(".", 1)[-1] if "." in filename else ""
-                            ),
+                            "file_extension": file_extension.lstrip("."),
                             "mime_type": content_type,
                             "storage_backend": "s3",
                             "storage_key": s3_key,
@@ -842,29 +849,52 @@ class GradingService:
                         },
                     )
 
-                    # For images, try to load base64 for vision model
-                    if is_image and storage_service.client:
+                    # Load file from S3
+                    if storage_service.client:
                         try:
-                            import base64
-                            from io import BytesIO
-
                             response = storage_service.client.get_object(
                                 storage_service._bucket, s3_key
                             )
-                            image_data = response.read()
+                            file_data = response.read()
                             response.close()
                             response.release_conn()
 
-                            context.image_base64 = base64.b64encode(image_data).decode(
-                                "utf-8"
-                            )
-                            context.type_data["file_size"] = len(image_data)
-                            logger.info(
-                                f"[Evaluation] Loaded image attachment: {filename} ({len(image_data)} bytes)"
-                            )
+                            context.type_data["file_size"] = len(file_data)
+
+                            if is_image:
+                                # For images: store binary_data for vision model
+                                # chat_shell's loader uses binary_data, not image_base64
+                                context.binary_data = file_data
+                                logger.info(
+                                    f"[Evaluation] Loaded image attachment: {filename} ({len(file_data)} bytes)"
+                                )
+                            else:
+                                # For documents: extract text content
+                                # chat_shell's loader uses extracted_text for documents
+                                try:
+                                    parse_result = parser.parse(file_data, file_extension)
+                                    context.extracted_text = parse_result.text
+                                    context.text_length = parse_result.text_length
+                                    logger.info(
+                                        f"[Evaluation] Extracted text from {filename}: "
+                                        f"{parse_result.text_length} chars"
+                                    )
+                                except DocumentParseError as e:
+                                    # Log warning but still create the context
+                                    logger.warning(
+                                        f"[Evaluation] Failed to extract text from {filename}: {e}"
+                                    )
+                                    # Store binary for files that can't be parsed
+                                    context.binary_data = file_data
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[Evaluation] Unexpected error parsing {filename}: {e}"
+                                    )
+                                    context.binary_data = file_data
+
                         except Exception as e:
                             logger.warning(
-                                f"[Evaluation] Failed to load image {filename}: {e}"
+                                f"[Evaluation] Failed to load attachment {filename}: {e}"
                             )
 
                     db.add(context)
