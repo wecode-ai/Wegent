@@ -63,6 +63,7 @@ class ChatInterface(ABC):
         """Resume a streaming session from a given offset."""
         pass
 
+
     @abstractmethod
     async def cancel(self, subtask_id: int) -> bool:
         """Cancel an ongoing chat request."""
