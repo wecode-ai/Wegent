@@ -14,7 +14,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/hooks/use-toast'
-import { taskApis } from '@/apis/tasks'
+import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { Textarea } from '@/components/ui/textarea'
 
 interface FinalPromptMessageProps {
@@ -46,6 +46,7 @@ export default function FinalPromptMessage({
   const { toast } = useToast()
   const { theme } = useTheme()
   const router = useRouter()
+  const { sendMessage } = useChatStreamContext()
   const [copied, setCopied] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedPrompt, setEditedPrompt] = useState(data.final_prompt)
@@ -122,7 +123,7 @@ export default function FinalPromptMessage({
       return
     }
 
-    if (!taskId) {
+    if (!taskId || !selectedTeam) {
       toast({
         variant: 'destructive',
         title: t('pipeline.no_task_id'),
@@ -132,10 +133,25 @@ export default function FinalPromptMessage({
 
     setIsConfirming(true)
     try {
-      const response = await taskApis.confirmPipelineStage(taskId, {
-        confirmed_prompt: isEditing ? editedPrompt : data.final_prompt,
-        action: 'continue',
-      })
+      const messageContent = isEditing ? editedPrompt : data.final_prompt
+
+      // Use sendMessage from ChatStreamContext to send pipeline confirmation
+      // This will add the user message to the state machine for display
+      await sendMessage(
+        {
+          task_id: taskId,
+          team_id: selectedTeam.id,
+          message: messageContent,
+          action: 'pipeline:confirm',
+        },
+        {
+          pendingUserMessage: messageContent,
+          immediateTaskId: taskId,
+          onError: error => {
+            throw error
+          },
+        }
+      )
 
       // Mark as confirmed to prevent duplicate submissions
       // This keeps the button disabled until the component unmounts or isPendingConfirmation becomes false
@@ -143,9 +159,6 @@ export default function FinalPromptMessage({
 
       toast({
         title: t('pipeline.stage_confirmed'),
-        description: response.next_stage_name
-          ? t('pipeline.proceeding_to_stage', { stage: response.next_stage_name })
-          : t('pipeline.pipeline_completed'),
       })
 
       onStageConfirmed?.()

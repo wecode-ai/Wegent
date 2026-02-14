@@ -239,6 +239,9 @@ class StatusUpdatingEmitter(ResultEmitter):
     ) -> None:
         """Update subtask and task status to COMPLETED.
 
+        The actual task status (COMPLETED or PENDING_CONFIRMATION for pipeline mode)
+        is determined by the collaboration strategy in db_handler.
+
         Args:
             result: Optional result data from the event
         """
@@ -272,6 +275,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                     )
 
             # Update subtask status to COMPLETED with executor info for container reuse
+            # Task status will be determined by collaboration strategy in db_handler
             await db_handler.update_subtask_status(
                 self._subtask_id,
                 "COMPLETED",
