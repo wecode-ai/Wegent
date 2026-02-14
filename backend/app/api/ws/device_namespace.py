@@ -511,6 +511,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
         This method finds the corresponding cloud device CRD by matching the
         WebSocket client IP with the Nevis sandbox IP.
 
+        If IP matching fails, fallback to using the first available cloud device
+        for this user (user-based configuration).
+
         Args:
             user_id: User ID
             client_ip: WebSocket client IP address
@@ -548,6 +551,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     f"cloud_device_count={len(cloud_devices)}"
                 )
 
+                # First pass: Try IP matching
                 for device in cloud_devices:
                     spec = device.json.get("spec", {})
                     if spec.get("deviceType") != DeviceType.CLOUD.value:
@@ -577,22 +581,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                                 f"new_device_id={executor_device_id}"
                             )
 
-                            # Update CRD with executor's device_id
-                            device_json = device.json.copy()
-                            old_device_id = device.name
-                            device_json["metadata"]["name"] = executor_device_id
-                            device_json["spec"]["deviceId"] = executor_device_id
-                            device.name = executor_device_id
-                            device.json = device_json
-                            db.add(device)
-                            db.commit()
-
-                            # Clean up old Redis key if exists
-                            await cloud_device_provider.unregister(
-                                db, user_id, old_device_id
+                            return await self._update_cloud_device_id(
+                                db, user_id, device, executor_device_id, sandbox_id
                             )
-
-                            return sandbox_id
                     except Exception as e:
                         logger.warning(
                             f"[Device WS] Failed to get Nevis status for "
@@ -600,10 +591,72 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         )
                         continue
 
+                # Second pass: IP matching failed, fallback to user-based config
+                # Use the first available cloud device for this user
+                logger.info(
+                    f"[Device WS] IP matching failed, fallback to user-based config: "
+                    f"user_id={user_id}"
+                )
+
+                for device in cloud_devices:
+                    spec = device.json.get("spec", {})
+                    if spec.get("deviceType") != DeviceType.CLOUD.value:
+                        continue
+
+                    cloud_config = spec.get("cloudConfig", {})
+                    sandbox_id = cloud_config.get("sandboxId", device.name)
+
+                    logger.info(
+                        f"[Device WS] User-based cloud device match: "
+                        f"sandbox_id={sandbox_id}, "
+                        f"new_device_id={executor_device_id}"
+                    )
+
+                    return await self._update_cloud_device_id(
+                        db, user_id, device, executor_device_id, sandbox_id
+                    )
+
         except Exception as e:
             logger.error(f"[Device WS] Error matching cloud device by IP: {e}")
 
         return None
+
+    async def _update_cloud_device_id(
+        self,
+        db: Session,
+        user_id: int,
+        device: Any,
+        executor_device_id: str,
+        sandbox_id: str,
+    ) -> str:
+        """Update cloud device ID in CRD and clean up old Redis key.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            device: Kind device model
+            executor_device_id: New device ID from executor
+            sandbox_id: Sandbox ID
+
+        Returns:
+            Sandbox ID
+        """
+        from wecode.service.cloud_device_provider import cloud_device_provider
+
+        # Update CRD with executor's device_id
+        device_json = device.json.copy()
+        old_device_id = device.name
+        device_json["metadata"]["name"] = executor_device_id
+        device_json["spec"]["deviceId"] = executor_device_id
+        device.name = executor_device_id
+        device.json = device_json
+        db.add(device)
+        db.commit()
+
+        # Clean up old Redis key if exists
+        await cloud_device_provider.unregister(db, user_id, old_device_id)
+
+        return sandbox_id
 
     async def on_connect(self, sid: str, environ: dict, auth: Optional[dict] = None):
         """
