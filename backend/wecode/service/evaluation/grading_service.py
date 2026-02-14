@@ -756,8 +756,8 @@ class GradingService:
             db.add(workspace)
             db.flush()
 
-            # Update grading task with wegent_task_id
-            grading_task.wegent_task_id = new_task_id
+            # Update grading task with task_id (Wegent Task ID)
+            grading_task.task_id = new_task_id
 
             # Get bot IDs from team
             bot_ids = get_bot_ids_from_team(db, team)
