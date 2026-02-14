@@ -27,7 +27,7 @@ import {
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useUserContext } from '@/contexts/UserContext'
+import { useUserContext } from '@/features/common/UserContext'
 import TaskListSection from './TaskListSection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTaskUnread } from '@/utils/taskViewStatus'
