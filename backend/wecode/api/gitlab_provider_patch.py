@@ -7,7 +7,7 @@ Monkey-patch GitLabProvider methods to resolve real token at runtime,
 without modifying open-source app/ code. This keeps changes confined
 to wecode directory and adheres to the minimal-intrusion principle.
 """
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 try:
     # Import target class from app
@@ -48,7 +48,9 @@ def _resolve_tokens_for_user(user) -> List[Tuple[Dict[str, Any], str]]:
             git_domain = d.get("git_domain", "")
             user_name = d.get("git_login", "")
             try:
-                token_result = token_resolver.resolve_git_token(user_name, git_domain, fallback_token="***")
+                token_result = token_resolver.resolve_git_token(
+                    user_name, git_domain, fallback_token="***"
+                )
                 if token_result:
                     # store original
                     original_token = user.git_info[idx].get("git_token")
@@ -89,10 +91,14 @@ def apply_patch() -> None:
         finally:
             _restore_tokens(restored)
 
-    async def patched_search_repositories(self, user, query: str, timeout: int = 30, fullmatch: bool = False):
+    async def patched_search_repositories(
+        self, user, query: str, timeout: int = 30, fullmatch: bool = False
+    ):
         restored = _resolve_tokens_for_user(user)
         try:
-            return await _orig_search_repositories(self, user, query=query, timeout=timeout, fullmatch=fullmatch)
+            return await _orig_search_repositories(
+                self, user, query=query, timeout=timeout, fullmatch=fullmatch
+            )
         finally:
             _restore_tokens(restored)
 
@@ -103,17 +109,17 @@ def apply_patch() -> None:
         finally:
             _restore_tokens(restored)
 
-    async def patched_get_diff_branches( self,
-        user,
-        repo_name,
-        source_branch,
-        target_branch,
-        git_domain):
+    async def patched_get_diff_branches(
+        self, user, repo_name, source_branch, target_branch, git_domain
+    ):
         restored = _resolve_tokens_for_user(user)
         try:
-            return await _orig_get_diff_branchs(self, user, repo_name, source_branch, target_branch, git_domain)
+            return await _orig_get_diff_branchs(
+                self, user, repo_name, source_branch, target_branch, git_domain
+            )
         finally:
             _restore_tokens(restored)
+
     # Assign patched methods
     GitLabProvider.get_repositories = patched_get_repositories  # type: ignore[attr-defined]
     GitLabProvider.search_repositories = patched_search_repositories  # type: ignore[attr-defined]

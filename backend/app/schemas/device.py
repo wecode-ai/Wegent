@@ -130,9 +130,11 @@ class DeviceRegisterPayload(BaseModel):
         max_length=50,
         description="Executor version (e.g., '1.0.0')",
     )
-
-
-class DeviceHeartbeatPayload(BaseModel):
+    client_ip: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Self-reported IP address of the executor",
+    )
     """Payload for device heartbeat via WebSocket."""
 
     device_id: str = Field(..., description="Device unique identifier")

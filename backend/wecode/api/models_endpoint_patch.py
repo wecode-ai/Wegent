@@ -16,13 +16,14 @@ without modifying open-source app/ code.
 Auto-applied on import.
 """
 
-from typing import Any, Callable
 from functools import wraps
+from typing import Any, Callable
 
 try:
     from fastapi import HTTPException
+
     from app.api.endpoints import models as models_module
-    from app.services.model import model_service, ModelService
+    from app.services.model import ModelService, model_service
 except Exception:
     # If import fails at bootstrap time, skip patching to avoid breaking startup
     models_module = None  # type: ignore
@@ -46,12 +47,14 @@ def _ensure_admin(current_user: Any) -> None:
     if not _is_admin(current_user):
         raise HTTPException(status_code=403, detail="Admin privileges required")
 
+
 def _wrap_admin_endpoint(endpoint: Callable) -> Callable:
     """
     Wrap an endpoint function to enforce admin via current_user parameter.
     Also, during the endpoint execution, temporarily patch ModelService methods
     to ensure current_user is injected into internal service calls that omit it.
     """
+
     @wraps(endpoint)
     def wrapper(*args, **kwargs):
         # 1) current_user should be provided by FastAPI via dependency
@@ -66,7 +69,14 @@ def _wrap_admin_endpoint(endpoint: Callable) -> Callable:
         def _needs_injection(method: Callable) -> bool:
             # Methods that declare keyword-only current_user and are commonly called internally without it
             name = getattr(method, "__name__", "")
-            return name in {"get_by_id", "update_model", "delete_model", "create_model", "get_models", "count_active_models"}
+            return name in {
+                "get_by_id",
+                "update_model",
+                "delete_model",
+                "create_model",
+                "get_models",
+                "count_active_models",
+            }
 
         def _wrap_service_method(method: Callable) -> Callable:
             @wraps(method)
@@ -75,14 +85,26 @@ def _wrap_admin_endpoint(endpoint: Callable) -> Callable:
                 if "current_user" not in m_kwargs:
                     m_kwargs["current_user"] = current_user
                 return method(self, *m_args, **m_kwargs)
+
             setattr(service_wrapper, "_wecode_ep_patched", True)
             return service_wrapper
 
         # 3) Apply temporary patches on the class to cover internal calls via self.method(...)
         if ModelService is not None:
-            for name in ("get_by_id", "update_model", "delete_model", "create_model", "get_models", "count_active_models"):
+            for name in (
+                "get_by_id",
+                "update_model",
+                "delete_model",
+                "create_model",
+                "get_models",
+                "count_active_models",
+            ):
                 orig = getattr(ModelService, name, None)
-                if callable(orig) and not getattr(orig, "_wecode_ep_patched", False) and _needs_injection(orig):
+                if (
+                    callable(orig)
+                    and not getattr(orig, "_wecode_ep_patched", False)
+                    and _needs_injection(orig)
+                ):
                     originals[name] = orig
                     setattr(ModelService, name, _wrap_service_method(orig))
                     patched_methods.append(name)
@@ -99,6 +121,7 @@ def _wrap_admin_endpoint(endpoint: Callable) -> Callable:
     # marker to avoid double patching
     setattr(wrapper, "_wecode_patched", True)
     return wrapper
+
 
 def apply_patch() -> None:
     """

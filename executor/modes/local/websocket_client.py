@@ -157,6 +157,18 @@ class WebSocketClient:
             return token.split(" ", 1)[1]
         return token
 
+    @staticmethod
+    def _get_local_ip() -> Optional[str]:
+        """Get the local IP address of this machine."""
+        import socket
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                return s.getsockname()[0]
+        except Exception:
+            return None
+
     def _generate_device_id(self) -> str:
         """Generate stable unique device ID.
 
@@ -424,6 +436,7 @@ class WebSocketClient:
                 "device_id": self.device_id,
                 "name": self.device_name,
                 "executor_version": get_version(),
+                "client_ip": self._get_local_ip(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 

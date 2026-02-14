@@ -8,10 +8,10 @@ Unit tests for MinIO storage backend.
 These tests use mocking to avoid requiring an actual MinIO server.
 """
 
-import pytest
 from io import BytesIO
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
 from minio.error import S3Error
 
 
@@ -167,7 +167,9 @@ class TestMinIOStorageBackend:
         result = storage_backend.delete(key)
 
         assert result is True
-        storage_backend._client.remove_object.assert_called_once_with("test-bucket", key)
+        storage_backend._client.remove_object.assert_called_once_with(
+            "test-bucket", key
+        )
 
     def test_delete_not_found_returns_true(self, storage_backend):
         """Test delete returns True when object doesn't exist (idempotent)."""
@@ -344,28 +346,25 @@ class TestStorageBackendRegistration:
 
     def test_minio_backend_registered(self):
         """Test that MinIO backend is registered after importing patch module."""
-        from app.services.attachment import is_storage_backend_registered
-
         # Import the patch module to trigger registration
         import wecode.service.storage_backend_patch  # noqa: F401
+        from app.services.attachment import is_storage_backend_registered
 
         assert is_storage_backend_registered("minio") is True
 
     def test_s3_backend_registered(self):
         """Test that S3 backend is registered after importing patch module."""
-        from app.services.attachment import is_storage_backend_registered
-
         # Import the patch module to trigger registration
         import wecode.service.storage_backend_patch  # noqa: F401
+        from app.services.attachment import is_storage_backend_registered
 
         assert is_storage_backend_registered("s3") is True
 
     def test_list_backends_includes_minio(self):
         """Test that list_storage_backends includes minio and s3."""
-        from app.services.attachment import list_storage_backends
-
         # Import the patch module to trigger registration
         import wecode.service.storage_backend_patch  # noqa: F401
+        from app.services.attachment import list_storage_backends
 
         backends = list_storage_backends()
 

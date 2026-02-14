@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 def generate_cloud_init_script(
-    device_id: str,
     user_name: str,
     backend_url: str,
     auth_token: str,
@@ -33,7 +32,6 @@ def generate_cloud_init_script(
     5. Starts the executor as ubuntu user
 
     Args:
-        device_id: Cloud device identifier (sandbox ID)
         user_name: User name for logging purposes
         backend_url: Backend WebSocket URL for executor connection
         auth_token: User's authentication token
@@ -44,7 +42,6 @@ def generate_cloud_init_script(
         Base64 encoded script string for cloud-init user_data
     """
     script = _generate_user_data_script(
-        device_id,
         user_name,
         backend_url,
         auth_token,
@@ -52,19 +49,17 @@ def generate_cloud_init_script(
         executor_download_token,
     )
 
-    # Encode to Base64
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
 
     logger.debug(
-        f"Generated cloud-init script for device_id={device_id}, "
-        f"user_name={user_name}, script_length={len(script)}"
+        f"Generated cloud-init script for user_name={user_name}, "
+        f"script_length={len(script)}"
     )
 
     return encoded
 
 
 def generate_simple_startup_script(
-    device_id: str,
     user_name: str,
     backend_url: str,
     auth_token: str,
@@ -80,7 +75,6 @@ def generate_simple_startup_script(
     execute the wegent-executor.
 
     Args:
-        device_id: Cloud device identifier (sandbox ID)
         user_name: User name for logging purposes
         backend_url: Backend WebSocket URL for executor connection
         auth_token: User's authentication token
@@ -91,7 +85,6 @@ def generate_simple_startup_script(
         Base64 encoded script string
     """
     script = _generate_user_data_script(
-        device_id,
         user_name,
         backend_url,
         auth_token,
@@ -99,19 +92,17 @@ def generate_simple_startup_script(
         executor_download_token,
     )
 
-    # Encode to Base64
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
 
     logger.debug(
-        f"Generated simple startup script for device_id={device_id}, "
-        f"user_name={user_name}, script_length={len(script)}"
+        f"Generated simple startup script for user_name={user_name}, "
+        f"script_length={len(script)}"
     )
 
     return encoded
 
 
 def _generate_user_data_script(
-    device_id: str,
     user_name: str,
     backend_url: str,
     auth_token: str,
@@ -126,18 +117,16 @@ def _generate_user_data_script(
     """
     # Build the full curl download command in Python to avoid
     # shell quoting issues with PRIVATE-TOKEN header in heredoc.
-    # Use URL decoded path for GitLab API
-    download_url = executor_download_url.replace("%2F", "/")
+    # Keep URL as-is: GitLab API requires %2F-encoded file paths.
     curl_parts = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "5"]
     if executor_download_token:
         curl_parts.append(f"-H 'PRIVATE-TOKEN: {executor_download_token}'")
-    curl_parts.extend(["-o", '"$EXECUTOR_PATH.tmp"', f'"{download_url}"'])
+    curl_parts.extend(["-o", '"$EXECUTOR_PATH.tmp"', f'"{executor_download_url}"'])
     curl_download_cmd = " ".join(curl_parts)
 
     return f"""#!/bin/bash
 # ===============================
 # Wegent Executor Install & Run (Cloud Device)
-# device_id: {device_id}
 # user_name: {user_name}
 # ===============================
 
@@ -219,7 +208,7 @@ if {curl_download_cmd}; then
     echo "   File size: $(ls -lh "$EXECUTOR_PATH" | awk '{{print $5}}')"
 else
     echo "   Download failed with exit code: $?"
-    echo "   Curl command was: curl -fsSL --retry 3 --retry-delay 5 -H 'PRIVATE-TOKEN: ***' -o \"$EXECUTOR_PATH.tmp\" \"{executor_download_url}\""
+    echo "   Curl command was: curl -fsSL --retry 3 --retry-delay 5 -H 'PRIVATE-TOKEN: ***' -o \\"$EXECUTOR_PATH.tmp\\" \\"{executor_download_url}\\""
     rm -f "$EXECUTOR_PATH.tmp"
 fi
 

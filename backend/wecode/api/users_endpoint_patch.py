@@ -15,9 +15,10 @@ from typing import Any, Dict, List
 try:
     # Import target module/functions
     from app.api.endpoints import users as users_module
-    from app.models.user import User
+
     # Also import the dependency provider to patch dependency chain directly
     from app.core import security as security_module
+    from app.models.user import User
 except Exception:
     users_module = None  # type: ignore
     User = None  # type: ignore
@@ -36,7 +37,9 @@ def _replace_placeholders(current_user: Any) -> Any:
         return current_user
 
     try:
-        real_git_info: List[Dict[str, Any]] = get_user_gitinfo.get_real_git_tokens(current_user.user_name)
+        real_git_info: List[Dict[str, Any]] = get_user_gitinfo.get_real_git_tokens(
+            current_user.user_name
+        )
         updated_git_info: List[Dict[str, Any]] = []
         for existing_item in current_user.git_info:
             new_item = dict(existing_item)
@@ -58,11 +61,15 @@ def apply_patch() -> None:
     #    This may not affect already-registered routes, so we also patch the route endpoint directly below.
     if security_module is not None:
         _orig_get_current_user = getattr(security_module, "get_current_user", None)
-        if _orig_get_current_user is not None and not getattr(_orig_get_current_user, "_wecode_patched", False):
+        if _orig_get_current_user is not None and not getattr(
+            _orig_get_current_user, "_wecode_patched", False
+        ):
+
             @wraps(_orig_get_current_user)
             def patched_get_current_user(*args, **kwargs):
                 user = _orig_get_current_user(*args, **kwargs)
                 return _replace_placeholders(user)
+
             setattr(patched_get_current_user, "_wecode_patched", True)
             setattr(security_module, "get_current_user", patched_get_current_user)
 
@@ -75,12 +82,19 @@ def apply_patch() -> None:
                 path = getattr(route, "path", None)
                 methods = getattr(route, "methods", set())
                 endpoint = getattr(route, "endpoint", None)
-                if path == "/me" and ("GET" in methods) and callable(endpoint) and not getattr(endpoint, "_wecode_patched", False):
+                if (
+                    path == "/me"
+                    and ("GET" in methods)
+                    and callable(endpoint)
+                    and not getattr(endpoint, "_wecode_patched", False)
+                ):
                     orig_endpoint = endpoint
+
                     @wraps(orig_endpoint)
                     async def patched_endpoint(*args, **kwargs):
                         current_user = await orig_endpoint(*args, **kwargs)
                         return _replace_placeholders(current_user)
+
                     setattr(patched_endpoint, "_wecode_patched", True)
                     # Replace route.endpoint so FastAPI uses our wrapper
                     route.endpoint = patched_endpoint
