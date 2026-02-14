@@ -175,6 +175,8 @@
     "execute": "执行评分",
     "retry": "重试",
     "retry_hint": "点击重试以重新执行评分任务",
+    "upload_report": "上传报告",
+    "upload_report_description": "上传自定义报告文件作为最终评分结果",
     "publish": "发布报告",
     "report": "评分报告",
     "report_content": "报告内容",

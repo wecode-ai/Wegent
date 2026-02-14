@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   Download,
   FileText,
   ClipboardList,
+  Upload,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -26,7 +27,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/contexts/ThemeContext'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
   getGraderAnswer,
   getGraderQuestion,
@@ -37,6 +40,11 @@ import {
   updateGraderReport,
   publishGraderTask,
 } from '@wecode/api/evaluation'
+import {
+  graderGetReportUploadUrl,
+  uploadFileToPresignedUrl,
+  graderPublishTaskWithAttachment,
+} from '@wecode/api/evaluation-grader'
 import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
 import type { Answer, Question, GradingTask, EvalAttachment } from '@wecode/types/evaluation'
 import { GradingTaskStatus, getStatusLabel } from '@wecode/types/evaluation'
@@ -47,6 +55,7 @@ function GraderAnswerContent() {
   const router = useRouter()
   const params = useParams()
   const { toast } = useToast()
+  const { theme } = useTheme()
   const { t } = useTranslation('evaluation')
   const answerId = parseInt(params.id as string)
 
@@ -57,8 +66,10 @@ function GraderAnswerContent() {
   const [executing, setExecuting] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedReport, setEditedReport] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -315,6 +326,54 @@ function GraderAnswerContent() {
     }
   }
 
+  // Handle file upload and publish with attachment
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file || !gradingTask) return
+
+    setUploading(true)
+    try {
+      // Get presigned URL for upload
+      const { upload_url, key } = await graderGetReportUploadUrl(
+        gradingTask.id,
+        file.name,
+        file.type
+      )
+
+      // Upload file to presigned URL
+      const uploadSuccess = await uploadFileToPresignedUrl(upload_url, file)
+      if (!uploadSuccess) {
+        throw new Error('Upload failed')
+      }
+
+      // Publish with attachment
+      await graderPublishTaskWithAttachment(gradingTask.id, {
+        key,
+        filename: file.name,
+        size: file.size,
+        contentType: file.type,
+      })
+
+      toast({
+        title: t('grading.publish_success'),
+        description: '',
+      })
+      loadData()
+    } catch (_error) {
+      toast({
+        title: t('errors.save_failed'),
+        description: '',
+        variant: 'destructive',
+      })
+    } finally {
+      setUploading(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   const getStatusBadgeVariant = (
     status: number
   ): 'default' | 'success' | 'error' | 'info' | 'warning' | 'secondary' => {
@@ -334,31 +393,26 @@ function GraderAnswerContent() {
     }
   }
 
-  // Render report content
+  // Render report content using EnhancedMarkdown
   const renderReportContent = (reportData: Record<string, unknown>) => {
     if (!reportData || Object.keys(reportData).length === 0) {
       return <p className="text-text-secondary">{t('grading.no_report_data')}</p>
     }
 
-    // Handle different report_data structures
+    // Extract content string from different report_data structures
+    let content = ''
     if (typeof reportData === 'string') {
-      return (
-        <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">{reportData}</pre>
-      )
-    }
-
-    if (typeof reportData.content === 'string') {
-      return (
-        <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
-          {reportData.content}
-        </pre>
-      )
+      content = reportData
+    } else if (typeof reportData.content === 'string') {
+      content = reportData.content
+    } else {
+      content = JSON.stringify(reportData, null, 2)
     }
 
     return (
-      <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
-        {JSON.stringify(reportData, null, 2)}
-      </pre>
+      <div className="rounded-lg bg-surface p-4">
+        <EnhancedMarkdown source={content} theme={theme === 'dark' ? 'dark' : 'light'} />
+      </div>
     )
   }
 
@@ -473,6 +527,10 @@ function GraderAnswerContent() {
                 )}
                 {gradingTask.status === GradingTaskStatus.COMPLETED && (
                   <>
+                    <Button variant="outline" onClick={handleRetry} disabled={executing}>
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      {t('grading.retry')}
+                    </Button>
                     <Button
                       variant="outline"
                       onClick={() => setIsEditing(!isEditing)}
@@ -480,6 +538,21 @@ function GraderAnswerContent() {
                     >
                       <Edit className="mr-2 h-4 w-4" />
                       {t('grading.edit_report')}
+                    </Button>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      accept=".pdf,.doc,.docx,.md,.txt"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      {t('grading.upload_report')}
                     </Button>
                     <Button variant="primary" onClick={handlePublish} disabled={publishing}>
                       <Send className="mr-2 h-4 w-4" />

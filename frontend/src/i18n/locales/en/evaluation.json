@@ -175,6 +175,8 @@
     "execute": "Execute",
     "retry": "Retry",
     "retry_hint": "Click retry to re-execute the grading task",
+    "upload_report": "Upload Report",
+    "upload_report_description": "Upload a custom report file as the final grading result",
     "publish": "Publish Report",
     "report": "Grading Report",
     "report_content": "Report Content",
