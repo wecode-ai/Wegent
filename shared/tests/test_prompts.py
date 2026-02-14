@@ -46,11 +46,9 @@ class TestKBPromptConstants:
 
         # Check for key phrases in relaxed mode
         assert "knowledge_base_search" in KB_PROMPT_RELAXED
-        assert (
-            "general knowledge" in KB_PROMPT_RELAXED
-            or "fallback" in KB_PROMPT_RELAXED
-            or "Intent Routing" in KB_PROMPT_RELAXED  # New routing approach
-        )
+        # Relaxed mode must allow fallback to general knowledge
+        assert "general knowledge" in KB_PROMPT_RELAXED
+        assert "Intent Routing" in KB_PROMPT_RELAXED  # New routing approach
 
     def test_prompts_are_different(self):
         """Strict and relaxed prompts should be different."""
@@ -59,9 +57,29 @@ class TestKBPromptConstants:
         assert KB_PROMPT_STRICT != KB_PROMPT_RELAXED
 
     def test_prompts_module_all_export(self):
-        """shared.prompts module should export KB_PROMPT_STRICT and KB_PROMPT_RELAXED in __all__."""
+        """shared.prompts module should export KB_PROMPT_STRICT, KB_PROMPT_RELAXED and KB_PROMPT_NO_RAG in __all__."""
         from shared import prompts
 
         assert hasattr(prompts, "__all__")
         assert "KB_PROMPT_STRICT" in prompts.__all__
         assert "KB_PROMPT_RELAXED" in prompts.__all__
+        assert "KB_PROMPT_NO_RAG" in prompts.__all__
+
+    def test_kb_prompt_no_rag_importable(self):
+        """Should be able to import KB_PROMPT_NO_RAG from shared.prompts."""
+        from shared.prompts import KB_PROMPT_NO_RAG
+
+        assert KB_PROMPT_NO_RAG is not None
+        assert isinstance(KB_PROMPT_NO_RAG, str)
+        assert len(KB_PROMPT_NO_RAG) > 0
+
+    def test_kb_prompt_no_rag_contains_required_content(self):
+        """KB_PROMPT_NO_RAG should contain no-RAG mode instructions."""
+        from shared.prompts import KB_PROMPT_NO_RAG
+
+        # Check for key phrases in no-RAG mode
+        assert "Exploration Mode" in KB_PROMPT_NO_RAG
+        assert "kb_ls" in KB_PROMPT_NO_RAG
+        assert "kb_head" in KB_PROMPT_NO_RAG
+        assert "RAG retrieval is NOT configured" in KB_PROMPT_NO_RAG
+        assert "Intent Routing" in KB_PROMPT_NO_RAG
