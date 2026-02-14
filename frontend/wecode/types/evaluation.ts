@@ -313,9 +313,9 @@ export function getStatusLabel(
 
   switch (status) {
     case TopicStatus.DRAFT:
-      return t ? t('topics.status.draft') : 'Draft'
+      return t ? t('topics.unpublished') : 'Draft'
     case TopicStatus.PUBLISHED:
-      return t ? t('topics.status.published') : 'Published'
+      return t ? t('topics.published') : 'Published'
     default:
       return 'Unknown'
   }
