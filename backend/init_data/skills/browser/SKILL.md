@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Complete real user web tasks end-to-end via browser-tool: navigate, interact, wait for page state, extract results, and provide evidence when needed.
+description: Complete real user web tasks end-to-end via browser-tool, navigate, interact, wait for page state, extract results, and provide evidence when needed.
 ---
 
 # Browser Control Skill
