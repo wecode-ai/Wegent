@@ -1062,10 +1062,16 @@ class GradingService:
 
         storage_service = EvalStorageService()
 
+        # Get topic_id from question (EvalGradingTask doesn't have topic_id field)
+        question = (
+            db.query(EvalQuestion).filter(EvalQuestion.id == task.question_id).first()
+        )
+        topic_id = question.topic_id if question else 0
+
         # Save AI report to S3
         s3_path = storage_service.save_grading_report(
             respondent_id=task.respondent_id,
-            topic_id=task.topic_id,
+            topic_id=topic_id,
             question_id=task.question_id,
             content=report_content,
             is_draft=True,
@@ -1144,10 +1150,16 @@ class GradingService:
 
         storage_service = EvalStorageService()
 
+        # Get topic_id from question (EvalGradingTask doesn't have topic_id field)
+        question = (
+            db.query(EvalQuestion).filter(EvalQuestion.id == task.question_id).first()
+        )
+        topic_id = question.topic_id if question else 0
+
         # Save human-reviewed report to S3 (using same pattern as AI report)
         s3_path = storage_service.save_grading_report(
             respondent_id=task.respondent_id,
-            topic_id=task.topic_id,
+            topic_id=topic_id,
             question_id=task.question_id,
             content=report_content,
             is_draft=True,  # Still a draft until published
@@ -1195,6 +1207,12 @@ class GradingService:
 
         storage_service = EvalStorageService()
 
+        # Get topic_id from question (EvalGradingTask doesn't have topic_id field)
+        question = (
+            db.query(EvalQuestion).filter(EvalQuestion.id == task.question_id).first()
+        )
+        topic_id = question.topic_id if question else 0
+
         # Determine final content
         report_data = task.report_data or {}
         if final_content:
@@ -1214,7 +1232,7 @@ class GradingService:
         if content:
             s3_path = storage_service.save_grading_report(
                 respondent_id=task.respondent_id,
-                topic_id=task.topic_id,
+                topic_id=topic_id,
                 question_id=task.question_id,
                 content=content,
                 is_draft=False,  # Final report
