@@ -51,7 +51,7 @@ import {
   graderListReports,
   graderGetTask,
   graderListTopics,
-  graderGetReportDownloadUrl,
+  graderDownloadReportFile,
   type GraderTopicItem,
 } from '@wecode/api/evaluation-grader'
 import { GradingTaskStatus, type GradingTask } from '@wecode/types/evaluation'
@@ -157,9 +157,8 @@ function GraderReportsContent() {
   const handleDownloadReport = async (taskId: number) => {
     setDownloading(taskId)
     try {
-      const response = await graderGetReportDownloadUrl(taskId)
-      // Open the download URL in a new tab
-      window.open(response.download_url, '_blank')
+      // Download report file through backend proxy
+      await graderDownloadReportFile(taskId)
     } catch (_error) {
       toast({
         title: t('errors.download_failed'),

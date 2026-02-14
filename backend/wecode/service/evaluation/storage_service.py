@@ -295,6 +295,31 @@ class EvalStorageService:
             logger.error(f"[Evaluation] Unexpected error uploading to S3: {e}")
             return None
 
+    def upload_file(
+        self,
+        key: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+        filename: str = "",
+    ) -> Optional[str]:
+        """
+        Upload file data to S3 (public interface for backend proxy upload).
+
+        Args:
+            key: Storage key
+            data: File data
+            content_type: MIME type
+            filename: Original filename
+
+        Returns:
+            Storage key if successful
+        """
+        if not self.client:
+            logger.warning("[Evaluation] Storage client not configured")
+            return None
+
+        return self._upload(key, data, content_type, filename or key.split("/")[-1])
+
     def get(self, key: str) -> Optional[bytes]:
         """
         Get file data from S3.
@@ -323,6 +348,84 @@ class EvalStorageService:
             return None
         except Exception as e:
             logger.error(f"[Evaluation] Unexpected error getting from S3: {e}")
+            return None
+
+    def get_stream(self, key: str, chunk_size: int = 65536):
+        """
+        Get file as a streaming generator from S3.
+
+        This is more memory-efficient for large files as it doesn't load
+        the entire file into memory.
+
+        Args:
+            key: Storage key
+            chunk_size: Size of each chunk in bytes (default 64KB)
+
+        Yields:
+            File data chunks
+
+        Returns:
+            Generator yielding file chunks, or None if file not found
+        """
+        if not self.client:
+            return None
+
+        try:
+            response = self.client.get_object(self._bucket, key)
+
+            def generate():
+                try:
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    response.close()
+                    response.release_conn()
+
+            return generate()
+
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                logger.info(f"[Evaluation] Object not found: {key}")
+            else:
+                logger.error(f"[Evaluation] Failed to get stream from S3: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"[Evaluation] Unexpected error getting stream from S3: {e}")
+            return None
+
+    def get_file_info(self, key: str) -> Optional[dict]:
+        """
+        Get file metadata from S3 without downloading the file.
+
+        Args:
+            key: Storage key
+
+        Returns:
+            Dict with file info (size, content_type, etc.) or None if not found
+        """
+        if not self.client:
+            return None
+
+        try:
+            stat = self.client.stat_object(self._bucket, key)
+            return {
+                "size": stat.size,
+                "content_type": stat.content_type,
+                "last_modified": stat.last_modified,
+                "etag": stat.etag,
+                "metadata": stat.metadata,
+            }
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                logger.info(f"[Evaluation] Object not found: {key}")
+            else:
+                logger.error(f"[Evaluation] Failed to get file info from S3: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"[Evaluation] Unexpected error getting file info from S3: {e}")
             return None
 
     def delete(self, key: str) -> bool:

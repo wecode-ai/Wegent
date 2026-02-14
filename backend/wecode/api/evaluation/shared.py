@@ -7,7 +7,7 @@ Shared API endpoints for evaluation module.
 
 Provides endpoints accessible to all roles:
 - Report viewing (with permission check)
-- File upload/download with presigned URLs
+- File upload/download with backend proxy (no S3 URL exposure to frontend)
 """
 
 import logging
@@ -15,8 +15,10 @@ import os
 import re
 from enum import Enum
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -50,42 +52,13 @@ class FileType(str, Enum):
     ANSWER_ATTACHMENT = "answer_attachment"
 
 
-class FileUploadRequest(BaseModel):
-    """Request schema for file upload."""
-
-    file_type: FileType = Field(..., description="Type of file being uploaded")
-    filename: str = Field(
-        ..., min_length=1, max_length=255, description="Original filename"
-    )
-    topic_id: int = Field(..., description="Topic ID for the file")
-    question_id: Optional[int] = Field(
-        None,
-        description="Question ID (required for question_content/question_criteria)",
-    )
-    content_type: Optional[str] = Field(
-        "application/octet-stream", description="MIME type of the file"
-    )
-
-
 class FileUploadResponse(BaseModel):
-    """Response schema for file upload."""
+    """Response schema for file upload (backend proxy mode)."""
 
     key: str = Field(..., description="Storage key for the file")
-    upload_url: str = Field(..., description="Presigned PUT URL for uploading")
-    expires_in: int = Field(..., description="URL expiration time in seconds")
-
-
-class FileDownloadRequest(BaseModel):
-    """Request schema for file download."""
-
-    s3_path: str = Field(..., description="S3 storage path of the file")
-
-
-class FileDownloadResponse(BaseModel):
-    """Response schema for file download."""
-
-    download_url: str = Field(..., description="Presigned GET URL for downloading")
-    expires_in: int = Field(..., description="URL expiration time in seconds")
+    filename: str = Field(..., description="Original filename")
+    file_size: int = Field(..., description="File size in bytes")
+    content_type: str = Field(..., description="MIME type of the file")
 
 
 # ============================================================================
@@ -180,32 +153,36 @@ def view_report(
 
 
 # ============================================================================
-# File upload endpoint
+# File upload endpoint (backend proxy mode)
 # ============================================================================
 
 
 @router.post("/files/upload", response_model=FileUploadResponse)
-def upload_file(
-    request: FileUploadRequest,
+async def upload_file(
+    file: UploadFile = File(..., description="File to upload"),
+    file_type: FileType = Form(..., description="Type of file being uploaded"),
+    topic_id: int = Form(..., description="Topic ID for the file"),
+    question_id: Optional[int] = Form(None, description="Question ID (required for question files)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get a presigned URL for file upload.
+    Upload a file through backend proxy (no S3 URL exposure).
 
     Accepts file types:
     - question_content: Question content attachments (requires creator/grader permission)
     - question_criteria: Grading criteria attachments (requires creator/grader permission)
     - answer_attachment: Answer submission attachments (requires respondent permission)
 
-    Returns a presigned PUT URL that the client can use to upload the file directly to S3.
+    The file is uploaded directly to the backend, which proxies it to S3.
+    This avoids exposing S3 URLs to the frontend (prevents Mixed Content issues).
     """
     topic_service = get_topic_service()
     permission_service = get_permission_service()
     storage_service = get_storage_service()
 
     # Validate topic exists
-    topic = topic_service.get(db, request.topic_id)
+    topic = topic_service.get(db, topic_id)
     if not topic:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -213,7 +190,7 @@ def upload_file(
         )
 
     # Permission check based on file type
-    if request.file_type in (FileType.QUESTION_CONTENT, FileType.QUESTION_CRITERIA):
+    if file_type in (FileType.QUESTION_CONTENT, FileType.QUESTION_CRITERIA):
         # Question content/criteria requires creator or grader permission
         if not permission_service.can_grade(db, topic, current_user.id):
             raise HTTPException(
@@ -222,13 +199,13 @@ def upload_file(
             )
 
         # question_id is required for question files
-        if not request.question_id:
+        if not question_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="question_id is required for question files",
             )
 
-    elif request.file_type == FileType.ANSWER_ATTACHMENT:
+    elif file_type == FileType.ANSWER_ATTACHMENT:
         # Answer attachment requires respondent permission
         if not permission_service.can_answer(db, topic, current_user.id):
             raise HTTPException(
@@ -236,34 +213,53 @@ def upload_file(
                 detail="You don't have permission to upload answer attachments",
             )
 
+    # Read file content
+    try:
+        file_content = await file.read()
+        file_size = len(file_content)
+    except Exception as e:
+        logger.error(f"[Evaluation] Failed to read uploaded file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to read uploaded file",
+        )
+
     # Generate storage key
+    filename = file.filename or "unnamed"
+    content_type = file.content_type or "application/octet-stream"
+
     key = storage_service.generate_upload_key(
-        file_type=request.file_type.value,
+        file_type=file_type.value,
         user_id=current_user.id,
-        topic_id=request.topic_id,
-        question_id=request.question_id,
-        filename=request.filename,
+        topic_id=topic_id,
+        question_id=question_id,
+        filename=filename,
     )
 
-    # Generate presigned PUT URL
-    expires_in = 3600  # 1 hour
-    upload_url = storage_service.get_presigned_put_url(key, expires=expires_in)
+    # Upload to S3 via backend
+    uploaded_key = storage_service.upload_file(
+        key=key,
+        data=file_content,
+        content_type=content_type,
+        filename=filename,
+    )
 
-    if not upload_url:
+    if not uploaded_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate upload URL. Storage service may not be configured.",
+            detail="Failed to upload file to storage",
         )
 
     return FileUploadResponse(
-        key=key,
-        upload_url=upload_url,
-        expires_in=expires_in,
+        key=uploaded_key,
+        filename=filename,
+        file_size=file_size,
+        content_type=content_type,
     )
 
 
 # ============================================================================
-# File download endpoint
+# File download endpoint (backend proxy mode)
 # ============================================================================
 
 
@@ -291,116 +287,151 @@ def _get_path_patterns() -> dict:
     }
 
 
-@router.get("/files/download", response_model=FileDownloadResponse)
+def _verify_download_permission(
+    s3_path: str,
+    current_user: User,
+    db: Session,
+) -> bool:
+    """
+    Verify download permission based on S3 path pattern.
+
+    Returns True if user has permission to download the file.
+    """
+    topic_service = get_topic_service()
+    permission_service = get_permission_service()
+
+    path_patterns = _get_path_patterns()
+    logger.debug(f"Download file request: s3_path={s3_path}, user_id={current_user.id}")
+
+    # Check question content pattern
+    match = path_patterns["question"].match(s3_path)
+    if match:
+        topic_id = int(match.group(1))
+        topic = topic_service.get(db, topic_id)
+        if topic:
+            return permission_service.can_view_topic(db, topic, current_user.id)
+        return False
+
+    # Check criteria pattern
+    match = path_patterns["criteria"].match(s3_path)
+    if match:
+        topic_id = int(match.group(1))
+        topic = topic_service.get(db, topic_id)
+        if topic:
+            return permission_service.can_view_criteria(db, topic, current_user.id)
+        return False
+
+    # Check answer pattern
+    match = path_patterns["answer"].match(s3_path)
+    if match:
+        user_id = int(match.group(1))
+        topic_id = int(match.group(2))
+        topic = topic_service.get(db, topic_id)
+        if topic:
+            if user_id == current_user.id:
+                return True
+            return permission_service.can_grade(db, topic, current_user.id)
+        return False
+
+    # Check report pattern
+    match = path_patterns["report"].match(s3_path)
+    if match:
+        respondent_id = int(match.group(1))
+        topic_id = int(match.group(2))
+        topic = topic_service.get(db, topic_id)
+        if topic:
+            if respondent_id == current_user.id:
+                return True
+            return permission_service.can_grade(db, topic, current_user.id)
+        return False
+
+    return False
+
+
+@router.get("/files/download")
 def download_file(
     s3_path: str = Query(..., description="S3 storage path of the file"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get a presigned URL for file download.
+    Download a file through backend proxy (no S3 URL exposure).
 
     Permission is verified based on the S3 path pattern:
     - Question content: Anyone who can view the topic can download
     - Criteria: Topic creator or grader can download (not respondents)
     - Answer: Topic creator, grader, or the answer owner can download
     - Report: Topic creator, grader, or the respondent can download
+
+    Returns the file content as a streaming response.
+    Uses streaming to avoid loading entire file into memory.
     """
-    topic_service = get_topic_service()
-    permission_service = get_permission_service()
     storage_service = get_storage_service()
 
-    # Get path patterns at runtime to ensure correct S3 prefix
-    path_patterns = _get_path_patterns()
-    logger.debug(f"Download file request: s3_path={s3_path}, user_id={current_user.id}")
-    logger.debug(f"S3 prefix from env: {os.getenv('EVAL_S3_PREFIX', 'evaluation')}")
-
-    # Parse path to determine type and extract IDs
-    topic_id = None
-    allowed = False
-
-    # Check question content pattern
-    match = path_patterns["question"].match(s3_path)
-    if match:
-        topic_id = int(match.group(1))
-        logger.debug(f"Matched question pattern: topic_id={topic_id}")
-        topic = topic_service.get(db, topic_id)
-        if topic:
-            # Question content: anyone who can view the topic can download
-            # (creators, graders, and respondents all need to see question content)
-            allowed = permission_service.can_view_topic(db, topic, current_user.id)
-            logger.debug(
-                f"can_view_topic check: topic.creator_id={topic.creator_id}, "
-                f"user_id={current_user.id}, allowed={allowed}"
-            )
-        else:
-            logger.debug(f"Topic not found: topic_id={topic_id}")
-
-    # Check criteria pattern
-    if not allowed:
-        match = path_patterns["criteria"].match(s3_path)
-        if match:
-            topic_id = int(match.group(1))
-            topic = topic_service.get(db, topic_id)
-            if topic:
-                # Criteria: only creator or grader can download (not respondents)
-                allowed = permission_service.can_view_criteria(
-                    db, topic, current_user.id
-                )
-
-    # Check answer pattern
-    if not allowed:
-        match = path_patterns["answer"].match(s3_path)
-        if match:
-            user_id = int(match.group(1))
-            topic_id = int(match.group(2))
-            topic = topic_service.get(db, topic_id)
-            if topic:
-                # Answer: creator, grader, or the answer owner
-                if user_id == current_user.id:
-                    allowed = True
-                else:
-                    allowed = permission_service.can_grade(db, topic, current_user.id)
-
-    # Check report pattern
-    if not allowed:
-        match = path_patterns["report"].match(s3_path)
-        if match:
-            respondent_id = int(match.group(1))
-            topic_id = int(match.group(2))
-            topic = topic_service.get(db, topic_id)
-            if topic:
-                # Report: creator, grader, or the respondent
-                if respondent_id == current_user.id:
-                    allowed = True
-                else:
-                    allowed = permission_service.can_grade(db, topic, current_user.id)
-
-    # If no pattern matched or permission denied
-    if not allowed:
+    # Verify permission
+    if not _verify_download_permission(s3_path, current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to download this file",
         )
 
-    # Check if file exists
-    if not storage_service.exists(s3_path):
+    # Get file info first to check existence and get size
+    file_info = storage_service.get_file_info(s3_path)
+    if file_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
         )
 
-    # Generate presigned GET URL
-    expires_in = 3600  # 1 hour
-    download_url = storage_service.get_presigned_url(s3_path, expires=expires_in)
-
-    if not download_url:
+    # Get file stream
+    file_stream = storage_service.get_stream(s3_path)
+    if file_stream is None:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate download URL. Storage service may not be configured.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found",
         )
 
-    return FileDownloadResponse(
-        download_url=download_url,
-        expires_in=expires_in,
+    # Extract filename from path
+    filename = s3_path.split("/")[-1]
+
+    # Try to determine content type based on file extension or use stored content type
+    content_type = file_info.get("content_type", "application/octet-stream")
+    if content_type == "application/octet-stream" and "." in filename:
+        ext = filename.rsplit(".", 1)[-1].lower()
+        content_type_map = {
+            "pdf": "application/pdf",
+            "doc": "application/msword",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls": "application/vnd.ms-excel",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "ppt": "application/vnd.ms-powerpoint",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "txt": "text/plain",
+            "md": "text/markdown",
+            "json": "application/json",
+            "xml": "application/xml",
+            "zip": "application/zip",
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "svg": "image/svg+xml",
+        }
+        content_type = content_type_map.get(ext, content_type)
+
+    # RFC 5987 encoding for non-ASCII filenames
+    encoded_filename = quote(filename, safe="")
+    content_disposition = (
+        f'attachment; filename="{encoded_filename}"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
+
+    # Return file as streaming response (memory efficient for large files)
+    return StreamingResponse(
+        file_stream,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(file_info.get("size", 0)),
+        },
     )

@@ -12,7 +12,7 @@ grading tasks, view answers, and publish reports.
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -982,11 +982,12 @@ class ReportUploadRequest(BaseModel):
 
 
 class ReportUploadResponse(BaseModel):
-    """Response for report file upload."""
+    """Response for report file upload (backend proxy mode)."""
 
-    upload_url: str = Field(..., description="Presigned URL for uploading")
     key: str = Field(..., description="Storage key for the file")
-    expires_in: int = Field(3600, description="URL expiration time in seconds")
+    filename: str = Field(..., description="Original filename")
+    file_size: int = Field(..., description="File size in bytes")
+    content_type: str = Field(..., description="MIME type of the file")
 
 
 class ReportPublishWithAttachmentRequest(BaseModel):
@@ -998,15 +999,15 @@ class ReportPublishWithAttachmentRequest(BaseModel):
     attachment_content_type: Optional[str] = Field(None, description="MIME type")
 
 
-@router.post("/tasks/{task_id}/report/upload-url", response_model=ReportUploadResponse)
-def get_report_upload_url(
+@router.post("/tasks/{task_id}/report/upload", response_model=ReportUploadResponse)
+async def upload_report_file(
     task_id: int,
-    request: ReportUploadRequest,
+    file: UploadFile = File(..., description="Report file to upload"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get a presigned URL for uploading a report file.
+    Upload a report file through backend proxy (no S3 URL exposure).
 
     The task must be in COMPLETED status.
     Use this to upload a file as the final report before publishing.
@@ -1047,25 +1048,45 @@ def get_report_upload_url(
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
 
+    # Read file content
+    try:
+        file_content = await file.read()
+        file_size = len(file_content)
+    except Exception as e:
+        logger.error(f"[Grader] Failed to read uploaded file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to read uploaded file",
+        )
+
     # Generate storage key
     from datetime import datetime
 
+    filename = file.filename or "report"
+    content_type = file.content_type or "application/octet-stream"
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    key = f"evaluation/reports/{task.respondent_id}/{question.topic_id}/{task.question_id}/{timestamp}/final_{request.filename}"
+    key = f"evaluation/reports/{task.respondent_id}/{question.topic_id}/{task.question_id}/{timestamp}/final_{filename}"
 
-    # Get presigned upload URL
+    # Upload to S3 via backend
     storage_service = EvalStorageService()
-    upload_url = storage_service.get_presigned_put_url(key)
-    if not upload_url:
+    uploaded_key = storage_service.upload_file(
+        key=key,
+        data=file_content,
+        content_type=content_type,
+        filename=filename,
+    )
+
+    if not uploaded_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate upload URL",
+            detail="Failed to upload file to storage",
         )
 
     return ReportUploadResponse(
-        upload_url=upload_url,
-        key=key,
-        expires_in=3600,
+        key=uploaded_key,
+        filename=filename,
+        file_size=file_size,
+        content_type=content_type,
     )
 
 
@@ -1130,8 +1151,8 @@ def publish_grader_task_with_attachment(
     return _convert_task_to_schema(task)
 
 
-@router.get("/tasks/{task_id}/report/download-url")
-def get_report_download_url(
+@router.get("/tasks/{task_id}/report/download")
+def download_report_file(
     task_id: int,
     version: Optional[str] = Query(
         None, description="Report version: ai, human, or final"
@@ -1140,15 +1161,19 @@ def get_report_download_url(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get a presigned URL for downloading a report file.
+    Download a report file through backend proxy (no S3 URL exposure).
 
     Args:
         task_id: Grading task ID
         version: Report version to download (ai, human, final). Defaults to latest available.
 
     Returns:
-        JSON with download_url and filename
+        File content as StreamingResponse (streaming for better performance)
     """
+    from urllib.parse import quote
+
+    from fastapi.responses import StreamingResponse
+
     from wecode.service.evaluation.storage_service import EvalStorageService
 
     topic_service = get_topic_service()
@@ -1184,6 +1209,7 @@ def get_report_download_url(
     # Determine which S3 path to use
     s3_path = None
     filename = "report.md"
+    content_type = "text/markdown"
 
     if version == "ai":
         s3_path = report_data.get("ai_report", {}).get("s3_path")
@@ -1197,6 +1223,7 @@ def get_report_download_url(
         attachment = final_report.get("attachment")
         if attachment:
             filename = attachment.get("filename", "final_report")
+            content_type = attachment.get("content_type", "application/octet-stream")
         else:
             filename = "final_report.md"
     else:
@@ -1206,6 +1233,7 @@ def get_report_download_url(
             attachment = report_data["final_report"].get("attachment")
             if attachment:
                 filename = attachment.get("filename", "final_report")
+                content_type = attachment.get("content_type", "application/octet-stream")
             else:
                 filename = "final_report.md"
         elif report_data.get("human_report", {}).get("s3_path"):
@@ -1223,19 +1251,41 @@ def get_report_download_url(
             detail="Report file not found in storage",
         )
 
+    # Get file info and stream from S3
     storage_service = EvalStorageService()
-    download_url = storage_service.get_presigned_url(s3_path)
-    if not download_url:
+    file_info = storage_service.get_file_info(s3_path)
+    if file_info is None:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate download URL",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report file not found in storage",
         )
 
-    return {
-        "download_url": download_url,
-        "filename": filename,
-        "s3_path": s3_path,
-    }
+    file_stream = storage_service.get_stream(s3_path)
+    if file_stream is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report file not found in storage",
+        )
+
+    # Use stored content type if available
+    if file_info.get("content_type") and file_info["content_type"] != "application/octet-stream":
+        content_type = file_info["content_type"]
+
+    # RFC 5987 encoding for non-ASCII filenames
+    encoded_filename = quote(filename, safe="")
+    content_disposition = (
+        f'attachment; filename="{encoded_filename}"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
+
+    return StreamingResponse(
+        file_stream,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": content_disposition,
+            "Content-Length": str(file_info.get("size", 0)),
+        },
+    )
 
 
 # ============================================================================

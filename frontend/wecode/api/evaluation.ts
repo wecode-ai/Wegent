@@ -56,8 +56,8 @@ export {
   // Respondents cannot view any grading status or results
 } from './evaluation-respondent'
 
-// Re-export shared file functions
-export { getDownloadUrl, downloadEvaluationFile } from './evaluation-shared'
+// Re-export shared file functions (backend proxy mode - no S3 URL exposure)
+export { downloadEvaluationFile, uploadEvaluationFile } from './evaluation-shared'
 
 // Re-export grader functions with convenient aliases
 export {
