@@ -27,7 +27,7 @@ import {
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useUserContext } from '@/features/common/UserContext'
+import { useUser } from '@/features/common/UserContext'
 import TaskListSection from './TaskListSection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTaskUnread } from '@/utils/taskViewStatus'
@@ -67,7 +67,7 @@ export default function TaskSidebar({
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { user } = useUserContext()
+  const { user } = useUser()
   const { clearAllStreams } = useChatStreamContext()
   const {
     tasks,
