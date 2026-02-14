@@ -563,6 +563,7 @@ class GradingService:
         from app.services.chat.adapters.interface import ChatEventType, ChatRequest
         from app.services.chat.config.chat_config import ChatConfigBuilder
         from app.services.chat.storage.task_manager import get_bot_ids_from_team
+        from sqlalchemy.orm.attributes import flag_modified
 
         logger.info(
             f"[Evaluation] Starting grading execution for task {grading_task_id}"
@@ -1012,12 +1013,13 @@ class GradingService:
                 assistant_subtask.result = {"value": full_response}
                 assistant_subtask.completed_at = datetime.now()
 
-                # Update task status
-                task_json = wegent_task.json
+                # Update task status - must use flag_modified for JSON field changes
+                task_json = wegent_task.json.copy()  # Create a copy to ensure change detection
                 task_json["status"]["status"] = "COMPLETED"
                 task_json["status"]["progress"] = 100
                 task_json["status"]["completedAt"] = datetime.now().isoformat()
                 wegent_task.json = task_json
+                flag_modified(wegent_task, "json")
 
                 # Complete grading task
                 self.complete(
@@ -1035,12 +1037,13 @@ class GradingService:
                 assistant_subtask.result = {"error": error_message}
                 assistant_subtask.completed_at = datetime.now()
 
-                # Update task status
-                task_json = wegent_task.json
+                # Update task status - must use flag_modified for JSON field changes
+                task_json = wegent_task.json.copy()  # Create a copy to ensure change detection
                 task_json["status"]["status"] = "FAILED"
                 task_json["status"]["errorMessage"] = error_message
                 task_json["status"]["completedAt"] = datetime.now().isoformat()
                 wegent_task.json = task_json
+                flag_modified(wegent_task, "json")
 
                 # Fail grading task
                 self.fail(
