@@ -31,6 +31,7 @@ import { CloudDeviceVncPanel } from '@wecode/components/cloud-device'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
 import { cloudDeviceApis } from '@wecode/apis/cloud-devices'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { useDevices } from '@/contexts/DeviceContext'
 
 /**
  * Desktop-specific implementation of Chat Page
@@ -70,6 +71,9 @@ export function ChatPageDesktop() {
 
   // Chat stream context
   const { clearAllStreams } = useChatStreamContext()
+
+  // Device context for cloud device detection
+  const { devices } = useDevices()
 
   // User state for git token check
   const { user } = useUser()
@@ -148,15 +152,13 @@ export function ChatPageDesktop() {
         return
       }
 
-      // Only fetch for cloud devices (device_id starts with 'sandbox-')
-      const deviceId = selectedTaskDetail.device_id
-      if (!deviceId.startsWith('sandbox-')) {
-        return
-      }
+      // Find the device and check if it's a cloud device
+      const device = devices.find(d => d.device_id === selectedTaskDetail.device_id)
+      if (!device || device.device_type !== 'cloud') return
 
       setIsLoadingVnc(true)
       try {
-        const status = await cloudDeviceApis.getCloudDeviceStatus(deviceId)
+        const status = await cloudDeviceApis.getCloudDeviceStatus(selectedTaskDetail.device_id)
         if (status.vnc_url) {
           setVncUrl(status.vnc_url)
           // Auto-open VNC panel by default for cloud devices
@@ -170,7 +172,7 @@ export function ChatPageDesktop() {
     }
 
     fetchCloudDeviceStatus()
-  }, [selectedTaskDetail?.device_id])
+  }, [selectedTaskDetail?.device_id, devices])
 
   // Check if we should show the VNC toggle button
   const showVncToggle = useMemo(() => {

@@ -413,7 +413,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         continue
 
                 # Second pass: IP matching failed, fallback to user-based config
-                # Use the first available cloud device for this user
+                # Only match cloud devices that haven't been bound to an executor yet
+                # (device.name still starts with 'sandbox-', meaning no executor has registered)
                 logger.info(
                     f"[Device WS] IP matching failed, fallback to user-based config: "
                     f"user_id={user_id}"
@@ -424,8 +425,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     if spec.get("deviceType") != DeviceType.CLOUD.value:
                         continue
 
+                    # Skip devices already bound to an executor (name is UUID, not sandbox ID)
                     cloud_config = spec.get("cloudConfig", {})
                     sandbox_id = cloud_config.get("sandboxId", device.name)
+                    if device.name != sandbox_id:
+                        continue
 
                     logger.info(
                         f"[Device WS] User-based cloud device match: "
@@ -462,15 +466,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
         Returns:
             Sandbox ID
         """
+        # Update CRD with executor's device_id
+        # Use deepcopy to ensure SQLAlchemy detects the JSON column change
+        import copy
+
+        from sqlalchemy.orm.attributes import flag_modified
+
         from wecode.service.cloud_device_provider import cloud_device_provider
 
-        # Update CRD with executor's device_id
-        device_json = device.json.copy()
+        device_json = copy.deepcopy(device.json)
         old_device_id = device.name
         device_json["metadata"]["name"] = executor_device_id
         device_json["spec"]["deviceId"] = executor_device_id
         device.name = executor_device_id
         device.json = device_json
+        flag_modified(device, "json")
         db.add(device)
         db.commit()
 

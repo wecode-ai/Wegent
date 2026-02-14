@@ -192,9 +192,11 @@ async def get_cloud_device_nevis_status(
     """Get Nevis sandbox status for a cloud device.
 
     Queries Nevis API for the VM's current status, including IP address.
+    Accepts either the current device_id (UUID) or the original sandbox ID.
+    Internally resolves to sandbox ID from cloudConfig for the Nevis API call.
 
     Args:
-        device_id: Cloud device ID (sandbox ID)
+        device_id: Cloud device ID (UUID or sandbox ID)
 
     Returns:
         NevisSandboxStatus with VM status info
@@ -216,8 +218,12 @@ async def get_cloud_device_nevis_status(
             detail=f"Cloud device '{device_id}' not found",
         )
 
+    # Resolve sandbox ID from cloud_config (device_id may be UUID after executor registration)
+    cloud_config = device_status.get("cloud_config") or {}
+    sandbox_id = cloud_config.get("sandboxId", device_id)
+
     try:
-        nevis_status = await cloud_device_provider.get_nevis_status(device_id)
+        nevis_status = await cloud_device_provider.get_nevis_status(sandbox_id)
         return NevisSandboxStatus(**nevis_status)
 
     except NevisClientError as e:

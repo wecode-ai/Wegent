@@ -4,8 +4,9 @@
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import { ComputerDesktopIcon } from '@heroicons/react/24/outline'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -27,6 +28,8 @@ import { teamService } from '@/features/tasks/service/teamService'
 import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
+import { CloudDeviceVncPanel } from '@wecode/components/cloud-device'
+import { cloudDeviceApis } from '@wecode/apis/cloud-devices'
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
@@ -47,6 +50,11 @@ export default function DeviceChatPage() {
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
+
+  // VNC panel state
+  const [isVncPanelOpen, setIsVncPanelOpen] = useState(false)
+  const [vncUrl, setVncUrl] = useState<string | null>(null)
+  const [isLoadingVnc, setIsLoadingVnc] = useState(false)
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -69,6 +77,41 @@ export default function DeviceChatPage() {
       }
     }
   }, [devices, selectedDeviceId, setSelectedDeviceId])
+
+  // Fetch cloud device VNC URL when task or device changes
+  useEffect(() => {
+    const fetchCloudDeviceStatus = async () => {
+      setVncUrl(null)
+      setIsVncPanelOpen(false)
+
+      // Find the cloud device
+      const deviceId = selectedTaskDetail?.device_id || selectedDeviceId
+      if (!deviceId) return
+
+      const device = devices.find(d => d.device_id === deviceId)
+      if (!device || device.device_type !== 'cloud') return
+
+      setIsLoadingVnc(true)
+      try {
+        const status = await cloudDeviceApis.getCloudDeviceStatus(deviceId)
+        if (status.vnc_url) {
+          setVncUrl(status.vnc_url)
+          setIsVncPanelOpen(true)
+        }
+      } catch (error) {
+        console.error('Failed to fetch cloud device status:', error)
+      } finally {
+        setIsLoadingVnc(false)
+      }
+    }
+
+    fetchCloudDeviceStatus()
+  }, [selectedTaskDetail?.device_id, selectedDeviceId, devices])
+
+  // Check if we should show the VNC toggle button
+  const showVncToggle = useMemo(() => {
+    return !!vncUrl && !isMobile
+  }, [vncUrl, isMobile])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
@@ -176,50 +219,90 @@ export default function DeviceChatPage() {
             </select>
           </div>
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
+          {/* VNC Panel Toggle Button */}
+          {showVncToggle && (
+            <button
+              onClick={() => setIsVncPanelOpen(prev => !prev)}
+              className={`relative w-8 h-8 rounded-[7px] bg-base border border-border hover:bg-hover focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary transition-all duration-200 ${
+                isVncPanelOpen ? 'text-primary border-primary' : ''
+              }`}
+              title={
+                isVncPanelOpen ? t('tasks:cloudDevice.closeVnc') : t('tasks:cloudDevice.openVnc')
+              }
+            >
+              <ComputerDesktopIcon className="w-4 h-4 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
+            </button>
+          )}
+          {isLoadingVnc && (
+            <div className="w-8 h-8 flex items-center justify-center">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+            </div>
+          )}
         </TopNavigation>
 
-        {/* Chat area or placeholder */}
-        {/* Show ChatArea when device is selected OR when viewing an existing task */}
-        {selectedDeviceId || selectedTaskDetail ? (
-          <ChatArea
-            teams={teams}
-            isTeamsLoading={isTeamsLoading}
-            showRepositorySelector={false}
-            taskType="task"
-            onRefreshTeams={handleRefreshTeams}
-            disabledReason={
-              !selectedDevice || selectedDevice.status === 'offline'
-                ? t('device_offline_cannot_send')
-                : undefined
-            }
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center bg-base">
-            <div className="text-center max-w-md px-6">
-              {devices.length === 0 ? (
-                <>
-                  <WifiOff className="w-16 h-16 text-text-muted mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-text-primary mb-2">
-                    {t('no_devices')}
-                  </h3>
-                  <p className="text-sm text-text-muted">{t('instructions')}</p>
-                </>
-              ) : (
-                <>
-                  <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <Monitor className="w-8 h-8 text-primary" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-text-primary mb-2">
-                    {t('select_device')}
-                  </h3>
-                  <p className="text-sm text-text-muted">
-                    {t('select_device_hint') || '从顶部选择一个在线设备开始发送任务'}
-                  </p>
-                </>
-              )}
-            </div>
+        {/* Content area with split layout */}
+        <div className="flex flex-1 min-h-0">
+          {/* Chat area - affected by VNC panel */}
+          <div
+            className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
+            style={{
+              width: isVncPanelOpen && vncUrl ? '60%' : '100%',
+            }}
+          >
+            {/* Show ChatArea when device is selected OR when viewing an existing task */}
+            {selectedDeviceId || selectedTaskDetail ? (
+              <ChatArea
+                teams={teams}
+                isTeamsLoading={isTeamsLoading}
+                showRepositorySelector={false}
+                taskType="task"
+                onRefreshTeams={handleRefreshTeams}
+                disabledReason={
+                  !selectedDevice || selectedDevice.status === 'offline'
+                    ? t('device_offline_cannot_send')
+                    : undefined
+                }
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center bg-base">
+                <div className="text-center max-w-md px-6">
+                  {devices.length === 0 ? (
+                    <>
+                      <WifiOff className="w-16 h-16 text-text-muted mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold text-text-primary mb-2">
+                        {t('no_devices')}
+                      </h3>
+                      <p className="text-sm text-text-muted">{t('instructions')}</p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <Monitor className="w-8 h-8 text-primary" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-text-primary mb-2">
+                        {t('select_device')}
+                      </h3>
+                      <p className="text-sm text-text-muted">
+                        {t('select_device_hint') || '从顶部选择一个在线设备开始发送任务'}
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* VNC Panel - only show if there's a VNC URL */}
+          {vncUrl && (
+            <CloudDeviceVncPanel
+              vncUrl={vncUrl}
+              isOpen={isVncPanelOpen}
+              onClose={() => setIsVncPanelOpen(false)}
+              onOpen={() => setIsVncPanelOpen(true)}
+              deviceName={selectedTaskDetail?.device_id || selectedDeviceId || undefined}
+            />
+          )}
+        </div>
       </div>
     </div>
   )
