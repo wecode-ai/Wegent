@@ -212,6 +212,7 @@
     "select_team_placeholder": "选择一个 AI 智能体",
     "no_team": "不使用智能体（仅手动评分）",
     "no_team_warning": "不配置 AI 智能体时，作答将需要手动评分。",
+    "no_group_teams": "暂无群组智能体，请先创建一个群组智能体用于评分。",
     "all_teams_shown": "显示所有可用的智能体",
     "auto_trigger": "自动触发",
     "auto_trigger_description": "配置何时自动触发 AI 评分。",

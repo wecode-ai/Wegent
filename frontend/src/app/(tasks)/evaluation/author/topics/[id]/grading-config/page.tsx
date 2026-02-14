@@ -42,6 +42,22 @@ const TRIGGER_CONDITIONS = {
 // Special value for "no team selected" - Radix Select doesn't allow empty string
 const NO_TEAM_VALUE = '__none__'
 
+// Check if a team uses Chat shell type (for AI grading)
+function isChatShellTeam(team: Team): boolean {
+  // Check team's agent_type - Chat type is for direct LLM calls
+  const agentType = team.agent_type?.toLowerCase() || ''
+  if (agentType.includes('chat')) {
+    return true
+  }
+  // Check if any bot in the team uses Chat shell
+  return (
+    team.bots?.some(teamBot => {
+      const shellType = teamBot.bot?.shell_type?.toLowerCase() || ''
+      return shellType.includes('chat')
+    }) ?? false
+  )
+}
+
 function GradingConfigContent() {
   const router = useRouter()
   const params = useParams()
@@ -51,7 +67,7 @@ function GradingConfigContent() {
 
   const [topic, setTopic] = useState<Topic | null>(null)
   const [config, setConfig] = useState<GradingConfig | null>(null)
-  const [teams, setTeams] = useState<Team[]>([])
+  const [groupTeams, setGroupTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -64,14 +80,15 @@ function GradingConfigContent() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
+      // Fetch group teams only - grading requires group Teams for resource sharing
       const [topicData, configData, teamsData] = await Promise.all([
         getAuthorTopic(topicId),
         getAuthorGradingConfig(topicId),
-        teamApis.getTeams({ page: 1, limit: 100 }),
+        teamApis.getTeams({ page: 1, limit: 100 }, 'group'),
       ])
       setTopic(topicData)
       setConfig(configData)
-      setTeams(teamsData.items || [])
+      setGroupTeams(teamsData.items || [])
 
       // Populate form state
       setTeamId(configData.team_id?.toString() || NO_TEAM_VALUE)
@@ -122,19 +139,10 @@ function GradingConfigContent() {
     }
   }
 
-  // Filter teams by ClaudeCode shell type (as per spec)
-  const claudeCodeTeams = teams.filter(team => {
-    // Check team's agent_type directly
-    if (team.agent_type?.toLowerCase().includes('claudecode') ||
-        team.agent_type?.toLowerCase().includes('claude')) {
-      return true
-    }
-    // Check if any bot in the team uses ClaudeCode shell
-    return team.bots?.some(
-      teamBot => teamBot.bot?.shell_type?.toLowerCase().includes('claudecode') ||
-                 teamBot.bot?.shell_type?.toLowerCase().includes('claude')
-    )
-  })
+  // Filter teams by Chat shell type (for AI grading via chat_shell service)
+  const chatTeams = groupTeams.filter(isChatShellTeam)
+  // Use Chat teams if available, otherwise show all group teams
+  const availableTeams = chatTeams.length > 0 ? chatTeams : groupTeams
 
   if (loading) {
     return (
@@ -194,14 +202,21 @@ function GradingConfigContent() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_TEAM_VALUE}>{t('grading.no_team')}</SelectItem>
-                  {(claudeCodeTeams.length > 0 ? claudeCodeTeams : teams).map(team => (
+                  {availableTeams.map(team => (
                     <SelectItem key={team.id} value={team.id?.toString() || NO_TEAM_VALUE}>
-                      {team.name || `Team ${team.id}`}
+                      {team.namespace && team.namespace !== 'default'
+                        ? `[${team.namespace}] ${team.name || `Team ${team.id}`}`
+                        : team.name || `Team ${team.id}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {claudeCodeTeams.length === 0 && teams.length > 0 && (
+              {groupTeams.length === 0 && (
+                <p className="text-xs text-amber-600">
+                  {t('grading.no_group_teams')}
+                </p>
+              )}
+              {chatTeams.length === 0 && groupTeams.length > 0 && (
                 <p className="text-xs text-text-muted">
                   {t('grading.all_teams_shown')}
                 </p>

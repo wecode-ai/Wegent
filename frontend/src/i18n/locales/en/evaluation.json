@@ -212,6 +212,7 @@
     "select_team_placeholder": "Select an AI team",
     "no_team": "No team (manual grading only)",
     "no_team_warning": "Without an AI team, answers will need to be graded manually.",
+    "no_group_teams": "No group teams available. Please create a group team for grading.",
     "all_teams_shown": "Showing all available teams",
     "auto_trigger": "Auto Trigger",
     "auto_trigger_description": "Configure when to automatically trigger AI grading.",
