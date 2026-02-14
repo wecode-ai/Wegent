@@ -34,10 +34,11 @@ class TestKBPromptConstants:
         """KB_PROMPT_STRICT should contain strict mode instructions."""
         from shared.prompts import KB_PROMPT_STRICT
 
-        # Check for key phrases in strict mode
-        assert "MUST use" in KB_PROMPT_STRICT
+        # Check for key phrases in strict mode (Intent Routing approach)
+        assert "MUST NOT" in KB_PROMPT_STRICT  # Critical rule for strict mode
         assert "knowledge_base_search" in KB_PROMPT_STRICT
         assert "ONLY" in KB_PROMPT_STRICT or "only" in KB_PROMPT_STRICT
+        assert "Intent Routing" in KB_PROMPT_STRICT  # New routing approach
 
     def test_kb_prompt_relaxed_contains_required_content(self):
         """KB_PROMPT_RELAXED should contain relaxed mode instructions."""
@@ -46,7 +47,9 @@ class TestKBPromptConstants:
         # Check for key phrases in relaxed mode
         assert "knowledge_base_search" in KB_PROMPT_RELAXED
         assert (
-            "general knowledge" in KB_PROMPT_RELAXED or "fallback" in KB_PROMPT_RELAXED
+            "general knowledge" in KB_PROMPT_RELAXED
+            or "fallback" in KB_PROMPT_RELAXED
+            or "Intent Routing" in KB_PROMPT_RELAXED  # New routing approach
         )
 
     def test_prompts_are_different(self):

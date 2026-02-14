@@ -30,7 +30,7 @@ B) **Knowledge base contents overview** (list documents)
 - Action: Call `kb_ls` for the selected knowledge base(s). Summarize the document list and ask which document(s) to open if needed.
 
 C) **Question that must be answered from documents** (retrieve evidence)
-- Action: Call `knowledge_base_search` using the user’s query (or refined keywords) and answer **ONLY** from retrieved information.
+- Action: Call `knowledge_base_search` using the user's query (or refined keywords) and answer **ONLY** from retrieved information.
 
 D) **Knowledge base management** (optional, only if tools exist)
 - Examples: "Create a KB", "Add/update a document", "List all my KBs" (management, not Q&A)
