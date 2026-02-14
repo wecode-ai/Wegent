@@ -640,6 +640,38 @@ class GradingService:
                 db.commit()
                 return
 
+            # Validate that the Team is a group Team (namespace != 'default' and != 'system')
+            # This ensures proper resource sharing between creator and grader
+            if team.namespace in ("default", "system"):
+                logger.error(
+                    f"[Evaluation] Team {team_id} is not a group Team (namespace: {team.namespace})"
+                )
+                grading_task.status = GradingTaskStatus.FAILED
+                grading_task.error_message = (
+                    "The grading team must be a group team, not a private team. "
+                    "Please ask the topic creator to configure a group team for grading."
+                )
+                grading_task.completed_at = datetime.now()
+                db.commit()
+                return
+
+            # Verify that grader has access to the team's namespace (group)
+            from app.services.group_permission import get_user_groups
+
+            user_groups = get_user_groups(db, user_id)
+            if team.namespace not in user_groups:
+                logger.error(
+                    f"[Evaluation] User {user_id} does not have access to group {team.namespace}"
+                )
+                grading_task.status = GradingTaskStatus.FAILED
+                grading_task.error_message = (
+                    f"You do not have access to the grading team's group '{team.namespace}'. "
+                    "Please contact the group administrator to grant you access."
+                )
+                grading_task.completed_at = datetime.now()
+                db.commit()
+                return
+
             # Build chat configuration using ChatConfigBuilder
             # This resolves Bot, Model, Ghost and builds system prompt
             config_builder = ChatConfigBuilder(
