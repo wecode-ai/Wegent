@@ -29,7 +29,7 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import {
   getGraderAnswer,
   getGraderQuestion,
@@ -173,7 +173,7 @@ function GraderAnswerContent() {
     )
   }
 
-  // Render content data (text, url, attachments)
+  // Render content data (text, url, attachments) with Markdown support
   const renderContentData = (
     contentData: Record<string, unknown> | undefined,
     showEmpty: boolean = true
@@ -184,11 +184,14 @@ function GraderAnswerContent() {
 
     const elements: React.ReactNode[] = []
 
-    // Handle text content
+    // Handle text content - render as Markdown
     if (typeof contentData.text === 'string' && contentData.text) {
       elements.push(
-        <div key="text">
-          <p className="whitespace-pre-wrap">{contentData.text}</p>
+        <div key="text" className="markdown-content">
+          <EnhancedMarkdown
+            source={contentData.text}
+            theme={theme === 'dark' ? 'dark' : 'light'}
+          />
         </div>
       )
     }
@@ -410,7 +413,7 @@ function GraderAnswerContent() {
     }
 
     return (
-      <div className="rounded-lg bg-surface p-4">
+      <div className="markdown-content rounded-lg bg-surface p-4">
         <EnhancedMarkdown source={content} theme={theme === 'dark' ? 'dark' : 'light'} />
       </div>
     )

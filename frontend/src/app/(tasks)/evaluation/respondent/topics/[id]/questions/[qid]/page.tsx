@@ -28,7 +28,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
-import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import {
   respondentGetQuestion,
   respondentSubmitAnswer,
@@ -39,6 +39,7 @@ import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
 import { ContentType, type Question, type Answer, type Topic, type EvalAttachment } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatFileSize } from '@/apis/attachments'
+import { MAX_BATCH_FILES } from '@/hooks/useBatchAttachment'
 
 function RespondentQuestionDetailContent() {
   const params = useParams()
@@ -210,25 +211,16 @@ function RespondentQuestionDetailContent() {
         </Alert>
       )}
 
-      {/* Question Card - Markdown rendered, no back navigation */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle>{question.title}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {typeof question.content_data?.text === 'string' && question.content_data.text ? (
-            <div className="rounded-lg border border-border bg-surface p-4">
-              <EnhancedMarkdown
-                source={question.content_data.text}
-                theme={theme === 'dark' ? 'dark' : 'light'}
-              />
-            </div>
-          ) : (
-            <p className="text-text-muted">{t('questions.no_content')}</p>
-          )}
-          {/* NOTE: Grading criteria (criteria_data) is intentionally NOT displayed for respondents */}
-        </CardContent>
-      </Card>
+      {/* Question Content - Markdown rendered directly without Card wrapper, no title */}
+      {typeof question.content_data?.text === 'string' && question.content_data.text && (
+        <div className="markdown-content mb-8">
+          <EnhancedMarkdown
+            source={question.content_data.text}
+            theme={theme === 'dark' ? 'dark' : 'light'}
+          />
+        </div>
+      )}
+      {/* NOTE: Grading criteria (criteria_data) is intentionally NOT displayed for respondents */}
 
       {/* Answer Submission Form - Fixed to MIXED mode (attachments first, then text) */}
       <Card className="mb-8">
@@ -251,7 +243,7 @@ function RespondentQuestionDetailContent() {
               fileType="answer_attachment"
               attachments={answerAttachments}
               onChange={setAnswerAttachments}
-              maxFiles={10}
+              maxFiles={MAX_BATCH_FILES}
             />
           </div>
 
