@@ -554,6 +554,8 @@ class GradingService:
         title = f"Grading Task #{grading_task.id}"
 
         # Create Workspace
+        # Use 'system' namespace to hide from user's task list (sidebar history)
+        # Evaluation grading tasks are managed in the evaluation module, not main task list
         workspace_name = f"workspace-{task_id}"
         workspace_json = {
             "kind": "Workspace",
@@ -567,7 +569,7 @@ class GradingService:
                 }
             },
             "status": {"state": "Available"},
-            "metadata": {"name": workspace_name, "namespace": "default"},
+            "metadata": {"name": workspace_name, "namespace": "system"},
             "apiVersion": "agent.wecode.io/v1",
         }
 
@@ -575,7 +577,7 @@ class GradingService:
             user_id=user_id,
             kind="Workspace",
             name=workspace_name,
-            namespace="default",
+            namespace="system",
             json=workspace_json,
             is_active=True,
         )
@@ -583,6 +585,7 @@ class GradingService:
 
         # Create Task JSON
         # Note: We store team.user_id in teamRef to maintain proper reference
+        # Use 'system' namespace to hide from user's task list
         task_json = {
             "kind": "Task",
             "spec": {
@@ -593,7 +596,7 @@ class GradingService:
                     "namespace": team.namespace,
                     "user_id": team.user_id,  # Team owner's user_id
                 },
-                "workspaceRef": {"name": workspace_name, "namespace": "default"},
+                "workspaceRef": {"name": workspace_name, "namespace": "system"},
             },
             "status": {
                 "state": "Available",
@@ -607,7 +610,7 @@ class GradingService:
             },
             "metadata": {
                 "name": f"task-{task_id}",
-                "namespace": "default",
+                "namespace": "system",
                 "labels": {
                     "type": "online",
                     "taskType": "chat",
@@ -623,7 +626,7 @@ class GradingService:
             user_id=user_id,
             kind="Task",
             name=f"task-{task_id}",
-            namespace="default",
+            namespace="system",
             json=task_json,
             is_active=True,
         )
