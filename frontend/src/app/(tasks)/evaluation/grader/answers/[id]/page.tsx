@@ -9,7 +9,6 @@ import { useRouter, useParams } from 'next/navigation'
 import {
   ArrowLeft,
   Play,
-  Send,
   Edit,
   RotateCcw,
   Save,
