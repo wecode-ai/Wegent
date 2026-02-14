@@ -31,7 +31,9 @@ The report_data JSON field stores versioned report content:
 }
 """
 
+import asyncio
 import logging
+import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -455,9 +457,14 @@ class GradingService:
         user_id: int,
     ) -> EvalGradingTask:
         """
-        Execute a grading task using Wegent Team.
+        Execute a grading task using chat_shell service directly.
 
-        This creates a Wegent Task to run the AI grading.
+        This method calls chat_shell via HTTP to perform AI grading, without
+        creating Wegent Tasks or using the executor. This is because Chat shell
+        type is not supported by the executor.
+
+        The actual AI call runs in the background, so this method returns
+        immediately after starting the grading task.
 
         Note: This method bypasses normal Team permission checks because:
         1. The grader has already been verified to have grading permission for the topic
@@ -473,6 +480,9 @@ class GradingService:
         Returns:
             Updated grading task
         """
+        from app.models.kind import Kind
+        from app.models.user import User
+
         # Update task status
         task.status = GradingTaskStatus.RUNNING
         task.team_id = team_id
@@ -500,265 +510,284 @@ class GradingService:
             db.flush()
             return task
 
-        # Create Wegent Task directly (bypassing permission check)
-        # This is intentional because the grader has evaluation permission,
-        # and the team_id is configured by the topic creator
-        try:
-            wegent_task_id = self._create_wegent_task_for_grading(
-                db, task, team_id, user_id, prompt, attachments
-            )
-            task.task_id = wegent_task_id
-
-            logger.info(
-                f"[Evaluation] Created Wegent Task {wegent_task_id} for grading task {task.id}"
-            )
-
-        except Exception as e:
-            logger.error(
-                f"[Evaluation] Failed to create Wegent Task for grading task {task.id}: {e}"
-            )
-            task.status = GradingTaskStatus.FAILED
-            task.error_message = f"Failed to create execution task: {str(e)[:200]}"
-            task.completed_at = datetime.now()
-
-        db.flush()
-        return task
-
-    def _create_wegent_task_for_grading(
-        self,
-        db: Session,
-        grading_task: EvalGradingTask,
-        team_id: int,
-        user_id: int,
-        prompt: str,
-        attachments: Optional[List[Dict]] = None,
-    ) -> int:
-        """
-        Create a Wegent Task for grading, bypassing normal permission checks.
-
-        This method directly creates the Task and Workspace records without
-        going through task_kinds_service, because the grader has already been
-        verified to have evaluation permission for the topic.
-
-        Attachments from evaluation (questions, criteria, answers) are copied
-        to SubtaskContext and linked to the user_subtask, allowing the executor
-        to download them via the standard attachment mechanism.
-
-        Args:
-            db: Database session
-            grading_task: The evaluation grading task
-            team_id: Team ID to use for grading
-            user_id: User ID of the grader
-            prompt: The grading prompt
-            attachments: Optional list of attachment info dicts with key, filename, content_type
-
-        Returns:
-            The created Wegent Task ID
-        """
-        from sqlalchemy import text
-
-        from app.models.kind import Kind
-        from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-        from app.models.task import TaskResource
-        from app.models.user import User
-        from app.schemas.kind import Team as TeamSchema
-        from app.services.readers.kinds import KindType, kindReader
-
-        # Get Team by ID directly (no permission check - intentional)
+        # Get Team for configuration
         team = db.query(Kind).filter(Kind.id == team_id, Kind.is_active == True).first()
         if not team:
-            raise ValueError(f"Team {team_id} not found")
-
-        # Validate Team has valid bot members BEFORE creating any resources
-        # This prevents the "Unable to get or create agent" error in executor
-        bot_ids = self._get_bot_ids_for_team(db, team)
-        if not bot_ids:
-            raise ValueError(
-                f"Team '{team.name}' (id={team_id}) has no valid bot members. "
-                "Please ensure the team has at least one bot with a valid shell configuration."
-            )
+            task.status = GradingTaskStatus.FAILED
+            task.error_message = f"Team {team_id} not found"
+            task.completed_at = datetime.now()
+            db.flush()
+            return task
 
         # Get user
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            raise ValueError(f"User {user_id} not found")
+            task.status = GradingTaskStatus.FAILED
+            task.error_message = f"User {user_id} not found"
+            task.completed_at = datetime.now()
+            db.flush()
+            return task
 
-        # Allocate task ID using the same logic as task_kinds_service
-        existing_placeholder = db.execute(
-            text("""
-            SELECT id FROM tasks
-            WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
-            LIMIT 1
-        """),
-            {"user_id": user_id},
-        ).fetchone()
+        # Extract task ID for logging (use grading task ID as reference)
+        grading_task_id = task.id
+        team_user_id = team.user_id
+        user_name_for_task = user.name
 
-        if existing_placeholder:
-            task_id = existing_placeholder[0]
-            db.execute(text("DELETE FROM tasks WHERE id = :id"), {"id": task_id})
-        else:
-            import json as json_lib
+        # Start background thread to run async chat_shell execution
+        # We use threading because this is called from a sync context (FastAPI sync endpoint)
+        def run_grading_in_thread():
+            """Run the async grading task in a new event loop."""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(
+                    self._execute_grading_with_chat_shell(
+                        grading_task_id=grading_task_id,
+                        team_id=team_id,
+                        team_user_id=team_user_id,
+                        user_id=user_id,
+                        user_name=user_name_for_task,
+                        prompt=prompt,
+                        attachments=attachments,
+                    )
+                )
+            finally:
+                loop.close()
 
-            placeholder_json = {
-                "kind": "Placeholder",
-                "metadata": {"name": "temp-placeholder", "namespace": "default"},
-                "spec": {},
-                "status": {"state": "Reserved"},
-            }
-            result = db.execute(
-                text("""
-                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
-                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, NOW(), NOW())
-            """),
-                {"user_id": user_id, "json": json_lib.dumps(placeholder_json)},
-            )
-            task_id = result.lastrowid
-            if not task_id:
-                raise ValueError("Failed to allocate task ID")
-            db.execute(text("DELETE FROM tasks WHERE id = :id"), {"id": task_id})
+        try:
+            # Start background thread
+            thread = threading.Thread(target=run_grading_in_thread, daemon=True)
+            thread.start()
 
-        # Generate title
-        title = f"Grading Task #{grading_task.id}"
-
-        # Create Workspace
-        # Use 'system' namespace to hide from user's task list (sidebar history)
-        # Evaluation grading tasks are managed in the evaluation module, not main task list
-        workspace_name = f"workspace-{task_id}"
-        workspace_json = {
-            "kind": "Workspace",
-            "spec": {
-                "repository": {
-                    "gitUrl": "",
-                    "gitRepo": "",
-                    "gitRepoId": 0,
-                    "gitDomain": "",
-                    "branchName": "",
-                }
-            },
-            "status": {"state": "Available"},
-            "metadata": {"name": workspace_name, "namespace": "system"},
-            "apiVersion": "agent.wecode.io/v1",
-        }
-
-        workspace = TaskResource(
-            user_id=user_id,
-            kind="Workspace",
-            name=workspace_name,
-            namespace="system",
-            json=workspace_json,
-            is_active=True,
-        )
-        db.add(workspace)
-
-        # Create Task JSON
-        # Note: We store team.user_id in teamRef to maintain proper reference
-        # Use 'system' namespace to hide from user's task list
-        task_json = {
-            "kind": "Task",
-            "spec": {
-                "title": title,
-                "prompt": prompt,
-                "teamRef": {
-                    "name": team.name,
-                    "namespace": team.namespace,
-                    "user_id": team.user_id,  # Team owner's user_id
-                },
-                "workspaceRef": {"name": workspace_name, "namespace": "system"},
-            },
-            "status": {
-                "state": "Available",
-                "status": "PENDING",
-                "progress": 0,
-                "result": None,
-                "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-                "completedAt": None,
-            },
-            "metadata": {
-                "name": f"task-{task_id}",
-                "namespace": "system",
-                "labels": {
-                    "type": "online",
-                    "taskType": "chat",
-                    "autoDeleteExecutor": "true",
-                    "source": "evaluation",
-                },
-            },
-            "apiVersion": "agent.wecode.io/v1",
-        }
-
-        wegent_task = TaskResource(
-            id=task_id,
-            user_id=user_id,
-            kind="Task",
-            name=f"task-{task_id}",
-            namespace="system",
-            json=task_json,
-            is_active=True,
-        )
-        db.add(wegent_task)
-
-        # bot_ids was already validated at the beginning of this method
-        # No need to re-fetch here
-
-        # Create subtasks (user message and assistant placeholder)
-        # Using the correct Subtask model fields based on shared/models/db/subtask.py
-        user_subtask = Subtask(
-            task_id=task_id,
-            user_id=user_id,
-            team_id=team_id,
-            title=f"{title} - User",
-            bot_ids=bot_ids,
-            role=SubtaskRole.USER,
-            status=SubtaskStatus.COMPLETED,
-            progress=100,
-            prompt=prompt,
-            message_id=1,
-            parent_id=0,
-            executor_namespace="",
-            executor_name="",
-            error_message="",
-            completed_at=datetime.now(),
-            result=None,
-        )
-        db.add(user_subtask)
-        db.flush()  # Get user_subtask.id
-
-        # Copy evaluation attachments to SubtaskContext for executor access
-        if attachments:
-            self._copy_attachments_to_subtask_context(
-                db, user_subtask.id, user_id, attachments
+            logger.info(
+                f"[Evaluation] Started background chat_shell execution for grading task {grading_task_id}"
             )
 
-        assistant_subtask = Subtask(
-            task_id=task_id,
-            user_id=user_id,
-            team_id=team_id,
-            title=f"{title} - Assistant",
-            bot_ids=bot_ids,
-            role=SubtaskRole.ASSISTANT,
-            status=SubtaskStatus.PENDING,
-            progress=0,
-            prompt="",
-            message_id=2,
-            parent_id=1,
-            executor_namespace="",
-            executor_name="",
-            error_message="",
-            completed_at=datetime.now(),
-            result=None,
+        except Exception as e:
+            logger.error(
+                f"[Evaluation] Failed to start background task for grading task {grading_task_id}: {e}"
+            )
+            task.status = GradingTaskStatus.FAILED
+            task.error_message = f"Failed to start AI grading: {str(e)[:200]}"
+            task.completed_at = datetime.now()
+            db.flush()
+
+        return task
+
+    async def _execute_grading_with_chat_shell(
+        self,
+        grading_task_id: int,
+        team_id: int,
+        team_user_id: int,
+        user_id: int,
+        user_name: str,
+        prompt: str,
+        attachments: List[Dict],
+    ) -> None:
+        """
+        Execute grading by calling chat_shell service directly.
+
+        This async method is run in the background to avoid blocking the API.
+        It builds a ChatRequest, calls chat_shell via HTTP, collects the response,
+        and updates the grading task with the result.
+
+        Args:
+            grading_task_id: ID of the evaluation grading task
+            team_id: Team ID for grading
+            team_user_id: User ID of the team owner
+            user_id: User ID of the grader
+            user_name: Name of the grader
+            prompt: The grading prompt
+            attachments: List of attachment info dicts
+        """
+        from app.core.config import settings
+        from app.services.chat.adapters.http import HTTPAdapter
+        from app.services.chat.adapters.interface import ChatEventType, ChatRequest
+        from app.services.chat.config.chat_config import ChatConfigBuilder
+
+        logger.info(
+            f"[Evaluation] Starting chat_shell execution for grading task {grading_task_id}"
         )
-        db.add(assistant_subtask)
 
-        db.flush()
+        # Create a new database session for async operation
+        from app.db.session import SessionLocal
 
-        # Dispatch task to executor_manager
-        from app.services.task_dispatcher import task_dispatcher
+        db = SessionLocal()
 
-        task_dispatcher.schedule_dispatch(task_id)
+        try:
+            # Reload grading task from DB
+            grading_task = (
+                db.query(EvalGradingTask)
+                .filter(EvalGradingTask.id == grading_task_id)
+                .first()
+            )
+            if not grading_task:
+                logger.error(
+                    f"[Evaluation] Grading task {grading_task_id} not found in background task"
+                )
+                return
 
-        return task_id
+            # Get Team for configuration
+            from app.models.kind import Kind
+
+            team = (
+                db.query(Kind).filter(Kind.id == team_id, Kind.is_active == True).first()
+            )
+            if not team:
+                grading_task.status = GradingTaskStatus.FAILED
+                grading_task.error_message = f"Team {team_id} not found"
+                grading_task.completed_at = datetime.now()
+                db.commit()
+                return
+
+            # Build chat configuration using ChatConfigBuilder
+            # This resolves Bot, Model, Ghost and builds system prompt
+            config_builder = ChatConfigBuilder(
+                db=db,
+                team=team,
+                user_id=team_user_id,  # Use team owner's user_id for resource resolution
+                user_name=user_name,
+            )
+
+            try:
+                chat_config = config_builder.build(
+                    enable_deep_thinking=False,  # Grading doesn't need deep thinking
+                    enable_clarification=False,
+                )
+            except Exception as e:
+                logger.error(
+                    f"[Evaluation] Failed to build chat config for grading task {grading_task_id}: {e}"
+                )
+                grading_task.status = GradingTaskStatus.FAILED
+                grading_task.error_message = f"Failed to configure AI: {str(e)[:200]}"
+                grading_task.completed_at = datetime.now()
+                db.commit()
+                return
+
+            # Create ChatRequest
+            # Use grading_task_id as a pseudo task/subtask ID for tracking
+            chat_request = ChatRequest(
+                task_id=grading_task_id,
+                subtask_id=grading_task_id,
+                message=prompt,
+                user_id=user_id,
+                user_name=user_name,
+                team_id=team_id,
+                team_name=team.name,
+                request_id=f"eval-grading-{grading_task_id}",
+                model_config=chat_config.model_config,
+                system_prompt=chat_config.system_prompt,
+                enable_tools=False,  # Grading doesn't need tools
+                enable_web_search=False,
+                enable_clarification=False,
+                enable_deep_thinking=False,
+                bot_name=chat_config.bot_name,
+                bot_namespace=chat_config.bot_namespace,
+            )
+
+            # Create HTTP adapter to call chat_shell
+            chat_shell_url = getattr(settings, "CHAT_SHELL_URL", "http://localhost:8001")
+            chat_shell_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "")
+
+            adapter = HTTPAdapter(
+                base_url=chat_shell_url,
+                token=chat_shell_token,
+                timeout=600.0,  # 10 minutes timeout for grading
+            )
+
+            logger.info(
+                f"[Evaluation] Calling chat_shell for grading task {grading_task_id} "
+                f"(url={chat_shell_url})"
+            )
+
+            # Stream response and collect content
+            full_response = ""
+            error_message = ""
+
+            try:
+                async for event in adapter.chat(chat_request):
+                    if event.type == ChatEventType.CHUNK:
+                        chunk_text = event.data.get("content", "")
+                        if chunk_text:
+                            full_response += chunk_text
+
+                    elif event.type == ChatEventType.DONE:
+                        # Done event may contain final result
+                        result = event.data.get("result", {})
+                        if result.get("content"):
+                            # Use final content if different from accumulated
+                            final_content = result.get("content", "")
+                            if final_content and len(final_content) > len(full_response):
+                                full_response = final_content
+                        logger.info(
+                            f"[Evaluation] Chat completed for grading task {grading_task_id}"
+                        )
+                        break
+
+                    elif event.type == ChatEventType.ERROR:
+                        error_message = event.data.get("error", "Unknown error")
+                        logger.error(
+                            f"[Evaluation] Chat error for grading task {grading_task_id}: {error_message}"
+                        )
+                        break
+
+                    elif event.type == ChatEventType.CANCELLED:
+                        error_message = "Chat was cancelled"
+                        logger.warning(
+                            f"[Evaluation] Chat cancelled for grading task {grading_task_id}"
+                        )
+                        break
+
+            except Exception as e:
+                error_message = f"Chat shell communication error: {str(e)}"
+                logger.exception(
+                    f"[Evaluation] Exception during chat for grading task {grading_task_id}"
+                )
+
+            # Reload grading task to get fresh state (in case it was modified)
+            db.refresh(grading_task)
+
+            # Update grading task with result
+            if full_response and not error_message:
+                # Success - complete the task
+                self.complete(
+                    db=db,
+                    task=grading_task,
+                    report_content=full_response,
+                )
+                logger.info(
+                    f"[Evaluation] Successfully completed grading task {grading_task_id} "
+                    f"(response length: {len(full_response)})"
+                )
+            else:
+                # Failed
+                self.fail(
+                    db=db,
+                    task=grading_task,
+                    error_message=error_message or "No response from AI",
+                )
+
+            db.commit()
+
+        except Exception as e:
+            logger.exception(
+                f"[Evaluation] Unexpected error in background grading task {grading_task_id}"
+            )
+            try:
+                grading_task = (
+                    db.query(EvalGradingTask)
+                    .filter(EvalGradingTask.id == grading_task_id)
+                    .first()
+                )
+                if grading_task:
+                    grading_task.status = GradingTaskStatus.FAILED
+                    grading_task.error_message = f"Unexpected error: {str(e)[:200]}"
+                    grading_task.completed_at = datetime.now()
+                    db.commit()
+            except Exception:
+                pass
+        finally:
+            db.close()
 
     def complete(
         self,
@@ -1077,121 +1106,3 @@ class GradingService:
                 tasks.append(updated)
 
         return tasks
-
-    def _get_bot_ids_for_team(self, db: Session, team: "Kind") -> List[int]:
-        """
-        Get bot IDs for a team, ensuring all bots are valid Bot kind resources.
-
-        This method validates that the team has valid bot members before
-        creating any grading tasks. It prevents the "Unable to get or create agent"
-        error in executor by catching invalid configurations early.
-
-        Args:
-            db: Database session
-            team: Team Kind resource
-
-        Returns:
-            List of valid Bot kind IDs
-
-        Raises:
-            No exceptions - returns empty list if no valid bots found
-        """
-        from app.schemas.kind import Team as TeamSchema
-        from app.services.readers.kinds import KindType, kindReader
-
-        bot_ids = []
-        try:
-            team_crd = TeamSchema.model_validate(team.json)
-            if team_crd.spec.members:
-                for member in team_crd.spec.members:
-                    bot = kindReader.get_by_name_and_namespace(
-                        db,
-                        team.user_id,
-                        KindType.BOT,
-                        member.botRef.namespace,
-                        member.botRef.name,
-                    )
-                    if bot:
-                        bot_ids.append(bot.id)
-                    else:
-                        logger.warning(
-                            f"[Evaluation] Bot not found: namespace={member.botRef.namespace}, "
-                            f"name={member.botRef.name}, team_user_id={team.user_id}"
-                        )
-        except Exception as e:
-            logger.warning(f"[Evaluation] Failed to get bot_ids from team: {e}")
-
-        return bot_ids
-
-    def _copy_attachments_to_subtask_context(
-        self,
-        db: Session,
-        subtask_id: int,
-        user_id: int,
-        attachments: List[Dict],
-    ) -> List[int]:
-        """
-        Copy evaluation attachments to SubtaskContext for executor access.
-
-        This method downloads files from the evaluation S3 storage and
-        creates SubtaskContext records linked to the grading subtask.
-        The executor will then be able to download these attachments
-        through the standard attachment mechanism.
-
-        Args:
-            db: Database session
-            subtask_id: Subtask ID to link attachments to
-            user_id: User ID for the context
-            attachments: List of attachment info dicts with key, filename, content_type
-
-        Returns:
-            List of created SubtaskContext IDs
-        """
-        from wecode.service.evaluation.storage_service import EvalStorageService
-
-        if not attachments:
-            return []
-
-        storage_service = EvalStorageService()
-        context_ids = []
-
-        for att in attachments:
-            key = att.get("key")
-            filename = att.get("filename", "unknown")
-
-            if not key:
-                continue
-
-            try:
-                # Download file from evaluation S3 storage
-                binary_data = storage_service.get(key)
-                if not binary_data:
-                    logger.warning(
-                        f"[Evaluation] Could not download attachment {filename} from S3"
-                    )
-                    continue
-
-                # Create SubtaskContext using the context service
-                from app.services.context.context_service import context_service
-
-                context, _ = context_service.upload_attachment(
-                    db=db,
-                    user_id=user_id,
-                    filename=filename,
-                    binary_data=binary_data,
-                    subtask_id=subtask_id,  # Directly link to subtask
-                )
-
-                context_ids.append(context.id)
-                logger.info(
-                    f"[Evaluation] Copied attachment {filename} to SubtaskContext {context.id}"
-                )
-
-            except Exception as e:
-                logger.error(f"[Evaluation] Failed to copy attachment {filename}: {e}")
-                continue
-
-        logger.info(
-            f"[Evaluation] Copied {len(context_ids)} attachments to subtask {subtask_id}"
-        )
-        return context_ids

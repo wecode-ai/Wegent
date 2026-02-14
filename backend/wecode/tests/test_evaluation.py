@@ -367,7 +367,7 @@ class TestGradingService:
         assert added_task.status == GradingTaskStatus.PENDING
 
     def test_execute_grading_task(self, grading_service, mock_db):
-        """Test executing a grading task - fails when build_grading_prompt fails."""
+        """Test executing a grading task - fails when Team not found."""
         mock_task = MagicMock()
         mock_task.status = GradingTaskStatus.PENDING
         mock_task.id = 1
@@ -377,13 +377,17 @@ class TestGradingService:
         mock_task.respondent_id = 2
         mock_task.attempt_count = 0
 
-        # Execute will fail during build_grading_prompt because of mock limitations
-        # This tests the error handling path
+        # Mock the query to return None for Team (simulating Team not found)
+        mock_query = MagicMock()
+        mock_query.filter.return_value.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        # Execute will set status to RUNNING first, then fail when Team not found
         result = grading_service.execute(mock_db, mock_task, team_id=123, user_id=1)
 
-        # Task should be FAILED because build_grading_prompt failed
+        # Task should be FAILED because Team was not found
         assert mock_task.status == GradingTaskStatus.FAILED
-        assert mock_task.error_message is not None
+        assert "not found" in mock_task.error_message.lower()
 
     def test_complete_grading_task(self, grading_service, mock_db):
         """Test completing a grading task."""
