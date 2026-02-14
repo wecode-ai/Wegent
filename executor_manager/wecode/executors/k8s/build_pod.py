@@ -63,25 +63,23 @@ def build_pod_configuration(
     # Load the template
     template = env.get_template("pod_template.yaml")
 
-    # Extract metadata from task - all task-specific fields are in metadata
-    metadata = task.get("metadata", {})
-
     repo_proxy_config = {}
+    metadata = task.get("metadata", {})
     if "github.com" in metadata.get("git_domain", ""):
         repo_proxy_config = REPO_PROXY_CONFIG
 
-    volumes_info = build_pod_volumes(task, metadata)
+    volumes_info = build_pod_volumes(task)
 
     # Check if we should use InitContainer pattern (base_image support)
-    base_image = _get_base_image_from_task(metadata)
+    base_image = _get_base_image_from_task(task)
     use_init_container = should_use_init_container(base_image)
 
     # Check task type for sandbox/subagent support
-    task_type = metadata.get("type", "online")
+    task_type = task.get("type", "online")
     is_sandbox = task_type == "sandbox"
 
     # Get sandbox metadata for e2b protocol support
-    sandbox_metadata = metadata.get("sandbox_metadata", {})
+    sandbox_metadata = task.get("sandbox_metadata", {})
     sandbox_id = sandbox_metadata.get("sandbox_id")
 
     # Compute heartbeat ID and type for OOM detection
@@ -137,9 +135,9 @@ def build_pod_configuration(
         "namespace": namespace,
         "task_str": json.dumps(task),
         "image": container_image,
-        "auth_token": metadata.get("auth_token"),
+        "auth_token": task.get("auth_token"),
         "task_id": task_id,
-        "task_type": metadata.get("type", "online"),
+        "task_type": task.get("type", "online"),
         "mode": mode,
         "executor_env": EXECUTOR_ENV,
         "repo_proxy_config": repo_proxy_config,
@@ -185,17 +183,17 @@ def build_pod_configuration(
     return pod_config
 
 
-def _get_base_image_from_task(metadata):
+def _get_base_image_from_task(task):
     """
     Extract custom base_image from task's bot configuration.
 
     Args:
-        metadata: Task metadata dictionary containing bot information
+        task: Task dictionary containing bot information
 
     Returns:
         Optional[str]: base_image if found, None otherwise
     """
-    bots = metadata.get("bot", [])
+    bots = task.get("bot", [])
     if bots and isinstance(bots, list) and len(bots) > 0:
         # Use the first bot's base_image if available
         first_bot = bots[0]
@@ -204,18 +202,17 @@ def _get_base_image_from_task(metadata):
     return None
 
 
-def build_pod_volumes(task, metadata):
+def build_pod_volumes(task):
     """
     Build Kubernetes pod volumes configuration for Git SSH access
 
     Args:
-        task: Task dictionary (full task payload)
-        metadata: Task metadata dictionary containing user information
+        task: Task dictionary containing user information
 
     Returns:
         dict: Volume mounts and volumes configuration
     """
-    user_info = metadata.get("user", {})
+    user_info = task.get("user", {})
     user_name = user_info.get("name", "").replace("_", "--")
     git_domain = user_info.get("git_domain", "")
 
