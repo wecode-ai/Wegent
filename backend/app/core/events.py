@@ -176,35 +176,6 @@ class EventBus:
         """
         # Skip event publishing in Celery worker context
         # WebSocket operations don't work across process boundaries
-        from app.services.chat.ws_emitter import get_ws_emitter
-
-        ws_emitter = get_ws_emitter()
-        if ws_emitter is None:
-            # Log detailed info for debugging subscription execution status issue
-            import threading
-
-            logger.warning(
-                "[EVENT_BUS] get_ws_emitter() returned None for event %s - "
-                "thread=%s, thread_id=%s, is_daemon=%s. "
-                "This may cause subscription execution status not to update!",
-                type(event).__name__,
-                threading.current_thread().name,
-                threading.current_thread().ident,
-                threading.current_thread().daemon,
-            )
-            # For TaskCompletedEvent, we should NOT skip - it's needed for subscription status update
-            # The handler (SubscriptionTaskCompletionHandler) doesn't need WebSocket
-            if type(event).__name__ == "TaskCompletedEvent":
-                logger.info(
-                    "[EVENT_BUS] TaskCompletedEvent detected, proceeding despite no ws_emitter "
-                    "(subscription status update doesn't need WebSocket)"
-                )
-            else:
-                logger.info(
-                    "[EVENT_BUS] Skipping event %s - not in FastAPI context (likely Celery worker)",
-                    type(event).__name__,
-                )
-                return
 
         event_type = type(event)
         handlers = self._handlers.get(event_type, [])

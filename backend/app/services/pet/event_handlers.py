@@ -37,11 +37,12 @@ async def handle_chat_completed(event: ChatCompletedEvent) -> None:
     """
     logger.info("[PET] handle_chat_completed called: user_id=%d", event.user_id)
     try:
-        # Import pet WebSocket emitter from pet module
-        from app.services.pet.ws_emitter import (
-            emit_pet_experience_gained,
-            emit_pet_stage_evolved,
+        # Use ExtendedEventEmitter for pet events
+        from backend.app.services.chat.webpage_ws_extended_emitter import (
+            get_extended_emitter,
         )
+
+        extended_emitter = get_extended_emitter()
 
         db = SessionLocal()
         try:
@@ -65,7 +66,7 @@ async def handle_chat_completed(event: ChatCompletedEvent) -> None:
             )
 
             # Emit experience gained event
-            await emit_pet_experience_gained(
+            await extended_emitter.emit_pet_experience_gained(
                 user_id=event.user_id,
                 amount=exp_gained,
                 total=total_exp,
@@ -77,7 +78,7 @@ async def handle_chat_completed(event: ChatCompletedEvent) -> None:
             if evolved:
                 new_stage = spec.get("stage", 1)
                 old_stage = new_stage - 1
-                await emit_pet_stage_evolved(
+                await extended_emitter.emit_pet_stage_evolved(
                     user_id=event.user_id,
                     old_stage=old_stage,
                     new_stage=new_stage,
@@ -107,8 +108,12 @@ async def handle_memory_created(event: MemoryCreatedEvent) -> None:
         event: MemoryCreatedEvent with user_id, memory_count, and memory_texts
     """
     try:
-        # Import pet WebSocket emitter from pet module
-        from app.services.pet.ws_emitter import emit_pet_traits_updated
+        # Use ExtendedEventEmitter for pet events
+        from backend.app.services.chat.webpage_ws_extended_emitter import (
+            get_extended_emitter,
+        )
+
+        extended_emitter = get_extended_emitter()
 
         db = SessionLocal()
         try:
@@ -127,7 +132,7 @@ async def handle_memory_created(event: MemoryCreatedEvent) -> None:
                     )
 
                     # Emit traits updated event
-                    await emit_pet_traits_updated(
+                    await extended_emitter.emit_pet_traits_updated(
                         user_id=event.user_id,
                         traits=updated_traits,
                     )

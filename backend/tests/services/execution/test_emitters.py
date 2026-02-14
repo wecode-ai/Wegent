@@ -24,7 +24,9 @@ class TestWebSocketResultEmitter:
         """Test emitting start event."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with patch("app.services.chat.ws_emitter.get_ws_emitter") as mock_get:
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
 
@@ -44,7 +46,9 @@ class TestWebSocketResultEmitter:
         """Test emitting chunk event."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with patch("app.services.chat.ws_emitter.get_ws_emitter") as mock_get:
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
 
@@ -63,7 +67,9 @@ class TestWebSocketResultEmitter:
         """Test emitting done event."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with patch("app.services.chat.ws_emitter.get_ws_emitter") as mock_get:
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
 
@@ -77,7 +83,9 @@ class TestWebSocketResultEmitter:
         """Test emitting error event."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with patch("app.services.chat.ws_emitter.get_ws_emitter") as mock_get:
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
 
@@ -91,7 +99,9 @@ class TestWebSocketResultEmitter:
         """Test emitting when WebSocket emitter is not available."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with patch("app.services.chat.ws_emitter.get_ws_emitter") as mock_get:
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
             mock_get.return_value = None
 
             emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)

@@ -4,8 +4,9 @@
 
 """Tests for the MCP tools decorator."""
 
-import pytest
 from typing import Any, Dict, Optional
+
+import pytest
 
 from app.mcp_server.tools.decorator import (
     _extract_first_docstring_line,
@@ -99,6 +100,7 @@ class TestExtractParametersFromSignature:
 
     def test_simple_function(self):
         """Test parameter extraction from simple function."""
+
         def func(name: str, count: int = 10):
             pass
 
@@ -121,6 +123,7 @@ class TestExtractParametersFromSignature:
 
     def test_exclude_params(self):
         """Test parameter exclusion."""
+
         def func(token_info: str, name: str, db: str):
             pass
 
@@ -136,6 +139,7 @@ class TestExtractParametersFromSignature:
 
     def test_param_descriptions(self):
         """Test custom parameter descriptions."""
+
         def func(name: str):
             pass
 
@@ -150,6 +154,7 @@ class TestExtractParametersFromSignature:
 
     def test_param_renames(self):
         """Test parameter renaming."""
+
         def func(knowledge_base_id: int):
             pass
 
@@ -172,6 +177,7 @@ class TestMcpToolDecorator:
 
     def test_basic_registration(self):
         """Test basic tool registration."""
+
         @mcp_tool(
             name="test_tool",
             description="A test tool",
@@ -189,6 +195,7 @@ class TestMcpToolDecorator:
 
     def test_auto_name_from_function(self):
         """Test automatic name generation from function name."""
+
         @mcp_tool(server="test")
         def list_knowledge_bases(token_info: str) -> Dict[str, Any]:
             """List all knowledge bases."""
@@ -199,6 +206,7 @@ class TestMcpToolDecorator:
 
     def test_auto_description_from_docstring(self):
         """Test automatic description from docstring."""
+
         @mcp_tool(name="test_tool", server="test")
         def my_tool(token_info: str) -> Dict[str, Any]:
             """This is the tool description."""
@@ -209,6 +217,7 @@ class TestMcpToolDecorator:
 
     def test_token_info_excluded_by_default(self):
         """Test that token_info is excluded from parameters by default."""
+
         @mcp_tool(name="test_tool", server="test")
         def my_tool(token_info: str, param1: str, param2: int = 5) -> Dict[str, Any]:
             return {}
@@ -223,6 +232,7 @@ class TestMcpToolDecorator:
 
     def test_custom_param_descriptions(self):
         """Test custom parameter descriptions."""
+
         @mcp_tool(
             name="test_tool",
             server="test",
@@ -245,6 +255,7 @@ class TestMcpToolDecorator:
 
     def test_filter_by_server(self):
         """Test filtering tools by server."""
+
         @mcp_tool(name="tool1", server="knowledge")
         def tool1(token_info: str) -> Dict[str, Any]:
             return {}
@@ -276,6 +287,7 @@ class TestBuildMcpToolsDict:
 
     def test_builds_compatible_dict(self):
         """Test that build_mcp_tools_dict returns compatible format."""
+
         @mcp_tool(
             name="list_knowledge_bases",
             description="List all KBs",

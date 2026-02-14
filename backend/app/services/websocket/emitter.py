@@ -10,6 +10,6 @@ TODO: Move WebSocketEmitter here in a future refactoring step.
 """
 
 # Reserved for future implementation
-# from app.services.chat.ws_emitter import WebSocketEmitter, get_ws_emitter
+# from app.services.chat.webpage_ws_chat_emitter import WebSocketEmitter, get_ws_emitter
 
 __all__: list[str] = []

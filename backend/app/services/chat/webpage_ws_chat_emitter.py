@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Public API exports
 __all__ = [
     # Classes
-    "WebSocketEmitter",
+    "WebPageSocketEmitter",
     "ExtendedEventEmitter",  # Re-exported from extended_emitter module
     # Functions
     "get_extended_emitter",  # Re-exported from extended_emitter module
@@ -33,7 +33,7 @@ __all__ = [
     "init_ws_emitter",
     "safe_emit_in_main_loop",
     # Deprecated - for backward compatibility only
-    "get_ws_emitter",
+    "get_webpage_ws_emitter",
 ]
 
 # Re-export ExtendedEventEmitter from dedicated module
@@ -43,7 +43,7 @@ from backend.app.services.chat.webpage_ws_extended_emitter import (
 )
 
 
-class WebSocketEmitter:
+class WebPageSocketEmitter:
     """
     WebSocket emitter for broadcasting Socket.IO events.
 
@@ -956,12 +956,12 @@ class WebSocketEmitter:
 
 
 # Global emitter instance (lazy initialized)
-_ws_emitter: Optional[WebSocketEmitter] = None
+_ws_emitter: Optional[WebPageSocketEmitter] = None
 # Global reference to the main event loop (set during initialization)
 _main_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
-def _get_ws_emitter() -> Optional[WebSocketEmitter]:
+def _get_ws_emitter() -> Optional[WebPageSocketEmitter]:
     """
     Get the global WebSocket emitter instance.
 
@@ -975,7 +975,7 @@ def _get_ws_emitter() -> Optional[WebSocketEmitter]:
 
 
 # Backward compatibility alias - will be removed in future versions
-def get_ws_emitter() -> Optional[WebSocketEmitter]:
+def get_webpage_ws_emitter() -> Optional[WebPageSocketEmitter]:
     """
     Get the global WebSocket emitter instance.
 
@@ -1000,7 +1000,7 @@ def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
     return _main_event_loop
 
 
-def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
+def init_ws_emitter(sio: socketio.AsyncServer) -> WebPageSocketEmitter:
     """
     Initialize the global WebSocket emitter.
 
@@ -1013,7 +1013,7 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
         WebSocketEmitter: Initialized emitter instance
     """
     global _ws_emitter, _main_event_loop
-    _ws_emitter = WebSocketEmitter(sio)
+    _ws_emitter = WebPageSocketEmitter(sio)
 
     # Capture the main event loop reference - only use get_running_loop()
     # as get_event_loop() is deprecated in Python 3.10+

@@ -201,10 +201,10 @@ async def correct_response(
             "is_correct": bool
         }
     """
-    from app.services.chat.ws_emitter import get_ws_emitter
+    from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 
-    # Get WebSocket emitter for progress broadcasting
-    ws_emitter = get_ws_emitter()
+    # Get extended emitter for progress broadcasting
+    extended_emitter = get_extended_emitter()
 
     # Validate that the task belongs to the current user
     task = (
@@ -307,35 +307,32 @@ async def correct_response(
         )
 
     # Emit correction:start event
-    if ws_emitter:
-        await ws_emitter.emit_correction_start(
-            task_id=request.task_id,
-            subtask_id=request.message_id,
-            correction_model=request.correction_model_id,
-        )
+    await extended_emitter.emit_correction_start(
+        task_id=request.task_id,
+        subtask_id=request.message_id,
+        correction_model=request.correction_model_id,
+    )
 
     # Define progress callback for WebSocket broadcasting
     async def on_progress(stage: str, tool_name: str | None) -> None:
         """Broadcast correction progress via WebSocket."""
-        if ws_emitter:
-            await ws_emitter.emit_correction_progress(
-                task_id=request.task_id,
-                subtask_id=request.message_id,
-                stage=stage,
-                tool_name=tool_name,
-            )
+        await extended_emitter.emit_correction_progress(
+            task_id=request.task_id,
+            subtask_id=request.message_id,
+            stage=stage,
+            tool_name=tool_name,
+        )
 
     # Define chunk callback for streaming content (future use)
     async def on_chunk(field: str, content: str, offset: int) -> None:
         """Broadcast correction content chunks via WebSocket."""
-        if ws_emitter:
-            await ws_emitter.emit_correction_chunk(
-                task_id=request.task_id,
-                subtask_id=request.message_id,
-                field=field,
-                content=content,
-                offset=offset,
-            )
+        await extended_emitter.emit_correction_chunk(
+            task_id=request.task_id,
+            subtask_id=request.message_id,
+            field=field,
+            content=content,
+            offset=offset,
+        )
 
     try:
         # Call correction service with progress callbacks using service module
@@ -353,12 +350,11 @@ async def correct_response(
         )
 
         # Emit correction:done event
-        if ws_emitter:
-            await ws_emitter.emit_correction_done(
-                task_id=request.task_id,
-                subtask_id=request.message_id,
-                result=llm_result,
-            )
+        await extended_emitter.emit_correction_done(
+            task_id=request.task_id,
+            subtask_id=request.message_id,
+            result=llm_result,
+        )
 
         return {
             "message_id": request.message_id,
@@ -373,12 +369,11 @@ async def correct_response(
         logger.error(f"Correction evaluation failed: {e}", exc_info=True)
 
         # Emit correction:error event
-        if ws_emitter:
-            await ws_emitter.emit_correction_error(
-                task_id=request.task_id,
-                subtask_id=request.message_id,
-                error=str(e),
-            )
+        await extended_emitter.emit_correction_error(
+            task_id=request.task_id,
+            subtask_id=request.message_id,
+            error=str(e),
+        )
 
         raise HTTPException(
             status_code=500,

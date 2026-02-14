@@ -4,13 +4,14 @@
 
 """Tests for KnowledgeOrchestrator service layer."""
 
+from unittest.mock import MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, Mock
 
 from app.services.knowledge.orchestrator import (
     KnowledgeOrchestrator,
-    _normalize_file_extension,
     _build_filename,
+    _normalize_file_extension,
 )
 
 
@@ -70,9 +71,7 @@ class TestKnowledgeOrchestrator:
         user.user_name = "testuser"
         return user
 
-    def test_get_default_retriever_returns_first(
-        self, orchestrator, mock_db
-    ):
+    def test_get_default_retriever_returns_first(self, orchestrator, mock_db):
         """Test get_default_retriever returns first available retriever."""
         with patch(
             "app.services.adapters.retriever_kinds.retriever_kinds_service"
@@ -95,9 +94,7 @@ class TestKnowledgeOrchestrator:
                 group_name=None,
             )
 
-    def test_get_default_retriever_returns_none_when_empty(
-        self, orchestrator, mock_db
-    ):
+    def test_get_default_retriever_returns_none_when_empty(self, orchestrator, mock_db):
         """Test get_default_retriever returns None when no retrievers."""
         with patch(
             "app.services.adapters.retriever_kinds.retriever_kinds_service"
@@ -108,9 +105,7 @@ class TestKnowledgeOrchestrator:
 
             assert result is None
 
-    def test_get_default_retriever_group_scope(
-        self, orchestrator, mock_db
-    ):
+    def test_get_default_retriever_group_scope(self, orchestrator, mock_db):
         """Test get_default_retriever with group namespace."""
         with patch(
             "app.services.adapters.retriever_kinds.retriever_kinds_service"
@@ -134,9 +129,7 @@ class TestKnowledgeOrchestrator:
                 group_name="my-team",
             )
 
-    def test_get_default_embedding_model_returns_first(
-        self, orchestrator, mock_db
-    ):
+    def test_get_default_embedding_model_returns_first(self, orchestrator, mock_db):
         """Test get_default_embedding_model returns first available model."""
         mock_user = MagicMock()
         mock_user.id = 1
@@ -183,9 +176,7 @@ class TestKnowledgeOrchestrator:
 
             assert result is None
 
-    def test_list_knowledge_bases_success(
-        self, orchestrator, mock_db, mock_user
-    ):
+    def test_list_knowledge_bases_success(self, orchestrator, mock_db, mock_user):
         """Test list_knowledge_bases returns knowledge bases."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -230,9 +221,7 @@ class TestKnowledgeOrchestrator:
             with pytest.raises(ValueError, match="Knowledge base not found"):
                 orchestrator.list_documents(mock_db, mock_user, knowledge_base_id=999)
 
-    def test_create_document_with_text_content(
-        self, orchestrator, mock_db, mock_user
-    ):
+    def test_create_document_with_text_content(self, orchestrator, mock_db, mock_user):
         """Test create_document_with_content with text source type."""
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"
@@ -247,9 +236,7 @@ class TestKnowledgeOrchestrator:
             mock_doc.name = "test"
             mock_kb_service.create_document.return_value = mock_doc
 
-            with patch(
-                "app.services.context.context_service"
-            ) as mock_context:
+            with patch("app.services.context.context_service") as mock_context:
                 mock_attachment = MagicMock()
                 mock_attachment.id = 1
                 mock_context.upload_attachment.return_value = (mock_attachment, None)
@@ -273,9 +260,7 @@ class TestKnowledgeOrchestrator:
                     mock_context.upload_attachment.assert_called_once()
                     mock_kb_service.create_document.assert_called_once()
 
-    def test_create_document_with_file_base64(
-        self, orchestrator, mock_db, mock_user
-    ):
+    def test_create_document_with_file_base64(self, orchestrator, mock_db, mock_user):
         """Test create_document_with_content with file source type."""
         import base64
 
@@ -293,9 +278,7 @@ class TestKnowledgeOrchestrator:
             mock_doc.id = 1
             mock_kb_service.create_document.return_value = mock_doc
 
-            with patch(
-                "app.services.context.context_service"
-            ) as mock_context:
+            with patch("app.services.context.context_service") as mock_context:
                 mock_attachment = MagicMock()
                 mock_attachment.id = 1
                 mock_context.upload_attachment.return_value = (mock_attachment, None)
