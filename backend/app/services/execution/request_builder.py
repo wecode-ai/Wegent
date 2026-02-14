@@ -125,8 +125,10 @@ class TaskRequestBuilder:
         # Parse team CRD
         team_crd = Team.model_validate(team.json)
 
-        # Get first bot from team
-        bot = self._get_first_bot(team, team_crd)
+        # Get bot for this subtask
+        # In pipeline mode, subtask.bot_ids contains the specific bot for this stage
+        # Otherwise, use the first bot from team members
+        bot = self._get_bot_for_subtask(subtask, team, team_crd)
         if not bot:
             raise ValueError(f"No bot found for team {team.name}")
 
@@ -257,6 +259,53 @@ class TaskRequestBuilder:
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
     # =========================================================================
+
+    def _get_bot_for_subtask(
+        self, subtask: Subtask, team: Kind, team_crd: Team
+    ) -> Kind | None:
+        """Get the bot for a specific subtask.
+
+        In pipeline mode, subtask.bot_ids contains the specific bot for this stage.
+        This method first tries to use the bot from subtask.bot_ids, then falls back
+        to the first bot from team members.
+
+        Args:
+            subtask: The subtask to get bot for
+            team: Team Kind object
+            team_crd: Parsed Team CRD
+
+        Returns:
+            Bot Kind object or None if not found
+        """
+        # First, try to get bot from subtask.bot_ids (for pipeline mode)
+        if subtask.bot_ids:
+            bot_id = subtask.bot_ids[0]
+            bot = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.id == bot_id,
+                    Kind.kind == "Bot",
+                    Kind.is_active,
+                )
+                .first()
+            )
+            if bot:
+                logger.info(
+                    "[TaskRequestBuilder] Using bot from subtask.bot_ids: "
+                    "bot_id=%d, bot_name=%s",
+                    bot_id,
+                    bot.name,
+                )
+                return bot
+            else:
+                logger.warning(
+                    "[TaskRequestBuilder] Bot not found for subtask.bot_ids[0]=%d, "
+                    "falling back to first team member",
+                    bot_id,
+                )
+
+        # Fallback to first bot from team members
+        return self._get_first_bot(team, team_crd)
 
     def _get_first_bot(self, team: Kind, team_crd: Team) -> Kind | None:
         """Get the first bot from team members.

@@ -19,6 +19,10 @@ from typing import Any, Callable, Generator, TypeVar
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.models.subtask import Subtask
+from app.schemas.kind import TaskStatus
+from app.services.adapters.collaboration_strategy import CollaborationStrategy
+
 logger = logging.getLogger(__name__)
 
 # Thread pool for database operations
@@ -165,10 +169,14 @@ class DatabaseHandler:
             logger.exception("Error updating subtask %s status", subtask_id)
 
     def _update_task_status_sync(self, task_id: int) -> None:
-        """Update task status based on subtask status."""
+        """Update task status based on subtask status using collaboration strategy."""
         from app.models.subtask import Subtask, SubtaskRole
         from app.models.task import TaskResource
         from app.schemas.kind import Task
+        from app.services.adapters.collaboration_strategy import (
+            CollaborationStrategy,
+            CollaborationStrategyFactory,
+        )
 
         try:
             with _db_session() as db:
@@ -200,7 +208,13 @@ class DatabaseHandler:
                 last_subtask = subtasks[-1]
 
                 if task_crd.status:
-                    self._apply_status_update(task_crd.status, last_subtask)
+                    # Use collaboration strategy to determine task status
+                    strategy: CollaborationStrategy = (
+                        CollaborationStrategyFactory.get_strategy_for_task(db, task_id)
+                    )
+                    self._apply_status_update(
+                        db, task_id, task_crd.status, last_subtask, strategy
+                    )
                     task_crd.status.updatedAt = datetime.now()
 
                 task.json = task_crd.model_dump(mode="json")
@@ -210,28 +224,45 @@ class DatabaseHandler:
         except Exception:
             logger.exception("Error updating task %s status", task_id)
 
-    def _apply_status_update(self, status_obj, last_subtask) -> None:
-        """Apply status update based on last subtask."""
+    def _apply_status_update(
+        self,
+        db: Session,
+        task_id: int,
+        status_obj: TaskStatus,
+        last_subtask: Subtask,
+        strategy: CollaborationStrategy,
+    ) -> None:
+        """Apply status update based on last subtask using collaboration strategy.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            status_obj: Task status object to update
+            last_subtask: The last assistant subtask
+            strategy: Collaboration strategy to use for status determination
+        """
         from app.models.subtask import SubtaskStatus
 
-        status_map = {
-            SubtaskStatus.COMPLETED: ("COMPLETED", 100, True),
-            SubtaskStatus.CANCELLED: ("CANCELLED", 100, True),
-            SubtaskStatus.FAILED: ("FAILED", None, False),
-            SubtaskStatus.RUNNING: ("RUNNING", None, False),
-        }
+        # Get the status string from subtask status enum
+        subtask_status_str = last_subtask.status.value
 
-        if last_subtask.status in status_map:
-            new_status, progress, is_completed = status_map[last_subtask.status]
-            status_obj.status = new_status
-            status_obj.result = last_subtask.result
+        # Use strategy to determine task status
+        new_status, progress = strategy.get_task_status_on_subtask_complete(
+            db, task_id, last_subtask.id, subtask_status_str
+        )
 
-            if progress is not None:
-                status_obj.progress = progress
-            if is_completed:
-                status_obj.completedAt = datetime.now()
-            if last_subtask.status == SubtaskStatus.FAILED:
-                status_obj.errorMessage = last_subtask.error_message
+        status_obj.status = new_status
+        status_obj.result = last_subtask.result
+
+        if progress is not None:
+            status_obj.progress = progress
+
+        # Set completedAt for terminal statuses
+        if new_status in ("COMPLETED", "CANCELLED", "PENDING_CONFIRMATION"):
+            status_obj.completedAt = datetime.now()
+
+        if last_subtask.status == SubtaskStatus.FAILED:
+            status_obj.errorMessage = last_subtask.error_message
 
     async def save_partial_response(
         self, subtask_id: int, content: str, is_streaming: bool = True

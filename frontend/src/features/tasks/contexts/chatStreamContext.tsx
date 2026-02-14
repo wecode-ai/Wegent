@@ -116,6 +116,8 @@ export interface ChatMessageRequest {
     namespace: string
     is_public: boolean
   }>
+  /** Action type. 'pipeline:confirm' for pipeline stage confirmation */
+  action?: 'pipeline:confirm' | string
 }
 
 /**
@@ -703,6 +705,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         knowledge_base_id: request.knowledge_base_id,
         device_id: request.device_id,
         additional_skills: request.additional_skills,
+        action: request.action,
       }
 
       try {

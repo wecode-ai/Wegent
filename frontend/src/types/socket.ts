@@ -130,6 +130,8 @@ export interface ChatSendPayload {
     namespace: string
     is_public: boolean
   }>
+  /** Action type. 'pipeline:confirm' for pipeline stage confirmation */
+  action?: 'pipeline:confirm' | string
 }
 
 export interface ChatCancelPayload {
@@ -527,6 +529,13 @@ export interface ChatSendAck {
   subtask_id?: number
   message_id?: number // Message ID for the user's subtask
   error?: string
+  // Pipeline confirmation response fields
+  /** Current stage number (1-indexed) */
+  current_stage?: number
+  /** Total number of stages in the pipeline */
+  total_stages?: number
+  /** Name of the next stage (null if pipeline completed) */
+  next_stage_name?: string | null
 }
 
 export interface TaskJoinAck {

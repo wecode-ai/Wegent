@@ -60,6 +60,9 @@ class TaskCreationParams:
     )
     # Skill selection - backend determines preload vs download based on executor type
     additional_skills: Optional[List[Dict[str, Any]]] = None
+    # Pipeline mode: specific bot_ids for the next stage
+    # When set, only create subtask for these bots instead of all team members
+    pipeline_bot_ids: Optional[List[int]] = None
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -652,8 +655,13 @@ async def create_task_and_subtasks(
         notify_group_members_task_updated,
     )
 
-    # Get bot IDs from team members
-    bot_ids = get_bot_ids_from_team(db, team)
+    # Get bot IDs: use pipeline_bot_ids if provided (for pipeline stage confirmation),
+    # otherwise get all bot IDs from team members
+    if params.pipeline_bot_ids:
+        bot_ids = params.pipeline_bot_ids
+        logger.info(f"[create_task_and_subtasks] Using pipeline_bot_ids: {bot_ids}")
+    else:
+        bot_ids = get_bot_ids_from_team(db, team)
 
     task = None
     # Track the user_id to use for subtasks (owner's ID for group chats)
