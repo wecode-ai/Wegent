@@ -549,6 +549,8 @@ class GradingService:
             prompt: The grading prompt
             attachments: List of attachment info dicts
         """
+        from sqlalchemy.orm.attributes import flag_modified
+
         from app.core.config import settings
         from app.db.session import SessionLocal
         from app.models.kind import Kind
@@ -563,7 +565,6 @@ class GradingService:
         from app.services.chat.adapters.interface import ChatEventType, ChatRequest
         from app.services.chat.config.chat_config import ChatConfigBuilder
         from app.services.chat.storage.task_manager import get_bot_ids_from_team
-        from sqlalchemy.orm.attributes import flag_modified
 
         logger.info(
             f"[Evaluation] Starting grading execution for task {grading_task_id}"
@@ -814,7 +815,10 @@ class GradingService:
             # Copy Attachments to SubtaskContext
             # =====================================
             if attachments:
-                from app.services.attachment.parser import DocumentParser, DocumentParseError
+                from app.services.attachment.parser import (
+                    DocumentParseError,
+                    DocumentParser,
+                )
                 from wecode.service.evaluation.storage_service import EvalStorageService
 
                 storage_service = EvalStorageService()
@@ -876,7 +880,9 @@ class GradingService:
                                 # For documents: extract text content
                                 # chat_shell's loader uses extracted_text for documents
                                 try:
-                                    parse_result = parser.parse(file_data, file_extension)
+                                    parse_result = parser.parse(
+                                        file_data, file_extension
+                                    )
                                     context.extracted_text = parse_result.text
                                     context.text_length = parse_result.text_length
                                     # Log detailed info for debugging
@@ -938,6 +944,51 @@ class GradingService:
             )
 
             # =====================================
+            # Build MCP servers and skills configuration
+            # =====================================
+            # Build task_data for MCP variable substitution
+            backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+            task_token = ""
+            try:
+                from app.mcp_server.auth import create_task_token
+
+                task_token = create_task_token(
+                    task_id=new_task_id,
+                    subtask_id=assistant_subtask.id,
+                    user_id=user_id,
+                    user_name=user_name,
+                    expires_delta_minutes=1440,  # 24 hours
+                )
+            except Exception as e:
+                logger.warning(f"[Evaluation] Failed to create task token for MCP: {e}")
+
+            task_data = {
+                "user": {
+                    "name": user_name,
+                    "id": user_id,
+                },
+                "task_id": new_task_id,
+                "subtask_id": assistant_subtask.id,
+                "team_id": team_id,
+                "backend_url": backend_url,
+                "task_token": task_token,
+            }
+
+            # Get MCP servers configuration
+            from app.services.chat.trigger.core import _append_mcp_servers
+
+            mcp_servers = _append_mcp_servers(
+                bot_name=chat_config.bot_name,
+                bot_namespace=chat_config.bot_namespace,
+                task_data=task_data,
+            )
+
+            logger.info(
+                f"[Evaluation] Built MCP servers for task {new_task_id}: "
+                f"count={len(mcp_servers)}, names={[s['name'] for s in mcp_servers]}"
+            )
+
+            # =====================================
             # Call chat_shell
             # =====================================
             chat_request = ChatRequest(
@@ -954,12 +1005,21 @@ class GradingService:
                 user_message_id=user_subtask.message_id,
                 model_config=chat_config.model_config,
                 system_prompt=chat_config.system_prompt,
-                enable_tools=False,
-                enable_web_search=False,
+                enable_tools=True,  # Enable tools for skills
+                enable_web_search=settings.WEB_SEARCH_ENABLED,
                 enable_clarification=False,
                 enable_deep_thinking=False,
                 bot_name=chat_config.bot_name,
                 bot_namespace=chat_config.bot_namespace,
+                # Skills configuration
+                skills=chat_config.skill_configs,
+                skill_names=chat_config.skill_names,
+                skill_configs=chat_config.skill_configs,
+                preload_skills=chat_config.preload_skills,
+                user_selected_skills=chat_config.user_selected_skills,
+                # MCP servers configuration
+                mcp_servers=mcp_servers,
+                task_data=task_data,
             )
 
             # Create HTTP adapter
@@ -1038,7 +1098,9 @@ class GradingService:
                 assistant_subtask.completed_at = datetime.now()
 
                 # Update task status - must use flag_modified for JSON field changes
-                task_json = wegent_task.json.copy()  # Create a copy to ensure change detection
+                task_json = (
+                    wegent_task.json.copy()
+                )  # Create a copy to ensure change detection
                 task_json["status"]["status"] = "COMPLETED"
                 task_json["status"]["progress"] = 100
                 task_json["status"]["completedAt"] = datetime.now().isoformat()
@@ -1062,7 +1124,9 @@ class GradingService:
                 assistant_subtask.completed_at = datetime.now()
 
                 # Update task status - must use flag_modified for JSON field changes
-                task_json = wegent_task.json.copy()  # Create a copy to ensure change detection
+                task_json = (
+                    wegent_task.json.copy()
+                )  # Create a copy to ensure change detection
                 task_json["status"]["status"] = "FAILED"
                 task_json["status"]["errorMessage"] = error_message
                 task_json["status"]["completedAt"] = datetime.now().isoformat()
