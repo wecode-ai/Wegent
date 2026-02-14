@@ -491,8 +491,8 @@ class Settings(BaseSettings):
     # Evaluation grading task monitor configuration
     # Enable/disable the background monitor for stuck grading tasks
     EVAL_GRADING_MONITOR_ENABLED: bool = True
-    # Monitor check interval in seconds (default: 5 minutes)
-    EVAL_GRADING_MONITOR_INTERVAL_SECONDS: int = 300
+    # Monitor check interval in seconds (default: 30 seconds for quick status sync)
+    EVAL_GRADING_MONITOR_INTERVAL_SECONDS: int = 30
     # Task timeout threshold in minutes (tasks running longer are considered stuck)
     EVAL_GRADING_STUCK_TIMEOUT_MINUTES: int = 30
 

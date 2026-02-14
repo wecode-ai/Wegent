@@ -81,6 +81,30 @@ class GradingTaskMonitor:
 
         return stuck_tasks
 
+    def find_running_tasks(self, db: Session) -> List[EvalGradingTask]:
+        """
+        Find all grading tasks that are currently RUNNING.
+
+        This method is used for quick status sync - checking if the associated
+        Wegent Task has completed so we can update the grading task status immediately.
+
+        Args:
+            db: Database session
+
+        Returns:
+            List of running grading tasks
+        """
+        running_tasks = (
+            db.query(EvalGradingTask)
+            .filter(
+                EvalGradingTask.status == GradingTaskStatus.RUNNING,
+                EvalGradingTask.task_id > 0,  # Must have associated Wegent Task
+            )
+            .all()
+        )
+
+        return running_tasks
+
     def get_wegent_task_state(
         self, db: Session, task_id: int
     ) -> Tuple[Optional[str], Optional[str]]:
@@ -262,29 +286,38 @@ class GradingTaskMonitor:
 
     def run_check(self, db: Session) -> int:
         """
-        Run a single check cycle for stuck grading tasks.
+        Run a single check cycle for grading tasks.
+
+        This method performs two checks:
+        1. Quick sync: Check all RUNNING tasks to see if their Wegent Task completed
+        2. Stuck recovery: Check for tasks stuck for too long and force-recover them
 
         Args:
             db: Database session
 
         Returns:
-            Number of tasks recovered
+            Number of tasks recovered/synced
         """
         recovered_count = 0
-        stuck_tasks = self.find_stuck_tasks(db)
 
-        for task in stuck_tasks:
+        # First, do a quick status sync for all running tasks
+        # This allows us to quickly detect completed tasks without waiting for timeout
+        running_tasks = self.find_running_tasks(db)
+        for task in running_tasks:
             try:
                 if self.recover_stuck_task(db, task):
                     recovered_count += 1
+                    logger.info(
+                        f"[Evaluation Monitor] Synced grading task {task.id} status"
+                    )
             except Exception as e:
                 logger.error(
-                    f"[Evaluation Monitor] Error recovering grading task {task.id}: {e}"
+                    f"[Evaluation Monitor] Error syncing grading task {task.id}: {e}"
                 )
 
         if recovered_count > 0:
             logger.info(
-                f"[Evaluation Monitor] Recovered {recovered_count} stuck grading tasks"
+                f"[Evaluation Monitor] Synced {recovered_count} grading tasks"
             )
 
         return recovered_count
