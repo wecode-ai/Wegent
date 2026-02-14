@@ -283,10 +283,34 @@ class GradingService:
         Args:
             db: Database session
             task: Grading task
-            storage_service: Storage service for presigned URLs
+            storage_service: Not used (kept for compatibility)
 
         Returns:
             Formatted prompt string
+        """
+        prompt, _ = self._build_grading_prompt_and_attachments(db, task)
+        return prompt
+
+    def _build_grading_prompt_and_attachments(
+        self,
+        db: Session,
+        task: EvalGradingTask,
+    ) -> Tuple[str, List[Dict]]:
+        """
+        Build the grading prompt and collect attachments for a task.
+
+        The prompt includes:
+        - Respondent info (name)
+        - Question content (text, URL, attachments)
+        - Grading criteria (text, URL, attachments)
+        - Student answer (text, URL, attachments)
+
+        Args:
+            db: Database session
+            task: Grading task
+
+        Returns:
+            Tuple of (formatted prompt string, list of attachment info dicts)
         """
         from app.models.user import User
 
@@ -315,31 +339,31 @@ class GradingService:
             respondent.user_name if respondent else f"User #{task.respondent_id}"
         )
 
+        # Collect all attachment keys for later copying to SubtaskContext
+        all_attachments = []
+
         # Format question content
         question_content = question_version.content_data.get("text", "") or ""
         question_url = self._format_url(question_version.content_data.get("url"))
-        question_attachments = self._format_attachments(
-            question_version.content_data.get("attachments", []),
-            storage_service,
-        )
+        q_attachments = question_version.content_data.get("attachments", [])
+        question_attachments = self._format_attachments(q_attachments)
+        all_attachments.extend(self._collect_attachment_keys(q_attachments))
 
         # Format criteria content
         criteria_content = question_version.criteria_data.get("text", "") or ""
         criteria_url = self._format_url(question_version.criteria_data.get("url"))
-        criteria_attachments = self._format_attachments(
-            question_version.criteria_data.get("attachments", []),
-            storage_service,
-        )
+        c_attachments = question_version.criteria_data.get("attachments", [])
+        criteria_attachments = self._format_attachments(c_attachments)
+        all_attachments.extend(self._collect_attachment_keys(c_attachments))
 
         # Format answer content
         answer_content = answer.content_data.get("text", "") or ""
         answer_url = self._format_url(answer.content_data.get("url"))
-        answer_attachments = self._format_attachments(
-            answer.content_data.get("attachments", []),
-            storage_service,
-        )
+        a_attachments = answer.content_data.get("attachments", [])
+        answer_attachments = self._format_attachments(a_attachments)
+        all_attachments.extend(self._collect_attachment_keys(a_attachments))
 
-        return GRADING_PROMPT_TEMPLATE.format(
+        prompt = GRADING_PROMPT_TEMPLATE.format(
             respondent_name=respondent_name,
             question_content=question_content,
             question_url=question_url,
@@ -351,6 +375,8 @@ class GradingService:
             answer_url=answer_url,
             answer_attachments=answer_attachments,
         )
+
+        return prompt, all_attachments
 
     def _format_url(self, url: Optional[str]) -> str:
         """
@@ -372,14 +398,17 @@ class GradingService:
         storage_service: Optional["EvalStorageService"] = None,
     ) -> str:
         """
-        Format attachments for prompt.
+        Format attachments for prompt display (filenames only).
+
+        Note: Actual file access is handled via SubtaskContext system.
+        The AI Agent will access files through the standard attachment mechanism.
 
         Args:
             attachments: List of attachment dictionaries
-            storage_service: Storage service for presigned URLs
+            storage_service: Not used (kept for compatibility)
 
         Returns:
-            Formatted attachment string
+            Formatted attachment string with filenames
         """
         if not attachments:
             return ""
@@ -387,13 +416,36 @@ class GradingService:
         lines = ["**Attachments:**"]
         for att in attachments:
             filename = att.get("filename", "Unknown")
-            if storage_service and att.get("key"):
-                url = storage_service.get_presigned_url(att["key"])
-                lines.append(f"- [{filename}]({url})")
-            else:
-                lines.append(f"- {filename}")
+            lines.append(f"- {filename}")
 
         return "\n".join(lines)
+
+    def _collect_attachment_keys(
+        self,
+        attachments: List[Dict],
+    ) -> List[Dict]:
+        """
+        Collect attachment information for copying to SubtaskContext.
+
+        Args:
+            attachments: List of attachment dictionaries from EvalQuestion/EvalAnswer
+
+        Returns:
+            List of attachment info dicts with key, filename, and content_type
+        """
+        result = []
+        for att in attachments:
+            if att.get("key"):
+                result.append(
+                    {
+                        "key": att["key"],
+                        "filename": att.get("filename", "unknown"),
+                        "content_type": att.get(
+                            "content_type", "application/octet-stream"
+                        ),
+                    }
+                )
+        return result
 
     def execute(
         self,
@@ -421,8 +473,6 @@ class GradingService:
         Returns:
             Updated grading task
         """
-        from wecode.service.evaluation.storage_service import EvalStorageService
-
         # Update task status
         task.status = GradingTaskStatus.RUNNING
         task.team_id = team_id
@@ -433,13 +483,12 @@ class GradingService:
 
         logger.info(f"[Evaluation] Started grading task {task.id} with team {team_id}")
 
-        # Build the grading prompt with presigned URLs
+        # Build the grading prompt and collect attachments
         try:
-            storage_service = EvalStorageService()
-            prompt = self.build_grading_prompt(db, task, storage_service)
+            prompt, attachments = self._build_grading_prompt_and_attachments(db, task)
             logger.info(
                 f"[Evaluation] Built grading prompt for task {task.id} "
-                f"(length: {len(prompt)} chars)"
+                f"(length: {len(prompt)} chars, attachments: {len(attachments)})"
             )
         except Exception as e:
             logger.error(
@@ -456,7 +505,7 @@ class GradingService:
         # and the team_id is configured by the topic creator
         try:
             wegent_task_id = self._create_wegent_task_for_grading(
-                db, task, team_id, user_id, prompt
+                db, task, team_id, user_id, prompt, attachments
             )
             task.task_id = wegent_task_id
 
@@ -482,6 +531,7 @@ class GradingService:
         team_id: int,
         user_id: int,
         prompt: str,
+        attachments: Optional[List[Dict]] = None,
     ) -> int:
         """
         Create a Wegent Task for grading, bypassing normal permission checks.
@@ -490,12 +540,17 @@ class GradingService:
         going through task_kinds_service, because the grader has already been
         verified to have evaluation permission for the topic.
 
+        Attachments from evaluation (questions, criteria, answers) are copied
+        to SubtaskContext and linked to the user_subtask, allowing the executor
+        to download them via the standard attachment mechanism.
+
         Args:
             db: Database session
             grading_task: The evaluation grading task
             team_id: Team ID to use for grading
             user_id: User ID of the grader
             prompt: The grading prompt
+            attachments: Optional list of attachment info dicts with key, filename, content_type
 
         Returns:
             The created Wegent Task ID
@@ -668,6 +723,13 @@ class GradingService:
             result=None,
         )
         db.add(user_subtask)
+        db.flush()  # Get user_subtask.id
+
+        # Copy evaluation attachments to SubtaskContext for executor access
+        if attachments:
+            self._copy_attachments_to_subtask_context(
+                db, user_subtask.id, user_id, attachments
+            )
 
         assistant_subtask = Subtask(
             task_id=task_id,
@@ -1060,3 +1122,76 @@ class GradingService:
             logger.warning(f"[Evaluation] Failed to get bot_ids from team: {e}")
 
         return bot_ids
+
+    def _copy_attachments_to_subtask_context(
+        self,
+        db: Session,
+        subtask_id: int,
+        user_id: int,
+        attachments: List[Dict],
+    ) -> List[int]:
+        """
+        Copy evaluation attachments to SubtaskContext for executor access.
+
+        This method downloads files from the evaluation S3 storage and
+        creates SubtaskContext records linked to the grading subtask.
+        The executor will then be able to download these attachments
+        through the standard attachment mechanism.
+
+        Args:
+            db: Database session
+            subtask_id: Subtask ID to link attachments to
+            user_id: User ID for the context
+            attachments: List of attachment info dicts with key, filename, content_type
+
+        Returns:
+            List of created SubtaskContext IDs
+        """
+        from wecode.service.evaluation.storage_service import EvalStorageService
+
+        if not attachments:
+            return []
+
+        storage_service = EvalStorageService()
+        context_ids = []
+
+        for att in attachments:
+            key = att.get("key")
+            filename = att.get("filename", "unknown")
+
+            if not key:
+                continue
+
+            try:
+                # Download file from evaluation S3 storage
+                binary_data = storage_service.get(key)
+                if not binary_data:
+                    logger.warning(
+                        f"[Evaluation] Could not download attachment {filename} from S3"
+                    )
+                    continue
+
+                # Create SubtaskContext using the context service
+                from app.services.context.context_service import context_service
+
+                context, _ = context_service.upload_attachment(
+                    db=db,
+                    user_id=user_id,
+                    filename=filename,
+                    binary_data=binary_data,
+                    subtask_id=subtask_id,  # Directly link to subtask
+                )
+
+                context_ids.append(context.id)
+                logger.info(
+                    f"[Evaluation] Copied attachment {filename} to SubtaskContext {context.id}"
+                )
+
+            except Exception as e:
+                logger.error(f"[Evaluation] Failed to copy attachment {filename}: {e}")
+                continue
+
+        logger.info(
+            f"[Evaluation] Copied {len(context_ids)} attachments to subtask {subtask_id}"
+        )
+        return context_ids
