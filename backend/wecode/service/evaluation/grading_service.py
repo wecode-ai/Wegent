@@ -869,7 +869,8 @@ class GradingService:
                                 # chat_shell's loader uses binary_data, not image_base64
                                 context.binary_data = file_data
                                 logger.info(
-                                    f"[Evaluation] Loaded image attachment: {filename} ({len(file_data)} bytes)"
+                                    f"[Evaluation] Loaded image attachment: {filename} "
+                                    f"(binary_data={len(file_data)} bytes, mime_type={content_type})"
                                 )
                             else:
                                 # For documents: extract text content
@@ -878,9 +879,17 @@ class GradingService:
                                     parse_result = parser.parse(file_data, file_extension)
                                     context.extracted_text = parse_result.text
                                     context.text_length = parse_result.text_length
+                                    # Log detailed info for debugging
+                                    text_preview = (
+                                        parse_result.text[:200] + "..."
+                                        if len(parse_result.text) > 200
+                                        else parse_result.text
+                                    )
                                     logger.info(
                                         f"[Evaluation] Extracted text from {filename}: "
-                                        f"{parse_result.text_length} chars"
+                                        f"{parse_result.text_length} chars, "
+                                        f"mime_type={content_type}, "
+                                        f"preview='{text_preview[:100]}...'"
                                     )
                                 except DocumentParseError as e:
                                     # Log warning but still create the context
@@ -907,6 +916,21 @@ class GradingService:
                 )
 
             db.commit()
+
+            # Verify SubtaskContext records after commit
+            saved_contexts = (
+                db.query(SubtaskContext)
+                .filter(SubtaskContext.subtask_id == user_subtask.id)
+                .all()
+            )
+            for ctx in saved_contexts:
+                logger.info(
+                    f"[Evaluation] Verified SubtaskContext id={ctx.id}: "
+                    f"name={ctx.name}, mime_type={ctx.mime_type}, "
+                    f"extracted_text_len={len(ctx.extracted_text) if ctx.extracted_text else 0}, "
+                    f"binary_data_len={len(ctx.binary_data) if ctx.binary_data else 0}, "
+                    f"text_length={ctx.text_length}"
+                )
 
             logger.info(
                 f"[Evaluation] Created Wegent Task {new_task_id} with subtasks "

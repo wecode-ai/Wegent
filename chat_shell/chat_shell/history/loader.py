@@ -383,6 +383,20 @@ def _build_history_message(
             if c.context_type == ContextType.KNOWLEDGE_BASE.value
         ]
 
+        # Log loaded contexts for debugging
+        logger.info(
+            f"[history] _build_history_message: subtask_id={subtask.id}, "
+            f"total_contexts={len(all_contexts)}, "
+            f"attachments={len(attachments)}, kb_contexts={len(kb_contexts)}"
+        )
+        for ctx in attachments:
+            logger.info(
+                f"[history] Attachment context: id={ctx.id}, name={ctx.name}, "
+                f"mime_type={ctx.mime_type}, "
+                f"extracted_text_len={len(ctx.extracted_text) if ctx.extracted_text else 0}, "
+                f"binary_data_len={len(ctx.binary_data) if ctx.binary_data else 0}"
+            )
+
         # Process attachments first (they have priority)
         vision_parts: list[dict[str, Any]] = []
         attachment_text_parts: list[str] = []
