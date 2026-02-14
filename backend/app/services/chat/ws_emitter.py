@@ -37,7 +37,7 @@ __all__ = [
 ]
 
 # Re-export ExtendedEventEmitter from dedicated module
-from backend.app.services.chat.webpage_ws_extended_emitter import (
+from app.services.chat.webpage_ws_extended_emitter import (
     ExtendedEventEmitter,
     get_extended_emitter,
 )

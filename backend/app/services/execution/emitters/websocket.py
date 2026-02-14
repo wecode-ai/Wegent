@@ -14,7 +14,7 @@ Uses unified block types from shared.models.blocks for consistency.
 import logging
 from typing import Any, Optional
 
-from backend.app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
+from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
 from shared.models import EventType, ExecutionEvent
 from shared.models.blocks import BlockStatus, create_tool_block
 
@@ -197,7 +197,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
         """
         # Only emit if we have user_id (should be passed during initialization)
         if not self.user_id:
-            logger.debug(
+            logger.info(
                 f"[WebSocketResultEmitter] Skipping task:status - no user_id for task {self.task_id}"
             )
             return

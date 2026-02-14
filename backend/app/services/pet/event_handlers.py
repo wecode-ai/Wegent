@@ -38,7 +38,7 @@ async def handle_chat_completed(event: ChatCompletedEvent) -> None:
     logger.info("[PET] handle_chat_completed called: user_id=%d", event.user_id)
     try:
         # Use ExtendedEventEmitter for pet events
-        from backend.app.services.chat.webpage_ws_extended_emitter import (
+        from app.services.chat.webpage_ws_extended_emitter import (
             get_extended_emitter,
         )
 
@@ -109,7 +109,7 @@ async def handle_memory_created(event: MemoryCreatedEvent) -> None:
     """
     try:
         # Use ExtendedEventEmitter for pet events
-        from backend.app.services.chat.webpage_ws_extended_emitter import (
+        from app.services.chat.webpage_ws_extended_emitter import (
             get_extended_emitter,
         )
 

@@ -112,13 +112,24 @@ async def handle_callback(
             logger.debug(f"[Callback] Skipping lifecycle event: {request.event_type}")
             return CallbackResponse(status="ok", message="Lifecycle event skipped")
 
+        # Get user_id from task for task:status notification
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == request.task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+            )
+            .first()
+        )
+        user_id = task.user_id if task else None
+
         # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
         # StatusUpdatingEmitter intercepts terminal events (DONE, ERROR, CANCELLED)
         # and updates the database status accordingly, including executor_name
         # for container reuse in follow-up tasks
         ws_emitter = WebSocketResultEmitter(
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
+            task_id=request.task_id, subtask_id=request.subtask_id, user_id=user_id
         )
         emitter = StatusUpdatingEmitter(
             wrapped=ws_emitter,
@@ -247,6 +258,9 @@ async def handle_batch_callback(
     skipped = 0
     errors = []
 
+    # Cache task_id -> user_id mapping to avoid repeated database queries
+    task_user_cache: dict[int, Optional[int]] = {}
+
     for request in events:
         try:
             # Parse OpenAI Responses API event using shared parser
@@ -263,11 +277,26 @@ async def handle_batch_callback(
                 skipped += 1
                 continue
 
+            # Get user_id from cache or database for task:status notification
+            if request.task_id not in task_user_cache:
+                task = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == request.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
+                    )
+                    .first()
+                )
+                task_user_cache[request.task_id] = task.user_id if task else None
+            user_id = task_user_cache[request.task_id]
+
             # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
             # Include executor_name for container reuse in follow-up tasks
             ws_emitter = WebSocketResultEmitter(
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
+                user_id=user_id,
             )
             emitter = StatusUpdatingEmitter(
                 wrapped=ws_emitter,
