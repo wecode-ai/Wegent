@@ -74,7 +74,7 @@ async def notify_group_members_task_updated(
     """
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
-    from backend.app.services.chat.webpage_ws_extended_emitter import (
+    from app.services.chat.webpage_ws_extended_emitter import (
         get_extended_emitter,
     )
 

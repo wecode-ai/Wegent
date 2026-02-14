@@ -683,9 +683,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     return {"success": True}
 
                 # Emit via StatusUpdatingEmitter -> WebSocketResultEmitter
+                # Pass user_id for task:status notification
                 ws_emitter = WebSocketResultEmitter(
                     task_id=task_id,
                     subtask_id=subtask_id,
+                    user_id=user_id,
                 )
                 emitter = StatusUpdatingEmitter(
                     wrapped=ws_emitter,
