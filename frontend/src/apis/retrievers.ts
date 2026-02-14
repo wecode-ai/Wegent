@@ -63,7 +63,7 @@ export interface UnifiedRetriever {
 
 // Test Connection Types
 export interface TestConnectionRequest {
-  storage_type: 'elasticsearch' | 'qdrant'
+  storage_type: 'elasticsearch' | 'qdrant' | 'milvus'
   url: string
   username?: string
   password?: string

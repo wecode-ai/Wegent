@@ -5,6 +5,7 @@
 """
 Gitee repository provider implementation
 """
+
 import asyncio
 import logging
 from functools import lru_cache

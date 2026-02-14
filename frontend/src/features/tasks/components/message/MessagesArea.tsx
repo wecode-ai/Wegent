@@ -28,6 +28,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTypewriter } from '@/hooks/useTypewriter'
 import MessageBubble, { type Message } from './MessageBubble'
+import { PreserveExecutorToggle } from '../PreserveExecutorToggle'
 import TaskShareModal from '../share/TaskShareModal'
 import ExportSelectModal, {
   type SelectableMessage,
@@ -100,6 +101,16 @@ function StreamingMessageBubble({
     message.thinking && Array.isArray(message.thinking) && message.thinking.length > 0
   )
 
+  // CRITICAL FIX: For page refresh recovery, we need to show content immediately
+  // When page refreshes during streaming:
+  // 1. cached_content is returned from backend and set to message.content
+  // 2. useTypewriter starts from empty string and gradually types out
+  // 3. If we use displayContent (empty initially), nothing is shown
+  // Solution: Use the longer of displayContent or message.content
+  // This ensures cached_content is shown immediately, then typewriter continues from there
+  const effectiveContent =
+    displayContent.length >= (message.content?.length || 0) ? displayContent : message.content || ''
+
   // Create msg object with thinking data
   // IMPORTANT: Create a new object each time to ensure memo comparison detects changes
   const msgForBubble = {
@@ -108,7 +119,8 @@ function StreamingMessageBubble({
     timestamp: message.timestamp,
     botName: message.botName || selectedTeam?.name || t('common:messages.bot') || 'Bot',
     subtaskStatus: 'RUNNING',
-    recoveredContent: isStreaming ? displayContent : hasContent ? message.content : undefined,
+    // Use effectiveContent instead of displayContent to handle page refresh recovery
+    recoveredContent: isStreaming ? effectiveContent : hasContent ? message.content : undefined,
     isRecovered: false,
     isIncomplete: false,
     subtaskId: message.subtaskId,
@@ -920,6 +932,13 @@ export default function MessagesArea({
     // Desktop: Show all buttons inline
     return (
       <div className="flex items-center gap-2">
+        {/* Preserve Executor Indicator - only show for code tasks when preserved */}
+        {selectedTaskDetail?.task_type === 'code' && (
+          <PreserveExecutorToggle
+            preserveExecutor={selectedTaskDetail.preserve_executor || false}
+          />
+        )}
+
         {showMembersButton && (
           <Button
             variant="outline"
@@ -994,6 +1013,9 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     selectedTaskDetail?.is_group_chat,
     selectedTaskDetail?.team?.agent_type,
+    selectedTaskDetail?.status,
+    selectedTaskDetail?.preserve_executor,
+    selectedTaskDetail?.task_type,
     messages.length,
     isSharing,
     isMobile,

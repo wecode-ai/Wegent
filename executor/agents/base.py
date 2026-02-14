@@ -11,11 +11,13 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
-from executor.callback.callback_client import CallbackClient
 from executor.config import config
 from shared.logger import setup_logger
+from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
+from shared.models.execution import EventType, ExecutionEvent
 from shared.status import TaskStatus
 from shared.utils import git_util
+from shared.utils.callback_client import CallbackClient
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 
 logger = setup_logger("agent_base")
@@ -36,15 +38,22 @@ class Agent:
         """
         return self.__class__.__name__
 
-    def __init__(self, task_data: Dict[str, Any]):
+    def __init__(
+        self,
+        task_data: Dict[str, Any],
+        emitter: ResponsesAPIEmitter,
+    ):
         """
         Initialize the base agent
 
         Args:
             task_data: The task data dictionary
+            emitter: Emitter instance for sending events. Required parameter.
+                     - Local mode: Use WebSocketTransport emitter
+                     - Docker mode: Use CallbackTransport emitter
         """
         self.task_data = task_data
-        self.callback_client = CallbackClient()
+        self.callback_client = CallbackClient(callback_url=config.CALLBACK_URL)
         self.task_id = task_data.get("task_id", -1)
         self.subtask_id = task_data.get("subtask_id", -1)
         self.task_title = task_data.get("task_title", "")
@@ -54,6 +63,18 @@ class Agent:
         )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
+
+        # Emitter is required and must be provided by caller
+        self.emitter: ResponsesAPIEmitter = emitter
+
+    def get_emitter(self) -> ResponsesAPIEmitter:
+        """
+        Get the emitter instance for this agent.
+
+        Returns:
+            ResponsesAPIEmitter: The emitter instance
+        """
+        return self.emitter
 
     def handle(
         self, pre_executed: Optional[TaskStatus] = None
@@ -116,7 +137,9 @@ class Agent:
         result: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        Report progress to the executor_manager
+        Report progress to the executor_manager using OpenAI Responses API format.
+
+        Uses the emitter created during agent initialization.
 
         Args:
             progress: The progress percentage (0-100)
@@ -124,21 +147,29 @@ class Agent:
             message: Optional message string
             result: Optional result data dictionary
         """
+        import asyncio
+
         logger.info(
             f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}"
         )
         try:
-            self.callback_client.send_callback(
-                task_id=self.task_id,
-                subtask_id=self.subtask_id,
-                task_title=self.task_title,
-                subtask_title=self.subtask_title,
-                progress=progress,
-                status=status,
-                message=message,
-                result=result,
-                task_type=self.task_type,
-            )
+
+            async def _send_progress():
+                await self.get_emitter().in_progress()
+
+            # Run async in sync context
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(_send_progress())
+                return
+
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _send_progress())
+                future.result()
         except Exception as e:
             logger.critical(
                 f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "

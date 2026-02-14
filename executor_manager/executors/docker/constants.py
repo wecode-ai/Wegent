@@ -20,7 +20,7 @@ DEFAULT_DOCKER_HOST = os.getenv("DOCKER_HOST_ADDR", "host.docker.internal")
 DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 
 # API configuration
-DEFAULT_API_ENDPOINT = "/api/tasks/execute"
+DEFAULT_API_ENDPOINT = "/v1/responses"
 
 # Environment configuration
 DEFAULT_TIMEZONE = "Asia/Shanghai"

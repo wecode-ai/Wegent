@@ -110,6 +110,12 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
 
     model_id = task_crd.metadata.labels and task_crd.metadata.labels.get("modelId")
 
+    # Extract preserve_executor flag from task labels
+    preserve_executor = (
+        task_crd.metadata.labels
+        and task_crd.metadata.labels.get("preserveExecutor") == "true"
+    )
+
     # Extract is_group_chat from task spec
     is_group_chat = (
         task_crd.spec.is_group_chat
@@ -166,6 +172,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "is_group_chat": is_group_chat,
         "app": app_data,
         "device_id": device_id,
+        "preserve_executor": preserve_executor,
     }
 
 
@@ -196,6 +203,12 @@ def convert_to_task_dict_optimized(
     # Extract device_id from task spec
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
 
+    # Extract preserve_executor flag from task labels
+    preserve_executor = (
+        task_crd.metadata.labels
+        and task_crd.metadata.labels.get("preserveExecutor") == "true"
+    )
+
     return {
         "id": task.id,
         "type": type_value,
@@ -224,6 +237,7 @@ def convert_to_task_dict_optimized(
             else None
         ),
         "device_id": device_id,
+        "preserve_executor": preserve_executor,
     }
 
 

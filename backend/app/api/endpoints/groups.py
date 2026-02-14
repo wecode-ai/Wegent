@@ -40,8 +40,15 @@ def list_groups(
     Returns paginated results.
     """
     skip = (page - 1) * limit
+    # Check if user is admin to include organization groups
+    is_admin = current_user.role == "admin"
+
     groups = group_service.list_user_groups(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        include_organization=is_admin,
     )
 
     # Calculate total count
@@ -50,7 +57,11 @@ def list_groups(
     else:
         # Get total count of user's groups
         all_groups = group_service.list_user_groups(
-            db=db, user_id=current_user.id, skip=0, limit=1000
+            db=db,
+            user_id=current_user.id,
+            skip=0,
+            limit=1000,
+            include_organization=is_admin,
         )
         total = len(all_groups)
 
@@ -69,7 +80,10 @@ def create_group_endpoint(
     """
     try:
         return group_service.create_group(
-            db=db, group_data=group_create, owner_user_id=current_user.id
+            db=db,
+            group_data=group_create,
+            owner_user_id=current_user.id,
+            user_role=current_user.role,
         )
     except HTTPException:
         raise
@@ -445,6 +459,7 @@ def update_group_endpoint(
             group_name=group_name,
             update_data=group_update,
             user_id=current_user.id,
+            user_role=current_user.role,
         )
     except HTTPException:
         raise

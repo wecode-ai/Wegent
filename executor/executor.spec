@@ -36,6 +36,11 @@ hiddenimports += collect_submodules('cryptography')
 hiddenimports += collect_submodules('requests')
 hiddenimports += collect_submodules('pymysql')
 
+# LiteLLM and tiktoken (required for OpenAI Responses API types)
+hiddenimports += collect_submodules('litellm')
+hiddenimports += collect_submodules('tiktoken')
+hiddenimports += collect_submodules('tiktoken_ext')
+
 # MCP server dependencies (starlette is required by mcp.server.sse, mcp.server.websocket, mcp.server.auth)
 hiddenimports += collect_submodules('starlette')
 hiddenimports += collect_submodules('sse_starlette')
@@ -99,7 +104,8 @@ hiddenimports += [
 
 # Collect package data
 for package in ['fastapi', 'uvicorn', 'pydantic', 'anthropic', 'claude_agent_sdk',
-                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette', 'rich']:
+                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette', 'rich',
+                'litellm', 'tiktoken']:
     try:
         tmp_datas, tmp_binaries, tmp_hiddenimports = collect_all(package)
         datas += tmp_datas

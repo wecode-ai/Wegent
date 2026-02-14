@@ -28,7 +28,10 @@ class TestDockerConstants:
 
     def test_default_docker_host(self):
         """Test DEFAULT_DOCKER_HOST constant"""
-        assert DEFAULT_DOCKER_HOST == "host.docker.internal"
+        import os
+
+        expected = os.getenv("DOCKER_HOST_ADDR", "host.docker.internal")
+        assert DEFAULT_DOCKER_HOST == expected
         assert isinstance(DEFAULT_DOCKER_HOST, str)
 
     def test_docker_socket_path(self):
@@ -38,7 +41,7 @@ class TestDockerConstants:
 
     def test_default_api_endpoint(self):
         """Test DEFAULT_API_ENDPOINT constant"""
-        assert DEFAULT_API_ENDPOINT == "/api/tasks/execute"
+        assert DEFAULT_API_ENDPOINT == "/v1/responses"
         assert isinstance(DEFAULT_API_ENDPOINT, str)
         assert DEFAULT_API_ENDPOINT.startswith("/")
 

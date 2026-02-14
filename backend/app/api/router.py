@@ -5,6 +5,7 @@
 """
 API router module, providing a global API router instance
 """
+
 from fastapi import APIRouter
 
 # Create a global API router instance

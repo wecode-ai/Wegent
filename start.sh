@@ -833,10 +833,12 @@ check_all_ports() {
 }
 
 # Stop all services
+# Stop all services
 stop_services() {
     echo -e "${YELLOW}Stopping all Wegent services...${NC}"
 
     local services=("backend" "frontend" "chat_shell" "executor_manager")
+    local stopped_pids=()
 
     for service in "${services[@]}"; do
         local pid_file="$PID_DIR/${service}.pid"
@@ -844,7 +846,10 @@ stop_services() {
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping $service (PID: $pid)..."
-                kill "$pid" 2>/dev/null || true
+                stopped_pids+=("$pid")
+                # Kill the process group to ensure child processes are also killed
+                # uvicorn --reload creates child processes that need to be terminated
+                kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
                 # Wait for process to exit
                 for i in {1..10}; do
                     if ! kill -0 "$pid" 2>/dev/null; then
@@ -854,32 +859,41 @@ stop_services() {
                 done
                 # Force terminate
                 if kill -0 "$pid" 2>/dev/null; then
-                    kill -9 "$pid" 2>/dev/null || true
+                    kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
                 fi
             fi
             rm -f "$pid_file"
         fi
     done
 
-    # Clean up potentially remaining processes by port (only kill processes on our configured ports)
-    # This ensures we don't accidentally kill other backend instances on the same machine
-    for port in $BACKEND_PORT $CHAT_SHELL_PORT $EXECUTOR_MANAGER_PORT $WEGENT_FRONTEND_PORT; do
-        local pids=$(lsof -ti :$port 2>/dev/null || true)
-        if [ -n "$pids" ]; then
-            echo -e "  Cleaning up processes on port $port..."
-            echo "$pids" | xargs kill 2>/dev/null || true
-            sleep 0.5
-            # Force kill if still running
-            pids=$(lsof -ti :$port 2>/dev/null || true)
-            if [ -n "$pids" ]; then
-                echo "$pids" | xargs kill -9 2>/dev/null || true
+    # Only clean up child processes of the PIDs we stopped
+    # DO NOT blindly kill all processes on ports - this could kill Docker or other important services
+    # The port-based cleanup was removed because it's dangerous and can kill unrelated processes
+    # If a Wegent service was started by this script, it will have a PID file and be stopped above
+
+    # Wait for stopped processes to fully exit
+    if [ ${#stopped_pids[@]} -gt 0 ]; then
+        echo -e "  Waiting for processes to exit..."
+        local max_wait=10
+        local waited=0
+        while [ $waited -lt $max_wait ]; do
+            local still_running=0
+            for pid in "${stopped_pids[@]}"; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    still_running=1
+                    break
+                fi
+            done
+            if [ $still_running -eq 0 ]; then
+                break
             fi
-        fi
-    done
+            sleep 1
+            waited=$((waited + 1))
+        done
+    fi
 
     echo -e "${GREEN}All services stopped${NC}"
 }
-
 # Show service status
 show_status() {
     echo -e "${BLUE}Wegent Service Status:${NC}"
@@ -1084,21 +1098,25 @@ start_services() {
     # 1. Start Backend
     # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
     # CHAT_SHELL_URL: URL for backend to call chat_shell service
+    # LOG_LEVEL: Application log level (DEBUG enables debug logging)
+    # --reload-dir: Watch shared module for changes (editable dependency)
     start_service "backend" "backend" \
-        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
+        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
 
     # 2. Start Chat Shell
     # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)
+    # --reload-dir: Watch shared module for changes (editable dependency)
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port $CHAT_SHELL_PORT"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug"
 
     # 3. Start Executor Manager
     # TASK_API_DOMAIN: URL for executor_manager to call backend (uses local IP so docker containers can access)
     # DOCKER_HOST_ADDR=localhost so executor_manager can access docker containers
     # CALLBACK_HOST: URL for executor containers to call back to executor_manager (uses local IP so docker containers can access)
+    # --reload-dir: Watch shared module for changes (editable dependency)
     local CALLBACK_HOST="http://$LOCAL_IP:$EXECUTOR_MANAGER_PORT"
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."

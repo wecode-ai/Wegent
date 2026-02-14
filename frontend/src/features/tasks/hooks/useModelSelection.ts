@@ -265,85 +265,32 @@ export function useModelSelection({
       prevTaskIdRef.current !== taskId &&
       (typeof prevTaskIdRef.current === 'number' || typeof taskId === 'number')
 
-    console.log('[useModelSelection] Selection effect triggered', {
-      currentTeamId,
-      teamChanged,
-      taskId,
-      taskChanged,
-      taskModelId,
-      hasInitialized: hasInitializedRef.current,
-      modelsCount: models.length,
-      filteredModelsCount: filteredModels.length,
-      showDefaultOption,
-      currentSelectedModel: selectedModel?.name,
-    })
-
-    // Debug: Log all model names and displayNames
-    if (models.length > 0 && taskModelId) {
-      console.log('[useModelSelection] Looking for taskModelId:', taskModelId)
-      console.log(
-        '[useModelSelection] Available models:',
-        models.map(m => ({
-          name: m.name,
-          displayName: m.displayName,
-          provider: m.provider,
-          type: m.type,
-        }))
-      )
-    }
-
     prevTeamIdRef.current = currentTeamId
     prevTaskIdRef.current = taskId
 
     // Skip if no models loaded yet
     if (models.length === 0) {
-      console.log('[useModelSelection] Skipping: no models loaded yet')
       return
     }
 
     // Case 1: Initial load or team/task changed - restore model
     if (!hasInitializedRef.current || teamChanged || taskChanged) {
-      console.log('[useModelSelection] Case 1: Initial load or team/task changed', {
-        hasInitialized: hasInitializedRef.current,
-        teamChanged,
-        taskChanged,
-        taskId,
-        taskModelId,
-        showDefaultOption,
-      })
       isRestoringRef.current = true
       let restoredModel: Model | null = null
 
       // Priority 1: Use taskModelId from API (if exists and not default)
       // Search in ALL models, not just filtered ones, since task already has a recorded model
       if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-        console.log('[useModelSelection] Priority 1: Searching for taskModelId in all models...')
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
-          console.log('[useModelSelection] Priority 1: Found model by taskModelId:', {
-            name: foundModel.name,
-            displayName: foundModel.displayName,
-            provider: foundModel.provider,
-          })
           restoredModel = foundModel
-        } else {
-          console.log(
-            '[useModelSelection] Priority 1: taskModelId NOT found in models:',
-            taskModelId
-          )
         }
-      } else {
-        console.log('[useModelSelection] Priority 1: Skipped (no taskModelId or is default)', {
-          taskModelId,
-        })
       }
 
       // Priority 2: Use global preference (for new chat only, i.e. no taskId)
       // NOTE: Must search in filteredModels to ensure model is compatible with current team's agent_type
       if (!restoredModel && teamId && !taskId) {
-        console.log('[useModelSelection] Priority 2: Checking global preference (new chat)...')
         const preference = getGlobalModelPreference(teamId)
-        console.log('[useModelSelection] Priority 2: Global preference:', preference)
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
           // Search in filteredModels (not models) to ensure compatibility with team's agent_type
           const foundModel = filteredModels.find(m => {
@@ -353,45 +300,25 @@ export function useModelSelection({
             return m.name === preference.modelName
           })
           if (foundModel) {
-            console.log('[useModelSelection] Priority 2: Using global preference:', foundModel.name)
             restoredModel = foundModel
             setForceOverrideState(preference.forceOverride)
-          } else {
-            console.log(
-              '[useModelSelection] Priority 2: Global preference model not compatible with current team (not in filteredModels)',
-              {
-                preferenceName: preference.modelName,
-                compatibleProvider,
-                filteredModelsCount: filteredModels.length,
-              }
-            )
           }
         }
       }
 
       // Priority 3: Use team's bot bind_model as fallback
       if (!restoredModel && !taskModelId) {
-        console.log('[useModelSelection] Priority 3: Checking team bind_model...')
         const teamDefaultModel = getTeamDefaultModel()
         if (teamDefaultModel) {
-          console.log(
-            '[useModelSelection] Priority 3: Using team bind_model:',
-            teamDefaultModel.name
-          )
           restoredModel = teamDefaultModel
-        } else {
-          console.log('[useModelSelection] Priority 3: No team bind_model found')
         }
       }
 
       // Priority 4: Use default if showDefaultOption and no model found
       if (!restoredModel && showDefaultOption) {
-        console.log('[useModelSelection] Priority 4: Using default model (showDefaultOption=true)')
         restoredModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
         setForceOverrideState(false)
       }
-
-      console.log('[useModelSelection] Final restoredModel:', restoredModel?.name ?? 'null')
 
       if (restoredModel) {
         setSelectedModel(restoredModel)
@@ -400,7 +327,6 @@ export function useModelSelection({
         }
       } else if (teamChanged) {
         // Clear selection on team change if no model found
-        console.log('[useModelSelection] Clearing selection (team changed, no model found)')
         setSelectedModel(null)
       }
 
@@ -420,7 +346,6 @@ export function useModelSelection({
         return m.name === selectedModel.name
       })
       if (!isStillCompatible) {
-        console.log('[useModelSelection] Case 2: Model no longer compatible, clearing')
         setSelectedModel(null)
       }
     }
@@ -462,7 +387,6 @@ export function useModelSelection({
     }
 
     // Always save to global when model changes
-    console.log('[useModelSelection] Saving to global', { teamId, preference })
     saveGlobalModelPreference(teamId, preference)
   }, [selectedModel, forceOverride, teamId])
 

@@ -12,7 +12,7 @@ import React, {
 } from 'react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Loader2, XIcon, SettingsIcon, Edit, Wand2, Download, ExternalLink } from 'lucide-react'
+import { Loader2, XIcon, SettingsIcon, Edit, Wand2, ExternalLink } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -201,8 +201,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Handle MCP configuration import
   const handleImportMcpConfig = useCallback(() => {
+    if (readOnly) {
+      return
+    }
     setImportModalVisible(true)
-  }, [])
+  }, [readOnly])
 
   // Handle import configuration confirmation
   const handleImportConfirm = useCallback(
@@ -1536,10 +1539,20 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               {/* MCP Config */}
               <div className="flex flex-col flex-grow">
                 <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center">
-                    <label className="block text-base font-medium text-text-primary">
+                  <div className="flex items-center gap-2">
+                    <label className="block text-base font-medium leading-8 text-text-primary">
                       {t('common:bot.mcp_config')}
                     </label>
+                    <Button
+                      size="sm"
+                      onClick={() => handleImportMcpConfig()}
+                      disabled={readOnly}
+                      aria-disabled={readOnly}
+                      className="h-8 text-xs gap-1.5 disabled:cursor-not-allowed"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      {t('common:bot.import_mcp_button')}
+                    </Button>
                   </div>
                   <div className="flex items-center gap-2">
                     {process.env.NEXT_PUBLIC_MCP_MARKET_URL && (
@@ -1555,14 +1568,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         {t('common:bot.mcp_market')}
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      onClick={() => handleImportMcpConfig()}
-                      className="text-xs gap-1.5"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      {t('common:bot.import_mcp_button')}
-                    </Button>
                   </div>
                 </div>
                 <textarea
@@ -1571,7 +1576,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   className={`w-full px-4 py-2 bg-base-secondary rounded-md text-text-primary focus:outline-none font-mono text-base flex-grow resize-y custom-scrollbar border border-border cursor-text min-h-[120px]`}
                   placeholder={t(
                     'common:bot.mcp_config_readonly_placeholder',
-                    'MCP configuration is read-only. Please use the Import button to modify.'
+                    'MCP configuration is read-only. Please use the Edit button to modify.'
                   )}
                 />
               </div>

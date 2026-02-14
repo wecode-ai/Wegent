@@ -21,8 +21,9 @@ from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Queue key prefix
-QUEUE_KEY_PREFIX = "wegent:task_queue"
+# Queue key prefix - configurable via environment variable for different environments
+# Default: "wegent:task_queue", can be set to e.g., "wegent:dev:task_queue" or "wegent:prod:task_queue"
+QUEUE_KEY_PREFIX = os.getenv("TASK_QUEUE_KEY_PREFIX", "wegent:task_queue")
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 3
@@ -62,6 +63,27 @@ class TaskQueueService:
             self._redis_client = RedisClientFactory.get_sync_client()
         return self._redis_client
 
+    @staticmethod
+    def _get_task_ids(task: Dict[str, Any]) -> tuple[Any, Any]:
+        """Extract task_id and subtask_id from task dict.
+
+        Supports both legacy format (task_id at top level) and
+        OpenAI Responses API format (task_id in metadata).
+
+        Args:
+            task: Task dictionary
+
+        Returns:
+            Tuple of (task_id, subtask_id), defaults to "unknown" if not found
+        """
+        task_id = task.get("task_id") or task.get("metadata", {}).get(
+            "task_id", "unknown"
+        )
+        subtask_id = task.get("subtask_id") or task.get("metadata", {}).get(
+            "subtask_id", "unknown"
+        )
+        return task_id, subtask_id
+
     def enqueue_task(self, task: Dict[str, Any]) -> bool:
         """Push task to queue.
 
@@ -80,8 +102,7 @@ class TaskQueueService:
         try:
             task_json = json.dumps(task)
             self.redis_client.lpush(self.queue_key, task_json)
-            task_id = task.get("task_id", "unknown")
-            subtask_id = task.get("subtask_id", "unknown")
+            task_id, subtask_id = self._get_task_ids(task)
             logger.info(
                 f"[TaskQueue] Enqueued task task_id:{task_id} subtask_id:{subtask_id} to {self.queue_key}"
             )
@@ -133,8 +154,7 @@ class TaskQueueService:
             if result:
                 _, task_json = result
                 task = json.loads(task_json)
-                task_id = task.get("task_id", "unknown")
-                subtask_id = task.get("subtask_id", "unknown")
+                task_id, subtask_id = self._get_task_ids(task)
                 logger.debug(
                     f"[TaskQueue] Dequeued task {task_id}/{subtask_id} from {self.queue_key}"
                 )
@@ -220,8 +240,7 @@ class TaskQueueService:
         retry_count = task.get(RETRY_COUNT_FIELD, 0) + 1
         task[RETRY_COUNT_FIELD] = retry_count
 
-        task_id = task.get("task_id", "unknown")
-        subtask_id = task.get("subtask_id", "unknown")
+        task_id, subtask_id = self._get_task_ids(task)
 
         if retry_count > self.max_retries:
             logger.warning(

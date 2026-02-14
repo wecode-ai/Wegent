@@ -12,6 +12,7 @@ from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.schemas.namespace import (
     GroupCreate,
+    GroupLevel,
     GroupResponse,
     GroupRole,
     GroupUpdate,
@@ -33,7 +34,10 @@ MAX_GROUP_DEPTH = 5
 
 
 def create_group(
-    db: Session, group_data: GroupCreate, owner_user_id: int
+    db: Session,
+    group_data: GroupCreate,
+    owner_user_id: int,
+    user_role: str | None = None,
 ) -> GroupResponse:
     """
     Create a new group and add the creator as Owner.
@@ -42,6 +46,7 @@ def create_group(
         db: Database session
         group_data: Group creation data
         owner_user_id: User ID of the group creator (becomes owner)
+        user_role: User's system role ('admin' or 'user') for organization-level check
 
     Returns:
         Created group response
@@ -49,6 +54,14 @@ def create_group(
     Raises:
         HTTPException: If group name already exists or validation fails
     """
+    # Check permission for organization-level group (admin only)
+    group_level = group_data.level.value if group_data.level else GroupLevel.group.value
+    if group_level == GroupLevel.organization.value and user_role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin users can create organization-level groups",
+        )
+
     # Check if group name already exists
     existing = (
         db.query(Namespace)
@@ -85,7 +98,7 @@ def create_group(
 
         # Check if user has permission to create subgroups (must be at least Maintainer)
         # Use effective role to support inheritance
-        user_role = get_effective_role_in_group(db, owner_user_id, parent_name)
+        user_group_role = get_effective_role_in_group(db, owner_user_id, parent_name)
         role_hierarchy = {
             GroupRole.Owner: 0,
             GroupRole.Maintainer: 1,
@@ -94,8 +107,9 @@ def create_group(
         }
 
         if (
-            user_role is None
-            or role_hierarchy.get(user_role, 999) > role_hierarchy[GroupRole.Maintainer]
+            user_group_role is None
+            or role_hierarchy.get(user_group_role, 999)
+            > role_hierarchy[GroupRole.Maintainer]
         ):
             raise HTTPException(
                 status_code=403,
@@ -109,6 +123,7 @@ def create_group(
         owner_user_id=owner_user_id,
         visibility=group_data.visibility.value,
         description=group_data.description,
+        level=group_level,
         is_active=True,
     )
 
@@ -158,7 +173,11 @@ def get_group(db: Session, group_name: str) -> Optional[GroupResponse]:
 
 
 def list_user_groups(
-    db: Session, user_id: int, skip: int = 0, limit: int = 100
+    db: Session,
+    user_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    include_organization: bool = False,
 ) -> list[GroupResponse]:
     """
     List groups where user is a member (created or joined).
@@ -169,6 +188,7 @@ def list_user_groups(
         user_id: User ID
         skip: Number of records to skip
         limit: Maximum number of records to return
+        include_organization: Whether to include organization-level groups (admin only)
 
     Returns:
         List of GroupResponse objects with additional fields
@@ -190,17 +210,20 @@ def list_user_groups(
     group_roles = {name: role for name, role in member_data}
     group_names = list(group_roles.keys())
 
-    groups = (
-        db.query(Namespace)
-        .filter(
-            Namespace.name.in_(group_names),
-            Namespace.is_active == True,
-        )
-        .order_by(Namespace.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
+    # Build query for groups
+    query = db.query(Namespace).filter(
+        Namespace.name.in_(group_names),
+        Namespace.is_active == True,
     )
+
+    # Filter out organization-level groups for non-admin users
+    if not include_organization:
+        query = query.filter(
+            (Namespace.level != GroupLevel.organization.value)
+            | (Namespace.level.is_(None))
+        )
+
+    groups = query.order_by(Namespace.created_at.desc()).offset(skip).limit(limit).all()
 
     # Get member counts for all groups
     member_counts = {}
@@ -227,7 +250,11 @@ def list_user_groups(
 
 
 def update_group(
-    db: Session, group_name: str, update_data: GroupUpdate, user_id: int
+    db: Session,
+    group_name: str,
+    update_data: GroupUpdate,
+    user_id: int,
+    user_role: str | None = None,
 ) -> GroupResponse:
     """
     Update group information.
@@ -237,6 +264,7 @@ def update_group(
         group_name: Group name
         update_data: Update data
         user_id: User ID performing the update
+        user_role: User's system role ('admin' or 'user') for organization-level check
 
     Returns:
         Updated group response
@@ -263,6 +291,22 @@ def update_group(
             detail="Only Maintainers and Owners can update group information",
         )
 
+    # Check permission for organization-level changes (admin only)
+    if update_data.level is not None:
+        new_level = update_data.level.value
+        current_level = group.level
+
+        # Check if changing to or from organization level
+        if (
+            new_level == GroupLevel.organization.value
+            or current_level == GroupLevel.organization.value
+        ):
+            if user_role != "admin":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only admin users can change group level to/from organization",
+                )
+
     # Update fields
     update_dict = update_data.model_dump(exclude_unset=True)
 
@@ -270,6 +314,8 @@ def update_group(
         if hasattr(group, field):
             # Handle enum conversion
             if field == "visibility" and isinstance(value, GroupVisibility):
+                setattr(group, field, value.value)
+            elif field == "level" and isinstance(value, GroupLevel):
                 setattr(group, field, value.value)
             else:
                 setattr(group, field, value)

@@ -29,7 +29,9 @@ RUN pip config set global.index-url http://mirrors.cloud.aliyuncs.com/pypi/simpl
 COPY executor/pyproject.toml /app/executor/pyproject.toml
 
 ENV PATH="/usr/local/bin:${PATH}"
-RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
+# Install main dependencies and build dependencies (pyinstaller)
+RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml && \
+    uv pip install --system --no-cache pyinstaller
 
 # Copy source code
 COPY executor /app/executor

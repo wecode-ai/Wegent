@@ -9,6 +9,7 @@ These models support the subscription visibility and follow feature:
 - SubscriptionFollow: Track user-subscription follow relationships
 - SubscriptionShareNamespace: Track namespace-level subscription sharing
 """
+
 from datetime import datetime
 from enum import Enum
 

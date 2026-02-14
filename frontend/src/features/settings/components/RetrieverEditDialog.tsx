@@ -28,6 +28,16 @@ const STORAGE_TYPE_CONFIG = {
     // Fallback retrieval methods (used if API call fails)
     fallbackRetrievalMethods: ['vector'] as const,
   },
+  milvus: {
+    defaultUrl: 'http://localhost:19530/default',
+    recommendedIndexMode: 'per_user' as const,
+    authFields: {
+      supportsUsernamePassword: true,
+      supportsApiKey: false,
+    },
+    // Fallback retrieval methods (used if API call fails)
+    fallbackRetrievalMethods: ['vector', 'keyword', 'hybrid'] as const,
+  },
 } as const
 
 // Retrieval method labels for display
@@ -88,7 +98,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   // Form state
   const [retrieverName, setRetrieverName] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [storageType, setStorageType] = useState<'elasticsearch' | 'qdrant'>('elasticsearch')
+  const [storageType, setStorageType] = useState<'elasticsearch' | 'qdrant' | 'milvus'>('elasticsearch')
   const [url, setUrl] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -114,7 +124,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   const [loadingRetrievalMethods, setLoadingRetrievalMethods] = useState(false)
 
   // Fetch retrieval methods for a storage type from API
-  const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant') => {
+  const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant' | 'milvus') => {
     setLoadingRetrievalMethods(true)
     try {
       const response = await retrieverApis.getStorageTypeRetrievalMethods(type)
@@ -163,6 +173,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
             const loadedStorageType = fullRetriever.spec.storageConfig.type as
               | 'elasticsearch'
               | 'qdrant'
+              | 'milvus'
             setRetrieverName(fullRetriever.metadata.name)
             setDisplayName(fullRetriever.metadata.displayName || '')
             setStorageType(loadedStorageType)
@@ -240,7 +251,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
     }
   }, [open, retriever, toast, t, fetchRetrievalMethods])
 
-  const handleStorageTypeChange = async (value: 'elasticsearch' | 'qdrant') => {
+  const handleStorageTypeChange = async (value: 'elasticsearch' | 'qdrant' | 'milvus') => {
     setStorageType(value)
     const config = STORAGE_TYPE_CONFIG[value]
     setUrl(config.defaultUrl)
@@ -494,6 +505,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
                   {t('retrievers.storage_type_elasticsearch')}
                 </SelectItem>
                 <SelectItem value="qdrant">{t('retrievers.storage_type_qdrant')}</SelectItem>
+                <SelectItem value="milvus">{t('retrievers.storage_type_milvus')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -510,14 +522,18 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               placeholder={
                 storageType === 'elasticsearch'
                   ? t('retrievers.connection_url_placeholder_es')
-                  : t('retrievers.connection_url_placeholder_qdrant')
+                  : storageType === 'milvus'
+                    ? t('retrievers.connection_url_placeholder_milvus')
+                    : t('retrievers.connection_url_placeholder_qdrant')
               }
               className="bg-base"
             />
             <p className="text-xs text-text-muted">
               {storageType === 'elasticsearch'
                 ? t('retrievers.connection_url_hint_es')
-                : t('retrievers.connection_url_hint_qdrant')}
+                : storageType === 'milvus'
+                  ? t('retrievers.connection_url_hint_milvus')
+                  : t('retrievers.connection_url_hint_qdrant')}
             </p>
           </div>
 

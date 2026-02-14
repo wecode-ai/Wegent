@@ -11,10 +11,25 @@ Local mode enables running Claude Code Agent without Docker containers.
 Key components:
 - LocalRunner: Main runner for local mode
 - WebSocketClient: WebSocket client for Backend communication
-- WebSocketProgressReporter: Progress reporter via WebSocket
 - HeartbeatService: Heartbeat service for connection health
+- Events: Event type definitions (Socket.IO events)
+
+Events are sent using OpenAI Responses API event types directly as Socket.IO
+event names (e.g., "response.created", "response.completed", "error").
+This allows backend's DeviceNamespace to route them correctly.
 """
 
+from executor.modes.local.events import (
+    ChatEvents,
+    DeviceEvents,
+    TaskEvents,
+)
 from executor.modes.local.runner import LocalRunner
 
-__all__ = ["LocalRunner"]
+__all__ = [
+    "LocalRunner",
+    # Event classes
+    "DeviceEvents",
+    "TaskEvents",
+    "ChatEvents",
+]

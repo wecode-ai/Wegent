@@ -6,10 +6,10 @@
 Document service for RAG functionality.
 Refactored to use modular architecture with pluggable storage backends.
 """
-
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from app.services.context import context_service
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.storage.chunk_metadata import ChunkMetadata
 from shared.telemetry.decorators import (
     add_span_event,
     capture_trace_context,
@@ -195,6 +196,14 @@ class DocumentService:
                 },
             )
 
+            # Create ChunkMetadata at the service layer
+            chunk_metadata = ChunkMetadata(
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                source_file=filename,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+
             # Create indexer with file_extension for SmartSplitter to use correct strategy
             # This is critical for .md files to use MarkdownNodeParser
             indexer = DocumentIndexer(
@@ -206,11 +215,9 @@ class DocumentService:
 
             # Index from binary data directly (indexer handles parsing)
             result = indexer.index_from_binary(
-                knowledge_id=knowledge_id,
                 binary_data=binary_data,
-                source_file=filename,
                 file_extension=file_extension,
-                doc_ref=doc_ref,
+                chunk_metadata=chunk_metadata,
                 user_id=user_id,
             )
         else:
@@ -218,6 +225,15 @@ class DocumentService:
             from pathlib import Path
 
             file_extension = Path(file_path).suffix.lower() if file_path else None
+            source_file = Path(file_path).name if file_path else ""
+
+            # Create ChunkMetadata at the service layer
+            chunk_metadata = ChunkMetadata(
+                knowledge_id=knowledge_id,
+                doc_ref=doc_ref,
+                source_file=source_file,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
 
             # Create indexer with file_extension for SmartSplitter
             indexer = DocumentIndexer(
@@ -229,9 +245,8 @@ class DocumentService:
 
             # Index from file path
             result = indexer.index_document(
-                knowledge_id=knowledge_id,
                 file_path=file_path,
-                doc_ref=doc_ref,
+                chunk_metadata=chunk_metadata,
                 user_id=user_id,
             )
 

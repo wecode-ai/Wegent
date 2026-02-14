@@ -6,8 +6,11 @@
 Device task router service.
 
 This module handles routing tasks to local devices via WebSocket.
-It reuses executor_kinds._format_subtasks_response() to ensure
-the task data format is identical to what executor_manager receives.
+
+Refactored version:
+- Uses ExecutionDispatcher for unified task dispatch
+- Simplified logic - no longer manually formats task data
+- Device routing is now just a special case of ExecutionDispatcher with device_id
 """
 
 import logging
@@ -20,7 +23,6 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.device_service import device_service
 
 logger = logging.getLogger(__name__)
@@ -40,11 +42,12 @@ async def route_task_to_device(
     """
     Route a task to a local device for execution.
 
+    Refactored version that uses ExecutionDispatcher for unified dispatch.
+
     This function:
     1. Verifies device is online
-    2. Formats task data using executor_kinds (same format as executor_manager)
-    3. Updates subtask with device executor info
-    4. Pushes task to device via WebSocket
+    2. Updates subtask with device executor info
+    3. Uses ExecutionDispatcher to dispatch task via WebSocket
 
     Args:
         db: Database session
@@ -65,13 +68,14 @@ async def route_task_to_device(
     """
     from fastapi import HTTPException
 
+    from app.services.execution import TaskRequestBuilder, execution_dispatcher
+
     # Verify device is online
     device_info = await device_service.get_device_online_info(user_id, device_id)
     if not device_info:
         raise HTTPException(status_code=400, detail="Selected device is offline")
 
     # Re-query ORM objects within this session to avoid cross-session issues
-    # This is necessary because the passed objects may be bound to a different session
     local_subtask = db.query(Subtask).filter(Subtask.id == subtask.id).first()
 
     if not local_subtask:
@@ -83,7 +87,6 @@ async def route_task_to_device(
         from app.schemas.kind import Task as TaskCRD
 
         task_crd = TaskCRD.model_validate(local_task.json)
-        # Only update device_id if not already set or if different
         if not task_crd.spec.device_id or task_crd.spec.device_id != device_id:
             task_crd.spec.device_id = device_id
             local_task.json = task_crd.model_dump(mode="json")
@@ -103,26 +106,19 @@ async def route_task_to_device(
     # Refresh to get updated state
     db.refresh(local_subtask)
 
-    # Use executor_kinds_service to format task data (same format as executor_manager)
-    # This ensures device receives identical structure to what executor_manager dispatches
-    formatted_result = executor_kinds_service._format_subtasks_response(
-        db, [local_subtask]
+    # Build unified execution request
+    builder = TaskRequestBuilder(db)
+    request = builder.build(
+        subtask=local_subtask,
+        task=task,
+        user=user,
+        team=team,
+        message=local_subtask.prompt or "",
     )
 
-    if not formatted_result.get("tasks"):
-        raise HTTPException(status_code=500, detail="Failed to format task data")
-
-    task_data = formatted_result["tasks"][0]
-
-    # Push task to device via WebSocket
-    from app.core.socketio import get_sio
-
-    sio = get_sio()
-    device_room = f"device:{user_id}:{device_id}"
-
-    await sio.emit(
-        "task:execute", task_data, room=device_room, namespace="/local-executor"
-    )
+    # Dispatch task via ExecutionDispatcher
+    # When device_id is specified, ExecutionDispatcher uses WebSocket mode
+    await execution_dispatcher.dispatch(request, device_id=device_id)
 
     logger.info(
         f"[DeviceRouter] Task routed to device: task_id={task.id}, "
@@ -130,7 +126,73 @@ async def route_task_to_device(
     )
 
     # Broadcast slot update to user after task is assigned to device
+    from app.core.socketio import get_sio
+
+    sio = get_sio()
     await _broadcast_device_slot_update(sio, db, user_id, device_id)
+
+    return True
+
+
+async def route_task_to_device_unified(
+    db: Session,
+    user_id: int,
+    device_id: str,
+    task: TaskResource,
+    subtask: Subtask,
+    team: Kind,
+    user: User,
+    message: str = "",
+    auth_token: str = "",
+) -> bool:
+    """
+    Simplified version of route_task_to_device using ExecutionDispatcher.
+
+    This is the recommended entry point for device routing.
+
+    Args:
+        db: Database session
+        user_id: User ID
+        device_id: Target device ID
+        task: Task resource
+        subtask: Assistant subtask to execute
+        team: Team Kind
+        user: User object
+        message: User message/prompt
+        auth_token: JWT token for API calls
+
+    Returns:
+        True if task was successfully routed to device
+
+    Raises:
+        HTTPException: If device is offline or routing fails
+    """
+    from fastapi import HTTPException
+
+    from app.services.execution import TaskRequestBuilder, execution_dispatcher
+
+    # Verify device is online
+    device_info = await device_service.get_device_online_info(user_id, device_id)
+    if not device_info:
+        raise HTTPException(status_code=400, detail="Selected device is offline")
+
+    # Build unified execution request
+    builder = TaskRequestBuilder(db)
+    request = builder.build(
+        subtask=subtask,
+        task=task,
+        user=user,
+        team=team,
+        message=message,
+    )
+
+    # Dispatch task via ExecutionDispatcher with device_id
+    await execution_dispatcher.dispatch(request, device_id=device_id)
+
+    logger.info(
+        f"[DeviceRouter] Task dispatched to device: task_id={task.id}, "
+        f"subtask_id={subtask.id}, device_id={device_id}"
+    )
 
     return True
 

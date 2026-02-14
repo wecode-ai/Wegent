@@ -1360,7 +1360,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Response text for sync mode, or None if streamed successfully
         """
-        from app.services.chat.config import should_use_direct_chat
         from app.services.chat.storage.task_manager import (
             TaskCreationParams,
             create_task_and_subtasks,
@@ -1399,15 +1398,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             team = self._get_default_team(db, user.id)
             if not team:
                 return "配置错误: 未配置默认智能体"
-
-            supports_direct_chat = should_use_direct_chat(db, team, user.id)
-
-            if not supports_direct_chat:
-                self.logger.warning(
-                    f"[{self._channel_type.value}Handler] Team {team.namespace}/{team.name} "
-                    "does not support direct chat"
-                )
-                return "This team does not support instant chat, please use the web interface"
 
             result = await create_task_and_subtasks(
                 db=db,
@@ -1476,15 +1466,16 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"⏰ 距离上次对话已超过 {timeout_minutes} 分钟，已自动开始新对话",
             )
 
-        # Trigger AI response (no db session needed)
-        from app.services.chat.trigger.core import trigger_ai_response
+        # Trigger AI response using unified dispatcher
+        # ExecutionDispatcher automatically selects communication mode based on shell_type
+        from app.services.chat.trigger import trigger_ai_response_unified
 
         task_room = f"task_{task_id}"
 
         # Append IM channel context hint to help AI understand available commands
         message_with_hint = message + IM_CHANNEL_CONTEXT_HINT
 
-        await trigger_ai_response(
+        await trigger_ai_response_unified(
             task=trigger_data["task"],
             assistant_subtask=trigger_data["assistant_subtask"],
             team=trigger_data["team"],
@@ -1492,10 +1483,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message=message_with_hint,
             payload=self._build_chat_payload(params, override_model_name),
             task_room=task_room,
-            supports_direct_chat=True,
             namespace=None,
             user_subtask_id=trigger_data["user_subtask_id"],
-            event_emitter=response_emitter,
+            result_emitter=response_emitter,
         )
 
         # Wait for AI response (no db session held)
@@ -1623,12 +1613,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # This ensures the "task sent" card appears before the result card
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
-            await streaming_emitter.emit_chat_start(
+            await streaming_emitter.emit_start(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 shell_type="ClaudeCode",
             )
-            await streaming_emitter.emit_chat_chunk(
+            await streaming_emitter.emit_chunk(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 content=(
@@ -1639,7 +1629,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 ),
                 offset=0,
             )
-            await streaming_emitter.emit_chat_done(
+            await streaming_emitter.emit_done(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 offset=0,
@@ -1686,7 +1676,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             TaskCreationParams,
             create_task_and_subtasks,
         )
-        from app.services.task_dispatcher import task_dispatcher
+        from app.services.execution import schedule_dispatch
 
         message = message_context.content
         conversation_id = message_context.conversation_id
@@ -1745,33 +1735,33 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"⏰ 距离上次对话已超过 {timeout_minutes} 分钟，已自动开始新对话",
             )
 
-        task_dispatcher.schedule_dispatch(result.task.id)
+        schedule_dispatch(result.task.id)
 
+        # Send acknowledgment
         # Send acknowledgment
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
-            await streaming_emitter.emit_chat_start(
+            await streaming_emitter.emit_start(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 shell_type="ClaudeCode",
             )
-            await streaming_emitter.emit_chat_chunk(
+            await streaming_emitter.emit_chunk(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 content=(
                     "⏳ 任务已提交到云端执行队列\n\n"
                     f"任务 ID: {result.task.id}\n"
                     "状态: 等待执行\n\n"
-                    "任务完成后将收到通知。"
+                    "任务完成后��收到通知。"
                 ),
                 offset=0,
             )
-            await streaming_emitter.emit_chat_done(
+            await streaming_emitter.emit_done(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 offset=0,
             )
-            return None
         else:
             return (
                 f"✅ 任务已提交到云端执行队列\n\n"
