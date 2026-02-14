@@ -13,16 +13,18 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import { viewReport } from '@wecode/api/evaluation-shared'
 import { GradingTaskStatus, getStatusLabel, type GradingTask } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
-import ReactMarkdown from 'react-markdown'
 
 function SharedReportViewContent() {
   const router = useRouter()
   const params = useParams()
   const { toast } = useToast()
+  const { theme } = useTheme()
   const { t } = useTranslation('evaluation')
   const reportId = parseInt(params.id as string)
 
@@ -226,7 +228,10 @@ function SharedReportViewContent() {
         <CardContent>
           {reportContent ? (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <ReactMarkdown>{reportContent}</ReactMarkdown>
+              <EnhancedMarkdown
+                source={reportContent}
+                theme={theme === 'dark' ? 'dark' : 'light'}
+              />
             </div>
           ) : (
             <p className="text-text-secondary">{t('grading.no_report_data')}</p>

@@ -44,7 +44,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
   graderListReports,
   graderGetTask,
@@ -59,6 +61,7 @@ function GraderReportsContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
+  const { theme } = useTheme()
   const { t } = useTranslation('evaluation')
 
   // Get initial filters from URL
@@ -399,13 +402,18 @@ function GraderReportsContent() {
                   )}
                 </div>
                 {/* Report content */}
-                <pre className="whitespace-pre-wrap rounded-lg bg-surface p-4 text-sm">
-                  {typeof selectedReport.report_data === 'string'
-                    ? selectedReport.report_data
-                    : typeof selectedReport.report_data.content === 'string'
-                      ? selectedReport.report_data.content
-                      : JSON.stringify(selectedReport.report_data, null, 2)}
-                </pre>
+                <div className="rounded-lg bg-surface p-4">
+                  <EnhancedMarkdown
+                    source={
+                      typeof selectedReport.report_data === 'string'
+                        ? selectedReport.report_data
+                        : typeof selectedReport.report_data.content === 'string'
+                          ? selectedReport.report_data.content
+                          : JSON.stringify(selectedReport.report_data, null, 2)
+                    }
+                    theme={theme === 'dark' ? 'dark' : 'light'}
+                  />
+                </div>
               </div>
             ) : (
               <p className="text-text-secondary">{t('grading.no_report_data')}</p>
