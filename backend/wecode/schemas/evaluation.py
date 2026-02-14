@@ -405,7 +405,7 @@ class GradingConfigUpdate(BaseModel):
     """
 
     team_id: Optional[int] = Field(
-        None, description="Team ID for AI grading (must be ClaudeCode type)"
+        None, description="Team ID for AI grading (must be Chat shell type)"
     )
     auto_trigger: bool = Field(
         False,

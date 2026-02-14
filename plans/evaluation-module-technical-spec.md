@@ -437,7 +437,7 @@ flowchart TD
 1. 出题人创建专题和题目 (draft 状态)
 2. 上传题目内容和评分标准
 3. 设置可见性，配置白名单
-4. 可选配置评分智能体 (ClaudeCode 类型 Team)
+4. 可选配置评分智能体 (Chat 类型 Team)
 5. 发布题目 → 生成 QuestionVersion
 6. 发布专题 → 生成 TopicVersion (记录题目版本快照)
 
@@ -669,7 +669,7 @@ POST /api/v1/wecode/evaluation/grader/tasks/100/publish
 
 **约束条件：**
 
-- Team Shell 类型必须为 `ClaudeCode`
+- Team Shell 类型必须为 `Chat`
 - Team 必须属于专题创建者或为公共 Team
 - 每个专题只能配置一个默认评分智能体
 
@@ -784,7 +784,7 @@ pending → running → completed → published
 
 ### 8.6 Team 配置要求
 
-- Shell 类型必须为 `ClaudeCode`
+- Shell 类型必须为 `Chat`
 - Team 必须属于专题创建者或为公共 Team
 
 ---

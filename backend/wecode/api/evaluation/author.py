@@ -934,7 +934,7 @@ def update_grading_config(
     Only the topic creator can update grading configuration.
 
     Constraints:
-    - Team must be of type ClaudeCode (for AI grading)
+    - Team must be of Chat shell type (for AI grading)
     - Team must belong to the user or be a public team
     """
     topic = _get_topic_or_404(db, topic_id)
@@ -969,7 +969,7 @@ def update_grading_config(
                 detail="You don't have access to this team",
             )
 
-        # Verify team shell type is ClaudeCode (optional validation)
+        # Verify team shell type is Chat (optional validation)
         # This ensures the team can be used for AI grading
         team_name = team.name
         team_valid = True
