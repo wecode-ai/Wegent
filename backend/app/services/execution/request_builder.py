@@ -417,6 +417,11 @@ class TaskRequestBuilder:
         This method queries the Shell CRD to get the shell_type.
         It's called once per builder instance and the result is cached.
 
+        Search order:
+        1. User's private shell (user_id == user_id, namespace == shell_ref.namespace)
+        2. Group shell (any user_id, namespace == shell_ref.namespace) - for group scenarios
+        3. Public shell (user_id == 0)
+
         Args:
             bot: Bot Kind object
             user_id: User ID for shell lookup
@@ -439,7 +444,7 @@ class TaskRequestBuilder:
 
         shell_ref = bot_crd.spec.shellRef
 
-        # Query user's private shell first
+        # 1. Query user's private shell first
         shell = (
             self.db.query(Kind)
             .filter(
@@ -452,7 +457,21 @@ class TaskRequestBuilder:
             .first()
         )
 
-        # If not found in user's shells, try public shells (user_id = 0)
+        # 2. If not found, try group shell (any user's shell in the namespace)
+        # This handles the case where shell belongs to another group member
+        if not shell and shell_ref.namespace != "default":
+            shell = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.name == shell_ref.name,
+                    Kind.namespace == shell_ref.namespace,
+                    Kind.is_active,
+                )
+                .first()
+            )
+
+        # 3. If still not found, try public shells (user_id = 0)
         if not shell:
             shell = (
                 self.db.query(Kind)
