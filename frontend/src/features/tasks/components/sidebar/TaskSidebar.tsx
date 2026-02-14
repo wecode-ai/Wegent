@@ -5,7 +5,7 @@
 'use client'
 
 import './task-list-scrollbar.css'
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useUserContext } from '@/contexts/UserContext'
 import TaskListSection from './TaskListSection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTaskUnread } from '@/utils/taskViewStatus'
@@ -66,6 +67,7 @@ export default function TaskSidebar({
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
+  const { user } = useUserContext()
   const { clearAllStreams } = useChatStreamContext()
   const {
     tasks,
@@ -116,40 +118,47 @@ export default function TaskSidebar({
     setIsSearchDialogOpen(true)
   }
 
-  // Navigation buttons - always show all buttons
-  const navigationButtons = [
-    {
-      label: t('common:navigation.flow'),
-      icon: Workflow,
-      path: paths.feed.getHref(),
-      isActive: pageType === 'flow',
-    },
-    {
-      label: t('common:navigation.code'),
-      icon: Code,
-      path: paths.code.getHref(),
-      isActive: pageType === 'code',
-      tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,
-    },
-    {
-      label: t('common:navigation.wiki'),
-      icon: BookOpen,
-      path: paths.wiki.getHref(),
-      isActive: pageType === 'knowledge',
-    },
-    {
-      label: t('devices:my_devices'),
-      icon: Monitor,
-      path: paths.devices.getHref(),
-      isActive: pageType === 'devices',
-    },
-    {
-      label: t('common:navigation.evaluation'),
-      icon: ClipboardCheck,
-      path: paths.evaluation.getHref(),
-      isActive: pageType === 'evaluation',
-    },
-  ]
+  // Navigation buttons - show evaluation only for admin users
+  const isAdmin = user?.role === 'admin'
+  const navigationButtons = useMemo(() => {
+    const buttons = [
+      {
+        label: t('common:navigation.flow'),
+        icon: Workflow,
+        path: paths.feed.getHref(),
+        isActive: pageType === 'flow',
+      },
+      {
+        label: t('common:navigation.code'),
+        icon: Code,
+        path: paths.code.getHref(),
+        isActive: pageType === 'code',
+        tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,
+      },
+      {
+        label: t('common:navigation.wiki'),
+        icon: BookOpen,
+        path: paths.wiki.getHref(),
+        isActive: pageType === 'knowledge',
+      },
+      {
+        label: t('devices:my_devices'),
+        icon: Monitor,
+        path: paths.devices.getHref(),
+        isActive: pageType === 'devices',
+      },
+    ]
+    // Only show evaluation nav item for admin users
+    if (isAdmin) {
+      buttons.push({
+        label: t('common:navigation.evaluation'),
+        icon: ClipboardCheck,
+        path: paths.evaluation.getHref(),
+        isActive: pageType === 'evaluation',
+      })
+    }
+    return buttons
+  }, [t, pageType, isAdmin])
 
   // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {

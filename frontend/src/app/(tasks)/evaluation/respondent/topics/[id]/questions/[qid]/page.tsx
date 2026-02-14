@@ -5,26 +5,30 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Send, AlertCircle, File, Download, Link } from 'lucide-react'
+import { useParams } from 'next/navigation'
+import { Send, AlertCircle, File, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
   respondentGetQuestion,
   respondentSubmitAnswer,
@@ -37,9 +41,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { formatFileSize } from '@/apis/attachments'
 
 function RespondentQuestionDetailContent() {
-  const router = useRouter()
   const params = useParams()
   const { toast } = useToast()
+  const { theme } = useTheme()
   const { t } = useTranslation('evaluation')
   const topicId = parseInt(params.id as string)
   const questionId = parseInt(params.qid as string)
@@ -49,11 +53,10 @@ function RespondentQuestionDetailContent() {
   const [myAnswers, setMyAnswers] = useState<Answer[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
 
-  // Answer form state
-  const [answerType, setAnswerType] = useState<string>(ContentType.TEXT)
+  // Answer form state - always use MIXED mode (attachments + text)
   const [answerText, setAnswerText] = useState('')
-  const [answerUrl, setAnswerUrl] = useState('')
   const [answerAttachments, setAnswerAttachments] = useState<EvalAttachment[]>([])
 
   const loadData = useCallback(async () => {
@@ -73,11 +76,10 @@ function RespondentQuestionDetailContent() {
         description: t('errors.permission_denied'),
         variant: 'destructive',
       })
-      router.push(`/evaluation/respondent/topics/${topicId}`)
     } finally {
       setLoading(false)
     }
-  }, [questionId, topicId, toast, router, t])
+  }, [questionId, topicId, toast, t])
 
   useEffect(() => {
     if (questionId && topicId) {
@@ -85,58 +87,48 @@ function RespondentQuestionDetailContent() {
     }
   }, [questionId, topicId, loadData])
 
-  const handleSubmitAnswer = async () => {
-    // Validate content based on answer type
+  // Check if content is empty
+  const isContentEmpty = () => {
     const hasText = answerText.trim().length > 0
-    const hasUrl = answerUrl.trim().length > 0
     const hasAttachments = answerAttachments.length > 0
+    return !hasText && !hasAttachments
+  }
 
-    if (answerType === ContentType.TEXT && !hasText) {
+  // Handle submit button click - show confirmation if has previous answer
+  const handleSubmitClick = () => {
+    if (isContentEmpty()) {
       toast({
         title: t('errors.save_failed'),
-        description: `${t('answers.content')} is required`,
+        description: t('answers.content_required', 'Please enter your answer or upload attachments'),
         variant: 'destructive',
       })
       return
     }
 
-    if (answerType === ContentType.URL && !hasUrl) {
-      toast({
-        title: t('errors.save_failed'),
-        description: `URL is required`,
-        variant: 'destructive',
-      })
-      return
+    // If there are previous answers, show confirmation dialog
+    if (myAnswers.length > 0) {
+      setShowConfirmDialog(true)
+    } else {
+      // No previous answers, submit directly
+      handleSubmitAnswer()
     }
+  }
 
-    if (answerType === ContentType.ATTACHMENT && !hasAttachments) {
-      toast({
-        title: t('errors.save_failed'),
-        description: `${t('questions.attachments')} is required`,
-        variant: 'destructive',
-      })
-      return
-    }
-
+  const handleSubmitAnswer = async () => {
+    setShowConfirmDialog(false)
     setSubmitting(true)
     try {
+      // Always use MIXED content type
       const contentData: Record<string, unknown> = {}
-      if (answerType === ContentType.TEXT || answerType === ContentType.MIXED) {
-        if (hasText) {
-          contentData.text = answerText.trim()
-        }
+      if (answerText.trim()) {
+        contentData.text = answerText.trim()
       }
-      if (answerType === ContentType.URL || answerType === ContentType.MIXED) {
-        if (hasUrl) {
-          contentData.url = answerUrl.trim()
-        }
-      }
-      if ((answerType === ContentType.ATTACHMENT || answerType === ContentType.MIXED) && hasAttachments) {
+      if (answerAttachments.length > 0) {
         contentData.attachments = answerAttachments
       }
 
       await respondentSubmitAnswer(questionId, {
-        content_type: answerType,
+        content_type: ContentType.MIXED,
         content_data: contentData,
       })
 
@@ -145,7 +137,6 @@ function RespondentQuestionDetailContent() {
         description: '',
       })
       setAnswerText('')
-      setAnswerUrl('')
       setAnswerAttachments([])
       loadData()
     } catch (_error) {
@@ -196,14 +187,9 @@ function RespondentQuestionDetailContent() {
     )
   }
 
-  // Check if answer type should show attachment upload
-  const showAnswerAttachment =
-    answerType === ContentType.ATTACHMENT || answerType === ContentType.MIXED
-
   if (loading) {
     return (
       <div className="container mx-auto max-w-4xl px-4 py-8">
-        <Skeleton className="mb-6 h-10 w-32" />
         <Skeleton className="mb-4 h-8 w-1/2" />
         <Skeleton className="mb-8 h-32 w-full" />
       </div>
@@ -216,17 +202,6 @@ function RespondentQuestionDetailContent() {
 
   return (
     <div className="container mx-auto max-w-4xl px-4 py-8">
-      {/* Header */}
-      <div className="mb-6">
-        <Button
-          variant="ghost"
-          onClick={() => router.push(`/evaluation/respondent/topics/${topicId}`)}
-        >
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          {t('actions.back')}
-        </Button>
-      </div>
-
       {/* Version Update Alert */}
       {question.has_new_version && (
         <Alert className="mb-6">
@@ -235,120 +210,88 @@ function RespondentQuestionDetailContent() {
         </Alert>
       )}
 
-      {/* Question Card - No grading criteria shown */}
+      {/* Question Card - Markdown rendered, no back navigation */}
       <Card className="mb-8">
         <CardHeader>
           <CardTitle>{question.title}</CardTitle>
-          <CardDescription>
-            {t('questions.content_type')}: {t(`questions.content_types.${question.content_type}`)}
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {typeof question.content_data?.text === 'string' && question.content_data.text && (
-            <div>
-              <h3 className="mb-2 font-medium">{t('questions.content')}</h3>
-              <p className="whitespace-pre-wrap text-text-secondary">
-                {question.content_data.text}
-              </p>
+          {typeof question.content_data?.text === 'string' && question.content_data.text ? (
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <EnhancedMarkdown
+                source={question.content_data.text}
+                theme={theme === 'dark' ? 'dark' : 'light'}
+              />
             </div>
-          )}
-          {typeof question.content_data?.url === 'string' && question.content_data.url && (
-            <div>
-              <h3 className="mb-2 font-medium">URL</h3>
-              <a
-                href={question.content_data.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                {question.content_data.url}
-              </a>
-            </div>
-          )}
-          {(question.content_data?.attachments as EvalAttachment[])?.length > 0 && (
-            <div>
-              <h3 className="mb-2 font-medium">{t('questions.attachments')}</h3>
-              {renderAttachmentList(question.content_data?.attachments as EvalAttachment[])}
-            </div>
+          ) : (
+            <p className="text-text-muted">{t('questions.no_content')}</p>
           )}
           {/* NOTE: Grading criteria (criteria_data) is intentionally NOT displayed for respondents */}
         </CardContent>
       </Card>
 
-      {/* Answer Submission Form */}
+      {/* Answer Submission Form - Fixed to MIXED mode (attachments first, then text) */}
       <Card className="mb-8">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Send className="h-5 w-5" />
             {t('answers.submit')}
           </CardTitle>
+          <CardDescription>
+            {t('answers.submit_hint', 'Upload attachments and/or enter your answer text below')}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Attachments first */}
           <div className="space-y-2">
-            <Label htmlFor="answerType">{t('questions.content_type')}</Label>
-            <Select value={answerType} onValueChange={setAnswerType}>
-              <SelectTrigger id="answerType">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="text">{t('questions.content_types.text')}</SelectItem>
-                <SelectItem value="url">{t('questions.content_types.url')}</SelectItem>
-                <SelectItem value="attachment">{t('questions.content_types.attachment')}</SelectItem>
-                <SelectItem value="mixed">{t('questions.content_types.mixed')}</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label>{t('questions.attachments')}</Label>
+            <EvaluationFileUpload
+              topicId={topicId}
+              questionId={questionId}
+              fileType="answer_attachment"
+              attachments={answerAttachments}
+              onChange={setAnswerAttachments}
+              maxFiles={10}
+            />
           </div>
 
-          {(answerType === ContentType.TEXT || answerType === ContentType.MIXED) && (
-            <div className="space-y-2">
-              <Label htmlFor="answerText">{t('answers.content')}</Label>
-              <Textarea
-                id="answerText"
-                value={answerText}
-                onChange={e => setAnswerText(e.target.value)}
-                placeholder={t('answers.content_placeholder')}
-                rows={8}
-              />
-            </div>
-          )}
-
-          {(answerType === ContentType.URL || answerType === ContentType.MIXED) && (
-            <div className="space-y-2">
-              <Label htmlFor="answerUrl" className="flex items-center gap-2">
-                <Link className="h-4 w-4" />
-                {t('questions.content_types.url')}
-              </Label>
-              <Input
-                id="answerUrl"
-                type="url"
-                value={answerUrl}
-                onChange={e => setAnswerUrl(e.target.value)}
-                placeholder="https://..."
-              />
-            </div>
-          )}
-
-          {showAnswerAttachment && (
-            <div className="space-y-2">
-              <Label>{t('questions.attachments')}</Label>
-              <EvaluationFileUpload
-                topicId={topicId}
-                questionId={questionId}
-                fileType="answer_attachment"
-                attachments={answerAttachments}
-                onChange={setAnswerAttachments}
-                maxFiles={10}
-              />
-            </div>
-          )}
+          {/* Text input second */}
+          <div className="space-y-2">
+            <Label htmlFor="answerText">{t('answers.content')}</Label>
+            <Textarea
+              id="answerText"
+              value={answerText}
+              onChange={e => setAnswerText(e.target.value)}
+              placeholder={t('answers.content_placeholder')}
+              rows={8}
+            />
+          </div>
 
           <div className="flex justify-end">
-            <Button variant="primary" onClick={handleSubmitAnswer} disabled={submitting}>
+            <Button variant="primary" onClick={handleSubmitClick} disabled={submitting}>
               {submitting ? '...' : t('answers.submit')}
             </Button>
           </div>
         </CardContent>
       </Card>
+
+      {/* Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('answers.confirm_submit_title', 'Confirm Submission')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('answers.confirm_submit_description', 'This will overwrite your previous submission. Are you sure you want to continue?')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSubmitAnswer}>
+              {t('actions.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* My Previous Answers */}
       {myAnswers.length > 0 && (
@@ -373,19 +316,6 @@ function RespondentQuestionDetailContent() {
                   </div>
                   {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
                     <p className="whitespace-pre-wrap">{answer.content_data.text}</p>
-                  )}
-                  {typeof answer.content_data?.url === 'string' && answer.content_data.url && (
-                    <div className="flex items-center gap-2">
-                      <Link className="h-4 w-4 text-primary" />
-                      <a
-                        href={answer.content_data.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        {answer.content_data.url}
-                      </a>
-                    </div>
                   )}
                   {renderAttachmentList(answer.content_data?.attachments as EvalAttachment[])}
                 </div>

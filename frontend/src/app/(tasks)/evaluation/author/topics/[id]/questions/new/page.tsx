@@ -6,30 +6,25 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import { createAuthorQuestion, getAuthorTopic } from '@wecode/api/evaluation-author'
-import { ContentType, type Topic, type EvalAttachment } from '@wecode/types/evaluation'
+import { ContentType, type Topic } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function NewQuestionContent() {
   const router = useRouter()
   const params = useParams()
   const { toast } = useToast()
+  const { theme } = useTheme()
   const { t } = useTranslation('evaluation')
   const topicId = parseInt(params.id as string)
 
@@ -37,14 +32,12 @@ function NewQuestionContent() {
   const [loading, setLoading] = useState(false)
   const [topicLoading, setTopicLoading] = useState(true)
   const [title, setTitle] = useState('')
-  const [contentType, setContentType] = useState<string>(ContentType.TEXT)
+  // Question content is Markdown only
   const [contentText, setContentText] = useState('')
-  const [contentUrl, setContentUrl] = useState('')
-  const [contentAttachments, setContentAttachments] = useState<EvalAttachment[]>([])
-  const [criteriaType, setCriteriaType] = useState<string>(ContentType.TEXT)
+  const [showContentPreview, setShowContentPreview] = useState(false)
+  // Criteria is also Markdown only
   const [criteriaText, setCriteriaText] = useState('')
-  const [criteriaUrl, setCriteriaUrl] = useState('')
-  const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
+  const [showCriteriaPreview, setShowCriteriaPreview] = useState(false)
 
   const loadTopic = useCallback(async () => {
     setTopicLoading(true)
@@ -81,45 +74,33 @@ function NewQuestionContent() {
       return
     }
 
+    if (!contentText.trim()) {
+      toast({
+        title: t('errors.save_failed'),
+        description: t('questions.content') + ' is required',
+        variant: 'destructive',
+      })
+      return
+    }
+
     setLoading(true)
     try {
-      const contentData: Record<string, unknown> = {}
-      if (contentType === ContentType.TEXT || contentType === ContentType.MIXED) {
-        contentData.text = contentText.trim()
-      }
-      if (contentType === ContentType.URL || contentType === ContentType.MIXED) {
-        contentData.url = contentUrl.trim()
-      }
-      if (
-        (contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED) &&
-        contentAttachments.length > 0
-      ) {
-        contentData.attachments = contentAttachments
+      // Content is always text/Markdown only
+      const contentData: Record<string, unknown> = {
+        text: contentText.trim(),
       }
 
+      // Criteria is also text/Markdown only
       const criteriaData: Record<string, unknown> = {}
-      if (criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) {
-        if (criteriaText.trim()) {
-          criteriaData.text = criteriaText.trim()
-        }
-      }
-      if (criteriaType === ContentType.URL || criteriaType === ContentType.MIXED) {
-        if (criteriaUrl.trim()) {
-          criteriaData.url = criteriaUrl.trim()
-        }
-      }
-      if (
-        (criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED) &&
-        criteriaAttachments.length > 0
-      ) {
-        criteriaData.attachments = criteriaAttachments
+      if (criteriaText.trim()) {
+        criteriaData.text = criteriaText.trim()
       }
 
       await createAuthorQuestion(topicId, {
         title: title.trim(),
-        content_type: contentType,
+        content_type: ContentType.TEXT,
         content_data: contentData,
-        criteria_type: criteriaType,
+        criteria_type: ContentType.TEXT,
         criteria_data: Object.keys(criteriaData).length > 0 ? criteriaData : undefined,
       })
 
@@ -139,15 +120,9 @@ function NewQuestionContent() {
     }
   }
 
-  // Check if content type should show attachment upload
-  const showContentAttachment =
-    contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED
-  const showCriteriaAttachment =
-    criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED
-
   if (topicLoading) {
     return (
-      <div className="container mx-auto max-w-2xl px-4 py-8">
+      <div className="container mx-auto max-w-3xl px-4 py-8">
         <div className="animate-pulse">
           <div className="mb-6 h-10 w-32 rounded bg-surface"></div>
           <div className="h-96 rounded bg-surface"></div>
@@ -157,7 +132,7 @@ function NewQuestionContent() {
   }
 
   return (
-    <div className="container mx-auto max-w-2xl px-4 py-8">
+    <div className="container mx-auto max-w-3xl px-4 py-8">
       <Button
         variant="ghost"
         className="mb-6"
@@ -184,125 +159,106 @@ function NewQuestionContent() {
                 id="title"
                 value={title}
                 onChange={e => setTitle(e.target.value)}
-                placeholder={t('questions.question_title', 'Question Title')}
+                placeholder={t('questions.title_placeholder', 'Enter question title')}
                 maxLength={500}
               />
             </div>
 
+            {/* Question Content - Markdown with Preview */}
             <div className="space-y-2">
-              <Label htmlFor="contentType">{t('questions.content_type', 'Content Type')}</Label>
-              <Select value={contentType} onValueChange={setContentType}>
-                <SelectTrigger id="contentType">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="text">{t('questions.content_types.text', 'Text')}</SelectItem>
-                  <SelectItem value="url">{t('questions.content_types.url', 'URL')}</SelectItem>
-                  <SelectItem value="attachment">
-                    {t('questions.content_types.attachment', 'Attachment')}
-                  </SelectItem>
-                  <SelectItem value="mixed">
-                    {t('questions.content_types.mixed', 'Mixed')}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {(contentType === ContentType.TEXT || contentType === ContentType.MIXED) && (
-              <div className="space-y-2">
-                <Label htmlFor="contentText">{t('questions.content', 'Content')}</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="contentText">{t('questions.content', 'Content')} * (Markdown)</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowContentPreview(!showContentPreview)}
+                >
+                  {showContentPreview ? (
+                    <>
+                      <EyeOff className="mr-1 h-4 w-4" />
+                      {t('actions.edit', 'Edit')}
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="mr-1 h-4 w-4" />
+                      {t('questions.preview', 'Preview')}
+                    </>
+                  )}
+                </Button>
+              </div>
+              {showContentPreview ? (
+                <div className="min-h-[200px] rounded-lg border border-border bg-surface p-4">
+                  {contentText.trim() ? (
+                    <EnhancedMarkdown
+                      source={contentText}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  ) : (
+                    <p className="text-text-muted">{t('questions.no_content', 'No content')}</p>
+                  )}
+                </div>
+              ) : (
                 <Textarea
                   id="contentText"
                   value={contentText}
                   onChange={e => setContentText(e.target.value)}
-                  placeholder={t('questions.content', 'Content')}
-                  rows={6}
+                  placeholder={t('questions.content_placeholder', 'Enter question content in Markdown format')}
+                  rows={10}
+                  className="font-mono text-sm"
                 />
-              </div>
-            )}
-
-            {(contentType === ContentType.URL || contentType === ContentType.MIXED) && (
-              <div className="space-y-2">
-                <Label htmlFor="contentUrl">URL</Label>
-                <Input
-                  id="contentUrl"
-                  type="url"
-                  value={contentUrl}
-                  onChange={e => setContentUrl(e.target.value)}
-                  placeholder="https://example.com"
-                />
-              </div>
-            )}
-
-            {showContentAttachment && (
-              <div className="space-y-2">
-                <Label>{t('questions.content_attachments', 'Content Attachments')}</Label>
-                <EvaluationFileUpload
-                  topicId={topicId}
-                  fileType="question_content"
-                  attachments={contentAttachments}
-                  onChange={setContentAttachments}
-                  maxFiles={10}
-                />
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="criteriaType">{t('questions.criteria_type')}</Label>
-              <Select value={criteriaType} onValueChange={setCriteriaType}>
-                <SelectTrigger id="criteriaType">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="text">{t('questions.content_types.text')}</SelectItem>
-                  <SelectItem value="url">{t('questions.content_types.url')}</SelectItem>
-                  <SelectItem value="attachment">
-                    {t('questions.content_types.attachment')}
-                  </SelectItem>
-                  <SelectItem value="mixed">{t('questions.content_types.mixed')}</SelectItem>
-                </SelectContent>
-              </Select>
+              )}
+              <p className="text-xs text-text-muted">
+                {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
+              </p>
             </div>
 
-            {(criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) && (
-              <div className="space-y-2">
-                <Label htmlFor="criteria">{t('questions.criteria')}</Label>
+            {/* Grading Criteria - Markdown with Preview */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="criteria">{t('questions.criteria', 'Grading Criteria')} (Markdown)</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowCriteriaPreview(!showCriteriaPreview)}
+                >
+                  {showCriteriaPreview ? (
+                    <>
+                      <EyeOff className="mr-1 h-4 w-4" />
+                      {t('actions.edit', 'Edit')}
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="mr-1 h-4 w-4" />
+                      {t('questions.preview', 'Preview')}
+                    </>
+                  )}
+                </Button>
+              </div>
+              {showCriteriaPreview ? (
+                <div className="min-h-[150px] rounded-lg border border-primary/20 bg-primary/5 p-4">
+                  {criteriaText.trim() ? (
+                    <EnhancedMarkdown
+                      source={criteriaText}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  ) : (
+                    <p className="text-text-muted">{t('questions.no_criteria', 'No grading criteria')}</p>
+                  )}
+                </div>
+              ) : (
                 <Textarea
                   id="criteria"
                   value={criteriaText}
                   onChange={e => setCriteriaText(e.target.value)}
-                  placeholder={t('questions.criteria_placeholder')}
-                  rows={4}
+                  placeholder={t('questions.criteria_placeholder', 'Enter grading criteria in Markdown format')}
+                  rows={6}
+                  className="font-mono text-sm"
                 />
-                <p className="text-xs text-text-muted">{t('grading.description')}</p>
-              </div>
-            )}
-
-            {(criteriaType === ContentType.URL || criteriaType === ContentType.MIXED) && (
-              <div className="space-y-2">
-                <Label htmlFor="criteriaUrl">{t('questions.criteria')} URL</Label>
-                <Input
-                  id="criteriaUrl"
-                  type="url"
-                  value={criteriaUrl}
-                  onChange={e => setCriteriaUrl(e.target.value)}
-                  placeholder="https://example.com/criteria"
-                />
-              </div>
-            )}
-
-            {showCriteriaAttachment && (
-              <div className="space-y-2">
-                <Label>{t('questions.criteria_attachments', 'Criteria Attachments')}</Label>
-                <EvaluationFileUpload
-                  topicId={topicId}
-                  fileType="question_criteria"
-                  attachments={criteriaAttachments}
-                  onChange={setCriteriaAttachments}
-                  maxFiles={10}
-                />
-              </div>
-            )}
+              )}
+              <p className="text-xs text-text-muted">{t('grading.description')}</p>
+            </div>
 
             <div className="flex justify-end gap-4">
               <Button

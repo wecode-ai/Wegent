@@ -6,18 +6,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Edit, Trash2, Send, X, Check, File, Download } from 'lucide-react'
+import { ArrowLeft, Edit, Trash2, Send, X, Check, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -33,23 +26,23 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
   getAuthorQuestion,
   updateAuthorQuestion,
   deleteAuthorQuestion,
   publishAuthorQuestion,
 } from '@wecode/api/evaluation-author'
-import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
-import { ContentType, QuestionStatus, type Question, type EvalAttachment } from '@wecode/types/evaluation'
+import { ContentType, QuestionStatus, type Question } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
-import { formatFileSize } from '@/apis/attachments'
 
 function QuestionDetailContent() {
   const router = useRouter()
   const params = useParams()
   const { toast } = useToast()
+  const { theme } = useTheme()
   const { t } = useTranslation('evaluation')
   const topicId = parseInt(params.id as string)
   const questionId = parseInt(params.questionId as string)
@@ -61,16 +54,12 @@ function QuestionDetailContent() {
   const [deleting, setDeleting] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
 
-  // Form state
+  // Form state - Markdown only
   const [title, setTitle] = useState('')
-  const [contentType, setContentType] = useState<string>(ContentType.TEXT)
   const [contentText, setContentText] = useState('')
-  const [contentUrl, setContentUrl] = useState('')
-  const [contentAttachments, setContentAttachments] = useState<EvalAttachment[]>([])
-  const [criteriaType, setCriteriaType] = useState<string>(ContentType.TEXT)
+  const [showContentPreview, setShowContentPreview] = useState(false)
   const [criteriaText, setCriteriaText] = useState('')
-  const [criteriaUrl, setCriteriaUrl] = useState('')
-  const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
+  const [showCriteriaPreview, setShowCriteriaPreview] = useState(false)
 
   const loadQuestion = useCallback(async () => {
     setLoading(true)
@@ -79,14 +68,8 @@ function QuestionDetailContent() {
       setQuestion(questionData)
       // Populate form fields
       setTitle(questionData.title)
-      setContentType(questionData.content_type || ContentType.TEXT)
       setContentText((questionData.content_data?.text as string) || '')
-      setContentUrl((questionData.content_data?.url as string) || '')
-      setContentAttachments((questionData.content_data?.attachments as EvalAttachment[]) || [])
-      setCriteriaType(questionData.criteria_type || ContentType.TEXT)
       setCriteriaText((questionData.criteria_data?.text as string) || '')
-      setCriteriaUrl((questionData.criteria_data?.url as string) || '')
-      setCriteriaAttachments((questionData.criteria_data?.attachments as EvalAttachment[]) || [])
     } catch (_error) {
       toast({
         title: t('errors.load_failed'),
@@ -109,16 +92,12 @@ function QuestionDetailContent() {
     if (question) {
       // Reset form to original values
       setTitle(question.title)
-      setContentType(question.content_type || ContentType.TEXT)
       setContentText((question.content_data?.text as string) || '')
-      setContentUrl((question.content_data?.url as string) || '')
-      setContentAttachments((question.content_data?.attachments as EvalAttachment[]) || [])
-      setCriteriaType(question.criteria_type || ContentType.TEXT)
       setCriteriaText((question.criteria_data?.text as string) || '')
-      setCriteriaUrl((question.criteria_data?.url as string) || '')
-      setCriteriaAttachments((question.criteria_data?.attachments as EvalAttachment[]) || [])
     }
     setIsEditing(false)
+    setShowContentPreview(false)
+    setShowCriteriaPreview(false)
   }
 
   const handleSave = async () => {
@@ -131,45 +110,33 @@ function QuestionDetailContent() {
       return
     }
 
+    if (!contentText.trim()) {
+      toast({
+        title: t('errors.save_failed'),
+        description: t('questions.content') + ' is required',
+        variant: 'destructive',
+      })
+      return
+    }
+
     setSaving(true)
     try {
-      const contentData: Record<string, unknown> = {}
-      if (contentType === ContentType.TEXT || contentType === ContentType.MIXED) {
-        contentData.text = contentText.trim()
-      }
-      if (contentType === ContentType.URL || contentType === ContentType.MIXED) {
-        contentData.url = contentUrl.trim()
-      }
-      if (
-        (contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED) &&
-        contentAttachments.length > 0
-      ) {
-        contentData.attachments = contentAttachments
+      // Content is always text/Markdown only
+      const contentData: Record<string, unknown> = {
+        text: contentText.trim(),
       }
 
+      // Criteria is also text/Markdown only
       const criteriaData: Record<string, unknown> = {}
-      if (criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) {
-        if (criteriaText.trim()) {
-          criteriaData.text = criteriaText.trim()
-        }
-      }
-      if (criteriaType === ContentType.URL || criteriaType === ContentType.MIXED) {
-        if (criteriaUrl.trim()) {
-          criteriaData.url = criteriaUrl.trim()
-        }
-      }
-      if (
-        (criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED) &&
-        criteriaAttachments.length > 0
-      ) {
-        criteriaData.attachments = criteriaAttachments
+      if (criteriaText.trim()) {
+        criteriaData.text = criteriaText.trim()
       }
 
       await updateAuthorQuestion(questionId, {
         title: title.trim(),
-        content_type: contentType,
+        content_type: ContentType.TEXT,
         content_data: contentData,
-        criteria_type: criteriaType,
+        criteria_type: ContentType.TEXT,
         criteria_data: Object.keys(criteriaData).length > 0 ? criteriaData : undefined,
       })
 
@@ -178,6 +145,8 @@ function QuestionDetailContent() {
         description: '',
       })
       setIsEditing(false)
+      setShowContentPreview(false)
+      setShowCriteriaPreview(false)
       loadQuestion()
     } catch (error) {
       toast({
@@ -230,14 +199,6 @@ function QuestionDetailContent() {
     }
   }
 
-  const handleDownload = async (attachment: EvalAttachment) => {
-    try {
-      await downloadEvaluationFile(attachment.key, attachment.filename)
-    } catch (error) {
-      console.error('Download failed:', error)
-    }
-  }
-
   // Helper function to get status label with i18n
   const getStatusText = (status: number) => {
     if (status === QuestionStatus.DRAFT) {
@@ -246,49 +207,9 @@ function QuestionDetailContent() {
     return t('topics.published')
   }
 
-  // Helper function to get content type label
-  const getContentTypeText = (type: string) => {
-    return t(`questions.content_types.${type}`, type)
-  }
-
-  // Check if content type should show attachment upload
-  const showContentAttachment =
-    contentType === ContentType.ATTACHMENT || contentType === ContentType.MIXED
-  const showCriteriaAttachment =
-    criteriaType === ContentType.ATTACHMENT || criteriaType === ContentType.MIXED
-
-  // Render attachment list (for display mode)
-  const renderAttachmentList = (attachments: EvalAttachment[] | undefined) => {
-    if (!attachments || attachments.length === 0) return null
-    return (
-      <div className="space-y-2">
-        {attachments.map((attachment, index) => (
-          <div
-            key={attachment.key || index}
-            className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2"
-          >
-            <File className="h-4 w-4 text-text-secondary" />
-            <span className="min-w-0 flex-1 truncate text-sm">{attachment.filename}</span>
-            {attachment.file_size && (
-              <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={() => handleDownload(attachment)}
-            >
-              <Download className="h-4 w-4" />
-            </Button>
-          </div>
-        ))}
-      </div>
-    )
-  }
-
   if (loading) {
     return (
-      <div className="container mx-auto max-w-2xl px-4 py-8">
+      <div className="container mx-auto max-w-3xl px-4 py-8">
         <Skeleton className="mb-6 h-10 w-32" />
         <Card>
           <CardHeader>
@@ -297,9 +218,7 @@ function QuestionDetailContent() {
           </CardHeader>
           <CardContent className="space-y-6">
             <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
             <Skeleton className="h-32 w-full" />
-            <Skeleton className="h-10 w-full" />
             <Skeleton className="h-24 w-full" />
           </CardContent>
         </Card>
@@ -312,7 +231,7 @@ function QuestionDetailContent() {
   }
 
   return (
-    <div className="container mx-auto max-w-2xl px-4 py-8">
+    <div className="container mx-auto max-w-3xl px-4 py-8">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <Button
@@ -386,14 +305,6 @@ function QuestionDetailContent() {
               {getStatusText(question.status)}
             </Badge>
           </div>
-          {!isEditing && (
-            <p className="text-sm text-text-secondary">
-              {t('questions.content_type')}: {getContentTypeText(question.content_type)}
-              {question.criteria_type && (
-                <> | {t('questions.criteria_type')}: {getContentTypeText(question.criteria_type)}</>
-              )}
-            </p>
-          )}
         </CardHeader>
         <CardContent>
           {isEditing ? (
@@ -410,181 +321,132 @@ function QuestionDetailContent() {
                 />
               </div>
 
-              {/* Content Type */}
+              {/* Question Content - Markdown with Preview */}
               <div className="space-y-2">
-                <Label htmlFor="contentType">{t('questions.content_type')}</Label>
-                <Select value={contentType} onValueChange={setContentType}>
-                  <SelectTrigger id="contentType">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="text">{t('questions.content_types.text')}</SelectItem>
-                    <SelectItem value="url">{t('questions.content_types.url')}</SelectItem>
-                    <SelectItem value="attachment">
-                      {t('questions.content_types.attachment')}
-                    </SelectItem>
-                    <SelectItem value="mixed">{t('questions.content_types.mixed')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Content Text */}
-              {(contentType === ContentType.TEXT || contentType === ContentType.MIXED) && (
-                <div className="space-y-2">
-                  <Label htmlFor="contentText">{t('questions.content')}</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="contentText">{t('questions.content')} * (Markdown)</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowContentPreview(!showContentPreview)}
+                  >
+                    {showContentPreview ? (
+                      <>
+                        <EyeOff className="mr-1 h-4 w-4" />
+                        {t('actions.edit')}
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="mr-1 h-4 w-4" />
+                        {t('questions.preview', 'Preview')}
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {showContentPreview ? (
+                  <div className="min-h-[200px] rounded-lg border border-border bg-surface p-4">
+                    {contentText.trim() ? (
+                      <EnhancedMarkdown
+                        source={contentText}
+                        theme={theme === 'dark' ? 'dark' : 'light'}
+                      />
+                    ) : (
+                      <p className="text-text-muted">{t('questions.no_content')}</p>
+                    )}
+                  </div>
+                ) : (
                   <Textarea
                     id="contentText"
                     value={contentText}
                     onChange={e => setContentText(e.target.value)}
                     placeholder={t('questions.content_placeholder')}
-                    rows={6}
+                    rows={10}
+                    className="font-mono text-sm"
                   />
-                </div>
-              )}
-
-              {/* Content URL */}
-              {(contentType === ContentType.URL || contentType === ContentType.MIXED) && (
-                <div className="space-y-2">
-                  <Label htmlFor="contentUrl">URL</Label>
-                  <Input
-                    id="contentUrl"
-                    type="url"
-                    value={contentUrl}
-                    onChange={e => setContentUrl(e.target.value)}
-                    placeholder="https://example.com"
-                  />
-                </div>
-              )}
-
-              {/* Content Attachments */}
-              {showContentAttachment && (
-                <div className="space-y-2">
-                  <Label>{t('questions.content_attachments')}</Label>
-                  <EvaluationFileUpload
-                    topicId={topicId}
-                    questionId={questionId}
-                    fileType="question_content"
-                    attachments={contentAttachments}
-                    onChange={setContentAttachments}
-                    maxFiles={10}
-                  />
-                </div>
-              )}
-
-              {/* Criteria Type */}
-              <div className="space-y-2">
-                <Label htmlFor="criteriaType">{t('questions.criteria_type')}</Label>
-                <Select value={criteriaType} onValueChange={setCriteriaType}>
-                  <SelectTrigger id="criteriaType">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="text">{t('questions.content_types.text')}</SelectItem>
-                    <SelectItem value="url">{t('questions.content_types.url')}</SelectItem>
-                    <SelectItem value="attachment">
-                      {t('questions.content_types.attachment')}
-                    </SelectItem>
-                    <SelectItem value="mixed">{t('questions.content_types.mixed')}</SelectItem>
-                  </SelectContent>
-                </Select>
+                )}
+                <p className="text-xs text-text-muted">
+                  {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
+                </p>
               </div>
 
-              {/* Criteria Text */}
-              {(criteriaType === ContentType.TEXT || criteriaType === ContentType.MIXED) && (
-                <div className="space-y-2">
-                  <Label htmlFor="criteriaText">{t('questions.criteria')}</Label>
+              {/* Grading Criteria - Markdown with Preview */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="criteriaText">{t('questions.criteria')} (Markdown)</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowCriteriaPreview(!showCriteriaPreview)}
+                  >
+                    {showCriteriaPreview ? (
+                      <>
+                        <EyeOff className="mr-1 h-4 w-4" />
+                        {t('actions.edit')}
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="mr-1 h-4 w-4" />
+                        {t('questions.preview', 'Preview')}
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {showCriteriaPreview ? (
+                  <div className="min-h-[150px] rounded-lg border border-primary/20 bg-primary/5 p-4">
+                    {criteriaText.trim() ? (
+                      <EnhancedMarkdown
+                        source={criteriaText}
+                        theme={theme === 'dark' ? 'dark' : 'light'}
+                      />
+                    ) : (
+                      <p className="text-text-muted">{t('questions.no_criteria')}</p>
+                    )}
+                  </div>
+                ) : (
                   <Textarea
                     id="criteriaText"
                     value={criteriaText}
                     onChange={e => setCriteriaText(e.target.value)}
                     placeholder={t('questions.criteria_placeholder')}
-                    rows={4}
+                    rows={6}
+                    className="font-mono text-sm"
                   />
-                  <p className="text-xs text-text-muted">{t('grading.description')}</p>
-                </div>
-              )}
-
-              {/* Criteria URL */}
-              {(criteriaType === ContentType.URL || criteriaType === ContentType.MIXED) && (
-                <div className="space-y-2">
-                  <Label htmlFor="criteriaUrl">{t('questions.criteria')} URL</Label>
-                  <Input
-                    id="criteriaUrl"
-                    type="url"
-                    value={criteriaUrl}
-                    onChange={e => setCriteriaUrl(e.target.value)}
-                    placeholder="https://example.com/criteria"
-                  />
-                </div>
-              )}
-
-              {/* Criteria Attachments */}
-              {showCriteriaAttachment && (
-                <div className="space-y-2">
-                  <Label>{t('questions.criteria_attachments')}</Label>
-                  <EvaluationFileUpload
-                    topicId={topicId}
-                    questionId={questionId}
-                    fileType="question_criteria"
-                    attachments={criteriaAttachments}
-                    onChange={setCriteriaAttachments}
-                    maxFiles={10}
-                  />
-                </div>
-              )}
+                )}
+                <p className="text-xs text-text-muted">{t('grading.description')}</p>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Display mode - Content */}
+              {/* Display mode - Content (Markdown rendered) */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.content')}</Label>
-                {typeof question.content_data?.text === 'string' && question.content_data.text && (
-                  <p className="whitespace-pre-wrap text-text-primary">
-                    {question.content_data.text}
-                  </p>
+                {typeof question.content_data?.text === 'string' && question.content_data.text ? (
+                  <div className="rounded-lg border border-border bg-surface p-4">
+                    <EnhancedMarkdown
+                      source={question.content_data.text}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-text-muted">{t('questions.no_content')}</p>
                 )}
-                {typeof question.content_data?.url === 'string' && question.content_data.url && (
-                  <a
-                    href={question.content_data.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    {question.content_data.url}
-                  </a>
-                )}
-                {renderAttachmentList(question.content_data?.attachments as EvalAttachment[])}
-                {typeof question.content_data?.text !== 'string' &&
-                  typeof question.content_data?.url !== 'string' &&
-                  !(question.content_data?.attachments as EvalAttachment[])?.length && (
-                    <p className="text-text-muted">-</p>
-                  )}
               </div>
 
-              {/* Display mode - Criteria */}
+              {/* Display mode - Criteria (Markdown rendered) */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.criteria')}</Label>
-                {typeof question.criteria_data?.text === 'string' && question.criteria_data.text && (
-                  <p className="whitespace-pre-wrap text-text-primary">
-                    {question.criteria_data.text}
-                  </p>
+                {typeof question.criteria_data?.text === 'string' && question.criteria_data.text ? (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                    <EnhancedMarkdown
+                      source={question.criteria_data.text}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-text-muted">{t('questions.no_criteria')}</p>
                 )}
-                {typeof question.criteria_data?.url === 'string' && question.criteria_data.url && (
-                  <a
-                    href={question.criteria_data.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    {question.criteria_data.url}
-                  </a>
-                )}
-                {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[])}
-                {typeof question.criteria_data?.text !== 'string' &&
-                  typeof question.criteria_data?.url !== 'string' &&
-                  !(question.criteria_data?.attachments as EvalAttachment[])?.length && (
-                    <p className="text-text-muted">-</p>
-                  )}
               </div>
 
               {/* Metadata */}
