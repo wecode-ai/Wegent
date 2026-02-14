@@ -326,7 +326,7 @@ class WebSocketClient:
                 if ip and ip != '127.0.0.1':
                     return ip
         except Exception:
-            pass
+            logger.debug("Failed to detect IP via UDP socket", exc_info=True)
 
         try:
             # Method 2: Get hostname resolution
@@ -334,10 +334,10 @@ class WebSocketClient:
             if ip and ip != '127.0.0.1':
                 return ip
         except Exception:
-            pass
+            logger.debug("Failed to detect IP via hostname resolution", exc_info=True)
 
         try:
-            # Method 3: Try to get IP from network interfaces (Linux/Mac)
+            # Method 3: Try to get IP from network interfaces (Linux only)
             result = subprocess.run(
                 ['hostname', '-I'],
                 capture_output=True,
@@ -350,7 +350,7 @@ class WebSocketClient:
                     if ip and not ip.startswith('127.'):
                         return ip
         except Exception:
-            pass
+            logger.debug("Failed to detect IP via hostname -I", exc_info=True)
 
         # Fallback to localhost
         return '127.0.0.1'
