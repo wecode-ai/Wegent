@@ -664,6 +664,21 @@ class GradingService:
                 db.commit()
                 return
 
+            # Validate that API key is configured
+            api_key = chat_config.model_config.get("api_key", "")
+            if not api_key:
+                logger.error(
+                    f"[Evaluation] API key not configured for grading task {grading_task_id}"
+                )
+                grading_task.status = GradingTaskStatus.FAILED
+                grading_task.error_message = (
+                    "AI model API key is not configured. "
+                    "Please check the model configuration for the grading team."
+                )
+                grading_task.completed_at = datetime.now()
+                db.commit()
+                return
+
             # Create ChatRequest
             # Use grading_task_id as a pseudo task/subtask ID for tracking
             chat_request = ChatRequest(
