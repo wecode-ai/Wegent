@@ -587,6 +587,17 @@ function GraderAnswerContent() {
                   <p className="mt-2 text-sm text-text-secondary">{gradingTask.error_message}</p>
                 )}
                 <p className="mt-2 text-sm text-text-secondary">{t('grading.retry_hint')}</p>
+                {gradingTask.task_id > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={() => router.push(`/chat?taskId=${gradingTask.task_id}`)}
+                    title={t('grading.view_execution_task_hint')}
+                  >
+                    {t('grading.view_execution_task')}
+                  </Button>
+                )}
               </div>
             )}
             {(gradingTask.status === GradingTaskStatus.COMPLETED ||

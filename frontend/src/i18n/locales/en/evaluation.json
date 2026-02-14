@@ -195,6 +195,8 @@
     },
     "no_tasks": "No grading tasks",
     "no_report_data": "No report data available",
+    "view_execution_task": "View Execution Task",
+    "view_execution_task_hint": "View detailed execution log for debugging",
     "execute_success": "Grading task started",
     "publish_success": "Report published successfully",
     "publish_ai_as_final": "Use AI Result",

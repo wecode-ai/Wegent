@@ -208,12 +208,40 @@ class GradingTaskMonitor:
 
         elif task_status in ("FAILED", "CANCELLED"):
             # Wegent Task failed - fail the grading task
+            # Try to get detailed error message from subtask
+            assistant_subtask = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == grading_task.task_id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                )
+                .order_by(Subtask.message_id.desc())
+                .first()
+            )
+
+            error_msg = f"Wegent Task {task_status.lower()}"
+            if assistant_subtask:
+                # Get error message from subtask if available
+                if assistant_subtask.error_message:
+                    error_msg = assistant_subtask.error_message
+                # Also check result for error details
+                elif assistant_subtask.result:
+                    result = assistant_subtask.result
+                    if isinstance(result, dict):
+                        # Check common error fields
+                        if result.get("error"):
+                            error_msg = str(result.get("error"))
+                        elif result.get("errorMessage"):
+                            error_msg = str(result.get("errorMessage"))
+                        elif result.get("message"):
+                            error_msg = str(result.get("message"))
+
             logger.info(
                 f"[Evaluation Monitor] Wegent Task {grading_task.task_id} {task_status}, "
-                f"marking grading task {grading_task.id} as failed"
+                f"marking grading task {grading_task.id} as failed. Error: {error_msg}"
             )
             grading_task.status = GradingTaskStatus.FAILED
-            grading_task.error_message = f"Wegent Task {task_status.lower()}"
+            grading_task.error_message = error_msg[:2000]
             grading_task.completed_at = datetime.now()
             db.flush()
             return True

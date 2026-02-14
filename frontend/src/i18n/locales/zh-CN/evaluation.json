@@ -195,6 +195,8 @@
     },
     "no_tasks": "暂无评分任务",
     "no_report_data": "暂无报告数据",
+    "view_execution_task": "查看执行任务",
+    "view_execution_task_hint": "查看详细执行日志以便调试",
     "execute_success": "评分任务已启动",
     "publish_success": "报告发布成功",
     "publish_ai_as_final": "确认 AI 评分",
