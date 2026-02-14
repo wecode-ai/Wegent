@@ -124,7 +124,7 @@
       "updateFailed": "更新文档失败",
       "dropzone": "拖拽文件到此处或点击浏览",
       "supportedTypes": "支持 PDF、Word、PPT、TXT、MD 文件（最大 {{maxSize}}MB）",
-      "supportedTypesWithExcel": "支持 PDF、Word、PPT、Excel、TXT、MD 文件（最大 {{maxSize}}MB）",
+      "supportedTypesWithExcel": "支持 PDF、Word、PPT、Excel、CSV、TXT、MD 文件（最大 {{maxSize}}MB）",
       "uploading": "上传中...",
       "uploadSuccess": "文件上传成功",
       "batch": {

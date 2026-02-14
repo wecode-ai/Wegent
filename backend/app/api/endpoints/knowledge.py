@@ -412,8 +412,8 @@ async def create_document(
     if the knowledge base has retrieval_config configured.
     """
     # Validate Excel file type based on configuration
-    excel_extensions = {".xls", ".xlsx", ".csv"}
-    file_ext = data.file_extension.lower() if data.file_extension else ""
+    excel_extensions = {"xls", "xlsx", "csv"}
+    file_ext = data.file_extension.lower().lstrip(".") if data.file_extension else ""
     if file_ext in excel_extensions and not settings.KNOWLEDGE_EXCEL_UPLOAD_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
