@@ -181,7 +181,7 @@ async def _load_history_from_remote(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
     """
-    logger.debug(
+    logger.info(
         "[history] _load_history_from_remote: START task_id=%d, is_group_chat=%s, "
         "exclude_after=%s, limit=%s",
         task_id,
@@ -229,7 +229,20 @@ async def _load_history_from_remote(
             msg_dict = msg.to_dict()
             history.append(msg_dict)
 
-        logger.debug(
+        # Log message content length for debugging attachment loading
+        for i, msg in enumerate(history):
+            content = msg.get("content", "")
+            content_len = len(content) if isinstance(content, str) else len(str(content))
+            logger.info(
+                "[history] _load_history_from_remote: message[%d] role=%s, content_len=%d, "
+                "content_preview='%s'",
+                i,
+                msg.get("role"),
+                content_len,
+                (content[:200] + "...") if isinstance(content, str) and len(content) > 200 else str(content)[:200],
+            )
+
+        logger.info(
             "[history] _load_history_from_remote: SUCCESS loaded %d messages "
             "for task_id=%d, is_group_chat=%s",
             len(history),

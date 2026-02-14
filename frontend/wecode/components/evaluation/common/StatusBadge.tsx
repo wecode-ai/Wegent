@@ -40,8 +40,29 @@ export function StatusBadge({ status, type }: StatusBadgeProps) {
   }
 
   const getLabel = () => {
-    const prefix = type === 'grading' ? 'grading.status' : `${type}.status`
-    return t(`${prefix}.${status}`, String(status))
+    const numStatus = typeof status === 'string' ? parseInt(status, 10) : status
+
+    // Map status codes to translation keys
+    if (type === 'grading') {
+      // Grading task status: pending=0, running=1, completed=2, failed=3, published=4
+      const statusMap: Record<number, string> = {
+        [GradingTaskStatus.PENDING]: 'pending',
+        [GradingTaskStatus.RUNNING]: 'running',
+        [GradingTaskStatus.COMPLETED]: 'completed',
+        [GradingTaskStatus.FAILED]: 'failed',
+        [GradingTaskStatus.PUBLISHED]: 'published',
+      }
+      const key = statusMap[numStatus] || String(numStatus)
+      return t(`grading.status.${key}`)
+    } else {
+      // Topic/Question status: draft=0, published=1
+      const statusMap: Record<number, string> = {
+        [TopicStatus.DRAFT]: 'unpublished',
+        [TopicStatus.PUBLISHED]: 'published',
+      }
+      const key = statusMap[numStatus] || String(numStatus)
+      return t(`topics.${key}`)
+    }
   }
 
   return <Badge variant={getVariant()}>{getLabel()}</Badge>
