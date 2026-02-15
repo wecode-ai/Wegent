@@ -44,16 +44,17 @@ def resolve_env_placeholder(value: str) -> str:
 
     def replace_env(match):
         env_var = match.group(1)
-        env_value = os.environ.get(env_var, "")
-        if env_value:
+        env_value = os.environ.get(env_var)
+        if env_value is not None:
             logger.info(
                 f"[model_resolver] Resolved env var ${{{env_var}}} to value (length={len(env_value)})"
             )
+            return env_value
         else:
             logger.warning(
-                f"[model_resolver] Env var ${{{env_var}}} not found or empty"
+                f"[model_resolver] Env var ${{{env_var}}} not found, keeping placeholder"
             )
-        return env_value
+            return match.group(0)  # Return original placeholder unchanged
 
     return re.sub(pattern, replace_env, value)
 
