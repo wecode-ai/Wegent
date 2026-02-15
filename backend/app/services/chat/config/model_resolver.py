@@ -716,7 +716,6 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     context_window = model_config.get("context_window")
     max_output_tokens = model_config.get("max_output_tokens")
 
-    logger.info("model!!,%s", api_key)
     return {
         "api_key": api_key,
         "base_url": base_url,
