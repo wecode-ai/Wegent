@@ -83,9 +83,17 @@ async def _process_task_data_api_key(
                 )
             processed_bots.append(processed_bot)
 
+        # Replace in model_config
+        processed_model_config = task_data.get("model_config")
+        if processed_model_config and isinstance(processed_model_config, dict):
+            processed_model_config = _replace_api_key_in_config(
+                processed_model_config, real_apikey
+            )
+
         return {
             **task_data,
             "bot": processed_bots,
+            "model_config": processed_model_config,
         }
 
     except Exception as e:
