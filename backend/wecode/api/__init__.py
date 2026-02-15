@@ -15,6 +15,7 @@ import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.qu
 import wecode.api.user_service_patch  # noqa: F401  patch app.services.user without modifying source
 import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
+import wecode.service.model_resolver_patch  # noqa: F401  patch model_resolver._process_model_config_placeholders to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
 from app.api.router import api_router
 from wecode.api.auth import router as auth_router
