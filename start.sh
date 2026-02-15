@@ -1095,28 +1095,35 @@ start_services() {
 
     echo -e "${BLUE}Starting services...${NC}"
 
+    # Common reload exclude patterns to avoid scanning .venv and __pycache__ directories
+    # This significantly reduces CPU usage during development
+    local RELOAD_EXCLUDE="--reload-exclude '.venv/*' --reload-exclude '__pycache__/*' --reload-exclude '*.pyc' --reload-exclude '.git/*'"
+
     # 1. Start Backend
     # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
     # CHAT_SHELL_URL: URL for backend to call chat_shell service
     # LOG_LEVEL: Application log level (DEBUG enables debug logging)
     # --reload-dir: Watch shared module for changes (editable dependency)
+    # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
     start_service "backend" "backend" \
-        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
+        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
 
     # 2. Start Chat Shell
     # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)
     # --reload-dir: Watch shared module for changes (editable dependency)
+    # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug"
 
     # 3. Start Executor Manager
     # TASK_API_DOMAIN: URL for executor_manager to call backend (uses local IP so docker containers can access)
     # DOCKER_HOST_ADDR=localhost so executor_manager can access docker containers
     # CALLBACK_HOST: URL for executor containers to call back to executor_manager (uses local IP so docker containers can access)
     # --reload-dir: Watch shared module for changes (editable dependency)
+    # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
     local CALLBACK_HOST="http://$LOCAL_IP:$EXECUTOR_MANAGER_PORT"
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."
