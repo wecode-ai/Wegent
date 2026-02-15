@@ -141,10 +141,13 @@ class Agent:
 
         Uses the emitter created during agent initialization.
 
+        For FAILED status, sends an error event instead of in_progress event
+        to ensure the frontend receives the error notification.
+
         Args:
             progress: The progress percentage (0-100)
-            status: Optional status string
-            message: Optional message string
+            status: Optional status string (e.g., "FAILED", "RUNNING", "COMPLETED")
+            message: Optional message string (used as error message for FAILED status)
             result: Optional result data dictionary
         """
         import asyncio
@@ -153,9 +156,18 @@ class Agent:
             f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}"
         )
         try:
+            # Determine if this is a failure status
+            is_failed = status == TaskStatus.FAILED.value if status else False
 
             async def _send_progress():
-                await self.get_emitter().in_progress()
+                if is_failed:
+                    # Send error event for FAILED status so frontend receives the error
+                    error_message = message or "Task execution failed"
+                    await self.get_emitter().error(
+                        error_message, code="execution_error"
+                    )
+                else:
+                    await self.get_emitter().in_progress()
 
             # Run async in sync context
             try:
