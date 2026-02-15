@@ -271,11 +271,11 @@ def _process_model_config_placeholders(
     api_key = model_config.get("api_key", "")
     if api_key and "${" in api_key:
         processed_api_key = replace_placeholders_with_sources(api_key, data_sources)
-        model_config["api_key"] = processed_api_key
-        logger.info(
-            f"[model_resolver] Processed api_key placeholder, "
-            f"has_value={bool(processed_api_key)}"
-        )
+        if processed_api_key:
+            model_config["api_key"] = processed_api_key
+            logger.info(
+                f"[model_resolver] Processed api_key placeholder, from: {api_key} "
+            )
 
     # Process DEFAULT_HEADERS with placeholder replacement
     raw_default_headers = model_config.get("default_headers", {})
@@ -630,7 +630,6 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     model_type = env.get("model", "openai")
 
     # Resolve environment variable placeholders in api_key
-    # This handles cases like api_key="${WECODE_API_KEY}"
     if api_key and "${" in api_key:
         logger.info(
             f"[model_resolver] api_key contains placeholder, resolving from env..."
@@ -717,6 +716,7 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     context_window = model_config.get("context_window")
     max_output_tokens = model_config.get("max_output_tokens")
 
+    logger.info("model!!,%s", api_key)
     return {
         "api_key": api_key,
         "base_url": base_url,
