@@ -27,14 +27,14 @@ English | [简体中文](README_zh.md)
 
 ```mermaid
 graph TB
-    subgraph Access["🚪 Entry Layer"]
+    subgraph Access["Entry Layer"]
         direction TB
         Web["🌐 Web"]
         IM["💬 IM Tools"]
         API["🔌 API"]
     end
 
-    subgraph Features["⚡ Feature Layer"]
+    subgraph Features["Feature Layer"]
         direction TB
         Chat["💬 Chat"]
         Code["💻 Coding"]
@@ -42,7 +42,7 @@ graph TB
         Knowledge["📚 Knowledge"]
     end
 
-    subgraph Agents["🤖 Agent Layer"]
+    subgraph Agents["Agent Layer"]
         direction TB
         ChatShell["🗣️ Wegent Chat"]
         ClaudeCode["🧠 Claude Code"]
@@ -50,7 +50,7 @@ graph TB
         Dify["✨ Dify"]
     end
 
-    subgraph Execution["🖥️ Execution Environment"]
+    subgraph Execution["Execution Environment"]
         direction TB
         Docker["🐳 Agent Sandbox"]
         Cloud["☁️ Cloud Device"]
