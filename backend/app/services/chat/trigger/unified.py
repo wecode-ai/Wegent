@@ -219,6 +219,10 @@ async def build_execution_request(
             force_override=force_override,
         )
 
+        # Always propagate user_subtask_id for downstream persistence (e.g., KB tool results).
+        # Note: This is different from request.subtask_id which is the assistant subtask.
+        request.user_subtask_id = user_subtask_id
+
         # Process contexts (attachments, knowledge bases, etc.)
         if user_subtask_id:
             request = await _process_contexts(db, request, user_subtask_id, user.id)
