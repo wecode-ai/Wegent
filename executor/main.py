@@ -105,12 +105,12 @@ def main() -> None:
             device_config = load_device_config(config_path)
 
             # Sync device config values to global config for modules that read from config directly
-            # This ensures all components use the correct values from device config
+            # Priority: environment variable > device config
             import executor.config.config as config
 
-            config.EXECUTOR_MODE = device_config.mode
-            config.WEGENT_BACKEND_URL = device_config.connection.backend_url
-            config.WEGENT_AUTH_TOKEN = device_config.connection.auth_token
+            config.EXECUTOR_MODE = os.environ.get("EXECUTOR_MODE") or device_config.mode
+            config.WEGENT_BACKEND_URL = os.environ.get("WEGENT_BACKEND_URL") or device_config.connection.backend_url
+            config.WEGENT_AUTH_TOKEN = os.environ.get("WEGENT_AUTH_TOKEN") or device_config.connection.auth_token
 
             logger.info("Starting executor in LOCAL mode")
             logger.info(f"Device ID: {device_config.device_id}")
