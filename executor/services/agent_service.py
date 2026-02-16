@@ -104,6 +104,10 @@ class AgentService:
                         callback_url=config.CALLBACK_URL
                     )
                 )
+                .with_executor_info(
+                    name=os.getenv("EXECUTOR_NAME"),
+                    namespace=os.getenv("EXECUTOR_NAMESPACE"),
+                )
                 .build()
             )
 
