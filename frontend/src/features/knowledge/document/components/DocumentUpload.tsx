@@ -102,6 +102,8 @@ interface DocumentUploadProps {
   kbType?: string
   /** Current document count in the knowledge base */
   currentDocumentCount?: number
+  /** Whether Excel file upload is enabled (from backend config) */
+  excelUploadEnabled?: boolean
 }
 
 export function DocumentUpload({
@@ -112,6 +114,7 @@ export function DocumentUpload({
   onWebAdd,
   kbType = 'classic',
   currentDocumentCount = 0,
+  excelUploadEnabled = true,
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -281,7 +284,7 @@ export function DocumentUpload({
     }
   }
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     reset()
     setSplitterConfig({
       type: 'sentence',
@@ -306,7 +309,7 @@ export function DocumentUpload({
     setWebSubmitting(false)
     setWebFetching(false)
     onOpenChange(false)
-  }
+  }, [reset, onOpenChange])
 
   // Handle text content submission - convert to file and upload
   const handleTextSubmit = useCallback(() => {
@@ -768,21 +771,28 @@ export function DocumentUpload({
               </Button>
             )}
           </div>
-
           <p className="text-xs text-text-muted mt-4">
             {t('document.upload.dropzoneHint', { max: MAX_BATCH_FILES })}
           </p>
           <p className="text-xs text-text-muted mt-1">
-            {t('document.document.supportedTypes', {
-              maxSize: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
-            })}
+            {excelUploadEnabled
+              ? t('document.document.supportedTypesWithExcel', {
+                  maxSize: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
+                })
+              : t('document.document.supportedTypes', {
+                  maxSize: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
+                })}
           </p>
           <input
             ref={fileInputRef}
             type="file"
             className="hidden"
             multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md"
+            accept={
+              excelUploadEnabled
+                ? '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md'
+                : '.pdf,.doc,.docx,.ppt,.pptx,.txt,.md'
+            }
             onChange={handleFileChange}
             disabled={state.isUploading}
           />

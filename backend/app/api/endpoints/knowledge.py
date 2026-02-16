@@ -136,6 +136,7 @@ def get_knowledge_config():
     """
     return {
         "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+        "excel_upload_enabled": settings.KNOWLEDGE_EXCEL_UPLOAD_ENABLED,
     }
 
 
@@ -410,6 +411,15 @@ async def create_document(
     After creating the document, automatically triggers RAG indexing via Celery
     if the knowledge base has retrieval_config configured.
     """
+    # Validate Excel file type based on configuration
+    excel_extensions = {"xls", "xlsx", "csv"}
+    file_ext = data.file_extension.lower().lstrip(".") if data.file_extension else ""
+    if file_ext in excel_extensions and not settings.KNOWLEDGE_EXCEL_UPLOAD_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Excel file upload is not enabled. Please contact administrator.",
+        )
+
     try:
         # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
         result = knowledge_orchestrator.create_document_from_attachment(
