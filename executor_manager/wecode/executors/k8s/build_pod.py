@@ -213,9 +213,9 @@ def build_pod_volumes(task):
     Returns:
         dict: Volume mounts and volumes configuration
     """
-    user_info = task.get("user", {})
-    user_name = user_info.get("name", "").replace("_", "--")
-    git_domain = user_info.get("git_domain", "")
+    user_info = task.get("user") or {}
+    user_name = (user_info.get("name") or "").replace("_", "--")
+    git_domain = user_info.get("git_domain") or ""
 
     # Supported Git domains
     supported_domains = [

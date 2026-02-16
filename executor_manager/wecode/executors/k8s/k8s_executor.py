@@ -289,7 +289,9 @@ class K8sExecutor(Executor):
                         task, "starting_container", error_msg
                     )
             except Exception as e:
-                logger.error(f"Error creating Kubernetes pod for task {task_id}", e)
+                logger.exception(
+                    f"Error creating Kubernetes pod for task {task_id}: {e}"
+                )
                 status = "failed"
                 progress = 100
                 error_msg = f"Error: {e}"
