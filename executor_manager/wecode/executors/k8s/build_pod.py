@@ -65,7 +65,8 @@ def build_pod_configuration(
 
     repo_proxy_config = {}
     metadata = task.get("metadata", {})
-    if "github.com" in metadata.get("git_domain", ""):
+    git_domain = metadata.get("git_domain") or ""
+    if "github.com" in git_domain:
         repo_proxy_config = REPO_PROXY_CONFIG
 
     volumes_info = build_pod_volumes(task)
@@ -212,9 +213,9 @@ def build_pod_volumes(task):
     Returns:
         dict: Volume mounts and volumes configuration
     """
-    user_info = task.get("user", {})
-    user_name = user_info.get("name", "").replace("_", "--")
-    git_domain = user_info.get("git_domain", "")
+    user_info = task.get("user") or {}
+    user_name = (user_info.get("name") or "").replace("_", "--")
+    git_domain = user_info.get("git_domain") or ""
 
     # Supported Git domains
     supported_domains = [
