@@ -65,7 +65,8 @@ def build_pod_configuration(
 
     repo_proxy_config = {}
     metadata = task.get("metadata", {})
-    if "github.com" in metadata.get("git_domain", ""):
+    git_domain = metadata.get("git_domain") or ""
+    if "github.com" in git_domain:
         repo_proxy_config = REPO_PROXY_CONFIG
 
     volumes_info = build_pod_volumes(task)
