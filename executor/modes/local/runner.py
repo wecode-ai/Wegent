@@ -508,8 +508,13 @@ class LocalRunner:
             file_handler.setFormatter(formatter)
 
             log_level = logging.INFO
-            env_log_level = os.environ.get("LOG_LEVEL")
-            if env_log_level and env_log_level.upper() == "DEBUG":
+            # Check device_config first, then fall back to environment variable
+            config_log_level = None
+            if self.device_config:
+                config_log_level = self.device_config.logging.level
+            if not config_log_level:
+                config_log_level = os.environ.get("LOG_LEVEL")
+            if config_log_level and config_log_level.upper() == "DEBUG":
                 log_level = logging.DEBUG
             file_handler.setLevel(log_level)
 

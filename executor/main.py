@@ -103,6 +103,15 @@ def main() -> None:
         # Load full configuration for local mode
         try:
             device_config = load_device_config(config_path)
+
+            # Sync device config values to global config for modules that read from config directly
+            # This ensures all components use the correct values from device config
+            import executor.config.config as config
+
+            config.EXECUTOR_MODE = device_config.mode
+            config.WEGENT_BACKEND_URL = device_config.connection.backend_url
+            config.WEGENT_AUTH_TOKEN = device_config.connection.auth_token
+
             logger.info("Starting executor in LOCAL mode")
             logger.info(f"Device ID: {device_config.device_id}")
             logger.info(f"Device Name: {device_config.device_name}")
