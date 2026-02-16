@@ -1138,7 +1138,19 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
         # Persist RAG results if user_subtask_id is available
         if self.user_subtask_id and chunks_used:
+            logger.info(
+                "[KnowledgeBaseTool] Persist requested (direct_injection): user_subtask_id=%s, chunks=%d, kb_ids=%s",
+                self.user_subtask_id,
+                len(chunks_used),
+                self.knowledge_base_ids,
+            )
             self._persist_rag_results_sync(chunks_used, query, "direct_injection")
+        elif chunks_used:
+            logger.info(
+                "[KnowledgeBaseTool] Persist skipped (direct_injection): missing user_subtask_id, chunks=%d, kb_ids=%s",
+                len(chunks_used),
+                self.knowledge_base_ids,
+            )
 
         return json.dumps(
             {
@@ -1229,7 +1241,21 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
         # Persist RAG results if user_subtask_id is available
         if self.user_subtask_id and all_chunks:
+            logger.info(
+                "[KnowledgeBaseTool] Persist requested (rag_retrieval): user_subtask_id=%s, chunks=%d, sources=%d, kb_ids=%s",
+                self.user_subtask_id,
+                len(all_chunks),
+                len(source_references),
+                self.knowledge_base_ids,
+            )
             await self._persist_rag_results(all_chunks, source_references, query)
+        elif all_chunks:
+            logger.info(
+                "[KnowledgeBaseTool] Persist skipped (rag_retrieval): missing user_subtask_id, chunks=%d, sources=%d, kb_ids=%s",
+                len(all_chunks),
+                len(source_references),
+                self.knowledge_base_ids,
+            )
 
         return json.dumps(
             {
@@ -1264,6 +1290,14 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
             query: Original search query
             injection_mode: "direct_injection" or "rag_retrieval"
         """
+        logger.info(
+            "[KnowledgeBaseTool] Persist start: mode=%s, user_subtask_id=%s, total_chunks=%d, total_sources=%d",
+            injection_mode,
+            self.user_subtask_id,
+            len(all_chunks),
+            len(source_references),
+        )
+
         # Group chunks by knowledge_base_id for per-KB persistence
         chunks_by_kb: Dict[int, List[Dict[str, Any]]] = {}
         for chunk in all_chunks:
@@ -1419,43 +1453,77 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
             backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
         try:
+            payload = {
+                "user_subtask_id": self.user_subtask_id,
+                "knowledge_base_id": kb_id,
+                "user_id": self.user_id,
+                "tool_type": "rag",
+                "extracted_text": extracted_text,
+                "sources": kb_sources,
+                "injection_mode": injection_mode,
+                "query": query,
+                "chunks_count": chunks_count,
+            }
+
+            logger.info(
+                "[KnowledgeBaseTool] Persist HTTP request: url=%s/api/internal/rag/save-tool-result, user_subtask_id=%s, kb_id=%s, injection_mode=%s, chunks_count=%s, sources=%s, extracted_text_len=%s",
+                backend_url,
+                self.user_subtask_id,
+                kb_id,
+                injection_mode,
+                chunks_count,
+                len(kb_sources),
+                len(extracted_text or ""),
+            )
+
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/save-tool-result",
-                    json={
-                        "user_subtask_id": self.user_subtask_id,
-                        "knowledge_base_id": kb_id,
-                        "user_id": self.user_id,
-                        "tool_type": "rag",
-                        "extracted_text": extracted_text,
-                        "sources": kb_sources,
-                        "injection_mode": injection_mode,
-                        "query": query,
-                        "chunks_count": chunks_count,
-                    },
+                    json=payload,
+                )
+
+                logger.info(
+                    "[KnowledgeBaseTool] Persist HTTP response: status=%s, kb_id=%s, user_subtask_id=%s",
+                    response.status_code,
+                    kb_id,
+                    self.user_subtask_id,
                 )
 
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("success"):
                         logger.info(
-                            f"[KnowledgeBaseTool] Persisted RAG result via HTTP: "
-                            f"context_id={data.get('context_id')}, subtask_id={self.user_subtask_id}, "
-                            f"kb_id={kb_id}, injection_mode={injection_mode}, chunks_count={chunks_count}"
+                            "[KnowledgeBaseTool] Persisted RAG result via HTTP: context_id=%s, subtask_id=%s, kb_id=%s, injection_mode=%s, chunks_count=%s",
+                            data.get("context_id"),
+                            self.user_subtask_id,
+                            kb_id,
+                            injection_mode,
+                            chunks_count,
                         )
                     else:
                         logger.warning(
-                            f"[KnowledgeBaseTool] Failed to persist RAG result: {data.get('message')}"
+                            "[KnowledgeBaseTool] Persist rejected by backend: kb_id=%s, subtask_id=%s, message=%s",
+                            kb_id,
+                            self.user_subtask_id,
+                            data.get("message"),
                         )
                 else:
                     logger.warning(
-                        f"[KnowledgeBaseTool] HTTP persist failed: status={response.status_code}, "
-                        f"body={response.text[:200]}"
+                        "[KnowledgeBaseTool] HTTP persist failed: status=%s, kb_id=%s, subtask_id=%s, body=%s",
+                        response.status_code,
+                        kb_id,
+                        self.user_subtask_id,
+                        response.text[:200],
                     )
 
         except Exception as e:
             logger.warning(
-                f"[KnowledgeBaseTool] HTTP persist error for kb_id={kb_id}: {e}"
+                "[KnowledgeBaseTool] HTTP persist error: kb_id=%s, subtask_id=%s, backend_url=%s, error=%s",
+                kb_id,
+                self.user_subtask_id,
+                backend_url,
+                str(e),
+                exc_info=True,
             )
 
     def _persist_rag_results_sync(
