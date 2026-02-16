@@ -23,6 +23,47 @@
 
 ---
 
+## 🏗️ 架构概览
+
+```mermaid
+graph TB
+    subgraph Access["🚪 入口层"]
+        direction TB
+        Web["🌐 网页"]
+        IM["💬 IM 工具"]
+        API["🔌 API"]
+    end
+
+    subgraph Features["⚡ 功能层"]
+        direction TB
+        Chat["💬 对话"]
+        Code["💻 编码"]
+        Feed["📡 定时任务"]
+        Knowledge["📚 知识库"]
+    end
+
+    subgraph Agents["🤖 Agent 层"]
+        direction TB
+        ChatShell["🗣️ Wegent Chat"]
+        ClaudeCode["🧠 Claude Code"]
+        Agno["🤝 Agno"]
+        Dify["✨ Dify"]
+    end
+
+    subgraph Execution["🖥️ 执行环境"]
+        direction TB
+        Docker["🐳 Agent 沙箱"]
+        Cloud["☁️ 云端设备"]
+        Local["💻 本地设备"]
+    end
+
+    Access --> Features
+    Features --> Agents
+    Agents --> Execution
+```
+
+---
+
 ## ✨ 核心功能
 
 ### 💬 对话模式
@@ -83,6 +124,13 @@
 - **槽位调度**：为每个设备配置并发任务槽位数
 - **安全连接**：通过认证的 WebSocket 连接到 Wegent 后端
 
+### 💬 IM 集成
+
+将 AI 智能体集成到你常用的 IM 工具中：
+
+- **钉钉机器人**：将智能体部署为钉钉机器人，支持团队协作
+- **Telegram 机器人**：连接智能体到 Telegram，支持个人或群组对话
+
 ### 🔧 定制化
 
 上面的所有功能都是可定制的：
@@ -124,20 +172,6 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | translator | 多语言翻译 |
 | dev-team | Git 工作流：分支 → 编码 → 提交 → PR |
 | wiki-team | 代码库 Wiki 文档生成 |
-
----
-
-## 🏗️ 架构
-
-```
-Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
-```
-
-**核心概念：**
-- **Ghost** (提示词) + **Shell** (执行环境) + **Model** = **Bot**
-- 多个 **Bot** + **协作模式** = **Team**
-
-> 详见 [核心概念](https://wecode-ai.github.io/wegent-docs/zh/concepts/core-concepts) | [YAML 规范](https://wecode-ai.github.io/wegent-docs/zh/reference/yaml-specification)
 
 ---
 
