@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
+from shared.models.knowledge import KnowledgeBaseToolsResult
 from shared.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
 
 logger = logging.getLogger(__name__)
@@ -822,7 +823,7 @@ async def prepare_contexts_for_chat(
         )
         # Even without subtask contexts, check for task-level bound knowledge bases
         # This is important for group chat where KBs are bound to the task, not subtask
-        extra_tools, enhanced_prompt = _prepare_kb_tools_from_contexts(
+        kb_result = _prepare_kb_tools_from_contexts(
             kb_contexts=[],  # No subtask-level KB contexts
             user_id=user_id,
             db=db,
@@ -830,7 +831,13 @@ async def prepare_contexts_for_chat(
             task_id=task_id,
             user_subtask_id=user_subtask_id,
         )
-        return message, enhanced_prompt, extra_tools, False, []
+        return (
+            message,
+            kb_result.enhanced_system_prompt,
+            kb_result.extra_tools,
+            False,
+            [],
+        )
 
     # Separate contexts by type
     attachment_contexts = [
@@ -870,7 +877,7 @@ async def prepare_contexts_for_chat(
     )
 
     # 2. Process knowledge base contexts - create tools
-    extra_tools, enhanced_system_prompt = _prepare_kb_tools_from_contexts(
+    kb_result = _prepare_kb_tools_from_contexts(
         kb_contexts=kb_contexts,
         user_id=user_id,
         db=db,
@@ -878,6 +885,9 @@ async def prepare_contexts_for_chat(
         task_id=task_id,
         user_subtask_id=user_subtask_id,
     )
+
+    extra_tools = kb_result.extra_tools
+    enhanced_system_prompt = kb_result.enhanced_system_prompt
 
     # 3. Process table contexts - create DataTableTool and build dynamic prompt
     parsed_tables = []
@@ -1024,34 +1034,17 @@ def _prepare_kb_tools_from_contexts(
     base_system_prompt: str,
     task_id: Optional[int] = None,
     user_subtask_id: Optional[int] = None,
-) -> Tuple[List[BaseTool], str]:
+) -> KnowledgeBaseToolsResult:
+    """Prepare knowledge base tools from context records.
+
+    NOTE:
+    - Knowledge base metadata (kb_meta_prompt) is returned separately and should be injected
+      via the `dynamic_context` mechanism to keep system prompts static for better caching.
     """
-    Prepare knowledge base tools from context records.
 
-    Knowledge base priority rules:
-    1. If subtask has selected knowledge bases (kb_contexts), use ONLY those (strict mode)
-    2. If subtask has no KB selection, fall back to task-level knowledgeBaseRefs (relaxed mode)
-
-    This ensures user's explicit KB selection in a message takes precedence
-    over task-level bound knowledge bases.
-
-    Prompt mode:
-    - Strict mode: User explicitly selected KB for this message, AI must use KB only
-    - Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
-
-    Args:
-        kb_contexts: List of knowledge base SubtaskContext records
-        user_id: User ID for access control
-        db: Database session
-        base_system_prompt: Base system prompt to enhance
-        task_id: Optional task ID for historical KB meta and group chat KB refs
-        user_subtask_id: User subtask ID for RAG persistence
-
-    Returns:
-        Tuple of (extra_tools list, enhanced_system_prompt string)
-    """
     extra_tools: List[BaseTool] = []
     enhanced_system_prompt = base_system_prompt
+    kb_meta_prompt = ""
 
     # Priority 1: Subtask-level knowledge bases (user-selected for this message)
     subtask_kb_ids = [c.knowledge_id for c in kb_contexts if c.knowledge_id is not None]
@@ -1082,9 +1075,11 @@ def _prepare_kb_tools_from_contexts(
         # Even without current knowledge bases, check for historical KB meta
         if task_id:
             kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
-            if kb_meta_prompt:
-                enhanced_system_prompt = f"{base_system_prompt}{kb_meta_prompt}"
-        return extra_tools, enhanced_system_prompt
+        return KnowledgeBaseToolsResult(
+            extra_tools=extra_tools,
+            enhanced_system_prompt=enhanced_system_prompt,
+            kb_meta_prompt=kb_meta_prompt,
+        )
 
     logger.info(
         f"[_prepare_kb_tools_from_contexts] Creating KnowledgeBaseTool for "
@@ -1105,24 +1100,21 @@ def _prepare_kb_tools_from_contexts(
     extra_tools.append(kb_tool)
 
     # Get historical knowledge base meta info if available
-    kb_meta_info = ""
     if task_id:
-        kb_meta_info = _build_historical_kb_meta_prompt(db, task_id)
+        kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
 
-    # Choose prompt template based on whether KB is user-selected or inherited from task
-    # Use the shared prompts which already include XML tags
-    # Inject KB meta list into the template using format method
-    # This ensures the KB list appears inside the <knowledge_base> tag
+    # Choose prompt template based on whether KB is user-selected or inherited from task.
+    # Keep KB prompt templates fully static (no kb_meta_list placeholder).
     if is_user_selected_kb:
         # Strict mode: User explicitly selected KB for this message
-        kb_instruction = KB_PROMPT_STRICT.format(kb_meta_list=kb_meta_info)
+        kb_instruction = KB_PROMPT_STRICT
         logger.info(
             "[_prepare_kb_tools_from_contexts] Using STRICT mode prompt "
             "(user explicitly selected KB)"
         )
     else:
         # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
-        kb_instruction = KB_PROMPT_RELAXED.format(kb_meta_list=kb_meta_info)
+        kb_instruction = KB_PROMPT_RELAXED
         logger.info(
             "[_prepare_kb_tools_from_contexts] Using RELAXED mode prompt "
             "(KB inherited from task)"
@@ -1130,7 +1122,11 @@ def _prepare_kb_tools_from_contexts(
 
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
 
-    return extra_tools, enhanced_system_prompt
+    return KnowledgeBaseToolsResult(
+        extra_tools=extra_tools,
+        enhanced_system_prompt=enhanced_system_prompt,
+        kb_meta_prompt=kb_meta_prompt,
+    )
 
 
 def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
@@ -1175,22 +1171,23 @@ def _build_historical_kb_meta_prompt(
     db: Session,
     task_id: int,
 ) -> str:
-    """
-    Build knowledge base meta information from historical contexts.
+    """Build knowledge base meta information from historical contexts.
 
-    Args:
-        db: Database session
-        task_id: Task ID
+    NOTE:
+    - Backend MUST NOT depend on chat_shell. The KB meta prompt builder lives in Backend.
 
     Returns:
-        Formatted prompt string with KB meta info, or empty string
+        Formatted prompt string with KB meta info, or empty string.
     """
-    from chat_shell.history.loader import get_knowledge_base_meta_prompt
 
     try:
-        return get_knowledge_base_meta_prompt(db, task_id)
+        from app.services.chat.preprocessing.kb_meta import (
+            build_kb_meta_prompt_for_task,
+        )
+
+        return build_kb_meta_prompt_for_task(db, task_id)
     except Exception as e:
-        logger.warning(f"Failed to get KB meta prompt for task {task_id}: {e}")
+        logger.warning(f"Failed to build KB meta prompt for task {task_id}: {e}")
         return ""
 
 

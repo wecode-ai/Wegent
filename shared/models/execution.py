@@ -81,6 +81,9 @@ class ExecutionRequest:
     # === Prompt ===
     system_prompt: str = ""
     prompt: str = ""  # User message
+    kb_meta_prompt: str = (
+        ""  # Knowledge base meta prompt (injected via dynamic_context mechanism)
+    )
 
     # === Feature Toggles ===
     enable_tools: bool = True

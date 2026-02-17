@@ -140,45 +140,25 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
 
     def _get_kb_info_sync(self) -> Dict[str, Any]:
-        """Get KB info synchronously, using cache or fetching if needed.
+        """Get KB info synchronously.
 
-        This is a helper method for sync methods that need KB info.
-        It handles async/sync boundary by checking event loop state.
+        IMPORTANT:
+        - Do NOT perform network I/O (HTTP) in synchronous code paths.
+        - The async entrypoint `_arun()` is responsible for fetching KB info and
+          populating the per-instance cache.
+
+        This keeps sync helpers deterministic and avoids unexpected blocking.
 
         Returns:
-            KB info dict from cache or HTTP API
-
-        Note:
-            This method assumes cache is populated by _arun() at the start.
-            If cache is empty, it will attempt to fetch synchronously as fallback.
+            KB info dict from cache if available, otherwise an empty default.
         """
-        # Fast path: return cached data if available
         if self._kb_info_cache is not None:
             return self._kb_info_cache
 
-        # Slow path: cache not populated, need to fetch
-        # This should rarely happen if _arun() called _get_kb_info() first
-        logger.warning(
-            "[KnowledgeBaseTool] KB info cache not populated, fetching synchronously"
+        logger.debug(
+            "[KnowledgeBaseTool] KB info cache not populated in sync path, using defaults"
         )
-
-        try:
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, we can't block
-                # Return empty dict and log warning
-                logger.warning(
-                    "[KnowledgeBaseTool] Cannot fetch KB info in running event loop, using defaults"
-                )
-                return {"items": []}
-            else:
-                # No running loop, fetch synchronously
-                return loop.run_until_complete(self._get_kb_info())
-        except RuntimeError:
-            # No event loop, create a new one
-            return asyncio.run(self._get_kb_info())
+        return {"items": []}
 
     def _get_kb_limits(self) -> tuple[int, int]:
         """Get (max_calls, exempt_calls) for knowledge base tool calls.
@@ -1138,7 +1118,19 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
         # Persist RAG results if user_subtask_id is available
         if self.user_subtask_id and chunks_used:
+            logger.info(
+                "[KnowledgeBaseTool] Persist requested (direct_injection): user_subtask_id=%s, chunks=%d, kb_ids=%s",
+                self.user_subtask_id,
+                len(chunks_used),
+                self.knowledge_base_ids,
+            )
             self._persist_rag_results_sync(chunks_used, query, "direct_injection")
+        elif chunks_used:
+            logger.info(
+                "[KnowledgeBaseTool] Persist skipped (direct_injection): missing user_subtask_id, chunks=%d, kb_ids=%s",
+                len(chunks_used),
+                self.knowledge_base_ids,
+            )
 
         return json.dumps(
             {
@@ -1229,7 +1221,21 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
         # Persist RAG results if user_subtask_id is available
         if self.user_subtask_id and all_chunks:
+            logger.info(
+                "[KnowledgeBaseTool] Persist requested (rag_retrieval): user_subtask_id=%s, chunks=%d, sources=%d, kb_ids=%s",
+                self.user_subtask_id,
+                len(all_chunks),
+                len(source_references),
+                self.knowledge_base_ids,
+            )
             await self._persist_rag_results(all_chunks, source_references, query)
+        elif all_chunks:
+            logger.info(
+                "[KnowledgeBaseTool] Persist skipped (rag_retrieval): missing user_subtask_id, chunks=%d, sources=%d, kb_ids=%s",
+                len(all_chunks),
+                len(source_references),
+                self.knowledge_base_ids,
+            )
 
         return json.dumps(
             {
@@ -1264,6 +1270,14 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
             query: Original search query
             injection_mode: "direct_injection" or "rag_retrieval"
         """
+        logger.info(
+            "[KnowledgeBaseTool] Persist start: mode=%s, user_subtask_id=%s, total_chunks=%d, total_sources=%d",
+            injection_mode,
+            self.user_subtask_id,
+            len(all_chunks),
+            len(source_references),
+        )
+
         # Group chunks by knowledge_base_id for per-KB persistence
         chunks_by_kb: Dict[int, List[Dict[str, Any]]] = {}
         for chunk in all_chunks:
@@ -1419,43 +1433,77 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
             backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
         try:
+            payload = {
+                "user_subtask_id": self.user_subtask_id,
+                "knowledge_base_id": kb_id,
+                "user_id": self.user_id,
+                "tool_type": "rag",
+                "extracted_text": extracted_text,
+                "sources": kb_sources,
+                "injection_mode": injection_mode,
+                "query": query,
+                "chunks_count": chunks_count,
+            }
+
+            logger.info(
+                "[KnowledgeBaseTool] Persist HTTP request: url=%s/api/internal/rag/save-tool-result, user_subtask_id=%s, kb_id=%s, injection_mode=%s, chunks_count=%s, sources=%s, extracted_text_len=%s",
+                backend_url,
+                self.user_subtask_id,
+                kb_id,
+                injection_mode,
+                chunks_count,
+                len(kb_sources),
+                len(extracted_text or ""),
+            )
+
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/save-tool-result",
-                    json={
-                        "user_subtask_id": self.user_subtask_id,
-                        "knowledge_base_id": kb_id,
-                        "user_id": self.user_id,
-                        "tool_type": "rag",
-                        "extracted_text": extracted_text,
-                        "sources": kb_sources,
-                        "injection_mode": injection_mode,
-                        "query": query,
-                        "chunks_count": chunks_count,
-                    },
+                    json=payload,
+                )
+
+                logger.info(
+                    "[KnowledgeBaseTool] Persist HTTP response: status=%s, kb_id=%s, user_subtask_id=%s",
+                    response.status_code,
+                    kb_id,
+                    self.user_subtask_id,
                 )
 
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("success"):
                         logger.info(
-                            f"[KnowledgeBaseTool] Persisted RAG result via HTTP: "
-                            f"context_id={data.get('context_id')}, subtask_id={self.user_subtask_id}, "
-                            f"kb_id={kb_id}, injection_mode={injection_mode}, chunks_count={chunks_count}"
+                            "[KnowledgeBaseTool] Persisted RAG result via HTTP: context_id=%s, subtask_id=%s, kb_id=%s, injection_mode=%s, chunks_count=%s",
+                            data.get("context_id"),
+                            self.user_subtask_id,
+                            kb_id,
+                            injection_mode,
+                            chunks_count,
                         )
                     else:
                         logger.warning(
-                            f"[KnowledgeBaseTool] Failed to persist RAG result: {data.get('message')}"
+                            "[KnowledgeBaseTool] Persist rejected by backend: kb_id=%s, subtask_id=%s, message=%s",
+                            kb_id,
+                            self.user_subtask_id,
+                            data.get("message"),
                         )
                 else:
                     logger.warning(
-                        f"[KnowledgeBaseTool] HTTP persist failed: status={response.status_code}, "
-                        f"body={response.text[:200]}"
+                        "[KnowledgeBaseTool] HTTP persist failed: status=%s, kb_id=%s, subtask_id=%s, body=%s",
+                        response.status_code,
+                        kb_id,
+                        self.user_subtask_id,
+                        response.text[:200],
                     )
 
         except Exception as e:
             logger.warning(
-                f"[KnowledgeBaseTool] HTTP persist error for kb_id={kb_id}: {e}"
+                "[KnowledgeBaseTool] HTTP persist error: kb_id=%s, subtask_id=%s, backend_url=%s, error=%s",
+                kb_id,
+                self.user_subtask_id,
+                backend_url,
+                str(e),
+                exc_info=True,
             )
 
     def _persist_rag_results_sync(

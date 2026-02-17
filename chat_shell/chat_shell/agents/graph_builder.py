@@ -13,8 +13,10 @@ This module provides a simplified LangGraph agent implementation using:
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from langchain_core.language_models import BaseChatModel
@@ -76,6 +78,152 @@ class ToolCallTruncatedError(Exception):
         self.reason = reason
         self.has_tool_calls = has_tool_calls
         super().__init__(f"Tool call truncated: {reason}")
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a boolean value from environment variables."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _truncate_str(text: str, max_len: int) -> str:
+    """Truncate a string for safe logging."""
+    if max_len <= 0:
+        return ""
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + f"...<truncated:{len(text) - max_len}>"
+
+
+def _to_jsonable(obj: Any, *, max_str_len: int = 200000) -> Any:
+    """Convert LangChain/LangGraph event payload to a JSON-serializable structure.
+
+    This is a best-effort serializer for logging the *logical* LLM request payload
+    (messages + invocation params). It intentionally avoids raising exceptions.
+    """
+    try:
+        # Primitive types
+        if obj is None or isinstance(obj, (bool, int, float)):
+            return obj
+        if isinstance(obj, str):
+            return _truncate_str(obj, max_str_len)
+
+        # Bytes-like
+        if isinstance(obj, (bytes, bytearray, memoryview)):
+            b = bytes(obj)
+            prefix = b[:64]
+            return {
+                "__type__": type(obj).__name__,
+                "len": len(b),
+                "prefix_base64": __import__("base64").b64encode(prefix).decode("ascii"),
+            }
+
+        # Dict / list
+        if isinstance(obj, dict):
+            return {
+                str(k): _to_jsonable(v, max_str_len=max_str_len) for k, v in obj.items()
+            }
+        if isinstance(obj, (list, tuple)):
+            return [_to_jsonable(v, max_str_len=max_str_len) for v in obj]
+
+        # LangChain message objects
+        # Import lazily to avoid import cycles at module import time.
+        try:
+            from langchain_core.messages import BaseMessage  # type: ignore
+        except Exception:
+            BaseMessage = None  # type: ignore
+
+        if BaseMessage is not None and isinstance(obj, BaseMessage):
+            # BaseMessage in LC has: type/content/additional_kwargs/response_metadata/name/id
+            data: dict[str, Any] = {
+                "type": getattr(obj, "type", type(obj).__name__),
+                "content": _to_jsonable(
+                    getattr(obj, "content", None), max_str_len=max_str_len
+                ),
+            }
+            additional = getattr(obj, "additional_kwargs", None)
+            if additional:
+                data["additional_kwargs"] = _to_jsonable(
+                    additional, max_str_len=max_str_len
+                )
+            response_meta = getattr(obj, "response_metadata", None)
+            if response_meta:
+                data["response_metadata"] = _to_jsonable(
+                    response_meta, max_str_len=max_str_len
+                )
+            name = getattr(obj, "name", None)
+            if name:
+                data["name"] = name
+            msg_id = getattr(obj, "id", None)
+            if msg_id:
+                data["id"] = msg_id
+            tool_calls = getattr(obj, "tool_calls", None)
+            if tool_calls:
+                data["tool_calls"] = _to_jsonable(tool_calls, max_str_len=max_str_len)
+            return data
+
+        # Pydantic models
+        if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
+            return _to_jsonable(obj.model_dump(), max_str_len=max_str_len)
+
+        # Fallback
+        return {
+            "__type__": type(obj).__name__,
+            "repr": _truncate_str(repr(obj), 20000),
+        }
+    except Exception as e:
+        return {
+            "__error__": "serialization_failed",
+            "exception": type(e).__name__,
+            "message": _truncate_str(str(e), 2000),
+            "obj_type": type(obj).__name__,
+        }
+
+
+def _log_llm_request_event(
+    event: dict[str, Any], tool_names: list[str] | None = None
+) -> None:
+    """Log the JSON-like LLM request payload from LangGraph/LangChain callbacks.
+
+    Enable via env:
+      - CHAT_SHELL_LOG_LLM_REQUESTS=1
+      - Optional: CHAT_SHELL_LOG_LLM_REQUESTS_FILE=/path/to/llm_requests.jsonl
+    """
+    if not _env_bool("CHAT_SHELL_LOG_LLM_REQUESTS", default=False):
+        return
+
+    import json
+
+    data = event.get("data") or {}
+
+    # LangChain event payload usually contains:
+    # - input: { messages: [...] }
+    # - invocation_params: {...}
+    # The exact shape varies across providers, so we log best-effort.
+    payload = {
+        "event": event.get("event"),
+        "name": event.get("name"),
+        "run_id": event.get("run_id"),
+        "tags": event.get("tags"),
+        "metadata": event.get("metadata"),
+        "tool_names": tool_names or [],
+        "data": data,
+    }
+
+    json_payload = json.dumps(_to_jsonable(payload), ensure_ascii=False, indent=2)
+    logger.info("[LLM_REQUEST] %s", json_payload)
+
+    file_path = os.getenv("CHAT_SHELL_LOG_LLM_REQUESTS_FILE", "").strip()
+    if file_path:
+        try:
+            p = Path(file_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json_payload + "\n")
+        except Exception:
+            logger.exception("[LLM_REQUEST] Failed to write request log file")
 
 
 class LangGraphAgentBuilder:
@@ -387,7 +535,8 @@ class LangGraphAgentBuilder:
         # Store all_tools for external access (e.g., for display_name lookup)
         self.all_tools = all_tools
 
-        # Build agent with optional prompt modifier for dynamic system prompt updates
+        # Add llm built-in tools if supported (currently none)
+        model_with_tools: BaseChatModel | Callable = self.llm
         # If we have a model configurator, use it for dynamic tool selection
         # Note: all_tools includes ALL possible tools (base + all skill tools) for execution
         # while model_configurator controls which tools the model sees at each step
@@ -400,7 +549,7 @@ class LangGraphAgentBuilder:
             )
         else:
             self._agent = create_react_agent(
-                model=self.llm,
+                model=model_with_tools,
                 tools=all_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
@@ -556,6 +705,15 @@ class LangGraphAgentBuilder:
                     add_span_event(
                         "llm_request_started",
                         {"model_name": event.get("name", "unknown")},
+                    )
+
+                    # Log the full JSON-like request structure sent to the model.
+                    # This is best-effort and may include large payloads (e.g., base64 images).
+                    _log_llm_request_event(
+                        event,
+                        tool_names=[
+                            t.name for t in getattr(self, "all_tools", []) or []
+                        ],
                     )
 
                 # Log streaming completion event (much less verbose)
@@ -821,6 +979,8 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
+                    # Get tool input data from event
+                    tool_input_data = event.get("data", {})
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
@@ -828,7 +988,7 @@ class LangGraphAgentBuilder:
                             {
                                 "name": tool_name,
                                 "run_id": run_id,
-                                "data": event.get("data", {}),
+                                "data": tool_input_data,
                             },
                         )
                         # Yield empty string to trigger _emit_pending_events() in chat_service

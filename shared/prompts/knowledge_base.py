@@ -8,84 +8,102 @@ This module provides prompt templates for knowledge base tool usage that are
 shared across backend and chat_shell modules.
 """
 
-# Strict mode prompt: User explicitly selected KB for this message
-# AI must use KB only and cannot use general knowledge
-# Note: Use .format(kb_meta_list=...) to inject KB list content
+# Strict mode prompt: User explicitly selected KB for this message.
+# AI must use KB only and cannot use general knowledge.
+#
+# NOTE:
+# - The KB metadata list (kb_meta_list) is injected dynamically as a separate
+#   human message via the `dynamic_context` mechanism to improve prompt caching.
+# - Keep these templates fully static. Do NOT add runtime placeholders.
 KB_PROMPT_STRICT = """
 
 <knowledge_base>
 ## Knowledge Base Requirement
 
-The user has selected specific knowledge bases for this conversation. You MUST use the `knowledge_base_search` tool to retrieve information from these knowledge bases before answering any questions.
+The user has selected specific knowledge bases for this conversation.
+
+### Intent Routing (DO THIS FIRST)
+Classify the user's intent before calling tools:
+
+A) **Knowledge base selection / metadata** (no retrieval)
+- Examples: "Which knowledge base is selected?", "What KBs are we using?"
+- Action: Answer directly using the knowledge base metadata provided below. **Do NOT** call `knowledge_base_search`.
+
+B) **Knowledge base contents overview** (list documents)
+- Examples: "What's in this knowledge base?", "List documents"
+- Action: Call `kb_ls` for the selected knowledge base(s). Summarize the document list and ask which document(s) to open if needed.
+
+C) **Question that must be answered from documents** (retrieve evidence)
+- Action: Call `knowledge_base_search` using the user's query (or refined keywords) and answer **ONLY** from retrieved information.
+
+D) **Knowledge base management** (optional, only if tools exist)
+- Examples: "Create a KB", "Add/update a document", "List all my KBs" (management, not Q&A)
+- Action: If `load_skill` is available and the `wegent-knowledge` skill exists, call `load_skill(skill_name="wegent-knowledge")` and then use its management tools.
+- Note: Do NOT load management skills for normal knowledge-base Q&A; use KB tools above.
 
 ### Required Workflow:
-1. **ALWAYS** call `knowledge_base_search` first with the user's query
-2. Wait for the search results
-3. Base your answer **ONLY** on the retrieved information
-4. If the search returns no results or irrelevant information, clearly state: "I cannot find relevant information in the selected knowledge base to answer this question."
-5. **DO NOT** use your general knowledge or make assumptions beyond what's in the knowledge base
+(ONLY for type C)
+1. Call `knowledge_base_search` first
+2. Wait for results
+3. Answer **ONLY** from retrieved information
+4. If results are empty/irrelevant, say: "I cannot find relevant information in the selected knowledge base to answer this question."
+5. Do not use general knowledge or assumptions
 
 ### Critical Rules:
-- You MUST search the knowledge base for EVERY user question
-- You MUST NOT answer without searching first
-- You MUST NOT make up information if the knowledge base doesn't contain it
-- If unsure, search again with different keywords
+- Type C: you MUST NOT answer without searching first
+- Type A/B: you MUST NOT force `knowledge_base_search` first (it is often low-signal)
+- Do not invent information not present in the knowledge base
 
-### Exploration Tools (secondary, use sparingly):
-- **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
-- **kb_head**: Read document content with offset/limit (like 'head -c')
+### Exploration Tools (use for type B, or when retrieval is unavailable):
+- **kb_ls**: List documents with summaries
+- **kb_head**: Read document content with offset/limit
 
-**IMPORTANT**: Only use exploration tools when:
-- `knowledge_base_search` returns rag_not_configured or RAG retrieval is not available
-- You need to verify what documents actually exist before concluding content is unavailable
-- **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): Use `kb_ls` to identify documents, then `kb_head` to read targeted content directly (more token-efficient than additional RAG searches)
-- **`knowledge_base_search` is rejected** (🚫): Use `kb_ls` and `kb_head` to access content directly
+Use exploration tools when:
+- The user asks for an overview / document list (type B)
+- `knowledge_base_search` is unavailable (rag_not_configured / rejected) or you hit call-limit warnings (⚠️/🚨)
 
-**DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
+Do not use exploration tools just because RAG returned no results.
 
 The user expects answers based on the selected knowledge base content only.
-{kb_meta_list}
 </knowledge_base>
 """
 
-# Relaxed mode prompt: KB inherited from task, AI can use general knowledge as fallback
-# Note: Use .format(kb_meta_list=...) to inject KB list content
+# Relaxed mode prompt: KB inherited from task, AI can use general knowledge as fallback.
 KB_PROMPT_RELAXED = """
 
 <knowledge_base>
 ## Knowledge Base Available
 
-You have access to knowledge bases from previous conversations in this task. You can use the `knowledge_base_search` tool to retrieve information from these knowledge bases.
+You have access to knowledge bases from previous conversations in this task.
 
-### Recommended Workflow:
-1. When the user's question might be related to the knowledge base content, consider calling `knowledge_base_search` with relevant keywords
-2. If relevant information is found, prioritize using it in your answer and cite the sources
-3. If the search returns no results or irrelevant information, you may use your general knowledge to answer
-4. Be transparent about whether your answer is based on knowledge base content or general knowledge
+### Intent Routing (DO THIS FIRST)
+Classify the user's intent before calling tools:
+
+A) **Knowledge base selection / metadata**
+- Action: Answer directly using the knowledge base metadata provided below.
+
+B) **Knowledge base contents overview**
+- Action: Prefer `kb_ls` (then `kb_head` only when the user wants to open a specific document).
+
+C) **Content question**
+- Action: Prefer `knowledge_base_search`.
+  - If results are relevant: answer using KB content and cite sources.
+  - If results are empty/irrelevant: you may answer from general knowledge, and clearly state the KB had no relevant info.
+  - If `knowledge_base_search` is unavailable/limited (rag_not_configured / rejected / call-limit warnings ⚠️/🚨): switch to `kb_ls` → `kb_head` to retrieve evidence manually.
+
+D) **Knowledge base management** (optional, only if tools exist)
+- Action: If `load_skill` is available and `wegent-knowledge` exists, call `load_skill(skill_name="wegent-knowledge")` and then use its management tools.
+- Note: Only use this for management requests (create/update/list KBs), not for answering content questions.
 
 ### Guidelines:
-- Prefer knowledge base content when it is relevant
-- Cite sources when you use knowledge base results
-- If the knowledge base has no relevant content, clearly say so and answer from general knowledge
-
-### Exploration Tools (secondary, use sparingly):
-- **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
-- **kb_head**: Read document content with offset/limit (like 'head -c')
-
-**IMPORTANT**: Only use exploration tools when:
-- `knowledge_base_search` returns rag_not_configured or 'RAG retrieval is not available'
-- You need to verify what documents actually exist before concluding content is unavailable
-- **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): Use `kb_ls` to identify documents, then `kb_head` to read targeted content directly (more token-efficient than additional RAG searches)
-- **`knowledge_base_search` is rejected** (🚫): Use `kb_ls` and `kb_head` to access content directly
-
-**DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
-{kb_meta_list}
+- Prefer knowledge base content when relevant; cite sources when used
+- If the KB has no relevant content, say so and answer from general knowledge
+- For "what's in the KB" questions, `kb_ls` is usually higher-signal than `knowledge_base_search`
 </knowledge_base>
 """
 
-# No-RAG mode prompt: Knowledge base without retriever configuration
-# AI must use kb_ls and kb_head tools to browse documents manually
-# Note: Use .format(kb_meta_list=...) to inject KB list content
+# No-RAG mode prompt: Knowledge base without retriever configuration.
+# AI must use kb_ls and kb_head tools to browse documents manually.
 KB_PROMPT_NO_RAG = """
 
 <knowledge_base>
@@ -93,22 +111,27 @@ KB_PROMPT_NO_RAG = """
 
 You have access to knowledge bases, but **RAG retrieval is NOT configured**. The `knowledge_base_search` tool will not work.
 
-### Available Tools:
-- **kb_ls**: List all documents in a knowledge base with their summaries
-- **kb_head**: Read document content with offset/limit pagination
+### Intent Routing (DO THIS FIRST)
+A) **Knowledge base selection / metadata**
+- Action: Answer directly using the knowledge base metadata provided below.
 
-### Required Workflow:
-1. Use `kb_ls(knowledge_base_id=X)` to see what documents are available
-2. Review document summaries to identify relevant ones
-3. Use `kb_head(document_ids=[...])` to read the content of relevant documents
-4. Answer based on the document content you've read
+B) **Knowledge base contents overview**
+- Action: Call `kb_ls` for the selected knowledge base(s) and summarize what is available.
 
-### Guidelines:
-- Always start with `kb_ls` to understand what's in the knowledge base
-- Read documents selectively based on summaries - don't read everything unless necessary
-- For large documents, use `offset` and `limit` parameters to read in chunks
-- Check `has_more` in response to know if more content exists
-- This approach is less efficient than RAG but still functional
-{kb_meta_list}
+C) **Content question (manual reading)**
+- Action: `kb_ls` → pick relevant docs → `kb_head` targeted chunks → answer **ONLY** from what you read.
+
+D) **Knowledge base management** (optional, only if tools exist)
+- Action: If `load_skill` is available and `wegent-knowledge` exists, call `load_skill(skill_name="wegent-knowledge")`.
+- Note: Only use this for management requests; keep Q&A in KB tools.
+
+### Available Tools
+- **kb_ls**: List documents in a knowledge base with summaries
+- **kb_head**: Read document content with offset/limit
+
+### Guidelines
+- Always start with `kb_ls` when you need an overview
+- Read selectively; paginate large docs with `offset`/`limit` and respect `has_more`
+- Do not use general knowledge or assumptions beyond what you have read
 </knowledge_base>
 """

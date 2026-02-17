@@ -26,8 +26,11 @@ from app.models.task import TaskResource
 from app.models.user import User
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from app.api.ws.chat_namespace import ChatNamespace
     from app.services.execution.emitters import ResultEmitter
+    from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +222,10 @@ async def build_execution_request(
             force_override=force_override,
         )
 
+        # Always propagate user_subtask_id for downstream persistence (e.g., KB tool results).
+        # Note: This is different from request.subtask_id which is the assistant subtask.
+        request.user_subtask_id = user_subtask_id
+
         # Process contexts (attachments, knowledge bases, etc.)
         if user_subtask_id:
             request = await _process_contexts(db, request, user_subtask_id, user.id)
@@ -230,11 +237,11 @@ async def build_execution_request(
 
 
 async def _process_contexts(
-    db,
-    request,
+    db: "Session",
+    request: "ExecutionRequest",
     user_subtask_id: int,
     user_id: int,
-):
+) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
     Args:
@@ -277,6 +284,28 @@ async def _process_contexts(
     request.prompt = final_message
     request.system_prompt = enhanced_system_prompt
     request.table_contexts = table_contexts
+
+    # Build KB meta prompt for dynamic_context injection in chat_shell.
+    # Keeping system prompts static improves prompt caching.
+    request.kb_meta_prompt = ""
+    if request.task_id:
+        try:
+            import asyncio
+
+            from app.services.chat.preprocessing.kb_meta import (
+                build_kb_meta_prompt_for_task,
+            )
+
+            # Use asyncio.to_thread to avoid blocking the event loop
+            request.kb_meta_prompt = await asyncio.to_thread(
+                build_kb_meta_prompt_for_task, db, request.task_id
+            )
+        except Exception as e:
+            logger.warning(
+                "[ai_trigger_unified] Failed to build kb_meta_prompt: task_id=%s, error=%s",
+                request.task_id,
+                e,
+            )
 
     # Get knowledge base IDs
     knowledge_base_ids = get_knowledge_base_ids_from_subtask(db, user_subtask_id)
