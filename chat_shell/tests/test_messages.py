@@ -127,6 +127,94 @@ class TestMessageConverterBuildMessages:
         assert len(messages) == 1
         assert messages[0]["role"] == "user"
 
+    def test_build_messages_with_dynamic_context_injection(self):
+        """Test that dynamic_context is injected as a human message."""
+        history = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello"},
+        ]
+
+        messages = MessageConverter.build_messages(
+            history=history,
+            current_message="Question",
+            system_prompt="SYS",
+            inject_datetime=False,
+            dynamic_context="DYNAMIC",
+        )
+
+        assert [m["role"] for m in messages] == [
+            "system",
+            "user",
+            "assistant",
+            "user",  # dynamic_context
+            "user",  # current
+        ]
+        assert messages[3]["content"] == "DYNAMIC"
+        assert messages[4]["content"] == "Question"
+
+    def test_build_messages_dynamic_context_position(self):
+        """Test that dynamic_context is inserted after history and before current message."""
+        history = [
+            {"role": "user", "content": "H1"},
+            {"role": "assistant", "content": "A1"},
+        ]
+
+        messages = MessageConverter.build_messages(
+            history=history,
+            current_message="CUR",
+            system_prompt="SYS",
+            inject_datetime=False,
+            dynamic_context="CTX",
+        )
+
+        assert messages[0] == {"role": "system", "content": "SYS"}
+        assert messages[1] == history[0]
+        assert messages[2] == history[1]
+        assert messages[3] == {"role": "user", "content": "CTX"}
+        assert messages[4] == {"role": "user", "content": "CUR"}
+
+    def test_build_messages_empty_dynamic_context(self):
+        """Test that empty dynamic_context does not create an extra message."""
+        messages_none = MessageConverter.build_messages(
+            history=[],
+            current_message="Hello",
+            system_prompt="SYS",
+            inject_datetime=False,
+            dynamic_context=None,
+        )
+        messages_empty = MessageConverter.build_messages(
+            history=[],
+            current_message="Hello",
+            system_prompt="SYS",
+            inject_datetime=False,
+            dynamic_context="",
+        )
+
+        assert len(messages_none) == 2
+        assert len(messages_empty) == 2
+
+    def test_build_messages_with_all_parameters(self):
+        """Test message building with system_prompt, history, dynamic_context and username."""
+        history = [
+            {"role": "user", "content": "H1"},
+            {"role": "assistant", "content": "A1"},
+        ]
+
+        messages = MessageConverter.build_messages(
+            history=history,
+            current_message="Hello",
+            system_prompt="SYS",
+            username="Alice",
+            inject_datetime=False,
+            dynamic_context="KB_META",
+        )
+
+        assert messages[0]["role"] == "system"
+        assert messages[3] == {"role": "user", "content": "KB_META"}
+        assert messages[4]["role"] == "user"
+        assert messages[4]["content"].startswith("User[Alice]:")
+        assert "Hello" in messages[4]["content"]
+
     def test_build_messages_vision_message(self):
         """Test building vision messages."""
         # Create a tiny valid image (1x1 red PNG)

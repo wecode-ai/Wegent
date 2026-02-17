@@ -82,6 +82,32 @@ class ChatService(ChatInterface):
         """Initialize chat service."""
         self._storage = session_manager
 
+    def _build_dynamic_context(self, request: ExecutionRequest, ctx_result: Any) -> str:
+        """Build dynamic context string for injection before current message.
+
+        This method aggregates all dynamic content that should be injected
+        as a human message before the current user message. This enables
+        better prompt caching by keeping system prompts static.
+
+        Currently includes:
+        - request.kb_meta_prompt: Knowledge base metadata (names, IDs, summaries)
+
+        Internal extensions may add:
+        - weibo_context: User identity context (internal network only)
+        """
+        parts: list[str] = []
+
+        # Prefer Backend-provided kb_meta_prompt (HTTP mode).
+        if request.kb_meta_prompt:
+            parts.append(request.kb_meta_prompt)
+
+        # Fallback to ctx_result (package mode).
+        kb_meta_prompt = getattr(ctx_result, "kb_meta_prompt", "")
+        if kb_meta_prompt and kb_meta_prompt not in parts:
+            parts.append(kb_meta_prompt)
+
+        return "\n\n".join(parts) if parts else ""
+
     @trace_async(
         span_name="chat_service.chat",
         tracer_name="chat_shell.services",
@@ -245,6 +271,7 @@ class ChatService(ChatInterface):
             model_id = (
                 request.model_config.get("model_id") if request.model_config else None
             )
+            dynamic_context = self._build_dynamic_context(request, ctx_result)
             t1 = time.perf_counter()
             messages = agent.build_messages(
                 history=ctx_result.history,
@@ -253,6 +280,7 @@ class ChatService(ChatInterface):
                 username=request.user_name if request.is_group_chat else None,
                 config=agent_config,
                 model_id=model_id,
+                dynamic_context=dynamic_context,
             )
             logger.info(
                 "[CHAT_SERVICE_PERF] build_messages: %.2fms",

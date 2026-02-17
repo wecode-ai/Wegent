@@ -171,6 +171,56 @@ class TestKBPromptMarkdownLevel:
 class TestKnowledgeFactorySkipPromptEnhancement:
     """Test skip_prompt_enhancement parameter in knowledge_factory."""
 
+
+class TestKnowledgeFactoryDynamicContext:
+    """Tests for knowledge_factory dynamic kb_meta_prompt return."""
+
+    @pytest.mark.asyncio
+    async def test_prepare_kb_tools_returns_kb_meta_prompt(self):
+        """Should return kb_meta_prompt as a separate string."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        base_prompt = "Base"
+
+        with patch(
+            "chat_shell.tools.knowledge_factory._build_historical_kb_meta_prompt"
+        ) as mock_meta:
+            mock_meta.return_value = "KB_META"
+
+            result = await prepare_knowledge_base_tools(
+                knowledge_base_ids=[1],
+                user_id=1,
+                db=MagicMock(),
+                base_system_prompt=base_prompt,
+                task_id=1,
+                model_id="claude-3-5-sonnet",
+                skip_prompt_enhancement=False,
+                is_user_selected=True,
+            )
+
+            assert result.kb_meta_prompt == "KB_META"
+            assert result.enhanced_system_prompt.startswith(base_prompt)
+
+    @pytest.mark.asyncio
+    async def test_kb_prompt_does_not_contain_placeholder(self):
+        """Enhanced system prompt should not contain legacy kb_meta_list placeholder."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class:
+            mock_kb_tool_class.return_value = MagicMock()
+
+            result = await prepare_knowledge_base_tools(
+                knowledge_base_ids=[1],
+                user_id=1,
+                db=MagicMock(),
+                base_system_prompt="Base",
+                model_id="claude-3-5-sonnet",
+                skip_prompt_enhancement=False,
+                is_user_selected=True,
+            )
+
+            assert "{kb_meta_list}" not in result.enhanced_system_prompt
+
     @pytest.mark.asyncio
     async def test_skip_prompt_enhancement_returns_base_prompt(self):
         """When skip_prompt_enhancement=True, should return base_system_prompt unchanged."""
@@ -183,7 +233,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
         with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class:
             mock_kb_tool_class.return_value = MagicMock()
 
-            tools, enhanced_prompt = await prepare_knowledge_base_tools(
+            result = await prepare_knowledge_base_tools(
                 knowledge_base_ids=kb_ids,
                 user_id=1,
                 db=MagicMock(),
@@ -194,11 +244,11 @@ class TestKnowledgeFactorySkipPromptEnhancement:
 
             # Should return 3 KB tools (knowledge_base_search, kb_ls, kb_head)
             # but not modify prompt
-            assert len(tools) == 3
-            assert enhanced_prompt == base_prompt
+            assert len(result.extra_tools) == 3
+            assert result.enhanced_system_prompt == base_prompt
             # Should NOT contain KB prompt markers
-            assert "## Knowledge Base Requirement" not in enhanced_prompt
-            assert "## Knowledge Base Available" not in enhanced_prompt
+            assert "## Knowledge Base Requirement" not in result.enhanced_system_prompt
+            assert "## Knowledge Base Available" not in result.enhanced_system_prompt
 
     @pytest.mark.asyncio
     async def test_no_skip_prompt_enhancement_adds_kb_prompt(self):
@@ -212,7 +262,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
         with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class:
             mock_kb_tool_class.return_value = MagicMock()
 
-            tools, enhanced_prompt = await prepare_knowledge_base_tools(
+            result = await prepare_knowledge_base_tools(
                 knowledge_base_ids=kb_ids,
                 user_id=1,
                 db=MagicMock(),
@@ -224,9 +274,9 @@ class TestKnowledgeFactorySkipPromptEnhancement:
 
             # Should return 3 KB tools (knowledge_base_search, kb_ls, kb_head)
             # and add prompt
-            assert len(tools) == 3
+            assert len(result.extra_tools) == 3
             # Should contain KB prompt marker (strict mode because is_user_selected=True)
-            assert "## Knowledge Base Requirement" in enhanced_prompt
+            assert "## Knowledge Base Requirement" in result.enhanced_system_prompt
 
     @pytest.mark.asyncio
     async def test_empty_kb_ids_with_skip_skips_historical_meta(self):
@@ -240,7 +290,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
         ) as mock_meta:
             mock_meta.return_value = "\nHistorical KB meta"
 
-            _, enhanced_prompt = await prepare_knowledge_base_tools(
+            result = await prepare_knowledge_base_tools(
                 knowledge_base_ids=None,
                 user_id=1,
                 db=MagicMock(),
@@ -253,7 +303,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
             # Should not call _build_historical_kb_meta_prompt
             mock_meta.assert_not_called()
             # Should return base prompt unchanged
-            assert enhanced_prompt == base_prompt
+            assert result.enhanced_system_prompt == base_prompt
 
 
 if __name__ == "__main__":
