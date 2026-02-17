@@ -168,24 +168,25 @@ class TestKBPromptMarkdownLevel:
         assert "### Guidelines:" in KB_PROMPT_RELAXED
 
 
-class TestKnowledgeFactorySkipPromptEnhancement:
-    """Test skip_prompt_enhancement parameter in knowledge_factory."""
-
-
 class TestKnowledgeFactoryDynamicContext:
     """Tests for knowledge_factory dynamic kb_meta_prompt return."""
 
     @pytest.mark.asyncio
-    async def test_prepare_kb_tools_returns_kb_meta_prompt(self):
-        """Should return kb_meta_prompt as a separate string."""
+    async def test_prepare_kb_tools_returns_empty_kb_meta_prompt(self):
+        """Should return empty kb_meta_prompt (Backend generates it separately)."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         base_prompt = "Base"
 
-        with patch(
-            "chat_shell.tools.knowledge_factory._build_historical_kb_meta_prompt"
-        ) as mock_meta:
-            mock_meta.return_value = "KB_META"
+        # Mock KnowledgeBaseTool and _check_any_kb_has_rag_enabled
+        with (
+            patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class,
+            patch(
+                "chat_shell.tools.knowledge_factory._check_any_kb_has_rag_enabled",
+                return_value=True,
+            ),
+        ):
+            mock_kb_tool_class.return_value = MagicMock()
 
             result = await prepare_knowledge_base_tools(
                 knowledge_base_ids=[1],
@@ -198,7 +199,8 @@ class TestKnowledgeFactoryDynamicContext:
                 is_user_selected=True,
             )
 
-            assert result.kb_meta_prompt == "KB_META"
+            # kb_meta_prompt is always empty in chat_shell (Backend generates it)
+            assert result.kb_meta_prompt == ""
             assert result.enhanced_system_prompt.startswith(base_prompt)
 
     @pytest.mark.asyncio
@@ -279,31 +281,28 @@ class TestKnowledgeFactoryDynamicContext:
             assert "## Knowledge Base Requirement" in result.enhanced_system_prompt
 
     @pytest.mark.asyncio
-    async def test_empty_kb_ids_with_skip_skips_historical_meta(self):
-        """When no KB IDs and skip=True, should skip historical KB meta prompt."""
+    async def test_empty_kb_ids_returns_base_prompt_unchanged(self):
+        """When no KB IDs, should return base_system_prompt unchanged."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         base_prompt = "This is the base system prompt."
 
-        with patch(
-            "chat_shell.tools.knowledge_factory._build_historical_kb_meta_prompt"
-        ) as mock_meta:
-            mock_meta.return_value = "\nHistorical KB meta"
+        result = await prepare_knowledge_base_tools(
+            knowledge_base_ids=None,
+            user_id=1,
+            db=MagicMock(),
+            base_system_prompt=base_prompt,
+            task_id=1,
+            model_id="claude-3-5-sonnet",
+            skip_prompt_enhancement=True,
+        )
 
-            result = await prepare_knowledge_base_tools(
-                knowledge_base_ids=None,
-                user_id=1,
-                db=MagicMock(),
-                base_system_prompt=base_prompt,
-                task_id=1,
-                model_id="claude-3-5-sonnet",
-                skip_prompt_enhancement=True,
-            )
-
-            # Should not call _build_historical_kb_meta_prompt
-            mock_meta.assert_not_called()
-            # Should return base prompt unchanged
-            assert result.enhanced_system_prompt == base_prompt
+        # Should return base prompt unchanged when no KB IDs
+        assert result.enhanced_system_prompt == base_prompt
+        # Should return empty kb_meta_prompt
+        assert result.kb_meta_prompt == ""
+        # Should return empty extra_tools
+        assert result.extra_tools == []
 
 
 if __name__ == "__main__":

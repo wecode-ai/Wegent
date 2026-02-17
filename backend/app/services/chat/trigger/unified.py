@@ -26,8 +26,11 @@ from app.models.task import TaskResource
 from app.models.user import User
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from app.api.ws.chat_namespace import ChatNamespace
     from app.services.execution.emitters import ResultEmitter
+    from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -234,11 +237,11 @@ async def build_execution_request(
 
 
 async def _process_contexts(
-    db,
-    request,
+    db: "Session",
+    request: "ExecutionRequest",
     user_subtask_id: int,
     user_id: int,
-):
+) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
     Args:

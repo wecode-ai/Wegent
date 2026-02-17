@@ -13,12 +13,13 @@ All comments must be written in English.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
 class KnowledgeBaseToolsResult:
     """Result container for knowledge base tool preparation."""
 
-    extra_tools: list
+    extra_tools: list[Any]
     enhanced_system_prompt: str
     kb_meta_prompt: str
