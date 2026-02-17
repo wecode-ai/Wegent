@@ -140,45 +140,25 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
         return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
 
     def _get_kb_info_sync(self) -> Dict[str, Any]:
-        """Get KB info synchronously, using cache or fetching if needed.
+        """Get KB info synchronously.
 
-        This is a helper method for sync methods that need KB info.
-        It handles async/sync boundary by checking event loop state.
+        IMPORTANT:
+        - Do NOT perform network I/O (HTTP) in synchronous code paths.
+        - The async entrypoint `_arun()` is responsible for fetching KB info and
+          populating the per-instance cache.
+
+        This keeps sync helpers deterministic and avoids unexpected blocking.
 
         Returns:
-            KB info dict from cache or HTTP API
-
-        Note:
-            This method assumes cache is populated by _arun() at the start.
-            If cache is empty, it will attempt to fetch synchronously as fallback.
+            KB info dict from cache if available, otherwise an empty default.
         """
-        # Fast path: return cached data if available
         if self._kb_info_cache is not None:
             return self._kb_info_cache
 
-        # Slow path: cache not populated, need to fetch
-        # This should rarely happen if _arun() called _get_kb_info() first
-        logger.warning(
-            "[KnowledgeBaseTool] KB info cache not populated, fetching synchronously"
+        logger.debug(
+            "[KnowledgeBaseTool] KB info cache not populated in sync path, using defaults"
         )
-
-        try:
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If event loop is running, we can't block
-                # Return empty dict and log warning
-                logger.warning(
-                    "[KnowledgeBaseTool] Cannot fetch KB info in running event loop, using defaults"
-                )
-                return {"items": []}
-            else:
-                # No running loop, fetch synchronously
-                return loop.run_until_complete(self._get_kb_info())
-        except RuntimeError:
-            # No event loop, create a new one
-            return asyncio.run(self._get_kb_info())
+        return {"items": []}
 
     def _get_kb_limits(self) -> tuple[int, int]:
         """Get (max_calls, exempt_calls) for knowledge base tool calls.

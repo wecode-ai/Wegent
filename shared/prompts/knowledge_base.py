@@ -8,9 +8,13 @@ This module provides prompt templates for knowledge base tool usage that are
 shared across backend and chat_shell modules.
 """
 
-# Strict mode prompt: User explicitly selected KB for this message
-# AI must use KB only and cannot use general knowledge
-# Note: Use .format(kb_meta_list=...) to inject KB list content
+# Strict mode prompt: User explicitly selected KB for this message.
+# AI must use KB only and cannot use general knowledge.
+#
+# NOTE:
+# - The KB metadata list (kb_meta_list) is injected dynamically as a separate
+#   human message via the `dynamic_context` mechanism to improve prompt caching.
+# - Keep these templates fully static. Do NOT add runtime placeholders.
 KB_PROMPT_STRICT = """
 
 <knowledge_base>
@@ -37,19 +41,20 @@ D) **Knowledge base management** (optional, only if tools exist)
 - Action: If `load_skill` is available and the `wegent-knowledge` skill exists, call `load_skill(skill_name="wegent-knowledge")` and then use its management tools.
 - Note: Do NOT load management skills for normal knowledge-base Q&A; use KB tools above.
 
-### Required Workflow (ONLY for type C)
+### Required Workflow:
+(ONLY for type C)
 1. Call `knowledge_base_search` first
 2. Wait for results
 3. Answer **ONLY** from retrieved information
 4. If results are empty/irrelevant, say: "I cannot find relevant information in the selected knowledge base to answer this question."
 5. Do not use general knowledge or assumptions
 
-### Critical Rules
+### Critical Rules:
 - Type C: you MUST NOT answer without searching first
 - Type A/B: you MUST NOT force `knowledge_base_search` first (it is often low-signal)
 - Do not invent information not present in the knowledge base
 
-### Exploration Tools (use for type B, or when retrieval is unavailable)
+### Exploration Tools (use for type B, or when retrieval is unavailable):
 - **kb_ls**: List documents with summaries
 - **kb_head**: Read document content with offset/limit
 
@@ -60,11 +65,10 @@ Use exploration tools when:
 Do not use exploration tools just because RAG returned no results.
 
 The user expects answers based on the selected knowledge base content only.
-{kb_meta_list}
 </knowledge_base>
 """
 
-# Relaxed mode prompt: KB inherited from task, AI can use general knowledge as fallback
+# Relaxed mode prompt: KB inherited from task, AI can use general knowledge as fallback.
 KB_PROMPT_RELAXED = """
 
 <knowledge_base>
@@ -72,7 +76,7 @@ KB_PROMPT_RELAXED = """
 
 You have access to knowledge bases from previous conversations in this task.
 
-### Intent Routing (recommended)
+### Recommended Workflow:
 A) **Knowledge base selection / metadata**
 - Action: Answer directly using the knowledge base metadata provided below.
 
@@ -89,17 +93,15 @@ D) **Knowledge base management** (optional, only if tools exist)
 - Action: If `load_skill` is available and `wegent-knowledge` exists, call `load_skill(skill_name="wegent-knowledge")` and then use its management tools.
 - Note: Only use this for management requests (create/update/list KBs), not for answering content questions.
 
-### Usage Guidelines
+### Guidelines:
 - Prefer knowledge base content when relevant; cite sources when used
 - If the KB has no relevant content, say so and answer from general knowledge
 - For "what's in the KB" questions, `kb_ls` is usually higher-signal than `knowledge_base_search`
-{kb_meta_list}
 </knowledge_base>
 """
 
-# No-RAG mode prompt: Knowledge base without retriever configuration
-# AI must use kb_ls and kb_head tools to browse documents manually
-# Note: Use .format(kb_meta_list=...) to inject KB list content
+# No-RAG mode prompt: Knowledge base without retriever configuration.
+# AI must use kb_ls and kb_head tools to browse documents manually.
 KB_PROMPT_NO_RAG = """
 
 <knowledge_base>
@@ -129,6 +131,5 @@ D) **Knowledge base management** (optional, only if tools exist)
 - Always start with `kb_ls` when you need an overview
 - Read selectively; paginate large docs with `offset`/`limit` and respect `has_more`
 - Do not use general knowledge or assumptions beyond what you have read
-{kb_meta_list}
 </knowledge_base>
 """

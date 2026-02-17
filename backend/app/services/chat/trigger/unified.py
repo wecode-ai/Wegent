@@ -282,6 +282,24 @@ async def _process_contexts(
     request.system_prompt = enhanced_system_prompt
     request.table_contexts = table_contexts
 
+    # Build KB meta prompt for dynamic_context injection in chat_shell.
+    # Keeping system prompts static improves prompt caching.
+    request.kb_meta_prompt = ""
+    if request.task_id:
+        try:
+            from app.services.chat.preprocessing.kb_meta import (
+                build_kb_meta_prompt_for_task,
+            )
+
+            request.kb_meta_prompt = build_kb_meta_prompt_for_task(db, request.task_id)
+        except Exception as e:
+            logger.warning(
+                "[ai_trigger_unified] Failed to build kb_meta_prompt: task_id=%s, error=%s",
+                request.task_id,
+                e,
+            )
+            request.kb_meta_prompt = ""
+
     # Get knowledge base IDs
     knowledge_base_ids = get_knowledge_base_ids_from_subtask(db, user_subtask_id)
     is_user_selected_kb = bool(knowledge_base_ids)

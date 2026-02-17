@@ -33,12 +33,14 @@ class MessageConverter:
         system_prompt: str = "",
         username: str | None = None,
         inject_datetime: bool = True,
+        dynamic_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build a complete message list from history, current message, and system prompt.
 
         Combines:
         - System prompt (if provided)
         - Chat history
+        - Dynamic context (if provided, injected as a human message)
         - Current user message (with optional datetime context at the END)
 
         The datetime is injected at the END of the user message (not system prompt) to enable
@@ -46,6 +48,9 @@ class MessageConverter:
         1. System prompts to remain static and be cached
         2. User message prefix to be cached (prefix matching)
         3. Only the datetime suffix changes between requests
+
+        The dynamic_context is injected as a human message before the current user message to
+        keep system prompts static and improve cache hit rate.
 
         Args:
             history: Previous messages in the conversation
@@ -56,6 +61,7 @@ class MessageConverter:
             system_prompt: Optional system prompt to prepend
             username: Optional username to prefix the current message (for group chat)
             inject_datetime: Whether to inject current datetime into user message (default: True)
+            dynamic_context: Optional dynamic context to inject before current message
 
         Returns:
             List of message dicts ready for LLM API (LangChain/OpenAI Chat Completions format)
@@ -66,6 +72,9 @@ class MessageConverter:
             messages.append({"role": "system", "content": system_prompt})
 
         messages.extend(history)
+
+        if dynamic_context:
+            messages.append({"role": "user", "content": dynamic_context})
 
         # Build datetime context suffix for user message (at the END for better caching)
         # Placing at the end allows the message prefix to be cached via prefix matching
