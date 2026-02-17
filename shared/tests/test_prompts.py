@@ -48,8 +48,8 @@ class TestKBPromptConstants:
         assert "knowledge_base_search" in KB_PROMPT_RELAXED
         # Relaxed mode must allow fallback to general knowledge
         assert "general knowledge" in KB_PROMPT_RELAXED
-        # Relaxed mode uses Recommended Workflow pattern
-        assert "Recommended Workflow" in KB_PROMPT_RELAXED
+        # All KB prompts use Intent Routing pattern
+        assert "Intent Routing" in KB_PROMPT_RELAXED
 
     def test_prompts_are_different(self):
         """Strict and relaxed prompts should be different."""

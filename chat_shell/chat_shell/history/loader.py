@@ -661,7 +661,13 @@ def _truncate_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     first_n = settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES
     last_n = settings.GROUP_CHAT_HISTORY_LAST_MESSAGES
 
+    # Handle edge case where both values are 0 or negative
+    if first_n <= 0 and last_n <= 0:
+        return history
+
     if len(history) <= first_n + last_n:
         return history
 
-    return [*history[:first_n], *history[-last_n:]]
+    # Handle edge case: history[-0:] returns full list, not empty list
+    tail = history[-last_n:] if last_n > 0 else []
+    return [*history[:first_n], *tail]

@@ -76,7 +76,9 @@ KB_PROMPT_RELAXED = """
 
 You have access to knowledge bases from previous conversations in this task.
 
-### Recommended Workflow:
+### Intent Routing (DO THIS FIRST)
+Classify the user's intent before calling tools:
+
 A) **Knowledge base selection / metadata**
 - Action: Answer directly using the knowledge base metadata provided below.
 

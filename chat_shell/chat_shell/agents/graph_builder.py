@@ -22,7 +22,6 @@ from typing import Any, Callable, Optional
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import convert_to_messages
-from langchain_core.runnables import Runnable
 from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
@@ -221,17 +220,8 @@ def _log_llm_request_event(
         try:
             p = Path(file_path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(
-                p.read_text(encoding="utf-8") + json_payload + "\n", encoding="utf-8"
-            )
-        except FileNotFoundError:
-            # If file doesn't exist, create it.
-            try:
-                p = Path(file_path)
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(json_payload + "\n", encoding="utf-8")
-            except Exception:
-                logger.exception("[LLM_REQUEST] Failed to write request log file")
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json_payload + "\n")
         except Exception:
             logger.exception("[LLM_REQUEST] Failed to write request log file")
 
