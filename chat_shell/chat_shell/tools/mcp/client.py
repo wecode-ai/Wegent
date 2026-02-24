@@ -23,7 +23,9 @@ import asyncio
 import concurrent.futures
 import inspect
 import logging
-from typing import Any
+from typing import Any, Optional
+
+from shared.models.execution import ExecutionRequest
 
 from langchain_core.tools.base import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -148,7 +150,7 @@ def wrap_tool_with_protection(
 
 
 def build_connections(
-    config: dict[str, dict[str, Any]], task_data: Any = None
+    config: dict[str, dict[str, Any]], task_data: Optional[ExecutionRequest] = None
 ) -> dict[str, Connection]:
     """Build connection configs from server configuration dict.
 
@@ -233,13 +235,13 @@ class MCPClient:
     """
 
     def __init__(
-        self, config: dict[str, dict[str, Any]], task_data: Any = None
+        self, config: dict[str, dict[str, Any]], task_data: Optional[ExecutionRequest] = None
     ):
         """Initialize MCP client.
 
         Args:
             config: MCP servers configuration dict. Supports ${{path}} placeholders.
-            task_data: Optional data source for variable substitution (dict or ExecutionRequest).
+            task_data: Optional ExecutionRequest for variable substitution.
         """
         self.config = config
         self.task_data = task_data

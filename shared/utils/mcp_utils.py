@@ -6,10 +6,18 @@
 
 # -*- coding: utf-8 -*-
 
+from __future__ import annotations
+
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from shared.logger import setup_logger
+
+if TYPE_CHECKING:
+    from shared.models.execution import ExecutionRequest
+
+# Type alias: data sources accepted by replace_mcp_server_variables()
+TaskData = Union["ExecutionRequest", Dict[str, Any]]
 
 logger = setup_logger("mcp_utils")
 
@@ -146,13 +154,13 @@ def _get_nested_value(data: Any, path: str) -> Optional[Any]:
     return current
 
 
-def _replace_placeholders_in_string(text: str, task_data: Any) -> str:
+def _replace_placeholders_in_string(text: str, task_data: TaskData) -> str:
     """
     Replace all ${{path}} placeholders in a string with values from task_data.
 
     Args:
         text: The string containing placeholders
-        task_data: The dictionary containing replacement values
+        task_data: Data source for replacement values (dict or ExecutionRequest).
 
     Returns:
         The string with placeholders replaced. If a path doesn't exist in task_data,
@@ -182,14 +190,14 @@ def _replace_placeholders_in_string(text: str, task_data: Any) -> str:
 
 
 def _replace_variables_recursive(
-    obj: Union[Dict[str, Any], List[Any], str, Any], task_data: Any
+    obj: Union[Dict[str, Any], List[Any], str, Any], task_data: TaskData
 ) -> Union[Dict[str, Any], List[Any], str, Any]:
     """
     Recursively process an object and replace placeholders in all string values.
 
     Args:
         obj: The object to process (dict, list, string, or other)
-        task_data: The dictionary containing replacement values
+        task_data: Data source for replacement values (dict or ExecutionRequest).
 
     Returns:
         The processed object with all string placeholders replaced
@@ -209,7 +217,7 @@ def _replace_variables_recursive(
 
 
 def replace_mcp_server_variables(
-    mcp_servers: Optional[Any], task_data: Optional[Any]
+    mcp_servers: Optional[Any], task_data: Optional[TaskData]
 ) -> Optional[Any]:
     """
     Replace ${{path}} placeholders in MCP servers configuration with values from task_data.
