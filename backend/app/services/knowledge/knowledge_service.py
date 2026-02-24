@@ -40,6 +40,104 @@ from app.services.group_permission import (
     get_user_groups,
 )
 
+# Permission level mapping for group knowledge base operations
+# Owner/Maintainer -> MANAGE, Developer -> EDIT, Reporter -> VIEW
+GROUP_ROLE_TO_PERMISSION_LEVEL = {
+    GroupRole.Owner: "manage",
+    GroupRole.Maintainer: "manage",
+    GroupRole.Developer: "edit",
+    GroupRole.Reporter: "view",
+}
+
+
+def _get_user_kb_permission_level(
+    db: Session,
+    kb: Kind,
+    user_id: int,
+) -> str:
+    """
+    Get user's permission level for a knowledge base.
+
+    Priority:
+    1. Creator - always has 'manage' permission
+    2. Explicit resource permission (ResourceMember)
+    3. Group role-based permission (for team KBs)
+    4. Organization-level access (for org KBs)
+
+    Args:
+        db: Database session
+        kb: Knowledge base Kind object
+        user_id: User ID
+
+    Returns:
+        Permission level: 'manage', 'edit', or 'view'
+    """
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import PermissionLevel, ResourceType
+
+    # 1. Creator has full manage permission
+    if kb.user_id == user_id:
+        return "manage"
+
+    # 2. Check explicit resource permission
+    explicit_perm = (
+        db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_id == kb.id,
+            ResourceMember.user_id == user_id,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .first()
+    )
+    if explicit_perm:
+        return explicit_perm.permission_level
+
+    # 3. Check group permission for team KB
+    if kb.namespace != "default":
+        role = get_effective_role_in_group(db, user_id, kb.namespace)
+        if role:
+            permission = GROUP_ROLE_TO_PERMISSION_LEVEL.get(role, "view")
+            return permission
+
+    # 4. Organization KB - all authenticated users have view access
+    if _is_organization_namespace(db, kb.namespace):
+        return "view"
+
+    # No access - but this function assumes access is already checked
+    return "view"
+
+
+def _check_kb_permission(
+    db: Session,
+    kb: Kind,
+    user_id: int,
+    required_level: str,
+) -> bool:
+    """
+    Check if user has required permission level for a knowledge base.
+
+    Permission hierarchy: manage > edit > view
+
+    Args:
+        db: Database session
+        kb: Knowledge base Kind object
+        user_id: User ID
+        required_level: Minimum required level ('manage', 'edit', or 'view')
+
+    Returns:
+        True if user has permission, False otherwise
+    """
+    user_level = _get_user_kb_permission_level(db, kb, user_id)
+
+    level_hierarchy = {
+        "manage": 3,
+        "edit": 2,
+        "view": 1,
+    }
+
+    return level_hierarchy.get(user_level, 0) >= level_hierarchy.get(required_level, 0)
+
 
 def _is_organization_namespace(db: Session, namespace_name: str) -> bool:
     """
@@ -137,14 +235,14 @@ class KnowledgeService:
 
         # Check permission for team knowledge base
         elif data.namespace != "default":
+            # Use effective role to support permission inheritance from parent groups
             role = get_effective_role_in_group(db, user_id, data.namespace)
             if role is None:
                 raise ValueError(
                     f"User does not have access to group '{data.namespace}'"
                 )
-            if not check_group_permission(
-                db, user_id, data.namespace, GroupRole.Maintainer
-            ):
+            # Only Owner/Maintainer can create KB (Developer and Reporter cannot)
+            if role not in (GroupRole.Owner, GroupRole.Maintainer):
                 raise ValueError(
                     "Only Owner or Maintainer can create knowledge base in this group"
                 )
@@ -455,6 +553,11 @@ class KnowledgeService:
         """
         Update a knowledge base.
 
+        Permission rules:
+        - Owner/Maintainer: Can update all fields (manage permission)
+        - Developer: Can only update name and description (edit permission)
+        - Reporter: Cannot update any fields (view permission only)
+
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
@@ -481,12 +584,30 @@ class KnowledgeService:
 
         # Check permission for team knowledge base
         elif kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
+            # Check user's permission level
+            if not _check_kb_permission(db, kb, user_id, "edit"):
                 raise ValueError(
-                    "Only Owner or Maintainer can update knowledge base in this group"
+                    "Only Owner, Maintainer, or Developer can update knowledge base in this group"
                 )
+
+            # Developer can only update name and description
+            # Check if any non-allowed fields are being updated
+            user_level = _get_user_kb_permission_level(db, kb, user_id)
+            if user_level == "edit":
+                # Developer can only update name and description
+                # Check if any restricted fields are being modified
+                restricted_fields = [
+                    "retrieval_config",
+                    "summary_enabled",
+                    "summary_model_ref",
+                    "max_calls_per_conversation",
+                    "exempt_calls_before_check",
+                ]
+                for field in restricted_fields:
+                    if getattr(data, field, None) is not None:
+                        raise ValueError(
+                            "Developer can only update name and description"
+                        )
 
         # Get current spec
         kb_json = kb.json
@@ -582,6 +703,11 @@ class KnowledgeService:
         """
         Delete a knowledge base.
 
+        Permission rules:
+        - Personal KB (namespace=default): Only creator can delete
+        - Group KB: Owner/Maintainer can delete (manage permission required)
+        - Organization KB: Only admin can delete
+
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
@@ -617,14 +743,16 @@ class KnowledgeService:
             if not user or user.role != "admin":
                 raise ValueError("Only admin can delete organization knowledge base")
             # Admin can delete organization KB, skip get_knowledge_base permission check
-        else:
-            # For non-organization KBs, use get_knowledge_base for permission check
-            kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
-            if not kb:
-                return False
-            # Only creator can delete personal/group knowledge base
+        elif kb.namespace == "default":
+            # Personal KB - only creator can delete
             if kb.user_id != user_id:
                 raise ValueError("Only the creator can delete this knowledge base")
+        else:
+            # Group KB - Owner/Maintainer can delete (requires manage permission)
+            if not _check_kb_permission(db, kb, user_id, "manage"):
+                raise ValueError(
+                    "Only Owner or Maintainer can delete knowledge base in this group"
+                )
 
         # Check if knowledge base has documents - prevent deletion if documents exist
         document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
@@ -670,9 +798,8 @@ class KnowledgeService:
 
         # Check permission for team knowledge base
         if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
+            # Only Owner/Maintainer can update KB type (manage permission required)
+            if not _check_kb_permission(db, kb, user_id, "manage"):
                 raise ValueError(
                     "Only Owner or Maintainer can update knowledge base type in this group"
                 )
@@ -818,6 +945,11 @@ class KnowledgeService:
         """
         Create a new document in a knowledge base.
 
+        Permission rules:
+        - Personal KB (namespace=default): Only creator can add documents
+        - Group KB: Owner/Maintainer/Developer can add documents (edit+ permission)
+        - Organization KB: Only admin can add documents
+
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
@@ -859,12 +991,10 @@ class KnowledgeService:
             if kb.user_id != user_id:
                 raise ValueError("Knowledge base not found or access denied")
         else:
-            # Team/Group KB - check group permission
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
+            # Team/Group KB - Owner/Maintainer/Developer can add (edit+ permission)
+            if not _check_kb_permission(db, kb, user_id, "edit"):
                 raise ValueError(
-                    "Only Owner or Maintainer can add documents to this knowledge base"
+                    "Only Owner, Maintainer, or Developer can add documents to this knowledge base"
                 )
 
         # Check document limit for notebook mode knowledge base
@@ -973,6 +1103,11 @@ class KnowledgeService:
         """
         Update a document (enable/disable status).
 
+        Permission rules:
+        - Personal KB (namespace=default): Only creator can update documents
+        - Group KB: Owner/Maintainer/Developer can update (edit+ permission)
+        - Organization KB: Only admin can update documents
+
         Args:
             db: Database session
             document_id: Document ID
@@ -1007,11 +1142,9 @@ class KnowledgeService:
                     )
             # Check permission for team knowledge base
             elif kb.namespace != "default":
-                if not check_group_permission(
-                    db, user_id, kb.namespace, GroupRole.Maintainer
-                ):
+                if not _check_kb_permission(db, kb, user_id, "edit"):
                     raise ValueError(
-                        "Only Owner or Maintainer can update documents in this knowledge base"
+                        "Only Owner, Maintainer, or Developer can update documents in this knowledge base"
                     )
 
         if data.name is not None:
@@ -1035,6 +1168,11 @@ class KnowledgeService:
     ) -> DocumentDeleteResult:
         """
         Physically delete a document, its RAG index, and associated attachment.
+
+        Permission rules:
+        - Personal KB (namespace=default): Only creator can delete documents
+        - Group KB: Only Owner/Maintainer can delete (manage permission required)
+        - Organization KB: Only admin can delete documents
 
         Args:
             db: Database session
@@ -1106,9 +1244,8 @@ class KnowledgeService:
                     )
             # Check permission for team knowledge base
             elif kb.namespace != "default":
-                if not check_group_permission(
-                    db, user_id, kb.namespace, GroupRole.Maintainer
-                ):
+                # Only Owner/Maintainer can delete documents (manage permission required)
+                if not _check_kb_permission(db, kb, user_id, "manage"):
                     raise ValueError(
                         "Only Owner or Maintainer can delete documents from this knowledge base"
                     )
@@ -1262,11 +1399,10 @@ class KnowledgeService:
             .first()
         )
         if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
+            # Owner/Maintainer/Developer can edit documents (edit+ permission)
+            if not _check_kb_permission(db, kb, user_id, "edit"):
                 raise ValueError(
-                    "Only Owner or Maintainer can edit documents in this knowledge base"
+                    "Only Owner, Maintainer, or Developer can edit documents in this knowledge base"
                 )
 
         # Update the extracted_text in SubtaskContext
@@ -1433,6 +1569,10 @@ class KnowledgeService:
         """
         Check if user can manage (create/edit/delete) a knowledge base.
 
+        Permission rules:
+        - Personal KB (namespace=default): Only creator can manage
+        - Group KB: Owner/Maintainer can manage (manage permission required)
+
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
@@ -1457,9 +1597,7 @@ class KnowledgeService:
         if kb.namespace == "default":
             return kb.user_id == user_id
         else:
-            return check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            )
+            return _check_kb_permission(db, kb, user_id, "manage")
 
     # ============== Batch Document Operations ==============
 
