@@ -208,6 +208,21 @@ class TaskRequestBuilder:
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
 
+        # Build task_data for MCP placeholder replacement (${{user.name}}, etc.)
+        # This dict is passed to chat_shell/executor so they can resolve
+        # ${{path}} placeholders in MCP server configurations at runtime.
+        task_data = {
+            "task_id": task.id,
+            "subtask_id": subtask.id,
+            "team_id": team.id,
+            "user": user_info,
+            "bot": bot_config,
+            "git_repo": git_repo,
+            "git_url": git_url,
+            "git_domain": git_domain,
+            "branch_name": branch_name,
+        }
+
         return ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
@@ -254,6 +269,7 @@ class TaskRequestBuilder:
             system_mcp_config=system_mcp_config,
             trace_context=trace_context,
             executor_name=subtask.executor_name,
+            task_data=task_data,
         )
 
     # =========================================================================
