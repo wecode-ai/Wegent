@@ -36,6 +36,9 @@ def post_create_claude_model_hook(
     """
     logger.info(f"Applying WeCode-specific configuration for model: {model_id}")
 
+    # Temporarily disable tool search until backend support is available
+    env_config["ENABLE_TOOL_SEARCH"] = "false"
+
     # Determine wecode-model-id: use last segment if model_id contains comma, otherwise use model_id as is
     wecode_model_id = model_id.split(",")[-1].strip() if "," in model_id else model_id
 
