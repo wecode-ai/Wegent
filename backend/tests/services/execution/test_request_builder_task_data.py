@@ -10,6 +10,8 @@ object (not just a dict) and resolve ${{path}} placeholders via attribute access
 Also tests the task_token property alias on ExecutionRequest.
 """
 
+from typing import Any
+
 from shared.models.execution import ExecutionRequest
 from shared.utils.mcp_utils import replace_mcp_server_variables
 
@@ -41,7 +43,7 @@ TEST_USER_INFO = {
 TEST_BOT_CONFIG = [{"id": TEST_BOT_ID, "name": "test-bot", "shell_type": "chat"}]
 
 
-def _make_request(**overrides: object) -> ExecutionRequest:
+def _make_request(**overrides: Any) -> ExecutionRequest:
     """Create an ExecutionRequest with sensible defaults for testing."""
     defaults = {
         "task_id": TEST_TASK_ID,

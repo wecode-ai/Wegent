@@ -40,8 +40,8 @@ def test_replace_mcp_server_variables_preserves_unknown_placeholders() -> None:
 
 def test_replace_user_name_placeholder_with_execution_request_task_data() -> None:
     """Integration test: Simulate CHAT_MCP_SERVERS with ${{user.name}} placeholder
-    being resolved using a task_data dict matching ExecutionRequest.to_mcp_task_data() output.
-    This is the exact scenario that was broken before the fix."""
+    being resolved using a task_data dict. This is the exact scenario that was
+    broken before the fix."""
     mcp_servers = {
         "my-server": {
             "type": "sse",
@@ -61,7 +61,7 @@ def test_replace_user_name_placeholder_with_execution_request_task_data() -> Non
             "id": 42,
             "name": "zhangsan",
             "git_domain": "github.com",
-            "git_token": "ghp_token",
+            "git_token": "ghp_token",  # noqa: S105
             "git_login": "zhangsan",
             "git_email": "zhangsan@example.com",
         },
@@ -95,7 +95,7 @@ def test_replace_multiple_placeholders_in_mcp_config() -> None:
                 "${{branch_name}}",
             ],
             "env": {
-                "GIT_TOKEN": "${{user.git_token}}",
+                "GIT_TOKEN": "${{user.git_token}}",  # noqa: S105
                 "GIT_DOMAIN": "${{git_domain}}",
             },
         }
@@ -107,7 +107,7 @@ def test_replace_multiple_placeholders_in_mcp_config() -> None:
         "user": {
             "id": 10,
             "name": "dev",
-            "git_token": "ghp_abc123",
+            "git_token": "ghp_abc123",  # noqa: S105
         },
         "git_repo": "myorg/myrepo",
         "git_domain": "github.com",
