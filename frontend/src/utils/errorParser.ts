@@ -17,6 +17,7 @@ export interface ParsedError {
     | 'forbidden'
     | 'container_oom'
     | 'container_error'
+    | 'device_offline'
     | 'generic_error'
   message: string
   originalError?: string
@@ -79,6 +80,16 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: false, // Permission errors are not retryable
+    }
+  }
+
+  // Check for device offline errors
+  if (lowerMessage.includes('device offline') || lowerMessage.includes('device is offline')) {
+    return {
+      type: 'device_offline',
+      message: errorMessage,
+      originalError: errorMessage,
+      retryable: false, // Device must be online to retry
     }
   }
 
@@ -200,6 +211,8 @@ export function getUserFriendlyErrorMessage(
       return t('errors.container_oom')
     case 'container_error':
       return t('errors.container_error')
+    case 'device_offline':
+      return t('errors.device_offline')
     case 'llm_unsupported':
       return t('errors.llm_unsupported')
     case 'llm_error':
