@@ -76,7 +76,9 @@ class OpenAIRequestConverter:
         Returns:
             Dict in OpenAI Responses API format
         """
-        # Build input - can be string or messages array
+        # Build input - can be string, list (vision content), or messages array
+        # When prompt is a list, it's already in OpenAI Responses API format:
+        # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
         input_data: Any = request.prompt
         if request.history:
             # If we have history, use messages format
@@ -85,6 +87,8 @@ class OpenAIRequestConverter:
                 messages.append(msg)
             # Add current user message
             if request.prompt:
+                # prompt can be string or list (vision content)
+                # Both are valid content types for OpenAI Responses API
                 messages.append({"role": "user", "content": request.prompt})
             input_data = messages
 
@@ -197,22 +201,35 @@ class OpenAIRequestConverter:
         model_config = openai_request.get("model_config", {})
 
         # Extract prompt from input
+        # Input can be:
+        # 1. String: simple text prompt
+        # 2. List of content blocks (vision): [{"type": "input_text", ...}, {"type": "input_image", ...}]
+        # 3. List of messages: [{"role": "user", "content": ...}, ...]
         input_data = openai_request.get("input", "")
-        prompt = ""
-        history = []
+        prompt: str | list[dict[str, Any]] = ""
+        history: list[dict[str, Any]] = []
 
         if isinstance(input_data, str):
             prompt = input_data
         elif isinstance(input_data, list):
-            # Messages format - extract last user message as prompt
-            for msg in input_data:
-                if isinstance(msg, dict):
-                    if msg.get("role") == "user":
-                        prompt = msg.get("content", "")
-                    history.append(msg)
-            # Remove the last user message from history since it's the prompt
-            if history and history[-1].get("role") == "user":
-                history = history[:-1]
+            # Check if it's vision content format (list of content blocks)
+            # Vision format: [{"type": "input_text", ...}, {"type": "input_image", ...}]
+            if input_data and isinstance(input_data[0], dict):
+                first_item = input_data[0]
+                if first_item.get("type") in ("input_text", "input_image"):
+                    # This is vision content format - use as-is
+                    prompt = input_data
+                elif "role" in first_item:
+                    # Messages format - extract last user message as prompt
+                    for msg in input_data:
+                        if isinstance(msg, dict):
+                            if msg.get("role") == "user":
+                                # Content can be string or list (vision content)
+                                prompt = msg.get("content", "")
+                            history.append(msg)
+                    # Remove the last user message from history since it's the prompt
+                    if history and history[-1].get("role") == "user":
+                        history = history[:-1]
 
         # Extract MCP servers from tools
         mcp_servers = []

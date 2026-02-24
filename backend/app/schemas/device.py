@@ -91,9 +91,7 @@ class DeviceInfo(BaseModel):
     )
     update_available: bool = Field(False, description="Whether an update is available")
     # Network information
-    client_ip: Optional[str] = Field(
-        None, description="Device's client IP address"
-    )
+    client_ip: Optional[str] = Field(None, description="Device's client IP address")
 
     class Config:
         from_attributes = True

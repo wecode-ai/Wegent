@@ -17,7 +17,7 @@ Design principles:
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from dacite import Config, from_dict
 
@@ -80,7 +80,10 @@ class ExecutionRequest:
 
     # === Prompt ===
     system_prompt: str = ""
-    prompt: str = ""  # User message
+    # User message - can be string or OpenAI Responses API format content list
+    # When vision content is present, this will be a list of content blocks:
+    # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
+    prompt: Union[str, list[dict[str, Any]]] = ""
 
     # === Feature Toggles ===
     enable_tools: bool = True

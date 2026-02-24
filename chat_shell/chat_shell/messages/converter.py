@@ -29,7 +29,7 @@ class MessageConverter:
     @staticmethod
     def build_messages(
         history: list[dict[str, Any]],
-        current_message: str | dict[str, Any],
+        current_message: str | list[dict[str, Any]],
         system_prompt: str = "",
         username: str | None = None,
         inject_datetime: bool = True,
@@ -49,13 +49,16 @@ class MessageConverter:
 
         Args:
             history: Previous messages in the conversation
-            current_message: The current user message (string or vision dict)
+            current_message: The current user message. Can be:
+                - string: Plain text message
+                - list[dict]: OpenAI Responses API format content blocks
+                  [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
             system_prompt: Optional system prompt to prepend
             username: Optional username to prefix the current message (for group chat)
             inject_datetime: Whether to inject current datetime into user message (default: True)
 
         Returns:
-            List of message dicts ready for LLM API
+            List of message dicts ready for LLM API (LangChain/OpenAI Chat Completions format)
         """
         messages: list[dict[str, Any]] = []
 
@@ -71,29 +74,17 @@ class MessageConverter:
             now = datetime.now()
             time_suffix = f"\n[Current time: {now.strftime('%Y-%m-%d %H:%M')}]"
 
-        if isinstance(current_message, dict):
-            if current_message.get("type") == "vision":
-                # For vision messages, add username prefix and time suffix to text
-                vision_data = current_message.copy()
-                text = vision_data.get("text", "")
-                if username:
-                    text = f"User[{username}]: {text}"
-                vision_data["text"] = text + time_suffix
-                messages.append(MessageConverter._build_vision_from_dict(vision_data))
-            elif current_message.get("type") == "multi_vision":
-                # For multi-vision messages, add username prefix and time suffix to text
-                multi_vision_data = current_message.copy()
-                text = multi_vision_data.get("text", "")
-                if username:
-                    text = f"User[{username}]: {text}"
-                multi_vision_data["text"] = text + time_suffix
-                messages.append(
-                    MessageConverter._build_multi_vision_from_dict(multi_vision_data)
+        if isinstance(current_message, list):
+            # OpenAI Responses API format: list of content blocks
+            # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
+            # Convert to LangChain/OpenAI Chat Completions format
+            messages.append(
+                MessageConverter._convert_responses_api_to_langchain(
+                    current_message, username, time_suffix
                 )
-            else:
-                messages.append(current_message)
+            )
         else:
-            # For plain text messages, add username prefix and time suffix
+            # Plain text message
             content = (
                 f"User[{username}]: {current_message}" if username else current_message
             )
@@ -103,50 +94,83 @@ class MessageConverter:
         return messages
 
     @staticmethod
-    def _build_vision_from_dict(vision_data: dict[str, Any]) -> dict[str, Any]:
-        """Build vision message from a vision data dict."""
-        return MessageConverter.build_vision_message(
-            text=vision_data.get("text", ""),
-            image_base64=vision_data.get("image_base64", ""),
-            mime_type=vision_data.get("mime_type", "image/png"),
-        )
-
-    @staticmethod
-    def _build_multi_vision_from_dict(
-        multi_vision_data: dict[str, Any],
+    def _convert_responses_api_to_langchain(
+        content_blocks: list[dict[str, Any]],
+        username: str | None = None,
+        time_suffix: str = "",
     ) -> dict[str, Any]:
-        """Build multi-vision message from a multi-vision data dict with multiple images."""
-        text = multi_vision_data.get("text", "")
-        images = multi_vision_data.get("images", [])
+        """Convert OpenAI Responses API format to LangChain/Chat Completions format.
 
-        # Build content array with text and all images
-        content = [{"type": "text", "text": text}]
+        OpenAI Responses API format:
+        [
+            {"type": "input_text", "text": "..."},
+            {"type": "input_image", "image_url": "data:image/png;base64,..."},
+        ]
 
-        for image_data in images:
-            image_base64 = image_data.get("image_base64", "")
-            mime_type = image_data.get("mime_type", "image/png")
+        LangChain/Chat Completions format:
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "..."},
+                {"type": "image_url", "image_url": {"url": "data:..."}},
+            ]
+        }
 
-            # Compress image if needed
-            try:
-                image_bytes = base64.b64decode(image_base64)
-                compressed_bytes = MessageConverter._compress_image(
-                    image_bytes, mime_type
-                )
-                compressed_base64 = base64.b64encode(compressed_bytes).decode("utf-8")
+        Args:
+            content_blocks: List of content blocks in Responses API format
+            username: Optional username to prefix text content
+            time_suffix: Optional time suffix to append to text content
 
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{compressed_base64}"
-                        },
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Failed to process image: {e}")
-                continue
+        Returns:
+            Message dict in LangChain/Chat Completions format
+        """
+        langchain_content: list[dict[str, Any]] = []
+        first_text_processed = False
 
-        return {"role": "user", "content": content}
+        for block in content_blocks:
+            block_type = block.get("type", "")
+
+            if block_type == "input_text":
+                # Convert input_text to text
+                text = block.get("text", "")
+                if not first_text_processed:
+                    if username:
+                        text = f"User[{username}]: {text}"
+                    text = text + time_suffix
+                    first_text_processed = True
+                langchain_content.append({"type": "text", "text": text})
+
+            elif block_type == "input_image":
+                # Convert input_image to image_url
+                image_url = block.get("image_url", "")
+                if image_url:
+                    # Compress image if needed
+                    try:
+                        # Extract base64 data from data URL
+                        if image_url.startswith("data:"):
+                            # Parse data URL: data:image/png;base64,<base64_data>
+                            header, base64_data = image_url.split(",", 1)
+                            mime_type = header.split(":")[1].split(";")[0]
+
+                            image_bytes = base64.b64decode(base64_data)
+                            if len(image_bytes) > MAX_IMAGE_SIZE_BYTES:
+                                compressed_bytes = MessageConverter._compress_image(
+                                    image_bytes, mime_type
+                                )
+                                compressed_base64 = base64.b64encode(
+                                    compressed_bytes
+                                ).decode("utf-8")
+                                image_url = (
+                                    f"data:{mime_type};base64,{compressed_base64}"
+                                )
+                    except Exception as e:
+                        logger.warning(f"Failed to process image: {e}")
+
+                    langchain_content.append(
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                    )
+
+        return {"role": "user", "content": langchain_content}
 
     @staticmethod
     def _compress_image(image_data: bytes, mime_type: str = "image/png") -> bytes:
@@ -233,41 +257,6 @@ class MessageConverter:
             logger.warning(f"Image compression failed: {e}")
             # If compression fails, return original data
             return image_data
-
-    @staticmethod
-    def build_vision_message(
-        text: str = "",
-        image_base64: str = "",
-        mime_type: str = "image/png",
-    ) -> dict[str, Any]:
-        """Build a vision message with text and image."""
-        if image_base64:
-            # Decode, compress, then re-encode
-            try:
-                image_data = base64.b64decode(image_base64)
-                if len(image_data) > MAX_IMAGE_SIZE_BYTES:
-                    compressed_data = MessageConverter._compress_image(
-                        image_data, mime_type
-                    )
-                    image_base64 = base64.b64encode(compressed_data).decode("utf-8")
-            except Exception:
-                # If decoding/compression fails, proceed with original (might fail later)
-                logger.exception("Failed to process image data in build_vision_message")
-
-        content: list[dict[str, Any]] = []
-
-        if text:
-            content.append({"type": "text", "text": text})
-
-        if image_base64:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{image_base64}"},
-                }
-            )
-
-        return {"role": "user", "content": content}
 
     @staticmethod
     def build_user_message(content: str, username: str | None = None) -> dict[str, Any]:
