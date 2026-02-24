@@ -5,7 +5,7 @@
 from shared.utils.mcp_utils import replace_mcp_server_variables
 
 
-def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
+def test_replace_mcp_server_variables_replaces_backend_url_and_task_token() -> None:
     mcp_servers = {
         "wegent-knowledge": {
             "type": "streamable-http",
@@ -29,7 +29,7 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
     )
 
 
-def test_replace_mcp_server_variables_preserves_unknown_placeholders():
+def test_replace_mcp_server_variables_preserves_unknown_placeholders() -> None:
     mcp_servers = {"s": {"url": "http://${{unknown}}/x"}}
     task_data = {"backend_url": "http://localhost:8000"}
 
@@ -38,7 +38,7 @@ def test_replace_mcp_server_variables_preserves_unknown_placeholders():
     assert replaced["s"]["url"] == "http://${{unknown}}/x"
 
 
-def test_replace_user_name_placeholder_with_execution_request_task_data():
+def test_replace_user_name_placeholder_with_execution_request_task_data() -> None:
     """Integration test: Simulate CHAT_MCP_SERVERS with ${{user.name}} placeholder
     being resolved using a task_data dict matching ExecutionRequest.task_data structure.
     This is the exact scenario that was broken before the fix."""
@@ -78,7 +78,7 @@ def test_replace_user_name_placeholder_with_execution_request_task_data():
     assert replaced["my-server"]["headers"]["X-User-Id"] == "42"
 
 
-def test_replace_multiple_placeholders_in_mcp_config():
+def test_replace_multiple_placeholders_in_mcp_config() -> None:
     """Test that all commonly used placeholders in CHAT_MCP_SERVERS are resolved."""
     mcp_servers = {
         "git-server": {
@@ -124,7 +124,7 @@ def test_replace_multiple_placeholders_in_mcp_config():
     assert replaced["git-server"]["env"]["GIT_DOMAIN"] == "github.com"
 
 
-def test_replace_with_none_task_data_returns_unchanged():
+def test_replace_with_none_task_data_returns_unchanged() -> None:
     """When task_data is None (the bug scenario), placeholders remain unresolved."""
     mcp_servers = {
         "s": {

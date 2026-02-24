@@ -208,6 +208,9 @@ class TaskRequestBuilder:
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
 
+        # Generate auth token once for reuse in both task_data and request
+        auth_token = self._generate_auth_token(task, subtask, user)
+
         # Build task_data for MCP placeholder replacement (${{user.name}}, etc.)
         # This dict is passed to chat_shell/executor so they can resolve
         # ${{path}} placeholders in MCP server configurations at runtime.
@@ -221,6 +224,8 @@ class TaskRequestBuilder:
             "git_url": git_url,
             "git_domain": git_domain,
             "branch_name": branch_name,
+            "backend_url": settings.BACKEND_INTERNAL_URL,
+            "task_token": auth_token,
         }
 
         return ExecutionRequest(
@@ -262,7 +267,7 @@ class TaskRequestBuilder:
             history_limit=history_limit,
             new_session=new_session,
             collaboration_model=collaboration_model,
-            auth_token=self._generate_auth_token(task, subtask, user),
+            auth_token=auth_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,

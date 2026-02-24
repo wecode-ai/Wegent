@@ -21,7 +21,7 @@ from chat_shell.tools.mcp.client import build_connections
 class TestBuildConnectionsVariableSubstitution:
     """Tests that build_connections() resolves ${{path}} placeholders."""
 
-    def test_sse_headers_placeholder_replaced(self):
+    def test_sse_headers_placeholder_replaced(self) -> None:
         """${{user.name}} in SSE headers should be replaced by task_data value."""
         config = {
             "my-server": {
@@ -42,7 +42,7 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["my-server"]
         assert conn["headers"] == {"X-User": "zhangsan"}
 
-    def test_streamable_http_headers_placeholder_replaced(self):
+    def test_streamable_http_headers_placeholder_replaced(self) -> None:
         """${{user.name}} in streamable-http headers should be replaced."""
         config = {
             "web-server": {
@@ -60,7 +60,7 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["web-server"]
         assert conn["headers"] == {"Authorization": "Bearer ghp_test_token_123"}
 
-    def test_url_placeholder_replaced(self):
+    def test_url_placeholder_replaced(self) -> None:
         """${{git_domain}} in URL should be replaced."""
         config = {
             "server": {
@@ -75,7 +75,7 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["server"]
         assert conn["url"] == "https://gitlab.example.com/mcp/sse"
 
-    def test_no_task_data_preserves_placeholders(self):
+    def test_no_task_data_preserves_placeholders(self) -> None:
         """When task_data is None, placeholders should remain in the config."""
         config = {
             "server": {
@@ -91,7 +91,7 @@ class TestBuildConnectionsVariableSubstitution:
         # Placeholder should remain unresolved
         assert conn["headers"] == {"X-User": "${{user.name}}"}
 
-    def test_empty_task_data_preserves_placeholders(self):
+    def test_empty_task_data_preserves_placeholders(self) -> None:
         """When task_data is empty dict, placeholders should remain."""
         config = {
             "server": {
@@ -106,7 +106,7 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["server"]
         assert conn["headers"] == {"X-User": "${{user.name}}"}
 
-    def test_stdio_env_placeholder_replaced(self):
+    def test_stdio_env_placeholder_replaced(self) -> None:
         """${{user.git_token}} in stdio env should be replaced."""
         config = {
             "git-mcp": {
@@ -125,7 +125,7 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["git-mcp"]
         assert conn["env"] == {"GIT_TOKEN": "glpat-xxx"}
 
-    def test_multiple_placeholders_in_same_config(self):
+    def test_multiple_placeholders_in_same_config(self) -> None:
         """Multiple different placeholders should all be resolved."""
         config = {
             "server": {
