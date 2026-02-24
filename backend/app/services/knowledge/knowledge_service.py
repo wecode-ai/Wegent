@@ -1413,18 +1413,29 @@ class KnowledgeService:
                 "Only TEXT type documents or plain text files (txt, md) can be edited"
             )
 
-        # Check permission for team knowledge base
+        # Check permission for knowledge base
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            # Owner/Maintainer/Developer can edit documents (edit+ permission)
-            if not _check_kb_permission(db, kb, user_id, "edit"):
-                raise ValueError(
-                    "Only Owner, Maintainer, or Developer can edit documents in this knowledge base"
-                )
+        if kb:
+            # Check permission for organization-level knowledge base (admin only)
+            if _is_organization_namespace(db, kb.namespace):
+                from app.models.user import User
+
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or user.role != "admin":
+                    raise ValueError(
+                        "Only admin can edit documents in organization knowledge base"
+                    )
+            # Check permission for team knowledge base
+            elif kb.namespace != "default":
+                # Owner/Maintainer/Developer can edit documents (edit+ permission)
+                if not _check_kb_permission(db, kb, user_id, "edit"):
+                    raise ValueError(
+                        "Only Owner, Maintainer, or Developer can edit documents in this knowledge base"
+                    )
 
         # Update the extracted_text in SubtaskContext
         if doc.attachment_id:
