@@ -33,8 +33,13 @@ import { userApis } from '@/apis/user'
 import { useUser } from '@/features/common/UserContext'
 import SetupModelStep from './SetupModelStep'
 import SetupSkillStep from './SetupSkillStep'
+import SetupDeviceStep from './SetupDeviceStep'
 
-const TOTAL_STEPS = 2
+// Check if device step should be shown based on environment variable
+const hasDeviceInstallCommand = !!process.env.NEXT_PUBLIC_DEVICE_INSTALL_COMMAND
+
+// Dynamic total steps based on whether device step is enabled
+const TOTAL_STEPS = hasDeviceInstallCommand ? 3 : 2
 
 /**
  * Global Admin Setup Wizard component that shows on any page when:
@@ -171,6 +176,8 @@ const GlobalAdminSetupWizard: React.FC = () => {
         return <SetupModelStep />
       case 2:
         return <SetupSkillStep />
+      case 3:
+        return hasDeviceInstallCommand ? <SetupDeviceStep /> : null
       default:
         return null
     }
