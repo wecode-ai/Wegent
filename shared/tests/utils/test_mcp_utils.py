@@ -40,7 +40,7 @@ def test_replace_mcp_server_variables_preserves_unknown_placeholders() -> None:
 
 def test_replace_user_name_placeholder_with_execution_request_task_data() -> None:
     """Integration test: Simulate CHAT_MCP_SERVERS with ${{user.name}} placeholder
-    being resolved using a task_data dict matching ExecutionRequest.task_data structure.
+    being resolved using a task_data dict matching ExecutionRequest.to_mcp_task_data() output.
     This is the exact scenario that was broken before the fix."""
     mcp_servers = {
         "my-server": {

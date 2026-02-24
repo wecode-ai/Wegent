@@ -151,8 +151,6 @@ class ExecutionRequest:
     is_subscription: bool = False
     system_mcp_config: Optional[dict] = None
 
-    # === Task Data (from ChatRequest) ===
-    task_data: Optional[dict] = None  # Task data for MCP tools
     extra_tools: list = field(default_factory=list)  # Extra tools to add
     timezone: str = "Asia/Shanghai"  # User timezone for CreateSubscriptionTool
 
@@ -189,6 +187,30 @@ class ExecutionRequest:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict - automatically serializes all fields."""
         return asdict(self)
+
+    def to_mcp_task_data(self) -> dict[str, Any]:
+        """Build dict for MCP ${{path}} placeholder replacement.
+
+        Constructs the dict needed by replace_mcp_server_variables() from
+        the existing fields on this ExecutionRequest. This avoids storing
+        a redundant task_data dict that duplicates existing attributes.
+
+        Key mapping:
+        - auth_token -> task_token (backward compat with ${{task_token}} in MCP configs)
+        """
+        return {
+            "task_id": self.task_id,
+            "subtask_id": self.subtask_id,
+            "team_id": self.team_id,
+            "user": self.user,
+            "bot": self.bot,
+            "git_repo": self.git_repo,
+            "git_url": self.git_url,
+            "git_domain": self.git_domain,
+            "branch_name": self.branch_name,
+            "backend_url": self.backend_url,
+            "task_token": self.auth_token,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionRequest":

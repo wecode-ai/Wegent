@@ -3,18 +3,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Tests for TaskRequestBuilder.build() - verifying task_data is properly populated
-in the ExecutionRequest for MCP placeholder replacement.
+Tests for ExecutionRequest.to_mcp_task_data() method.
+
+Verifies that to_mcp_task_data() correctly derives the MCP placeholder
+replacement dict from ExecutionRequest attributes, without needing a
+redundant task_data field.
 """
 
-from unittest.mock import MagicMock, patch
+from shared.models.execution import ExecutionRequest
 
 # Constants for test data
 TEST_USER_ID = 42
 TEST_USER_NAME = "testuser"
 TEST_TASK_ID = 100
 TEST_SUBTASK_ID = 200
-TEST_MESSAGE_ID = 300
 TEST_TEAM_ID = 10
 TEST_BOT_ID = 5
 TEST_GIT_TOKEN = "ghp_test_token"  # noqa: S105
@@ -25,155 +27,46 @@ TEST_GIT_ID = 12345
 TEST_BACKEND_URL = "http://localhost:8000"
 TEST_AUTH_TOKEN = "mock-jwt-token"  # noqa: S105
 
+TEST_USER_INFO = {
+    "id": TEST_USER_ID,
+    "name": TEST_USER_NAME,
+    "git_domain": TEST_GIT_DOMAIN,
+    "git_token": TEST_GIT_TOKEN,
+    "git_id": TEST_GIT_ID,
+    "git_login": TEST_GIT_LOGIN,
+    "git_email": TEST_GIT_EMAIL,
+}
 
-def _make_user_mock() -> MagicMock:
-    """Create a mock User object."""
-    user = MagicMock()
-    user.id = TEST_USER_ID
-    user.user_name = TEST_USER_NAME
-    user.git_info = [
-        {
-            "type": "github",
-            "git_domain": TEST_GIT_DOMAIN,
-            "git_token": TEST_GIT_TOKEN,
-            "git_id": TEST_GIT_ID,
-            "git_login": TEST_GIT_LOGIN,
-            "git_email": TEST_GIT_EMAIL,
-        }
-    ]
-    return user
+TEST_BOT_CONFIG = [{"id": TEST_BOT_ID, "name": "test-bot", "shell_type": "chat"}]
 
 
-def _make_task_mock() -> MagicMock:
-    """Create a mock TaskResource object."""
-    task = MagicMock()
-    task.id = TEST_TASK_ID
-    task.json = {
-        "spec": {"workspaceRef": {"name": "workspace1", "namespace": "default"}}
+def _make_request(**overrides: object) -> ExecutionRequest:
+    """Create an ExecutionRequest with sensible defaults for testing."""
+    defaults = {
+        "task_id": TEST_TASK_ID,
+        "subtask_id": TEST_SUBTASK_ID,
+        "team_id": TEST_TEAM_ID,
+        "user": TEST_USER_INFO,
+        "bot": TEST_BOT_CONFIG,
+        "git_repo": "test/repo",
+        "git_url": "https://github.com/test/repo.git",
+        "git_domain": TEST_GIT_DOMAIN,
+        "branch_name": "main",
+        "backend_url": TEST_BACKEND_URL,
+        "auth_token": TEST_AUTH_TOKEN,
     }
-    return task
+    defaults.update(overrides)
+    return ExecutionRequest(**defaults)
 
 
-def _make_subtask_mock() -> MagicMock:
-    """Create a mock Subtask object."""
-    subtask = MagicMock()
-    subtask.id = TEST_SUBTASK_ID
-    subtask.message_id = TEST_MESSAGE_ID
-    subtask.bot_ids = None
-    subtask.executor_name = None
-    return subtask
+class TestToMcpTaskData:
+    """Tests for ExecutionRequest.to_mcp_task_data() method."""
 
+    def test_returns_all_required_fields(self) -> None:
+        """to_mcp_task_data() should return all fields needed for MCP placeholder replacement."""
+        request = _make_request()
+        td = request.to_mcp_task_data()
 
-def _make_team_mock() -> MagicMock:
-    """Create a mock Team Kind object."""
-    team = MagicMock()
-    team.id = TEST_TEAM_ID
-    team.name = "test-team"
-    team.namespace = "default"
-    team.user_id = TEST_USER_ID
-    team.json = {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "Team",
-        "metadata": {"name": "test-team", "namespace": "default"},
-        "spec": {
-            "collaborationModel": "solo",
-            "members": [
-                {
-                    "botRef": {"name": "test-bot", "namespace": "default"},
-                    "role": "worker",
-                }
-            ],
-        },
-    }
-    return team
-
-
-def _make_bot_mock() -> MagicMock:
-    """Create a mock Bot Kind object."""
-    bot = MagicMock()
-    bot.id = TEST_BOT_ID
-    bot.name = "test-bot"
-    bot.namespace = "default"
-    bot.json = {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "Bot",
-        "metadata": {"name": "test-bot", "namespace": "default"},
-        "spec": {
-            "ghostRef": {"name": "test-ghost", "namespace": "default"},
-            "shellRef": {"name": "test-shell", "namespace": "default"},
-            "agent_config": {},
-        },
-    }
-    return bot
-
-
-class TestTaskRequestBuilderTaskData:
-    """Tests that TaskRequestBuilder.build() populates task_data in ExecutionRequest."""
-
-    @patch("app.services.execution.request_builder.settings")
-    def test_task_data_is_populated(self, mock_settings: MagicMock) -> None:
-        """Test that task_data is set in the ExecutionRequest with required fields."""
-        from app.services.execution.request_builder import TaskRequestBuilder
-
-        mock_settings.CHAT_MCP_SERVERS = "{}"
-        mock_settings.BACKEND_INTERNAL_URL = TEST_BACKEND_URL
-
-        user = _make_user_mock()
-        task = _make_task_mock()
-        subtask = _make_subtask_mock()
-        team = _make_team_mock()
-        bot = _make_bot_mock()
-
-        builder = TaskRequestBuilder(MagicMock())
-
-        builder._get_bot_for_subtask = MagicMock(return_value=bot)
-        builder._build_workspace = MagicMock(
-            return_value={
-                "repository": {
-                    "gitUrl": "https://github.com/test/repo.git",
-                    "gitDomain": TEST_GIT_DOMAIN,
-                    "gitRepo": "test/repo",
-                    "gitRepoId": 999,
-                    "branchName": "main",
-                }
-            }
-        )
-        builder._build_user_info = MagicMock(
-            return_value={
-                "id": TEST_USER_ID,
-                "name": TEST_USER_NAME,
-                "git_domain": TEST_GIT_DOMAIN,
-                "git_token": TEST_GIT_TOKEN,
-                "git_id": TEST_GIT_ID,
-                "git_login": TEST_GIT_LOGIN,
-                "git_email": TEST_GIT_EMAIL,
-            }
-        )
-        builder._get_model_config = MagicMock(
-            return_value={
-                "provider": "anthropic",
-                "model_id": "claude-3-5-sonnet",
-                "api_key": "sk-test",
-            }
-        )
-        builder._get_base_system_prompt = MagicMock(return_value="You are a helper.")
-        builder._get_bot_skills = MagicMock(return_value=([], [], []))
-        builder._build_bot_config = MagicMock(
-            return_value=[{"id": TEST_BOT_ID, "name": "test-bot", "shell_type": "chat"}]
-        )
-        builder._build_mcp_servers = MagicMock(return_value=[])
-        builder._is_group_chat = MagicMock(return_value=False)
-        builder._generate_auth_token = MagicMock(return_value=TEST_AUTH_TOKEN)
-
-        result = builder.build(
-            subtask=subtask, task=task, user=user, team=team, message="Hello"
-        )
-
-        # Verify task_data is set
-        assert result.task_data is not None, "task_data should not be None"
-
-        # Verify required fields for MCP placeholder replacement
-        td = result.task_data
         assert td["task_id"] == TEST_TASK_ID
         assert td["subtask_id"] == TEST_SUBTASK_ID
         assert td["team_id"] == TEST_TEAM_ID
@@ -183,99 +76,45 @@ class TestTaskRequestBuilderTaskData:
         assert td["git_url"] == "https://github.com/test/repo.git"
         assert td["git_domain"] == TEST_GIT_DOMAIN
         assert td["branch_name"] == "main"
-        assert "bot" in td
-
-        # Verify backend_url and task_token are present for MCP skill configs
+        assert td["bot"] == TEST_BOT_CONFIG
         assert td["backend_url"] == TEST_BACKEND_URL
-        assert td["task_token"] == TEST_AUTH_TOKEN
 
-    @patch("app.services.execution.request_builder.settings")
-    def test_task_data_user_matches_user_info(self, mock_settings: MagicMock) -> None:
-        """Test that task_data['user'] matches the user_info built by the builder."""
-        from app.services.execution.request_builder import TaskRequestBuilder
+    def test_user_matches_request_user(self) -> None:
+        """to_mcp_task_data()['user'] should be the same object as request.user."""
+        request = _make_request()
+        td = request.to_mcp_task_data()
 
-        mock_settings.CHAT_MCP_SERVERS = "{}"
-        mock_settings.BACKEND_INTERNAL_URL = TEST_BACKEND_URL
+        assert td["user"] is request.user
 
-        user = _make_user_mock()
-        task = _make_task_mock()
-        subtask = _make_subtask_mock()
-        team = _make_team_mock()
-        bot = _make_bot_mock()
-
-        builder = TaskRequestBuilder(MagicMock())
-
-        expected_user_info = {
-            "id": TEST_USER_ID,
-            "name": TEST_USER_NAME,
-            "git_domain": TEST_GIT_DOMAIN,
-            "git_token": TEST_GIT_TOKEN,
-            "git_id": TEST_GIT_ID,
-            "git_login": TEST_GIT_LOGIN,
-            "git_email": TEST_GIT_EMAIL,
-        }
-
-        builder._get_bot_for_subtask = MagicMock(return_value=bot)
-        builder._build_workspace = MagicMock(
-            return_value={"repository": {"gitUrl": None, "gitDomain": None}}
+    def test_handles_none_git_fields(self) -> None:
+        """When git fields are None, to_mcp_task_data() should still work."""
+        request = _make_request(
+            git_repo=None,
+            git_url=None,
+            git_domain=None,
+            branch_name=None,
         )
-        builder._build_user_info = MagicMock(return_value=expected_user_info)
-        builder._get_model_config = MagicMock(return_value={})
-        builder._get_base_system_prompt = MagicMock(return_value="")
-        builder._get_bot_skills = MagicMock(return_value=([], [], []))
-        builder._build_bot_config = MagicMock(return_value=[])
-        builder._build_mcp_servers = MagicMock(return_value=[])
-        builder._is_group_chat = MagicMock(return_value=False)
-        builder._generate_auth_token = MagicMock(return_value="token")
+        td = request.to_mcp_task_data()
 
-        result = builder.build(
-            subtask=subtask, task=task, user=user, team=team, message="hi"
-        )
+        assert td["git_repo"] is None
+        assert td["git_url"] is None
+        assert td["git_domain"] is None
+        assert td["branch_name"] is None
+        # Other fields should still be present
+        assert td["user"]["name"] == TEST_USER_NAME
+        assert td["backend_url"] == TEST_BACKEND_URL
 
-        # task_data["user"] should be the same dict as user_info in the request
-        assert result.task_data["user"] == result.user
+    def test_auth_token_mapped_to_task_token(self) -> None:
+        """auth_token on ExecutionRequest should map to task_token in the dict."""
+        request = _make_request(auth_token="my-auth-token-xyz")  # noqa: S106
+        td = request.to_mcp_task_data()
 
-    @patch("app.services.execution.request_builder.settings")
-    def test_task_data_handles_no_workspace(self, mock_settings: MagicMock) -> None:
-        """Test that task_data handles missing workspace gracefully."""
-        from app.services.execution.request_builder import TaskRequestBuilder
+        assert td["task_token"] == "my-auth-token-xyz"  # noqa: S105
+        assert "auth_token" not in td
 
-        mock_settings.CHAT_MCP_SERVERS = "{}"
-        mock_settings.BACKEND_INTERNAL_URL = TEST_BACKEND_URL
+    def test_empty_auth_token_maps_to_empty_task_token(self) -> None:
+        """Default empty auth_token should produce empty task_token."""
+        request = ExecutionRequest()
+        td = request.to_mcp_task_data()
 
-        user = _make_user_mock()
-        task = _make_task_mock()
-        subtask = _make_subtask_mock()
-        team = _make_team_mock()
-        bot = _make_bot_mock()
-
-        builder = TaskRequestBuilder(MagicMock())
-
-        builder._get_bot_for_subtask = MagicMock(return_value=bot)
-        builder._build_workspace = MagicMock(return_value={})
-        builder._build_user_info = MagicMock(
-            return_value={"id": TEST_USER_ID, "name": TEST_USER_NAME}
-        )
-        builder._get_model_config = MagicMock(return_value={})
-        builder._get_base_system_prompt = MagicMock(return_value="")
-        builder._get_bot_skills = MagicMock(return_value=([], [], []))
-        builder._build_bot_config = MagicMock(return_value=[])
-        builder._build_mcp_servers = MagicMock(return_value=[])
-        builder._is_group_chat = MagicMock(return_value=False)
-        builder._generate_auth_token = MagicMock(return_value=TEST_AUTH_TOKEN)
-
-        result = builder.build(
-            subtask=subtask, task=task, user=user, team=team, message="hi"
-        )
-
-        # task_data should still be set, git fields will be None
-        assert result.task_data is not None
-        assert result.task_data["git_repo"] is None
-        assert result.task_data["git_url"] is None
-        assert result.task_data["git_domain"] is None
-        assert result.task_data["branch_name"] is None
-        # user info should still be present
-        assert result.task_data["user"]["name"] == TEST_USER_NAME
-        # backend_url and task_token should always be present
-        assert result.task_data["backend_url"] == TEST_BACKEND_URL
-        assert result.task_data["task_token"] == TEST_AUTH_TOKEN
+        assert td["task_token"] == ""
