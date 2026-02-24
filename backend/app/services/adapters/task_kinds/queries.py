@@ -1176,14 +1176,29 @@ class TaskQueryMixin:
 
         # Get latest USER subtask (the one with the actual user message in prompt field)
         # Note: ASSISTANT subtasks have empty prompt field, their content is in result field
-        subtask = (
+        user_subtask = (
             db.query(Subtask)
             .filter(Subtask.task_id == task_id, Subtask.role == SubtaskRole.USER)
             .order_by(Subtask.id.desc())
             .first()
         )
-        if not subtask:
+        if not user_subtask:
             raise ValueError(f"No user subtask found for task {task_id}")
+
+        # Get corresponding ASSISTANT subtask (if exists)
+        # ASSISTANT subtask's parent_id equals USER subtask's message_id
+        assistant_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.parent_id == user_subtask.message_id,
+            )
+            .first()
+        )
+
+        # Use user_subtask as the primary subtask for execution
+        subtask = user_subtask
 
         # Get team
         from app.schemas.kind import Task as TaskCRD
@@ -1222,7 +1237,7 @@ class TaskQueryMixin:
         # Note: attachments are fetched separately by executor via API
         builder = TaskRequestBuilder(db)
         execution_request = builder.build(
-            subtask=subtask,
+            subtask=assistant_subtask,
             task=task,
             user=user,
             team=team,
