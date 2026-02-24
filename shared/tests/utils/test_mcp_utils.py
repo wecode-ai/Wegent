@@ -38,7 +38,7 @@ def test_replace_mcp_server_variables_preserves_unknown_placeholders():
     assert replaced["s"]["url"] == "http://${{unknown}}/x"
 
 
-def test_replace_mcp_server_variables_with_user_name_placeholder():
+def test_replace_mcp_server_variables_with_user_name_placeholder() -> None:
     """Test that ${{user.name}} placeholders are correctly replaced.
 
     This is a regression test for the issue where CHAT_MCP_SERVERS environment
@@ -64,7 +64,7 @@ def test_replace_mcp_server_variables_with_user_name_placeholder():
     assert replaced["custom-server"]["headers"]["X-User"] == "zhangsan"
 
 
-def test_replace_mcp_server_variables_with_nested_user_fields():
+def test_replace_mcp_server_variables_with_nested_user_fields() -> None:
     """Test replacement of nested user fields like ${{user.git_login}}."""
     mcp_servers = {
         "github-server": {
@@ -92,7 +92,7 @@ def test_replace_mcp_server_variables_with_nested_user_fields():
     assert replaced["github-server"]["headers"]["X-Git-Email"] == "zhangsan@example.com"
 
 
-def test_replace_mcp_server_variables_with_multiple_placeholders_in_string():
+def test_replace_mcp_server_variables_with_multiple_placeholders_in_string() -> None:
     """Test replacement of multiple placeholders in a single string."""
     mcp_servers = {
         "multi-server": {
@@ -111,7 +111,7 @@ def test_replace_mcp_server_variables_with_multiple_placeholders_in_string():
     assert replaced["multi-server"]["url"] == "http://localhost:8000/user/zhangsan/repo/myrepo"
 
 
-def test_replace_mcp_server_variables_returns_unchanged_when_task_data_is_none():
+def test_replace_mcp_server_variables_returns_unchanged_when_task_data_is_none() -> None:
     """Test that original config is returned when task_data is None."""
     mcp_servers = {
         "test-server": {
@@ -125,7 +125,7 @@ def test_replace_mcp_server_variables_returns_unchanged_when_task_data_is_none()
     assert replaced["test-server"]["url"] == "https://api.example.com/${{user.name}}/mcp"
 
 
-def test_replace_mcp_server_variables_returns_unchanged_when_task_data_is_empty():
+def test_replace_mcp_server_variables_returns_unchanged_when_task_data_is_empty() -> None:
     """Test that original config is returned when task_data is empty dict."""
     mcp_servers = {
         "test-server": {
@@ -139,7 +139,7 @@ def test_replace_mcp_server_variables_returns_unchanged_when_task_data_is_empty(
     assert replaced["test-server"]["url"] == "https://api.example.com/${{user.name}}/mcp"
 
 
-def test_replace_mcp_server_variables_handles_list_values():
+def test_replace_mcp_server_variables_handles_list_values() -> None:
     """Test that variables in list values are also replaced."""
     mcp_servers = {
         "list-server": {

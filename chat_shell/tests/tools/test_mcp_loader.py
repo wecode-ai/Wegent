@@ -20,7 +20,7 @@ class TestMcpLoaderVariableSubstitution:
     """Test cases for MCP loader variable substitution."""
 
     @pytest.mark.asyncio
-    async def test_load_mcp_tools_applies_variable_substitution_to_backend_servers(self):
+    async def test_load_mcp_tools_applies_variable_substitution_to_backend_servers(self) -> None:
         """Test that load_mcp_tools applies variable substitution to CHAT_MCP_SERVERS.
 
         This is a regression test for the issue where placeholders like ${{user.name}}
@@ -71,7 +71,7 @@ class TestMcpLoaderVariableSubstitution:
             assert config_passed["test-server"]["headers"]["X-User"] == "zhangsan"
 
     @pytest.mark.asyncio
-    async def test_load_mcp_tools_no_substitution_when_no_task_data(self):
+    async def test_load_mcp_tools_no_substitution_when_no_task_data(self) -> None:
         """Test that placeholders are preserved when task_data is None."""
         mcp_servers_config = {
             "test-server": {
@@ -109,7 +109,7 @@ class TestMcpLoaderVariableSubstitution:
             assert config_passed["test-server"]["url"] == "https://api.example.com/${{user.name}}/mcp"
 
     @pytest.mark.asyncio
-    async def test_load_mcp_tools_substitutes_nested_user_fields(self):
+    async def test_load_mcp_tools_substitutes_nested_user_fields(self) -> None:
         """Test substitution of nested user fields like ${{user.git_login}}."""
         mcp_servers_config = {
             "github-server": {
@@ -159,7 +159,7 @@ class TestMcpLoaderVariableSubstitution:
             assert config_passed["github-server"]["headers"]["X-Email"] == "zhangsan@example.com"
 
     @pytest.mark.asyncio
-    async def test_load_mcp_tools_substitutes_multiple_variables(self):
+    async def test_load_mcp_tools_substitutes_multiple_variables(self) -> None:
         """Test substitution of multiple different variables in config."""
         mcp_servers_config = {
             "multi-server": {
@@ -203,7 +203,7 @@ class TestMcpLoaderVariableSubstitution:
             assert config_passed["multi-server"]["headers"]["Authorization"] == "Bearer token-abc-123"
 
     @pytest.mark.asyncio
-    async def test_load_mcp_handles_empty_chat_mcp_servers(self):
+    async def test_load_mcp_handles_empty_chat_mcp_servers(self) -> None:
         """Test that load_mcp_tools handles empty CHAT_MCP_SERVERS gracefully."""
         mock_client = MagicMock()
         mock_client.is_connected = True
