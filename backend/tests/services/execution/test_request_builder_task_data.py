@@ -7,12 +7,7 @@ Tests for TaskRequestBuilder.build() - verifying task_data is properly populated
 in the ExecutionRequest for MCP placeholder replacement.
 """
 
-from typing import Tuple
 from unittest.mock import MagicMock, patch
-
-import pytest
-
-from shared.models.execution import ExecutionRequest
 
 # Constants for test data
 TEST_USER_ID = 42
@@ -22,13 +17,13 @@ TEST_SUBTASK_ID = 200
 TEST_MESSAGE_ID = 300
 TEST_TEAM_ID = 10
 TEST_BOT_ID = 5
-TEST_GIT_TOKEN = "ghp_test_token"
+TEST_GIT_TOKEN = "ghp_test_token"  # noqa: S105
 TEST_GIT_DOMAIN = "github.com"
 TEST_GIT_LOGIN = "testuser"
 TEST_GIT_EMAIL = "test@example.com"
 TEST_GIT_ID = 12345
 TEST_BACKEND_URL = "http://localhost:8000"
-TEST_AUTH_TOKEN = "mock-jwt-token"
+TEST_AUTH_TOKEN = "mock-jwt-token"  # noqa: S105
 
 
 def _make_user_mock() -> MagicMock:

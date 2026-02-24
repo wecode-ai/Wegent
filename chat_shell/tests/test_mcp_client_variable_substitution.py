@@ -13,8 +13,6 @@ StdioConnection, StreamableHttpConnection) which are plain dicts,
 so we use dict-style access (conn["key"]) not attribute access.
 """
 
-import pytest
-
 from chat_shell.tools.mcp.client import build_connections
 
 

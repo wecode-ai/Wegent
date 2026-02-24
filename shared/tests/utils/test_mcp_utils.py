@@ -120,7 +120,7 @@ def test_replace_multiple_placeholders_in_mcp_config() -> None:
     assert replaced["git-server"]["args"][3] == "ghp_abc123"
     assert replaced["git-server"]["args"][5] == "myorg/myrepo"
     assert replaced["git-server"]["args"][7] == "feature/test"
-    assert replaced["git-server"]["env"]["GIT_TOKEN"] == "ghp_abc123"
+    assert replaced["git-server"]["env"]["GIT_TOKEN"] == "ghp_abc123"  # noqa: S105
     assert replaced["git-server"]["env"]["GIT_DOMAIN"] == "github.com"
 
 
