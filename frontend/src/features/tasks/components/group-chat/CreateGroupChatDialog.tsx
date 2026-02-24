@@ -26,7 +26,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { teamService } from '@/features/tasks/service/teamService'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { ModelSelector, type Model } from '@/features/tasks/components/selector'
@@ -35,9 +34,16 @@ import { useUser } from '@/features/common/UserContext'
 interface CreateGroupChatDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  teams: Team[]
+  isTeamsLoading: boolean
 }
 
-export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDialogProps) {
+export function CreateGroupChatDialog({
+  open,
+  onOpenChange,
+  teams,
+  isTeamsLoading,
+}: CreateGroupChatDialogProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
   const router = useRouter()
@@ -47,7 +53,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [forceOverride, setForceOverride] = useState(false)
 
-  const { teams, isTeamsLoading } = teamService.useTeams()
   const { sendMessage } = useChatStreamContext()
   const { refreshTasks, setSelectedTask } = useTaskContext()
   const { user } = useUser()
