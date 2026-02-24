@@ -61,8 +61,8 @@ def _get_user_kb_permission_level(
     Priority:
     1. Creator - always has 'manage' permission
     2. Explicit resource permission (ResourceMember)
-    3. Group role-based permission (for team KBs)
-    4. Organization-level access (for org KBs)
+    3. Organization-level access (for org KBs)
+    4. Group role-based permission (for team KBs)
 
     Args:
         db: Database session
@@ -93,7 +93,11 @@ def _get_user_kb_permission_level(
     if explicit_perm:
         return explicit_perm.permission_level
 
-    # 3. Check group permission for team KB
+    # 3. Organization KB - all authenticated users have view access
+    if _is_organization_namespace(db, kb.namespace):
+        return "view"
+
+    # 4. Check group permission for team KB
     if kb.namespace != "default":
         role = get_effective_role_in_group(db, user_id, kb.namespace)
         if role:
@@ -102,12 +106,8 @@ def _get_user_kb_permission_level(
         # No role in group - no access
         return None
 
-    # 4. Organization KB - all authenticated users have view access
-    if _is_organization_namespace(db, kb.namespace):
-        return "view"
-
     # No access - user is not creator, has no explicit permission,
-    # and KB is not in organization namespace
+    # and KB is not in organization namespace or group
     return None
 
 
