@@ -5,7 +5,7 @@
 from shared.utils.mcp_utils import replace_mcp_server_variables
 
 
-def test_replace_mcp_server_variables_replaces_backend_url_and_task_token() -> None:
+def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
     mcp_servers = {
         "wegent-knowledge": {
             "type": "streamable-http",
@@ -29,7 +29,7 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token() -> N
     )
 
 
-def test_replace_mcp_server_variables_preserves_unknown_placeholders() -> None:
+def test_replace_mcp_server_variables_preserves_unknown_placeholders():
     mcp_servers = {"s": {"url": "http://${{unknown}}/x"}}
     task_data = {"backend_url": "http://localhost:8000"}
 
