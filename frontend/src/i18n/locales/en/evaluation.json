@@ -165,6 +165,21 @@
     "view": "View Answer",
     "new_version_available": "A new version of this question is available. You may want to re-answer.",
     "respondents": "Respondents",
+    "tabs": {
+      "instructions": "Instructions",
+      "question": "Question",
+      "answer": "Submit Answer"
+    },
+    "instructions": {
+      "title": "Instructions",
+      "description": "Please read the following carefully before answering:",
+      "time_limit": "Time Limit",
+      "no_limit": "No time limit",
+      "attempts": "Attempts Allowed",
+      "unlimited": "Unlimited",
+      "submission_notice": "You can modify your submission multiple times. The system will keep your latest answer.",
+      "version_notice": "If the question is updated, you will need to re-answer based on the latest version."
+    },
     "progress": {
       "title": "My Progress",
       "total": "Total Questions",

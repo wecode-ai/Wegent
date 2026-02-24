@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Send, AlertCircle, File, Download } from 'lucide-react'
+import { Send, AlertCircle, File, Download, Info, FileText, Edit3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,6 +56,7 @@ function RespondentQuestionDetailContent() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
+  const [activeTab, setActiveTab] = useState('question')
 
   // Answer form state - always use MIXED mode (attachments + text)
   const [answerText, setAnswerText] = useState('')
@@ -68,7 +70,7 @@ function RespondentQuestionDetailContent() {
         respondentGetQuestion(questionId),
         respondentListAnswerHistory({ question_id: questionId, page: 1, limit: 20 }),
       ])
-      setTopic(topicData) // Keep topic data for potential future use
+      setTopic(topicData)
       setQuestion(questionData)
       setMyAnswers(answersData.items)
     } catch (_error) {
@@ -211,61 +213,179 @@ function RespondentQuestionDetailContent() {
         </Alert>
       )}
 
-      {/* Question Content - Markdown rendered directly without Card wrapper, no title */}
-      {typeof question.content_data?.text === 'string' && question.content_data.text && (
-        <div className="markdown-content mb-8">
-          <EnhancedMarkdown
-            source={question.content_data.text}
-            theme={theme === 'dark' ? 'dark' : 'light'}
-          />
+      {/* Question Title */}
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold">{question.title}</h1>
+        <div className="mt-2 flex items-center gap-2">
+          <Badge variant="info">
+            {t('answers.version')}: {question.current_version || '-'}
+          </Badge>
         </div>
-      )}
-      {/* NOTE: Grading criteria (criteria_data) is intentionally NOT displayed for respondents */}
+      </div>
 
-      {/* Answer Submission Form - Fixed to MIXED mode (attachments first, then text) */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Send className="h-5 w-5" />
-            {t('answers.submit')}
-          </CardTitle>
-          <CardDescription>
-            {t('answers.submit_hint', 'Upload attachments and/or enter your answer text below')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Attachments first */}
-          <div className="space-y-2">
-            <Label>{t('questions.attachments')}</Label>
-            <EvaluationFileUpload
-              topicId={topicId}
-              questionId={questionId}
-              fileType="answer_attachment"
-              attachments={answerAttachments}
-              onChange={setAnswerAttachments}
-              maxFiles={MAX_BATCH_FILES}
-            />
-          </div>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="instructions" className="flex items-center gap-2">
+            <Info className="h-4 w-4" />
+            {t('answers.tabs.instructions')}
+          </TabsTrigger>
+          <TabsTrigger value="question" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            {t('answers.tabs.question')}
+          </TabsTrigger>
+          <TabsTrigger value="answer" className="flex items-center gap-2">
+            <Edit3 className="h-4 w-4" />
+            {t('answers.tabs.answer')}
+          </TabsTrigger>
+        </TabsList>
 
-          {/* Text input second */}
-          <div className="space-y-2">
-            <Label htmlFor="answerText">{t('answers.content')}</Label>
-            <Textarea
-              id="answerText"
-              value={answerText}
-              onChange={e => setAnswerText(e.target.value)}
-              placeholder={t('answers.content_placeholder')}
-              rows={8}
-            />
-          </div>
+        {/* Tab 1: Instructions */}
+        <TabsContent value="instructions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Info className="h-5 w-5" />
+                {t('answers.instructions.title')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-text-secondary">{t('answers.instructions.description')}</p>
 
-          <div className="flex justify-end">
-            <Button variant="primary" onClick={handleSubmitClick} disabled={submitting}>
-              {submitting ? '...' : t('answers.submit')}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border border-border bg-surface p-3">
+                  <span className="text-sm text-text-secondary">{t('answers.instructions.time_limit')}</span>
+                  <Badge variant="info">{t('answers.instructions.no_limit')}</Badge>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border bg-surface p-3">
+                  <span className="text-sm text-text-secondary">{t('answers.instructions.attempts')}</span>
+                  <Badge variant="info">{t('answers.instructions.unlimited')}</Badge>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                <p className="text-sm text-text-primary">{t('answers.instructions.submission_notice')}</p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-surface p-4">
+                <p className="text-sm text-text-secondary">{t('answers.instructions.version_notice')}</p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 2: Question Content */}
+        <TabsContent value="question" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                {t('questions.content')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {typeof question.content_data?.text === 'string' && question.content_data.text ? (
+                <div className="markdown-content">
+                  <EnhancedMarkdown
+                    source={question.content_data.text}
+                    theme={theme === 'dark' ? 'dark' : 'light'}
+                  />
+                </div>
+              ) : (
+                <p className="text-text-muted">{t('questions.no_content')}</p>
+              )}
+
+              {/* Question attachments */}
+              {question.content_data?.attachments && question.content_data.attachments.length > 0 && (
+                <div className="mt-6 space-y-2">
+                  <Label>{t('questions.content_attachments')}</Label>
+                  {renderAttachmentList(question.content_data.attachments as EvalAttachment[])}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Tab 3: Answer Submission */}
+        <TabsContent value="answer" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Send className="h-5 w-5" />
+                {t('answers.submit')}
+              </CardTitle>
+              <CardDescription>
+                {t('answers.submit_hint', 'Upload attachments and/or enter your answer text below')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Attachments first */}
+              <div className="space-y-2">
+                <Label>{t('questions.attachments')}</Label>
+                <EvaluationFileUpload
+                  topicId={topicId}
+                  questionId={questionId}
+                  fileType="answer_attachment"
+                  attachments={answerAttachments}
+                  onChange={setAnswerAttachments}
+                  maxFiles={MAX_BATCH_FILES}
+                />
+              </div>
+
+              {/* Text input second */}
+              <div className="space-y-2">
+                <Label htmlFor="answerText">{t('answers.content')}</Label>
+                <Textarea
+                  id="answerText"
+                  value={answerText}
+                  onChange={e => setAnswerText(e.target.value)}
+                  placeholder={t('answers.content_placeholder')}
+                  rows={8}
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <Button variant="primary" onClick={handleSubmitClick} disabled={submitting}>
+                  {submitting ? '...' : t('answers.submit')}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* My Previous Answers */}
+          {myAnswers.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('answers.history')}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {myAnswers.map(answer => (
+                    <div key={answer.id} className="rounded-lg border p-4">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-sm text-text-secondary">
+                          {t('answers.submitted_at')}: {new Date(answer.submitted_at).toLocaleString()}
+                        </span>
+                        <div className="flex gap-2">
+                          {answer.is_latest && <Badge variant="success">{t('answers.latest')}</Badge>}
+                          <Badge variant="info">
+                            {t('answers.version')}: {answer.question_version}
+                          </Badge>
+                        </div>
+                      </div>
+                      {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
+                        <p className="whitespace-pre-wrap">{answer.content_data.text}</p>
+                      )}
+                      {renderAttachmentList(answer.content_data?.attachments as EvalAttachment[])}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* Confirmation Dialog */}
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
@@ -284,38 +404,6 @@ function RespondentQuestionDetailContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* My Previous Answers */}
-      {myAnswers.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('answers.history')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {myAnswers.map(answer => (
-                <div key={answer.id} className="rounded-lg border p-4">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm text-text-secondary">
-                      {t('answers.submitted_at')}: {new Date(answer.submitted_at).toLocaleString()}
-                    </span>
-                    <div className="flex gap-2">
-                      {answer.is_latest && <Badge variant="success">{t('answers.latest')}</Badge>}
-                      <Badge variant="info">
-                        {t('answers.version')}: {answer.question_version}
-                      </Badge>
-                    </div>
-                  </div>
-                  {typeof answer.content_data?.text === 'string' && answer.content_data.text && (
-                    <p className="whitespace-pre-wrap">{answer.content_data.text}</p>
-                  )}
-                  {renderAttachmentList(answer.content_data?.attachments as EvalAttachment[])}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   )
 }

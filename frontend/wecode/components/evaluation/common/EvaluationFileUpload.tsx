@@ -67,15 +67,16 @@ export function EvaluationFileUpload({
       if (!files || files.length === 0) return
       if (disabled) return
 
-      const remainingSlots = maxFiles - attachments.length
+      const remainingSlots = maxFiles - attachments.length - uploadingFiles.size
       if (remainingSlots <= 0) {
         return
       }
 
       const filesToUpload = Array.from(files).slice(0, remainingSlots)
 
+      // Upload files sequentially (one by one) to avoid race conditions
       for (const file of filesToUpload) {
-        const fileId = `${file.name}-${Date.now()}`
+        const fileId = `${file.name}-${Date.now()}-${Math.random()}`
 
         // Add to uploading state
         setUploadingFiles(prev => {
@@ -110,7 +111,8 @@ export function EvaluationFileUpload({
             content_type: file.type,
           }
 
-          onChange([...attachments, newAttachment])
+          // Update attachments using functional update to get latest state
+          onChange(prevAttachments => [...prevAttachments, newAttachment])
 
           // Remove from uploading state
           setUploadingFiles(prev => {
@@ -134,7 +136,7 @@ export function EvaluationFileUpload({
         }
       }
     },
-    [topicId, questionId, fileType, attachments, onChange, maxFiles, disabled]
+    [topicId, questionId, fileType, onChange, maxFiles, disabled, uploadingFiles.size]
   )
 
   const handleRemove = useCallback(

@@ -165,6 +165,21 @@
     "view": "查看作答",
     "new_version_available": "题目有新版本，您可能需要重新作答。",
     "respondents": "答题人数",
+    "tabs": {
+      "instructions": "考前须知",
+      "question": "考题内容",
+      "answer": "答案提交"
+    },
+    "instructions": {
+      "title": "考前须知",
+      "description": "请仔细阅读以下注意事项后再开始作答：",
+      "time_limit": "作答时间限制",
+      "no_limit": "无时间限制",
+      "attempts": "作答次数",
+      "unlimited": "无限制",
+      "submission_notice": "提交后可多次修改，系统将保留您的最新作答。",
+      "version_notice": "题目更新后，您需要基于最新版本重新作答。"
+    },
     "progress": {
       "title": "我的进度",
       "total": "总题数",
