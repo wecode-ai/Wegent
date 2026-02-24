@@ -15,6 +15,7 @@ Uses unified ExecutionRequest from shared.models.execution.
 import json
 import os
 import subprocess
+import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -53,6 +54,10 @@ from shared.telemetry.config import get_otel_config
 from shared.utils.http_client import traced_session, traced_sync_client
 
 logger = setup_logger(__name__)
+
+# Maximum size of TASK_INFO to pass via environment variable (32KB)
+# If TASK_INFO exceeds this size, it will be written to a file and mounted as a volume
+TASK_INFO_ENV_MAX_SIZE = 32 * 1024  # 32KB
 
 
 class DockerExecutor(Executor):
@@ -645,7 +650,20 @@ class DockerExecutor(Executor):
         # Sandbox containers should wait for execute requests via API
         is_sandbox = get_metadata_field(task, "type") == "sandbox"
         if not is_sandbox:
-            cmd.extend(["-e", f"TASK_INFO={task_str}"])
+            # Check if TASK_INFO is too large to pass via environment variable
+            task_info_size = len(task_str.encode("utf-8"))
+            if task_info_size > TASK_INFO_ENV_MAX_SIZE:
+                # Write TASK_INFO to a temporary file and mount it as a volume
+                # This avoids "argument list too long" errors for large task data
+                task_info_file = self._write_task_info_to_temp_file(task_id, task_str)
+                cmd.extend(
+                    ["-v", f"{task_info_file}:/root/.wegent/.config/task_info:ro"]
+                )
+                logger.info(
+                    f"TASK_INFO too large ({task_info_size} bytes), using file mount for task {task_id}"
+                )
+            else:
+                cmd.extend(["-e", f"TASK_INFO={task_str}"])
         else:
             # For sandbox mode, pass auth_token and task_id via environment variables
             # so the container can call Backend API to fetch and download skills
@@ -714,6 +732,40 @@ class DockerExecutor(Executor):
         cmd.append(final_image)
 
         return cmd
+
+    def _write_task_info_to_temp_file(self, task_id: str, task_str: str) -> str:
+        """
+        Write TASK_INFO to a temporary file for mounting as a volume.
+
+        This is used when TASK_INFO is too large to pass via environment variable,
+        to avoid "argument list too long" errors.
+
+        The file is created in the system temp directory with a unique name
+        based on the task ID.
+
+        Args:
+            task_id: The task ID for creating a unique filename
+            task_str: The JSON-serialized task data
+
+        Returns:
+            Path to the temporary file
+        """
+        # Create a temp directory for task info files if it doesn't exist
+        temp_dir = os.path.join(tempfile.gettempdir(), "wegent_task_info")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Create a unique filename based on task_id
+        # Use a sanitized version of task_id to ensure valid filename
+        task_id_str = str(task_id)
+        safe_task_id = "".join(c if c.isalnum() else "_" for c in task_id_str)
+        temp_file = os.path.join(temp_dir, f"{safe_task_id}_task_info.json")
+
+        # Write the task info to the file
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(task_str)
+
+        logger.debug(f"Wrote TASK_INFO to temporary file: {temp_file}")
+        return temp_file
 
     def _add_task_api_domain(self, cmd: List[str]) -> None:
         """Add TASK_API_DOMAIN environment variable for executor to access backend API"""

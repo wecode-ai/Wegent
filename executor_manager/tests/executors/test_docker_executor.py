@@ -2,13 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import os
 import subprocess
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 
-from executor_manager.executors.docker.executor import DockerExecutor
+from executor_manager.executors.docker.executor import (
+    TASK_INFO_ENV_MAX_SIZE,
+    DockerExecutor,
+)
 from shared.status import TaskStatus
 
 
@@ -334,3 +338,104 @@ class TestDockerExecutor:
             progress=50,
             status=TaskStatus.RUNNING.value,
         )
+
+    def test_write_task_info_to_temp_file(self, executor):
+        """Test writing TASK_INFO to temporary file"""
+        task_id = "test-task-123"
+        task_data = {"key": "value", "nested": {"data": "test"}}
+        task_str = json.dumps(task_data)
+
+        temp_file = executor._write_task_info_to_temp_file(task_id, task_str)
+
+        # Verify file was created
+        assert os.path.exists(temp_file)
+        assert "wegent_task_info" in temp_file
+        assert "test_task_123" in temp_file
+
+        # Verify content
+        with open(temp_file, "r") as f:
+            content = f.read()
+            assert content == task_str
+            assert json.loads(content) == task_data
+
+        # Cleanup
+        os.remove(temp_file)
+
+    def test_write_task_info_sanitizes_task_id(self, executor):
+        """Test that task_id is sanitized for filename"""
+        task_id = "test/task:with.special@chars"
+        task_str = '{"data": "test"}'
+
+        temp_file = executor._write_task_info_to_temp_file(task_id, task_str)
+
+        # Verify file was created with sanitized name
+        assert os.path.exists(temp_file)
+        assert "test_task_with_special_chars" in temp_file
+
+        # Cleanup
+        os.remove(temp_file)
+
+    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
+    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    def test_prepare_docker_command_large_task_info_uses_file_mount(
+        self, mock_callback, mock_get_ports, executor
+    ):
+        """Test that large TASK_INFO uses file mount instead of env var"""
+        mock_get_ports.return_value = set()
+        mock_callback.return_value = "http://callback.url"
+
+        # Create a large task that exceeds TASK_INFO_ENV_MAX_SIZE
+        large_content = "x" * (TASK_INFO_ENV_MAX_SIZE + 1000)
+        large_task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "mode": "code",
+            "type": "online",
+            "large_field": large_content,
+        }
+
+        task_info = executor._extract_task_info(large_task)
+        executor_name = "test-executor"
+        executor_image = "test/executor:latest"
+
+        cmd = executor._prepare_docker_command(
+            large_task, task_info, executor_name, executor_image
+        )
+
+        # Verify file mount is used instead of environment variable
+        cmd_str = " ".join(cmd)
+        assert "/root/.wegent/.config/task_info" in cmd_str
+        assert "TASK_INFO=" not in cmd_str
+
+        # Cleanup any created temp files
+        import tempfile
+
+        temp_dir = os.path.join(tempfile.gettempdir(), "wegent_task_info")
+        if os.path.exists(temp_dir):
+            for f in os.listdir(temp_dir):
+                if f.endswith("_task_info.json"):
+                    os.remove(os.path.join(temp_dir, f))
+
+    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
+    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    def test_prepare_docker_command_small_task_info_uses_env_var(
+        self, mock_callback, mock_get_ports, executor, sample_task
+    ):
+        """Test that small TASK_INFO uses environment variable"""
+        mock_get_ports.return_value = set()
+        mock_callback.return_value = "http://callback.url"
+
+        task_info = executor._extract_task_info(sample_task)
+        executor_name = "test-executor"
+        executor_image = "test/executor:latest"
+
+        cmd = executor._prepare_docker_command(
+            sample_task, task_info, executor_name, executor_image
+        )
+
+        # Verify environment variable is used for small task info
+        cmd_str = " ".join(cmd)
+        assert "TASK_INFO=" in cmd_str
+        assert "/root/.wegent/.config/task_info" not in cmd_str
