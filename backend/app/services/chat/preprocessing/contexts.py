@@ -92,7 +92,7 @@ async def process_contexts(
     db: Session,
     context_ids: List[int],
     message: str,
-) -> str | dict[str, Any]:
+) -> str | list[dict[str, Any]]:
     """
     Process multiple contexts and build message with all context contents.
 
@@ -102,7 +102,8 @@ async def process_contexts(
         message: Original message
 
     Returns:
-        Message with all context contents prepended, or vision structure for images
+        Message with all context contents prepended, or OpenAI Responses API
+        format vision content list for images
     """
     if not context_ids:
         return message
@@ -157,17 +158,27 @@ def _build_vision_structure(
     text_contents: List[str],
     image_contents: List[dict],
     message: str,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """
-    Build multi-vision structure for image contexts.
+    Build OpenAI Responses API format vision content for image contexts.
+
+    This function generates content in OpenAI Responses API format:
+    [
+        {"type": "input_text", "text": "..."},
+        {"type": "input_image", "image_url": "data:image/jpeg;base64,..."},
+        ...
+    ]
 
     Args:
         text_contents: List of text content strings (attachment contents without XML tags)
         image_contents: List of image content dictionaries
+        message: User message
 
     Returns:
-        Vision structure dictionary
+        List of content blocks in OpenAI Responses API format
     """
+    content: list[dict[str, Any]] = []
+
     # Collect all attachment content parts (text documents and image headers)
     all_attachment_parts = []
 
@@ -189,11 +200,22 @@ def _build_vision_structure(
 
     combined_text += f"[User Question]:\n{message}"
 
-    return {
-        "type": "multi_vision",
-        "text": combined_text,
-        "images": image_contents,
-    }
+    # Add text content block
+    content.append({"type": "input_text", "text": combined_text})
+
+    # Add image content blocks
+    for img in image_contents:
+        image_base64 = img.get("image_base64", "")
+        mime_type = img.get("mime_type", "image/jpeg")
+        if image_base64:
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{mime_type};base64,{image_base64}",
+                }
+            )
+
+    return content
 
 
 def _combine_text_contents(text_contents: List[str], message: str) -> str:
@@ -284,7 +306,7 @@ async def process_attachments(
     attachment_ids: List[int],
     user_id: int,
     message: str,
-) -> str | dict[str, Any]:
+) -> str | list[dict[str, Any]]:
     """
     Process multiple attachments and build message with all attachment contents.
 
@@ -297,7 +319,8 @@ async def process_attachments(
         message: Original message
 
     Returns:
-        Message with all attachment contents prepended, or vision structure for images
+        Message with all attachment contents prepended, or OpenAI Responses API
+        format vision content list for images
     """
     return await process_contexts(db, attachment_ids, message)
 
@@ -969,7 +992,7 @@ async def _process_attachment_contexts_for_message(
     message: str,
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
-) -> str | dict[str, Any]:
+) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
 
@@ -980,7 +1003,8 @@ async def _process_attachment_contexts_for_message(
         subtask_id: Optional subtask ID for building sandbox path
 
     Returns:
-        Message with attachment contents prepended, or vision structure for images
+        Message with attachment contents prepended, or OpenAI Responses API
+        format vision content list for images
     """
     if not attachment_contexts:
         return message

@@ -128,19 +128,18 @@ class TestMessageConverterBuildMessages:
         assert messages[0]["role"] == "user"
 
     def test_build_messages_vision_message(self):
-        """Test building vision messages."""
+        """Test building vision messages with OpenAI Responses API format."""
         # Create a tiny valid image (1x1 red PNG)
         tiny_png = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
         )
         image_b64 = base64.b64encode(tiny_png).decode()
 
-        vision_data = {
-            "type": "vision",
-            "text": "What is this?",
-            "image_base64": image_b64,
-            "mime_type": "image/png",
-        }
+        # OpenAI Responses API format: list of content blocks
+        vision_data = [
+            {"type": "input_text", "text": "What is this?"},
+            {"type": "input_image", "image_url": f"data:image/png;base64,{image_b64}"},
+        ]
 
         messages = MessageConverter.build_messages(
             history=[],
@@ -152,7 +151,7 @@ class TestMessageConverterBuildMessages:
         user_msg = messages[-1]
         assert user_msg["role"] == "user"
         assert isinstance(user_msg["content"], list)
-        # Should have text and image blocks
+        # Should have text and image blocks (converted to LangChain format)
         text_block = next(
             (b for b in user_msg["content"] if b.get("type") == "text"), None
         )
@@ -162,6 +161,8 @@ class TestMessageConverterBuildMessages:
         assert text_block is not None
         assert image_block is not None
         assert "What is this?" in text_block["text"]
+        # Verify image_url is in LangChain format (nested dict)
+        assert "url" in image_block["image_url"]
 
 
 class TestMessageConverterExtractText:

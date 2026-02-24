@@ -86,21 +86,34 @@ def test_create_image_block_compression():
             )
 
 
-def test_build_vision_message_compression():
-    """Test that build_vision_message triggers compression."""
+def test_build_messages_with_vision_compression():
+    """Test that build_messages with vision content triggers compression."""
     img_data = create_test_image(200, 200)
     b64_img = base64.b64encode(img_data).decode("utf-8")
+
+    # Create OpenAI Responses API format input with image
+    content_blocks = [
+        {"type": "input_text", "text": "describe this image"},
+        {"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64_img}"},
+    ]
 
     # Mock compression
     with patch.object(
         MessageConverter, "_compress_image", return_value=b"compressed"
     ) as mock_compress:
-        # Mock limit
+        # Mock limit to force compression
         with patch("chat_shell.messages.converter.MAX_IMAGE_SIZE_BYTES", 1):
-            msg = MessageConverter.build_vision_message("text", b64_img, "image/jpeg")
+            messages = MessageConverter.build_messages(
+                history=[],
+                current_message=content_blocks,
+                system_prompt="",
+                inject_datetime=False,
+            )
 
             mock_compress.assert_called_once()
-            content = msg["content"]
+            # The last message should be the user message with vision content
+            user_msg = messages[-1]
+            content = user_msg["content"]
             assert len(content) == 2
             assert content[1]["type"] == "image_url"
             # Check if url contains encoded "compressed" bytes

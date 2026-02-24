@@ -485,7 +485,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
 
         # Database operation: quick in, quick out
-        success, error = _register_device(user_id, payload.device_id, payload.name, payload.client_ip)
+        success, error = _register_device(
+            user_id, payload.device_id, payload.name, payload.client_ip
+        )
         if not success:
             return {"error": f"Registration failed: {error}"}
 
