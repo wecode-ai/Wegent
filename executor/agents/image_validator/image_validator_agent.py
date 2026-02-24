@@ -14,12 +14,14 @@ compatibility with specific shell types.
 
 import re
 import subprocess
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.status import TaskStatus
+if TYPE_CHECKING:
+    from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("image_validator")
 
@@ -74,14 +76,14 @@ class ImageValidatorAgent(Agent):
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: Union[Dict[str, Any], "ExecutionRequest"],
         emitter: ResponsesAPIEmitter,
     ):
         super().__init__(task_data, emitter)
-        self.task_data = task_data
+        # task_data is already stored in base class as ExecutionRequest
 
         # Get validation parameters from task data
-        validation_params = task_data.get("validation_params", {})
+        validation_params = self.task_data.validation_params or {}
         self.shell_type = validation_params.get("shell_type", "")
         self.image = validation_params.get("image", "")
         self.shell_name = validation_params.get("shell_name", "")

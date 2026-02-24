@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from executor.agents.base import Agent
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 
 
@@ -16,21 +17,21 @@ class TestAgent:
     @pytest.fixture
     def task_data(self):
         """Sample task data for testing"""
-        return {
-            "task_id": 123,
-            "subtask_id": 456,
-            "task_title": "Test Task",
-            "subtask_title": "Test Subtask",
-            "git_url": "https://github.com/test/repo.git",
-            "branch_name": "main",
-            "user": {
+        return ExecutionRequest(
+            task_id=123,
+            subtask_id=456,
+            task_title="Test Task",
+            subtask_title="Test Subtask",
+            git_url="https://github.com/test/repo.git",
+            branch_name="main",
+            user={
                 "user_name": "testuser",
                 "git_token": "test_token",
                 "git_id": "12345",
                 "git_login": "testuser",
                 "git_email": "test@example.com",
             },
-        }
+        )
 
     @pytest.fixture
     def mock_emitter(self):
@@ -50,10 +51,10 @@ class TestAgent:
 
     def test_agent_initialization(self, agent, task_data):
         """Test agent initialization with task data"""
-        assert agent.task_id == task_data["task_id"]
-        assert agent.subtask_id == task_data["subtask_id"]
-        assert agent.task_title == task_data["task_title"]
-        assert agent.subtask_title == task_data["subtask_title"]
+        assert agent.task_id == task_data.task_id
+        assert agent.subtask_id == task_data.subtask_id
+        assert agent.task_title == task_data.task_title
+        assert agent.subtask_title == task_data.subtask_title
         assert agent.execution_status == TaskStatus.INITIALIZED
         assert agent.project_path is None
 
@@ -121,7 +122,17 @@ class TestAgent:
 
     def test_download_code_empty_git_url(self, agent):
         """Test download_code with empty git_url"""
-        agent.task_data["git_url"] = ""
+        # Create a new ExecutionRequest with empty git_url
+        new_task_data = ExecutionRequest(
+            task_id=agent.task_id,
+            subtask_id=agent.subtask_id,
+            task_title=agent.task_title,
+            subtask_title=agent.subtask_title,
+            git_url="",
+            branch_name=agent.task_data.branch_name,
+            user=agent.task_data.user,
+        )
+        agent.task_data = new_task_data
         agent.download_code()
         # Should not raise exception
         assert True
@@ -130,7 +141,7 @@ class TestAgent:
     def test_setup_git_config(self, mock_set_config, agent):
         """Test git config setup"""
         mock_set_config.return_value = (True, None)
-        user_config = agent.task_data["user"]
+        user_config = agent.task_data.user
         project_path = "/test/path"
 
         agent.setup_git_config(user_config, project_path)

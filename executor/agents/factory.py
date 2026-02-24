@@ -6,7 +6,7 @@
 
 # -*- coding: utf-8 -*-
 
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.base import Agent
@@ -15,6 +15,8 @@ from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.image_validator.image_validator_agent import ImageValidatorAgent
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
+if TYPE_CHECKING:
+    from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("agent_factory")
 
@@ -40,7 +42,7 @@ class AgentFactory:
     def get_agent(
         cls,
         agent_type: str,
-        task_data: Dict[str, Any],
+        task_data: Union[Dict[str, Any], "ExecutionRequest"],
         emitter: ResponsesAPIEmitter,
     ) -> Optional[Agent]:
         """

@@ -8,7 +8,7 @@
 
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 import requests
 
@@ -21,6 +21,8 @@ from shared.models import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult
 from shared.status import TaskStatus
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
+if TYPE_CHECKING:
+    from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("dify_agent")
 
@@ -50,23 +52,23 @@ class DifyAgent(Agent):
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: Union[Dict[str, Any], "ExecutionRequest"],
         emitter: ResponsesAPIEmitter,
     ):
         """
         Initialize the Dify Agent
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data dictionary or ExecutionRequest object
             emitter: Emitter instance for sending events. Required parameter.
         """
         super().__init__(task_data, emitter)
 
-        self.prompt = task_data.get("prompt", "")
-        self.bot_prompt = task_data.get("bot_prompt", "")
+        self.prompt = self.task_data.prompt
+        self.bot_prompt = self.task_data.bot_prompt or ""
 
         # Extract Dify configuration from Model environment variables
-        self.dify_config = self._extract_dify_config(task_data)
+        self.dify_config = self._extract_dify_config(self.task_data.to_dict())
 
         # Extract params from prompt (highest priority - task-specific parameters)
         self.prompt, prompt_params = self._extract_params_from_prompt(self.prompt)
@@ -116,7 +118,7 @@ class DifyAgent(Agent):
         Extract Dify configuration from task_data
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data dictionary or ExecutionRequest object
 
         Returns:
             Dict containing Dify configuration (api_key, base_url, app_id, params)

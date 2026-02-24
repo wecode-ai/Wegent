@@ -10,7 +10,7 @@ import asyncio
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
@@ -64,6 +64,9 @@ from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
+if TYPE_CHECKING:
+    from shared.models.execution import ExecutionRequest
+
 logger = setup_logger("claude_code_agent")
 
 
@@ -114,23 +117,23 @@ class ClaudeCodeAgent(Agent):
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: Union[Dict[str, Any], "ExecutionRequest"],
         emitter: ResponsesAPIEmitter,
     ):
         """
         Initialize the Claude Code Agent
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data dictionary or ExecutionRequest object
             emitter: Emitter instance for sending events. Required parameter.
         """
         super().__init__(task_data, emitter)
         self.client = None
-        self.new_session = task_data.get("new_session", False)
+        self.new_session = self.task_data.new_session
 
         # Extract bot_id from task_data for session key
         bot_id = None
-        bots = task_data.get("bot", [])
+        bots = self.task_data.bot
         if bots and len(bots) > 0:
             bot_id = bots[0].get("id")
 
@@ -143,18 +146,18 @@ class ClaudeCodeAgent(Agent):
             self.task_id, bot_id, self.new_session, self.task_state_manager
         )
 
-        self.prompt = task_data.get("prompt", "")
+        self.prompt = self.task_data.prompt
         self.project_path = None
 
         # Load hooks on first initialization
         HookManager.load_hooks()
 
         # Extract Claude Code options from task_data
-        self.options = extract_claude_options(task_data)
+        self.options = extract_claude_options(self.task_data.to_dict())
         self.options["permission_mode"] = "bypassPermissions"
 
         # Set git-related environment variables
-        setup_git_authentication(task_data)
+        setup_git_authentication(self.task_data.to_dict())
 
         # Initialize thinking step manager
         self.thinking_manager = ThinkingStepManager(

@@ -10,7 +10,7 @@ import asyncio
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.agent import Agent as AgnoSDKAgent
 from agno.agent import RunEvent
@@ -26,6 +26,10 @@ from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
+from shared.telemetry.decorators import add_span_event, trace_async
+
+if TYPE_CHECKING:
+    from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
 from .config_utils import ConfigManager
@@ -93,14 +97,14 @@ class AgnoAgent(Agent):
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: Union[Dict[str, Any], "ExecutionRequest"],
         emitter: ResponsesAPIEmitter,
     ):
         """
         Initialize the Agno Agent
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data dictionary or ExecutionRequest object
             emitter: Emitter instance for sending events. Required parameter.
         """
         super().__init__(task_data, emitter)
@@ -108,10 +112,10 @@ class AgnoAgent(Agent):
         # Check if this subtask should start a new session (no conversation history)
         # This is used in pipeline mode when user confirms a stage and proceeds to next bot
         # The next bot should not inherit conversation history from previous bot
-        new_session = task_data.get("new_session", False)
+        new_session = self.task_data.new_session
         if new_session:
             # Use subtask_id as session_id to create a fresh session without history
-            self.session_id = task_data.get("subtask_id", self.task_id)
+            self.session_id = self.task_data.subtask_id if self.task_data.subtask_id else self.task_id
             logger.info(
                 f"Pipeline mode: new_session=True, using subtask_id {self.session_id} as session_id "
                 f"to avoid inheriting conversation history from previous bot"
@@ -119,15 +123,15 @@ class AgnoAgent(Agent):
         else:
             # Default behavior: use task_id as session_id to maintain conversation history
             self.session_id = self.task_id
-        self.prompt = task_data.get("prompt", "")
+        self.prompt = self.task_data.prompt
         self.project_path = None
 
         self.team: Optional[Team] = None
         self.single_agent: Optional[AgnoSDKAgent] = None
         self.current_run_id: Optional[str] = None
 
-        self.mode = task_data.get("mode", "")
-        self.task_data = task_data
+        self.mode = self.task_data.mode or ""
+        # task_data is already stored in base class as ExecutionRequest
 
         # Accumulated reasoning content from DeepSeek R1 and similar models
         self.accumulated_reasoning_content: str = ""

@@ -80,6 +80,7 @@ class ExecutionRequest:
 
     # === Prompt ===
     system_prompt: str = ""
+    bot_prompt: str = ""  # Bot-specific prompt for Dify agent
     # User message - can be string or OpenAI Responses API format content list
     # When vision content is present, this will be a list of content blocks:
     # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
