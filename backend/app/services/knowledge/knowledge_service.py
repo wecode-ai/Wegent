@@ -54,7 +54,7 @@ def _get_user_kb_permission_level(
     db: Session,
     kb: Kind,
     user_id: int,
-) -> str:
+) -> Optional[str]:
     """
     Get user's permission level for a knowledge base.
 
@@ -70,7 +70,7 @@ def _get_user_kb_permission_level(
         user_id: User ID
 
     Returns:
-        Permission level: 'manage', 'edit', or 'view'
+        Permission level: 'manage', 'edit', or 'view', or None if no access
     """
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import PermissionLevel, ResourceType
@@ -99,13 +99,16 @@ def _get_user_kb_permission_level(
         if role:
             permission = GROUP_ROLE_TO_PERMISSION_LEVEL.get(role, "view")
             return permission
+        # No role in group - no access
+        return None
 
     # 4. Organization KB - all authenticated users have view access
     if _is_organization_namespace(db, kb.namespace):
         return "view"
 
-    # No access - but this function assumes access is already checked
-    return "view"
+    # No access - user is not creator, has no explicit permission,
+    # and KB is not in organization namespace
+    return None
 
 
 def _check_kb_permission(
@@ -129,6 +132,10 @@ def _check_kb_permission(
         True if user has permission, False otherwise
     """
     user_level = _get_user_kb_permission_level(db, kb, user_id)
+
+    # If user_level is None, user has no access
+    if user_level is None:
+        return False
 
     level_hierarchy = {
         "manage": 3,
@@ -593,6 +600,10 @@ class KnowledgeService:
             # Developer can only update name and description
             # Check if any non-allowed fields are being updated
             user_level = _get_user_kb_permission_level(db, kb, user_id)
+            if user_level is None:
+                # This should not happen since _check_kb_permission already passed
+                # But handle it defensively
+                raise ValueError("No access to knowledge base")
             if user_level == "edit":
                 # Developer can only update name and description
                 # Check if any restricted fields are being modified
@@ -796,8 +807,18 @@ class KnowledgeService:
         if not kb:
             return None
 
+        # Check permission for organization-level knowledge base (admin only)
+        if _is_organization_namespace(db, kb.namespace):
+            from app.models.user import User
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError(
+                    "Only admin can update organization knowledge base type"
+                )
+
         # Check permission for team knowledge base
-        if kb.namespace != "default":
+        elif kb.namespace != "default":
             # Only Owner/Maintainer can update KB type (manage permission required)
             if not _check_kb_permission(db, kb, user_id, "manage"):
                 raise ValueError(

@@ -34,7 +34,6 @@ from app.services.knowledge.knowledge_service import (
     _get_user_kb_permission_level,
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -117,7 +116,9 @@ def test_group(test_db: Session, test_group_owner: User) -> Namespace:
 
 
 @pytest.fixture(scope="function")
-def test_subgroup(test_db: Session, test_group: Namespace, test_group_owner: User) -> Namespace:
+def test_subgroup(
+    test_db: Session, test_group: Namespace, test_group_owner: User
+) -> Namespace:
     """Create a test subgroup to test permission inheritance."""
     namespace = Namespace(
         name=f"{test_group.name}/subgroup",
@@ -223,6 +224,7 @@ def subgroup_kb(
     test_db: Session,
     test_subgroup: Namespace,
     test_group_owner: User,
+    group_owner_member: NamespaceMember,
 ) -> Kind:
     """Create a knowledge base in the test subgroup."""
     kb_data = KnowledgeBaseCreate(
@@ -320,7 +322,9 @@ class TestGetUserKbPermissionLevel:
         group_maintainer_member: NamespaceMember,
     ):
         """Maintainer should have 'manage' permission."""
-        level = _get_user_kb_permission_level(test_db, group_kb, test_group_maintainer.id)
+        level = _get_user_kb_permission_level(
+            test_db, group_kb, test_group_maintainer.id
+        )
         assert level == "manage"
 
     def test_developer_has_edit_permission(
@@ -331,7 +335,9 @@ class TestGetUserKbPermissionLevel:
         group_developer_member: NamespaceMember,
     ):
         """Developer should have 'edit' permission."""
-        level = _get_user_kb_permission_level(test_db, group_kb, test_group_developer.id)
+        level = _get_user_kb_permission_level(
+            test_db, group_kb, test_group_developer.id
+        )
         assert level == "edit"
 
     def test_reporter_has_view_permission(
@@ -350,8 +356,8 @@ class TestGetUserKbPermissionLevel:
     ):
         """Non-member should not have access to group KB."""
         level = _get_user_kb_permission_level(test_db, group_kb, test_user.id)
-        # Returns 'view' as default, but access check should fail before this
-        assert level == "view"
+        # Returns None for no access (not 'view' anymore)
+        assert level is None
 
 
 # =============================================================================
@@ -399,7 +405,9 @@ class TestCheckKbPermission:
         assert not _check_kb_permission(
             test_db, group_kb, test_group_reporter.id, "manage"
         )
-        assert not _check_kb_permission(test_db, group_kb, test_group_reporter.id, "edit")
+        assert not _check_kb_permission(
+            test_db, group_kb, test_group_reporter.id, "edit"
+        )
         assert _check_kb_permission(test_db, group_kb, test_group_reporter.id, "view")
 
 
@@ -578,7 +586,9 @@ class TestUpdateKnowledgeBase:
                 retriever_name="test_retriever",
             ),
         )
-        with pytest.raises(ValueError, match="Developer can only update name and description"):
+        with pytest.raises(
+            ValueError, match="Developer can only update name and description"
+        ):
             KnowledgeService.update_knowledge_base(
                 db=test_db,
                 knowledge_base_id=group_kb.id,
