@@ -24,7 +24,7 @@ async def load_mcp_tools(
     task_id: int,
     bot_name: str = "",
     bot_namespace: str = "default",
-    task_data: dict[str, Any] | None = None,
+    task_data: Any = None,
 ) -> Any:
     """Load MCP tools for a task.
 

@@ -3,14 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Tests for ExecutionRequest.to_mcp_task_data() method.
+Tests for MCP placeholder replacement using ExecutionRequest directly.
 
-Verifies that to_mcp_task_data() correctly derives the MCP placeholder
-replacement dict from ExecutionRequest attributes, without needing a
-redundant task_data field.
+Verifies that replace_mcp_server_variables() can accept an ExecutionRequest
+object (not just a dict) and resolve ${{path}} placeholders via attribute access.
+Also tests the task_token property alias on ExecutionRequest.
 """
 
 from shared.models.execution import ExecutionRequest
+from shared.utils.mcp_utils import replace_mcp_server_variables
 
 # Constants for test data
 TEST_USER_ID = 42
@@ -59,62 +60,93 @@ def _make_request(**overrides: object) -> ExecutionRequest:
     return ExecutionRequest(**defaults)
 
 
-class TestToMcpTaskData:
-    """Tests for ExecutionRequest.to_mcp_task_data() method."""
+class TestTaskTokenProperty:
+    """Tests for the task_token property alias on ExecutionRequest."""
 
-    def test_returns_all_required_fields(self) -> None:
-        """to_mcp_task_data() should return all fields needed for MCP placeholder replacement."""
-        request = _make_request()
-        td = request.to_mcp_task_data()
-
-        assert td["task_id"] == TEST_TASK_ID
-        assert td["subtask_id"] == TEST_SUBTASK_ID
-        assert td["team_id"] == TEST_TEAM_ID
-        assert td["user"]["name"] == TEST_USER_NAME
-        assert td["user"]["id"] == TEST_USER_ID
-        assert td["git_repo"] == "test/repo"
-        assert td["git_url"] == "https://github.com/test/repo.git"
-        assert td["git_domain"] == TEST_GIT_DOMAIN
-        assert td["branch_name"] == "main"
-        assert td["bot"] == TEST_BOT_CONFIG
-        assert td["backend_url"] == TEST_BACKEND_URL
-
-    def test_user_matches_request_user(self) -> None:
-        """to_mcp_task_data()['user'] should be the same object as request.user."""
-        request = _make_request()
-        td = request.to_mcp_task_data()
-
-        assert td["user"] is request.user
-
-    def test_handles_none_git_fields(self) -> None:
-        """When git fields are None, to_mcp_task_data() should still work."""
-        request = _make_request(
-            git_repo=None,
-            git_url=None,
-            git_domain=None,
-            branch_name=None,
-        )
-        td = request.to_mcp_task_data()
-
-        assert td["git_repo"] is None
-        assert td["git_url"] is None
-        assert td["git_domain"] is None
-        assert td["branch_name"] is None
-        # Other fields should still be present
-        assert td["user"]["name"] == TEST_USER_NAME
-        assert td["backend_url"] == TEST_BACKEND_URL
-
-    def test_auth_token_mapped_to_task_token(self) -> None:
-        """auth_token on ExecutionRequest should map to task_token in the dict."""
+    def test_task_token_aliases_auth_token(self) -> None:
+        """task_token property should return auth_token value."""
         request = _make_request(auth_token="my-auth-token-xyz")  # noqa: S106
-        td = request.to_mcp_task_data()
+        assert request.task_token == "my-auth-token-xyz"
 
-        assert td["task_token"] == "my-auth-token-xyz"  # noqa: S105
-        assert "auth_token" not in td
-
-    def test_empty_auth_token_maps_to_empty_task_token(self) -> None:
-        """Default empty auth_token should produce empty task_token."""
+    def test_task_token_defaults_to_empty(self) -> None:
+        """Default ExecutionRequest should have empty task_token."""
         request = ExecutionRequest()
-        td = request.to_mcp_task_data()
+        assert request.task_token == ""
 
-        assert td["task_token"] == ""
+
+class TestMcpPlaceholderWithExecutionRequest:
+    """Tests that replace_mcp_server_variables() works with ExecutionRequest directly."""
+
+    def test_user_name_placeholder_replaced(self) -> None:
+        """${{user.name}} should be resolved via ExecutionRequest.user['name']."""
+        mcp_servers = {
+            "server": {
+                "headers": {"X-User": "${{user.name}}"},
+            }
+        }
+        request = _make_request()
+
+        result = replace_mcp_server_variables(mcp_servers, request)
+
+        assert result["server"]["headers"]["X-User"] == TEST_USER_NAME
+
+    def test_top_level_fields_replaced(self) -> None:
+        """Top-level attributes like task_id, git_repo should be resolved."""
+        mcp_servers = {
+            "server": {
+                "url": "https://${{git_domain}}/api/mcp",
+                "headers": {
+                    "X-Task": "${{task_id}}",
+                    "X-Repo": "${{git_repo}}",
+                    "X-Branch": "${{branch_name}}",
+                },
+            }
+        }
+        request = _make_request()
+
+        result = replace_mcp_server_variables(mcp_servers, request)
+
+        assert result["server"]["url"] == f"https://{TEST_GIT_DOMAIN}/api/mcp"
+        assert result["server"]["headers"]["X-Task"] == str(TEST_TASK_ID)
+        assert result["server"]["headers"]["X-Repo"] == "test/repo"
+        assert result["server"]["headers"]["X-Branch"] == "main"
+
+    def test_task_token_placeholder_resolved_via_property(self) -> None:
+        """${{task_token}} should resolve via the task_token property alias."""
+        mcp_servers = {
+            "server": {
+                "url": "${{backend_url}}/mcp/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"},
+            }
+        }
+        request = _make_request()
+
+        result = replace_mcp_server_variables(mcp_servers, request)
+
+        assert result["server"]["url"] == f"{TEST_BACKEND_URL}/mcp/sse"
+        assert result["server"]["headers"]["Authorization"] == f"Bearer {TEST_AUTH_TOKEN}"
+
+    def test_nested_user_git_token_replaced(self) -> None:
+        """${{user.git_token}} should resolve via ExecutionRequest.user['git_token']."""
+        mcp_servers = {
+            "server": {
+                "env": {"GIT_TOKEN": "${{user.git_token}}"},
+            }
+        }
+        request = _make_request()
+
+        result = replace_mcp_server_variables(mcp_servers, request)
+
+        assert result["server"]["env"]["GIT_TOKEN"] == TEST_GIT_TOKEN  # noqa: S105
+
+    def test_none_request_preserves_placeholders(self) -> None:
+        """When task_data is None, placeholders should remain unresolved."""
+        mcp_servers = {
+            "server": {
+                "headers": {"X-User": "${{user.name}}"},
+            }
+        }
+
+        result = replace_mcp_server_variables(mcp_servers, None)
+
+        assert result["server"]["headers"]["X-User"] == "${{user.name}}"

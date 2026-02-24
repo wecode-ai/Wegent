@@ -208,9 +208,6 @@ class TaskRequestBuilder:
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
 
-        # Generate auth token for the request
-        auth_token = self._generate_auth_token(task, subtask, user)
-
         return ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
@@ -250,7 +247,7 @@ class TaskRequestBuilder:
             history_limit=history_limit,
             new_session=new_session,
             collaboration_model=collaboration_model,
-            auth_token=auth_token,
+            auth_token=self._generate_auth_token(task, subtask, user),
             backend_url=settings.BACKEND_INTERNAL_URL,
             attachments=attachments or [],
             is_subscription=is_subscription,

@@ -148,7 +148,7 @@ def wrap_tool_with_protection(
 
 
 def build_connections(
-    config: dict[str, dict[str, Any]], task_data: dict[str, Any] | None = None
+    config: dict[str, dict[str, Any]], task_data: Any = None
 ) -> dict[str, Connection]:
     """Build connection configs from server configuration dict.
 
@@ -157,7 +157,7 @@ def build_connections(
 
     Args:
         config: MCP servers configuration dict
-        task_data: Optional dict for variable substitution
+        task_data: Optional data source for variable substitution (dict or ExecutionRequest)
 
     Returns:
         Dict of server_name to Connection config
@@ -233,13 +233,13 @@ class MCPClient:
     """
 
     def __init__(
-        self, config: dict[str, dict[str, Any]], task_data: dict[str, Any] | None = None
+        self, config: dict[str, dict[str, Any]], task_data: Any = None
     ):
         """Initialize MCP client.
 
         Args:
             config: MCP servers configuration dict. Supports ${{path}} placeholders.
-            task_data: Optional dict for variable substitution in config.
+            task_data: Optional data source for variable substitution (dict or ExecutionRequest).
         """
         self.config = config
         self.task_data = task_data

@@ -90,13 +90,13 @@ def extract_mcp_servers_config(config: Dict[str, Any]) -> Optional[Any]:
     return None
 
 
-def _get_nested_value(data: Dict[str, Any], path: str) -> Optional[Any]:
+def _get_nested_value(data: Any, path: str) -> Optional[Any]:
     """
-    Get a value from a nested dictionary using dot-separated path.
-    Supports both dict key access and list index access.
+    Get a value from a nested structure using dot-separated path.
+    Supports dict key access, list index access, and object attribute access.
 
     Args:
-        data: The dictionary to search in
+        data: The data to search in (dict, dataclass, or any object with attributes)
         path: Dot-separated path string, e.g., "user.name", "git_repo", or "bot.0.name"
 
     Returns:
@@ -137,13 +137,16 @@ def _get_nested_value(data: Dict[str, Any], path: str) -> Optional[Any]:
             except ValueError:
                 # Key is not a valid integer
                 return None
+        elif hasattr(current, key):
+            # Support dataclass and other objects with attributes
+            current = getattr(current, key)
         else:
             return None
 
     return current
 
 
-def _replace_placeholders_in_string(text: str, task_data: Dict[str, Any]) -> str:
+def _replace_placeholders_in_string(text: str, task_data: Any) -> str:
     """
     Replace all ${{path}} placeholders in a string with values from task_data.
 
@@ -179,7 +182,7 @@ def _replace_placeholders_in_string(text: str, task_data: Dict[str, Any]) -> str
 
 
 def _replace_variables_recursive(
-    obj: Union[Dict[str, Any], List[Any], str, Any], task_data: Dict[str, Any]
+    obj: Union[Dict[str, Any], List[Any], str, Any], task_data: Any
 ) -> Union[Dict[str, Any], List[Any], str, Any]:
     """
     Recursively process an object and replace placeholders in all string values.
@@ -206,7 +209,7 @@ def _replace_variables_recursive(
 
 
 def replace_mcp_server_variables(
-    mcp_servers: Optional[Any], task_data: Optional[Dict[str, Any]]
+    mcp_servers: Optional[Any], task_data: Optional[Any]
 ) -> Optional[Any]:
     """
     Replace ${{path}} placeholders in MCP servers configuration with values from task_data.
@@ -216,8 +219,10 @@ def replace_mcp_server_variables(
 
     Args:
         mcp_servers: The MCP servers configuration dictionary
-        task_data: The task data dictionary containing replacement values.
+        task_data: Data source for replacement values. Can be a dict or any object
+                   with attributes (e.g., ExecutionRequest dataclass).
                    Supports nested access like "user.name" -> task_data["user"]["name"]
+                   or task_data.user["name"].
 
     Returns:
         A new dictionary with all placeholders replaced. If a path doesn't exist

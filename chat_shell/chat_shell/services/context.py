@@ -400,7 +400,7 @@ class ChatContext:
             user_selected_skills=self._request.user_selected_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
-            task_data=self._request.to_mcp_task_data(),
+            task_data=self._request,
         )
         add_span_event(
             "skill_tools_prepared",
@@ -438,7 +438,7 @@ class ChatContext:
             if auth:
                 server_config[server_name]["headers"] = auth
 
-            client = MCPClient(server_config, task_data=self._request.to_mcp_task_data())
+            client = MCPClient(server_config, task_data=self._request)
             await client.connect()
             if client.is_connected:
                 tools = client.get_tools()
@@ -499,7 +499,7 @@ class ChatContext:
         from chat_shell.tools.mcp import MCPClient
 
         try:
-            client = MCPClient(server_config, task_data=self._request.to_mcp_task_data())
+            client = MCPClient(server_config, task_data=self._request)
             await client.connect()
             if client.is_connected:
                 tools = client.get_tools()

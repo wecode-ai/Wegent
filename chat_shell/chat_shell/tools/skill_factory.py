@@ -141,7 +141,7 @@ async def prepare_skill_tools(
     user_selected_skills: Optional[list[str]] = None,
     user_name: str = "",
     auth_token: str = "",
-    task_data: dict[str, Any] | None = None,
+    task_data: Any = None,
 ) -> tuple[list[Any], list[Any]]:
     """
     Prepare skill tools dynamically using SkillToolRegistry.
@@ -481,7 +481,7 @@ async def prepare_skill_tools(
 async def _load_skill_mcp_tools(
     mcp_configs: dict[str, dict[str, Any]],
     task_id: int,
-    task_data: dict[str, Any] | None = None,
+    task_data: Any = None,
 ) -> tuple[list[Any], list[Any]]:
     """
     Load MCP tools from skill-level MCP server configurations.
