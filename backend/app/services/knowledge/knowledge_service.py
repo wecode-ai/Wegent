@@ -615,7 +615,7 @@ class KnowledgeService:
                     "exempt_calls_before_check",
                 ]
                 for field in restricted_fields:
-                    if getattr(data, field, None) is not None:
+                    if field in data.model_fields_set:
                         raise ValueError(
                             "Developer can only update name and description"
                         )
