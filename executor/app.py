@@ -97,21 +97,60 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
 
     try:
+        task_info_loaded = False
+
+        # Case 1: TASK_INFO already provided (legacy mode or validation tasks)
         if os.getenv("TASK_INFO"):
+            logger.info("TASK_INFO environment variable found, attempting to run task")
+            task_info_loaded = True
+
+        # Case 2: TASK_ID + AUTH_TOKEN provided, fetch task info from API
+        elif os.getenv("TASK_ID") and os.getenv("AUTH_TOKEN"):
+            task_id = os.getenv("TASK_ID")
+            auth_token = os.getenv("AUTH_TOKEN")
+            logger.info(
+                f"TASK_ID and AUTH_TOKEN found, fetching task info from API for task {task_id}"
+            )
+
+            from executor.services.api_client import fetch_task_execution_info
+
+            task_info = fetch_task_execution_info(task_id, auth_token)
+
+            if task_info:
+                # DEBUG: Save fetched task info to file for comparison
+                debug_file = f"/tmp/task_info_api_{task_id}.json"
+                try:
+                    with open(debug_file, "w") as f:
+                        json.dump(task_info, f, indent=2, default=str)
+                    logger.info(f"[DEBUG] API task info saved to {debug_file}")
+                except Exception as e:
+                    logger.warning(f"[DEBUG] Failed to save API task info: {e}")
+
+                # Set TASK_INFO env var so existing code can access it
+                os.environ["TASK_INFO"] = json.dumps(task_info)
+                logger.info(
+                    f"Successfully fetched task info from API for task {task_id}"
+                )
+                task_info_loaded = True
+            else:
+                logger.error(
+                    f"Failed to fetch task info from API for task {task_id}, cannot run task"
+                )
+
+        # Run task if we have task info
+        if task_info_loaded:
             # Generate a request_id for startup task execution
-            # This ensures logs have a request_id even without HTTP request
             startup_request_id = str(uuid.uuid4())[:8]
             from shared.telemetry.context import set_request_context
 
             set_request_context(startup_request_id)
 
-            logger.info("TASK_INFO environment variable found, attempting to run task")
             # Use async version to avoid "event loop already running" error
             status = await run_task_async()
             logger.info(f"Task execution status: {status}")
         else:
             logger.info(
-                "No TASK_INFO environment variable found, skipping task execution"
+                "No TASK_INFO or TASK_ID+AUTH_TOKEN found, skipping task execution"
             )
     except Exception as e:
         logger.exception(f"Error running task at startup: {str(e)}")

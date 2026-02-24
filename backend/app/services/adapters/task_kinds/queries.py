@@ -1131,3 +1131,114 @@ class TaskQueryMixin:
             "skills": list(all_skills),
             "preload_skills": list(all_preload_skills),
         }
+
+    def get_task_execution_info(
+        self, db: Session, *, task_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """Get task execution info for executor.
+
+        Returns all data needed by executor to run the task.
+        This is used when executor fetches task data after container startup,
+        avoiding large environment variables.
+
+        Uses TaskRequestBuilder to ensure the same format as executor_manager.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+
+        Returns:
+            Dict containing task execution info in ExecutionRequest format
+        """
+        from app.models.subtask import Subtask, SubtaskRole
+        from app.models.task import TaskResource
+        from app.models.user import User
+        from app.services.execution.request_builder import TaskRequestBuilder
+
+        # Get task
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+
+        # Get user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+
+        # Get latest USER subtask (the one with the actual user message in prompt field)
+        # Note: ASSISTANT subtasks have empty prompt field, their content is in result field
+        subtask = (
+            db.query(Subtask)
+            .filter(Subtask.task_id == task_id, Subtask.role == SubtaskRole.USER)
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+        if not subtask:
+            raise ValueError(f"No user subtask found for task {task_id}")
+
+        # Get team
+        from app.schemas.kind import Task as TaskCRD
+
+        task_crd = TaskCRD.model_validate(task.json)
+        if not task_crd.spec.teamRef:
+            raise ValueError(f"Task {task_id} has no team reference")
+
+        from app.models.kind import Kind
+
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == task_crd.spec.teamRef.name,
+                Kind.kind == "Team",
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if not team:
+            # Try by name + user_id
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.name == task_crd.spec.teamRef.name,
+                    Kind.kind == "Team",
+                    Kind.user_id == task.user_id,
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+        if not team:
+            raise ValueError(f"Team {task_crd.spec.teamRef.name} not found")
+
+        # Build ExecutionRequest using TaskRequestBuilder
+        # Note: attachments are fetched separately by executor via API
+        builder = TaskRequestBuilder(db)
+        execution_request = builder.build(
+            subtask=subtask,
+            task=task,
+            user=user,
+            team=team,
+            message=subtask.prompt or "",
+            attachments=[],  # Executor will fetch attachments separately
+        )
+
+        # Convert to OpenAI Responses API format (same as executor_manager's format)
+        # This ensures executor receives data in the expected format
+        from shared.models.openai_converter import OpenAIRequestConverter
+
+        openai_request = OpenAIRequestConverter.from_execution_request(
+            execution_request
+        )
+
+        logger.info(
+            f"[get_task_execution_info] task_id={task_id}, subtask_id={subtask.id}"
+        )
+        return openai_request

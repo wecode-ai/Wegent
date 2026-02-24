@@ -83,7 +83,7 @@ def replace_placeholders_with_sources(
     # Find all placeholders in format ${source_spec}
     pattern = r"\$\{([^}]+)\}"
 
-    logger.info(f"data_sources:{data_sources}, template:{template}")
+    # logger.info(f"data_sources:{data_sources}, template:{template}")
 
     def replace_match(match):
         source_spec = match.group(1)

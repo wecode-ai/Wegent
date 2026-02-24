@@ -609,6 +609,18 @@ class DockerExecutor(Executor):
         # Convert task to JSON string
         task_str = json.dumps(task)
 
+        # DEBUG: Save original task info to file for comparison
+        debug_file = f"/tmp/task_info_em_{task_id}_{subtask_id}.json"
+        try:
+            import os as os_module
+
+            os_module.makedirs("/tmp", exist_ok=True)
+            with open(debug_file, "w") as f:
+                json.dump(task, f, indent=2, default=str)
+            logger.info(f"[DEBUG] Executor Manager task info saved to {debug_file}")
+        except Exception as e:
+            logger.warning(f"[DEBUG] Failed to save EM task info: {e}")
+
         # Basic command
         cmd = [
             "docker",
@@ -641,20 +653,24 @@ class DockerExecutor(Executor):
             logger.info("Disabled seccomp for compatibility with older kernel")
 
         # Environment variables
-        # For sandbox type, do NOT set TASK_INFO to prevent auto-execution
-        # Sandbox containers should wait for execute requests via API
-        is_sandbox = get_metadata_field(task, "type") == "sandbox"
-        if not is_sandbox:
+        # Always pass TASK_ID and AUTH_TOKEN so executor can fetch task info via API
+        # This avoids "argument list too long" errors from large TASK_INFO env var
+        auth_token = get_metadata_field(task, "auth_token")
+        if auth_token:
+            cmd.extend(["-e", f"AUTH_TOKEN={auth_token}"])
+        task_id = get_metadata_field(task, "task_id")
+        if task_id:
+            cmd.extend(["-e", f"TASK_ID={task_id}"])
+
+        # For validation/legacy mode: still pass TASK_INFO directly
+        # This allows gradual migration and backward compatibility
+        is_validation = get_metadata_field(task, "type") == "validation"
+        use_legacy_mode = (
+            os.getenv("EXECUTOR_LEGACY_TASK_INFO_MODE", "").lower() == "true"
+        )
+        if is_validation or use_legacy_mode:
             cmd.extend(["-e", f"TASK_INFO={task_str}"])
-        else:
-            # For sandbox mode, pass auth_token and task_id via environment variables
-            # so the container can call Backend API to fetch and download skills
-            auth_token = get_metadata_field(task, "auth_token")
-            if auth_token:
-                cmd.extend(["-e", f"AUTH_TOKEN={auth_token}"])
-            sandbox_task_id = get_metadata_field(task, "task_id")
-            if sandbox_task_id:
-                cmd.extend(["-e", f"TASK_ID={sandbox_task_id}"])
+            logger.info(f"Using legacy TASK_INFO mode for task {task_id}")
 
         cmd.extend(
             [

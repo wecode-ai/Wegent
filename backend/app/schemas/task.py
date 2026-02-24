@@ -4,9 +4,9 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.subtask import SubtaskWithBot
 from app.schemas.team import TeamInDB
@@ -254,3 +254,27 @@ class TaskSkillsResponse(BaseModel):
     team_namespace: str = "default"
     skills: List[str] = []  # All bot skills (deduplicated)
     preload_skills: List[str] = []  # Skills to preload
+
+
+class TaskExecutionInfo(BaseModel):
+    """Task execution info for executor.
+
+    Returns all data needed by executor to run the task.
+    This is used when executor fetches task data after container startup,
+    avoiding large environment variables.
+
+    Matches the OpenAI Responses API format (same as executor_manager's format).
+    """
+
+    # OpenAI Responses API format fields (same as executor_manager format)
+    model: str = ""
+    input: Union[str, List[Dict[str, Any]]] = ""
+    instructions: Optional[str] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    stream: bool = True
+    metadata: Dict[str, Any] = {}
+    model_config_dict: Dict[str, Any] = Field(default={}, alias="model_config")
+    background: bool = False
+
+    class Config:
+        from_attributes = True

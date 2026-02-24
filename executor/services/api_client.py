@@ -32,7 +32,7 @@ import os
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -540,3 +540,62 @@ def fetch_task_attachments(task_id: str, auth_token: str) -> TaskAttachmentsResu
     except Exception as e:
         logger.exception("[fetch_task_attachments] Error")
         return TaskAttachmentsResult(attachments=[], error=str(e))
+
+
+def fetch_task_execution_info(
+    task_id: str, auth_token: str
+) -> Optional[Dict[str, Any]]:
+    """Fetch task execution info via Backend API.
+
+    Calls GET /api/tasks/{task_id}/execution-info to get all data
+    needed by executor to run the task. This is used when executor
+    fetches task data after container startup, avoiding large
+    environment variables that cause "argument list too long" errors.
+
+    Args:
+        task_id: Task ID
+        auth_token: API auth token (JWT or Task Token)
+
+    Returns:
+        Task info dict or None if failed
+    """
+    if not auth_token or not task_id:
+        logger.warning(
+            f"[fetch_task_execution_info] Missing required params: "
+            f"auth_token={'present' if auth_token else 'missing'}, task_id={task_id}"
+        )
+        return None
+
+    try:
+        logger.info(
+            f"[fetch_task_execution_info] Calling API for task {task_id}, "
+            f"auth_token={'present' if auth_token else 'missing'}"
+        )
+        client = ApiClient(auth_token)
+        logger.info(f"[fetch_task_execution_info] API base URL: {client.api_base_url}")
+
+        response = client.get(f"/api/tasks/{task_id}/execution-info")
+
+        if response:
+            data = response.json()
+            # bot is a list of bot configs, get first bot name
+            bot_list = data.get("bot", [])
+            bot_name = "unknown"
+            if bot_list and isinstance(bot_list, list) and len(bot_list) > 0:
+                bot_name = bot_list[0].get("name", "unknown")
+            logger.info(
+                f"[fetch_task_execution_info] Fetched execution info for task {task_id}: "
+                f"prompt_length={len(data.get('prompt', ''))}, "
+                f"bot_name={bot_name}"
+                f"response={response}"
+            )
+            return data
+        else:
+            logger.warning(
+                f"[fetch_task_execution_info] API returned no response for task {task_id}"
+            )
+            return None
+
+    except Exception as e:
+        logger.exception(f"[fetch_task_execution_info] Error: {e}")
+        return None

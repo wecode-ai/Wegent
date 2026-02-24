@@ -32,6 +32,7 @@ from app.schemas.task import (
     PipelineStageInfo,
     TaskCreate,
     TaskDetail,
+    TaskExecutionInfo,
     TaskInDB,
     TaskListResponse,
     TaskLiteListResponse,
@@ -232,6 +233,38 @@ def get_task_skills(
         skills list (deduplicated), and preload_skills list.
     """
     return task_kinds_service.get_task_skills(
+        db=db, task_id=task_id, user_id=current_user.id
+    )
+
+
+@router.get("/{task_id}/execution-info", response_model=TaskExecutionInfo)
+def get_task_execution_info(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    db: Session = Depends(get_db),
+):
+    """Get task execution info for executor.
+
+    Returns all data needed by executor to run the task.
+    This is used when executor fetches task data after container startup,
+    avoiding large environment variables that cause "argument list too long" errors.
+
+    Supports multiple authentication methods:
+    - JWT Token (standard user authentication)
+    - API Key (for executor/service authentication)
+    - Task Token (for executor task-based authentication)
+
+    Returns:
+        TaskExecutionInfo with all data needed by executor:
+        - task_id, subtask_id
+        - prompt, instructions
+        - bot configuration
+        - git_url, branch_name, etc.
+        - auth_token for subsequent API calls
+        - attachments list
+        - model_config
+    """
+    return task_kinds_service.get_task_execution_info(
         db=db, task_id=task_id, user_id=current_user.id
     )
 
