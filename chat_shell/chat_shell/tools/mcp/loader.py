@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from chat_shell.core.config import settings
+from shared.utils.mcp_utils import replace_mcp_server_variables
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,17 @@ async def load_mcp_tools(
             try:
                 config_data = json.loads(mcp_servers_config)
                 backend_servers = config_data.get("mcpServers", config_data)
+
+                # Apply variable substitution to backend MCP servers
+                # This replaces placeholders like ${{user.name}} with actual values
+                if task_data:
+                    backend_servers = replace_mcp_server_variables(
+                        backend_servers, task_data
+                    )
+                    logger.debug(
+                        "[MCP] Applied variable substitution to backend MCP servers"
+                    )
+
                 logger.info(
                     "[MCP] Loaded %d backend MCP servers from CHAT_MCP_SERVERS: %s",
                     len(backend_servers),

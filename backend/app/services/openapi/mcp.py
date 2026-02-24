@@ -17,7 +17,9 @@ from typing import Any, Dict, List
 logger = logging.getLogger(__name__)
 
 
-async def load_server_mcp_tools(task_id: int) -> Any:
+async def load_server_mcp_tools(
+    task_id: int, task_data: dict[str, Any] | None = None
+) -> Any:
     """
     Load server-side MCP tools from CHAT_MCP_SERVERS configuration.
 
@@ -26,6 +28,7 @@ async def load_server_mcp_tools(task_id: int) -> Any:
 
     Args:
         task_id: Task ID for session management and logging
+        task_data: Optional task data for variable substitution in MCP configs
 
     Returns:
         MCPClient instance or None if no server MCP configured
@@ -54,8 +57,8 @@ async def load_server_mcp_tools(task_id: int) -> Any:
             )
             return None
 
-        # Create MCP client with server configuration
-        client = MCPClient(backend_servers)
+        # Create MCP client with server configuration and variable substitution
+        client = MCPClient(backend_servers, task_data=task_data)
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
             logger.info(
@@ -82,7 +85,11 @@ async def load_server_mcp_tools(task_id: int) -> Any:
 
 
 async def load_bot_mcp_tools(
-    task_id: int, user_id: int, bot_name: str, bot_namespace: str = "default"
+    task_id: int,
+    user_id: int,
+    bot_name: str,
+    bot_namespace: str = "default",
+    task_data: dict[str, Any] | None = None,
 ) -> Any:
     """
     Load bot-specific MCP tools from Bot/Ghost mcpServers configuration.
@@ -95,6 +102,7 @@ async def load_bot_mcp_tools(
         user_id: User ID for resource lookup
         bot_name: Bot name to query Ghost MCP configuration
         bot_namespace: Bot namespace for Ghost query
+        task_data: Optional task data for variable substitution in MCP configs
 
     Returns:
         MCPClient instance or None if no bot MCP configured
@@ -132,8 +140,8 @@ async def load_bot_mcp_tools(
             )
             return None
 
-        # Create MCP client with bot configuration
-        client = MCPClient(bot_servers)
+        # Create MCP client with bot configuration and variable substitution
+        client = MCPClient(bot_servers, task_data=task_data)
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
             logger.info(
@@ -220,7 +228,9 @@ def _get_bot_mcp_servers_sync(
         db.close()
 
 
-async def load_custom_mcp_tools(task_id: int, mcp_servers: Dict[str, Any]) -> Any:
+async def load_custom_mcp_tools(
+    task_id: int, mcp_servers: Dict[str, Any], task_data: dict[str, Any] | None = None
+) -> Any:
     """
     Load custom MCP tools from user-provided configurations via API.
 
@@ -275,8 +285,8 @@ async def load_custom_mcp_tools(task_id: int, mcp_servers: Dict[str, Any]) -> An
             )
             return None
 
-        # Create MCP client with custom configuration
-        client = MCPClient(servers_config)
+        # Create MCP client with custom configuration and variable substitution
+        client = MCPClient(servers_config, task_data=task_data)
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
             logger.info(
