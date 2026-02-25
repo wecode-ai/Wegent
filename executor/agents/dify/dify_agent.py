@@ -633,7 +633,7 @@ class DifyAgent(Agent):
                     100,
                     TaskStatus.COMPLETED.value,
                     "Dify Agent execution completed",
-                    result=ExecutionResult(value=answer).dict(),
+                    result=ExecutionResult(value=answer).model_dump(),
                 )
                 return TaskStatus.COMPLETED
             else:

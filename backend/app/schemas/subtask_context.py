@@ -251,7 +251,7 @@ class AttachmentPreviewResponse(AttachmentDetailResponse):
         """Create preview response from SubtaskContext model."""
         base = AttachmentDetailResponse.from_context(context, truncation_info)
         return cls(
-            **base.dict(),
+            **base.model_dump(),
             preview_type=preview_type,
             preview_text=preview_text,
             download_url=download_url,

@@ -31,11 +31,11 @@ class ThinkingStep(BaseModel):
         default=None, description="Anthropic tool_use_id (standard identifier)"
     )
 
-    def dict(self, **kwargs) -> Dict[str, Any]:
-        """Override dict method to exclude None values"""
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        """Override model_dump method to exclude None values"""
         # Exclude None values by default
         kwargs.setdefault("exclude_none", True)
-        return super().dict(**kwargs)
+        return super().model_dump(**kwargs)
 
 
 class ExecutionResult(BaseModel):
@@ -49,8 +49,8 @@ class ExecutionResult(BaseModel):
     thinking: List[ThinkingStep] = []
     reasoning_content: Optional[str] = None  # Reasoning content from DeepSeek R1 etc.
 
-    def dict(self, **kwargs) -> Dict[str, Any]:
-        """Override dict method to exclude None values"""
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        """Override model_dump method to exclude None values"""
         # Exclude None values by default
         kwargs.setdefault("exclude_none", True)
-        return super().dict(**kwargs)
+        return super().model_dump(**kwargs)

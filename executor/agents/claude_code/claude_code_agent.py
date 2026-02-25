@@ -891,7 +891,7 @@ class ClaudeCodeAgent(Agent):
                 result=ExecutionResult(
                     value=result_content,
                     thinking=self.thinking_manager.get_thinking_steps(),
-                ).dict(),
+                ).model_dump(),
             )
             return TaskStatus.COMPLETED
         else:
@@ -908,7 +908,7 @@ class ClaudeCodeAgent(Agent):
                 f"${{thinking.failed_no_content}} {execution_type}",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
             return TaskStatus.FAILED
 
@@ -941,7 +941,7 @@ class ClaudeCodeAgent(Agent):
             f"${{thinking.execution_failed}} {execution_type}: {error_message}",
             result=ExecutionResult(
                 thinking=self.thinking_manager.get_thinking_steps()
-            ).dict(),
+            ).model_dump(),
         )
         return TaskStatus.FAILED
 

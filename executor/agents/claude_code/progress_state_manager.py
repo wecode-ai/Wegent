@@ -9,6 +9,7 @@
 """
 Progress State Manager - Unified management of thinking and workbench states
 """
+
 import os
 import threading
 from datetime import datetime
@@ -231,7 +232,7 @@ class ProgressStateManager:
         # Automatically add thinking steps
         if include_thinking and "thinking" not in result:
             result["thinking"] = [
-                step.dict() for step in self.thinking_manager.get_thinking_steps()
+                step.model_dump() for step in self.thinking_manager.get_thinking_steps()
             ]
 
         # Automatically add workbench data
@@ -254,7 +255,7 @@ class ProgressStateManager:
         """
         result = ExecutionResult(
             thinking=self.thinking_manager.get_thinking_steps()
-        ).dict()
+        ).model_dump()
         if self.workbench_data is not None:
             result["workbench"] = self.workbench_data
         return result

@@ -369,7 +369,7 @@ class AgnoAgent(Agent):
                 "Starting Agno Agent",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             # Check if this is a subscription task - subscription tasks need to wait for completion
@@ -473,7 +473,7 @@ class AgnoAgent(Agent):
                 "${{thinking.starting_agent_async}}",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             # Add trace event for async execution started
@@ -695,7 +695,7 @@ class AgnoAgent(Agent):
             f"${{thinking.execution_failed}} {execution_type}: {error_message}",
             result=ExecutionResult(
                 thinking=self.thinking_manager.get_thinking_steps()
-            ).dict(),
+            ).model_dump(),
         )
 
         return TaskStatus.FAILED
@@ -1007,7 +1007,7 @@ class AgnoAgent(Agent):
                 "${{thinking.starting_agent_streaming}}",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             self.add_thinking_step_by_key(
@@ -1143,7 +1143,7 @@ class AgnoAgent(Agent):
                 "${{thinking.starting_team_streaming}}",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             # Run with streaming enabled
