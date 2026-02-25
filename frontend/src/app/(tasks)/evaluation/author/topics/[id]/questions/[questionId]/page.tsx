@@ -224,6 +224,40 @@ function QuestionDetailContent() {
     return t('topics.published')
   }
 
+  // Render attachment list for display mode
+  const renderAttachmentList = (attachments: EvalAttachment[] | undefined, label: string) => {
+    if (!attachments || attachments.length === 0) return null
+    return (
+      <div className="mt-4 space-y-2">
+        <Label>{label}</Label>
+        <div className="space-y-2">
+          {attachments.map((attachment, index) => (
+            <div
+              key={attachment.key || index}
+              className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2"
+            >
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded bg-primary/10">
+                  <span className="text-xs font-medium text-primary">
+                    {attachment.filename.split('.').pop()?.toUpperCase().slice(0, 3) || 'FILE'}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{attachment.filename}</p>
+                  {attachment.file_size && (
+                    <p className="text-xs text-text-muted">
+                      {(attachment.file_size / 1024).toFixed(1)} KB
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="container mx-auto max-w-3xl px-4 py-8">
@@ -487,36 +521,7 @@ function QuestionDetailContent() {
                 ) : (
                   <p className="text-text-muted">{t('questions.no_content')}</p>
                 )}
-                {/* Content attachments */}
-                {question.content_data?.attachments && question.content_data.attachments.length > 0 && (
-                  <div className="mt-4 space-y-2">
-                    <Label>{t('questions.content_attachments')}</Label>
-                    <div className="space-y-2">
-                      {(question.content_data.attachments as EvalAttachment[]).map((attachment, index) => (
-                        <div
-                          key={attachment.key || index}
-                          className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2"
-                        >
-                          <div className="flex items-center gap-2">
-                            <div className="h-10 w-10 rounded bg-primary/10 flex items-center justify-center">
-                              <span className="text-xs font-medium text-primary">
-                                {attachment.filename.split('.').pop()?.toUpperCase().slice(0, 3) || 'FILE'}
-                              </span>
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium">{attachment.filename}</p>
-                              {attachment.file_size && (
-                                <p className="text-xs text-text-muted">
-                                  {(attachment.file_size / 1024).toFixed(1)} KB
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {renderAttachmentList(question.content_data?.attachments as EvalAttachment[] | undefined, t('questions.content_attachments'))}
               </div>
 
               {/* Display mode - Criteria (Markdown rendered) */}
@@ -532,36 +537,7 @@ function QuestionDetailContent() {
                 ) : (
                   <p className="text-text-muted">{t('questions.no_criteria')}</p>
                 )}
-                {/* Criteria attachments */}
-                {question.criteria_data?.attachments && question.criteria_data.attachments.length > 0 && (
-                  <div className="mt-4 space-y-2">
-                    <Label>{t('questions.criteria_attachments')}</Label>
-                    <div className="space-y-2">
-                      {(question.criteria_data.attachments as EvalAttachment[]).map((attachment, index) => (
-                        <div
-                          key={attachment.key || index}
-                          className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2"
-                        >
-                          <div className="flex items-center gap-2">
-                            <div className="h-10 w-10 rounded bg-primary/10 flex items-center justify-center">
-                              <span className="text-xs font-medium text-primary">
-                                {attachment.filename.split('.').pop()?.toUpperCase().slice(0, 3) || 'FILE'}
-                              </span>
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium">{attachment.filename}</p>
-                              {attachment.file_size && (
-                                <p className="text-xs text-text-muted">
-                                  {(attachment.file_size / 1024).toFixed(1)} KB
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[] | undefined, t('questions.criteria_attachments'))}
               </div>
 
               {/* Metadata */}
