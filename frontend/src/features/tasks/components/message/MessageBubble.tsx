@@ -1207,6 +1207,7 @@ const MessageBubble = memo(
               taskId={selectedTaskDetail?.id}
               isPendingConfirmation={isPendingConfirmation}
               onStageConfirmed={onPipelineStageConfirmed}
+              readOnly={!!shareToken}
             />
           )
         }
