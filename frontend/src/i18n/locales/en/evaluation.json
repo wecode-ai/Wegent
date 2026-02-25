@@ -199,7 +199,12 @@
       "answered": "Answered",
       "reports": "Reports Received",
       "completion": "Completion Rate"
-    }
+    },
+    "upload_drag_hint": "Drag files here to upload",
+    "upload_format_hint": "Supports PDF, Word, images, and other common formats",
+    "uploaded_files": "Uploaded files",
+    "text_supplement": "Text supplement",
+    "auto_saved": "Auto-saved at"
   },
   "grading": {
     "title": "Grading",

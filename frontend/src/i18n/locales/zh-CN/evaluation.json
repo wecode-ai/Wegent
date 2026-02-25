@@ -199,7 +199,12 @@
       "answered": "已作答",
       "reports": "已收到报告",
       "completion": "完成率"
-    }
+    },
+    "upload_drag_hint": "拖拽文件到此处上传",
+    "upload_format_hint": "支持 PDF、Word、图片等常见格式",
+    "uploaded_files": "已上传文件",
+    "text_supplement": "文字补充说明",
+    "auto_saved": "自动保存于"
   },
   "grading": {
     "title": "评分",
