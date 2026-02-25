@@ -296,6 +296,7 @@
     "delete_failed": "Failed to delete",
     "download_failed": "Failed to download",
     "permission_denied": "Permission denied",
-    "not_found": "Not found"
+    "not_found": "Not found",
+    "question_not_found": "Question not found"
   }
 }

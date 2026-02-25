@@ -296,6 +296,7 @@
     "delete_failed": "删除失败",
     "download_failed": "下载失败",
     "permission_denied": "没有权限",
-    "not_found": "未找到"
+    "not_found": "未找到",
+    "question_not_found": "题目不存在"
   }
 }
