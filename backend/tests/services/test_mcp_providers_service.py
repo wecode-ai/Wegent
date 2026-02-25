@@ -9,6 +9,7 @@ import app.services.mcp_providers.service as service_module
 from app.schemas.user import MCPProviderKeys, UserPreferences
 from app.services.mcp_providers import MCPProviderDefinition
 from app.services.mcp_providers.service import MCPProviderService
+from shared.utils.crypto import encrypt_sensitive_data
 
 
 @pytest.mark.anyio
@@ -28,7 +29,9 @@ async def test_sync_servers_sets_error_details_for_unauthorized(monkeypatch):
     )
     monkeypatch.setattr(service_module, "PROVIDERS", [provider])
 
-    preferences = UserPreferences(mcp_provider_keys=MCPProviderKeys(mcp_router="token"))
+    preferences = UserPreferences(
+        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+    )
     success, _message, _servers, error_details = await MCPProviderService.sync_servers(
         provider_key="mcp_router",
         preferences=preferences,
@@ -55,7 +58,9 @@ async def test_sync_servers_sets_error_details_for_server_error(monkeypatch):
     )
     monkeypatch.setattr(service_module, "PROVIDERS", [provider])
 
-    preferences = UserPreferences(mcp_provider_keys=MCPProviderKeys(mcp_router="token"))
+    preferences = UserPreferences(
+        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+    )
     success, _message, _servers, error_details = await MCPProviderService.sync_servers(
         provider_key="mcp_router",
         preferences=preferences,
@@ -82,7 +87,9 @@ async def test_sync_servers_handles_empty_exception_message(monkeypatch):
     )
     monkeypatch.setattr(service_module, "PROVIDERS", [provider])
 
-    preferences = UserPreferences(mcp_provider_keys=MCPProviderKeys(mcp_router="token"))
+    preferences = UserPreferences(
+        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+    )
     success, _message, _servers, error_details = await MCPProviderService.sync_servers(
         provider_key="mcp_router",
         preferences=preferences,
@@ -109,7 +116,9 @@ async def test_sync_servers_handles_connect_error(monkeypatch):
     )
     monkeypatch.setattr(service_module, "PROVIDERS", [provider])
 
-    preferences = UserPreferences(mcp_provider_keys=MCPProviderKeys(mcp_router="token"))
+    preferences = UserPreferences(
+        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+    )
     success, message, _servers, error_details = await MCPProviderService.sync_servers(
         provider_key="mcp_router",
         preferences=preferences,
@@ -118,3 +127,33 @@ async def test_sync_servers_handles_connect_error(monkeypatch):
     assert success is False
     assert error_details == "connect_error"
     assert "Network error" in message
+
+
+@pytest.mark.anyio
+async def test_sync_servers_rejects_plaintext_token(monkeypatch):
+    async def _sync(_token: str):
+        return []
+
+    provider = MCPProviderDefinition(
+        key="mcp_router",
+        name="MCP Router",
+        name_en="MCP Router",
+        description="test",
+        discover_url="https://example.com",
+        api_key_url="https://example.com",
+        token_field_name="mcp_router",
+        sync_servers=_sync,
+    )
+    monkeypatch.setattr(service_module, "PROVIDERS", [provider])
+
+    preferences = UserPreferences(
+        mcp_provider_keys=MCPProviderKeys(mcp_router="plaintext")
+    )
+    success, message, _servers, error_details = await MCPProviderService.sync_servers(
+        provider_key="mcp_router",
+        preferences=preferences,
+    )
+
+    assert success is False
+    assert error_details == "invalid_api_key_format"
+    assert "invalid" in message.lower()

@@ -17,6 +17,7 @@ from app.schemas.mcp_providers import (
     MCPServerListResponse,
 )
 from app.schemas.user import MCPProviderKeys, UserInDB, UserPreferences, UserUpdate
+from app.services.mcp_providers.security import encrypt_mcp_provider_keys
 from app.services.mcp_providers.service import MCPProviderService
 from app.services.user import user_service
 from shared.logger import setup_logger
@@ -113,7 +114,7 @@ async def update_mcp_provider_keys(
                 else existing_keys.mcp_router
             ),
         )
-        existing_prefs.mcp_provider_keys = updated_keys
+        existing_prefs.mcp_provider_keys = encrypt_mcp_provider_keys(updated_keys)
 
         # Update user via service
         user_update = UserUpdate(preferences=existing_prefs)

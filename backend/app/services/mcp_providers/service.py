@@ -10,6 +10,7 @@ import httpx
 from app.schemas.mcp_providers import MCPProviderInfo, MCPServer
 from app.schemas.user import UserPreferences
 from app.services.mcp_providers import PROVIDERS
+from app.services.mcp_providers.security import decrypt_mcp_provider_key
 from shared.logger import setup_logger
 
 
@@ -41,9 +42,13 @@ class MCPProviderService:
         for provider in PROVIDERS:
             has_token = False
             if provider_keys:
-                has_token = (
-                    getattr(provider_keys, provider.token_field_name, None) is not None
+                encrypted_token = getattr(
+                    provider_keys, provider.token_field_name, None
                 )
+                try:
+                    has_token = bool(decrypt_mcp_provider_key(encrypted_token))
+                except ValueError:
+                    has_token = False
 
             result.append(
                 MCPProviderInfo(
@@ -73,9 +78,21 @@ class MCPProviderService:
         if not preferences or not preferences.mcp_provider_keys:
             return False, "API key not configured", [], None
 
-        token = getattr(preferences.mcp_provider_keys, provider.token_field_name, None)
-        if not token:
+        encrypted_token = getattr(
+            preferences.mcp_provider_keys, provider.token_field_name, None
+        )
+        if not encrypted_token:
             return False, "API key not configured", [], None
+
+        try:
+            token = decrypt_mcp_provider_key(encrypted_token)
+        except ValueError:
+            return (
+                False,
+                "API key format is invalid. Please save the API key again.",
+                [],
+                "invalid_api_key_format",
+            )
 
         MCPProviderService.logger.info(
             "Syncing MCP servers: provider_key=%s token_present=%s token_length=%s",
