@@ -59,6 +59,8 @@ export function EvaluationFileUpload({
 }: EvaluationFileUploadProps) {
   const { t } = useTranslation('evaluation')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const attachmentsRef = useRef<EvalAttachment[]>(attachments)
+  attachmentsRef.current = attachments
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, UploadingFile>>(new Map())
   const [isDragging, setIsDragging] = useState(false)
 
@@ -111,8 +113,8 @@ export function EvaluationFileUpload({
             content_type: file.type,
           }
 
-          // Update attachments using functional update to get latest state
-          onChange(prevAttachments => [...prevAttachments, newAttachment])
+          // Update attachments using ref to avoid stale closure in sequential uploads
+          onChange([...attachmentsRef.current, newAttachment])
 
           // Remove from uploading state
           setUploadingFiles(prev => {
