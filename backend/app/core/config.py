@@ -352,7 +352,7 @@ class Settings(BaseSettings):
     # Chat Shell service URL (only used when CHAT_SHELL_MODE="http")
     CHAT_SHELL_URL: str = "http://localhost:8100"
     # Executor Manager service URL (for ClaudeCode, Agno, Dify shell types)
-    EXECUTOR_MANAGER_URL: str = "http://localhost:8001/executor-manager"
+    EXECUTOR_MANAGER_URL: str = "http://localhost:8001"
     # Chat Shell service authentication token (only used when CHAT_SHELL_MODE="http")
     CHAT_SHELL_TOKEN: str = ""
     # Internal service authentication token (for HTTP mode communication)
