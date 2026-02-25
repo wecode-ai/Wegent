@@ -13,6 +13,10 @@ import {
   FileText,
   HelpCircle,
   Edit3,
+  History,
+  Download,
+  File,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,9 +25,13 @@ import { useQuestionDraft } from '../hooks/useQuestionDraft'
 import { useAnswerTimer } from '../hooks/useAnswerTimer'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { respondentGetQuestion, respondentSubmitAnswer } from '@wecode/api/evaluation-respondent'
+import {
+  respondentGetQuestion,
+  respondentSubmitAnswer,
+  respondentListAnswerHistory,
+} from '@wecode/api/evaluation-respondent'
 import { ContentType } from '@wecode/types/evaluation'
-import type { Question, Topic, EvalAttachment } from '@wecode/types/evaluation'
+import type { Question, Topic, EvalAttachment, Answer } from '@wecode/types/evaluation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,6 +47,8 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
 import { Textarea } from '@/components/ui/textarea'
 import { MAX_BATCH_FILES } from '@/hooks/useBatchAttachment'
+import { formatFileSize } from '@/apis/attachments'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 
 interface RespondentQuestionDesktopProps {
   topic: Topic
@@ -65,20 +75,43 @@ export function RespondentQuestionDesktop({
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
-  const [showInstructions, setShowInstructions] = useState(true)
 
   const { draft, lastSaved, saveDraft, clearDraft } = useQuestionDraft(questionId)
   const [answerText, setAnswerText] = useState('')
   const [attachments, setAttachments] = useState<EvalAttachment[]>([])
   const [showTextInput, setShowTextInput] = useState(false)
 
-  // Load draft on mount
+  // Last submitted answer
+  const [lastSubmittedAnswer, setLastSubmittedAnswer] = useState<Answer | null>(null)
+  const [showLastSubmitted, setShowLastSubmitted] = useState(false)
+
+  // Load draft and last submitted answer on mount
   useEffect(() => {
     if (draft) {
       setAnswerText(draft.text)
       setAttachments(draft.attachments)
     }
   }, [draft])
+
+  // Load last submitted answer
+  const loadLastSubmittedAnswer = useCallback(async () => {
+    try {
+      const response = await respondentListAnswerHistory({
+        question_id: questionId,
+        latest_only: true,
+        limit: 1,
+      })
+      if (response.items.length > 0) {
+        setLastSubmittedAnswer(response.items[0])
+      }
+    } catch {
+      // Silently fail - last submitted answer is not critical
+    }
+  }, [questionId])
+
+  useEffect(() => {
+    loadLastSubmittedAnswer()
+  }, [loadLastSubmittedAnswer])
 
   // Auto-save draft
   useEffect(() => {
@@ -134,12 +167,13 @@ export function RespondentQuestionDesktop({
         contentData.attachments = attachments
       }
 
-      await respondentSubmitAnswer(questionId, {
+      const newAnswer = await respondentSubmitAnswer(questionId, {
         content_type: ContentType.MIXED,
         content_data: contentData,
       })
 
       clearDraft()
+      setLastSubmittedAnswer(newAnswer)
       toast({
         title: t('answers.submit_success'),
       })
@@ -174,7 +208,21 @@ export function RespondentQuestionDesktop({
     setShowConfirmDialog(true)
   }
 
+  const handleRemoveAttachment = (index: number) => {
+    const newAttachments = [...attachments]
+    newAttachments.splice(index, 1)
+    setAttachments(newAttachments)
+  }
+
   const progress = Math.round(((currentQuestionIndex + 1) / totalQuestions) * 100)
+
+  const instructions =
+    (question?.content_data?.instructions as string)?.trim() ||
+    (topic.extra_data?.instructions as string)?.trim()
+
+  const lastSubmittedAttachments = lastSubmittedAnswer?.content_data?.attachments as
+    | Array<{ key: string; filename: string; file_size?: number }>
+    | undefined
 
   if (loading || !question) {
     return (
@@ -186,10 +234,6 @@ export function RespondentQuestionDesktop({
       </div>
     )
   }
-
-  const instructions =
-    (question.content_data?.instructions as string)?.trim() ||
-    (topic.extra_data?.instructions as string)?.trim()
 
   return (
     <div className="flex h-screen flex-col bg-surface">
@@ -263,23 +307,21 @@ export function RespondentQuestionDesktop({
           <div className="max-w-2xl mx-auto p-8">
             {/* Instructions - Collapsible */}
             {instructions && (
-              <div className="mb-6">
-                <button
-                  onClick={() => setShowInstructions(!showInstructions)}
-                  className="w-full flex items-center justify-between p-4 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition-colors"
-                >
-                  <div className="flex items-center gap-2 text-amber-900">
-                    <FileText className="h-4 w-4" />
-                    <span className="text-sm font-medium">{t('answers.instructions.title')}</span>
-                  </div>
-                  {showInstructions ? (
-                    <ChevronUp className="h-4 w-4 text-amber-700" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4 text-amber-700" />
-                  )}
-                </button>
-                {showInstructions && (
-                  <div className="mt-3 p-4 rounded-lg border border-amber-100 bg-amber-50/30">
+              <Collapsible open={true} className="mb-6">
+                <CollapsibleTrigger asChild>
+                  <button className="w-full flex items-center justify-between p-4 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition-colors text-left">
+                    <div className="flex items-center gap-2 text-amber-900">
+                      <FileText className="h-4 w-4" />
+                      <span className="text-sm font-medium">{t('answers.instructions.title')}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-amber-700">点击收起</span>
+                      <ChevronUp className="h-4 w-4 text-amber-700" />
+                    </div>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-2 p-4 rounded-lg border border-amber-100 bg-amber-50/30">
                     <div className="prose prose-sm max-w-none text-amber-800">
                       <EnhancedMarkdown
                         source={instructions}
@@ -287,8 +329,8 @@ export function RespondentQuestionDesktop({
                       />
                     </div>
                   </div>
-                )}
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
             )}
 
             {/* Question Content - No separate title */}
@@ -313,19 +355,101 @@ export function RespondentQuestionDesktop({
             <span className="font-medium text-text-primary">作答区域</span>
           </div>
 
-          <div className="max-w-2xl mx-auto p-8">
+          <div className="max-w-2xl mx-auto p-8 space-y-6">
+            {/* Last Submitted Answer */}
+            {lastSubmittedAnswer && (
+              <Card className="border-0 shadow-sm bg-blue-50/50">
+                <CardHeader className="pb-3">
+                  <Collapsible open={showLastSubmitted} onOpenChange={setShowLastSubmitted}>
+                    <CollapsibleTrigger asChild>
+                      <button className="w-full flex items-center justify-between text-left">
+                        <CardTitle className="text-base font-semibold flex items-center gap-2 text-blue-900">
+                          <History className="h-4 w-4" />
+                          上次提交内容
+                          <span className="text-xs font-normal text-blue-600">
+                            (
+                            {new Date(lastSubmittedAnswer.submitted_at).toLocaleString('zh-CN', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                            )
+                          </span>
+                        </CardTitle>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-blue-600">
+                            {showLastSubmitted ? '收起' : '展开'}
+                          </span>
+                          {showLastSubmitted ? (
+                            <ChevronUp className="h-4 w-4 text-blue-600" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4 text-blue-600" />
+                          )}
+                        </div>
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <CardContent className="pt-4 px-0 pb-0 space-y-4">
+                        {/* Last submitted text */}
+                        {typeof lastSubmittedAnswer.content_data?.text === 'string' && (
+                          <div className="p-3 rounded-lg bg-white border border-blue-100">
+                            <p className="text-sm text-text-secondary mb-2">文字作答：</p>
+                            <p className="text-sm text-text-primary whitespace-pre-wrap">
+                              {lastSubmittedAnswer.content_data.text}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Last submitted attachments */}
+                        {lastSubmittedAttachments && lastSubmittedAttachments.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-sm text-text-secondary">
+                              附件 ({lastSubmittedAttachments.length})：
+                            </p>
+                            <div className="space-y-2">
+                              {lastSubmittedAttachments.map((attachment, index) => (
+                                <a
+                                  key={attachment.key || index}
+                                  href={`/api/evaluation/respondent/files/${attachment.key}?filename=${encodeURIComponent(attachment.filename)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-3 p-3 rounded-lg border border-blue-100 bg-white hover:bg-blue-50 transition-colors group"
+                                >
+                                  <File className="h-4 w-4 text-blue-600" />
+                                  <span className="text-sm text-text-primary truncate flex-1">
+                                    {attachment.filename}
+                                  </span>
+                                  {attachment.file_size && (
+                                    <span className="text-xs text-text-muted">
+                                      {formatFileSize(attachment.file_size)}
+                                    </span>
+                                  )}
+                                  <Download className="h-4 w-4 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </CardHeader>
+              </Card>
+            )}
+
+            {/* New Answer Form */}
             <Card className="border-0 shadow-sm">
               <CardHeader className="pb-4">
                 <CardTitle className="text-lg font-semibold flex items-center gap-2">
                   <Upload className="h-5 w-5 text-primary" />
-                  提交作答
+                  {lastSubmittedAnswer ? '重新作答' : '提交作答'}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* File Upload - Integrated with file list */}
+                {/* File Upload */}
                 <div className="space-y-3">
                   {attachments.length === 0 ? (
-                    // Empty state - show upload area
                     <div className="border-2 border-dashed border-border rounded-xl p-8 text-center hover:border-primary/50 transition-colors bg-white">
                       <div className="flex flex-col items-center gap-3">
                         <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -350,7 +474,6 @@ export function RespondentQuestionDesktop({
                       </div>
                     </div>
                   ) : (
-                    // Has files - show compact upload button + file list
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <h3 className="text-sm font-medium text-text-secondary">
@@ -364,6 +487,34 @@ export function RespondentQuestionDesktop({
                           onChange={setAttachments}
                           maxFiles={MAX_BATCH_FILES}
                         />
+                      </div>
+                      <div className="space-y-2">
+                        {attachments.map((attachment, index) => (
+                          <div
+                            key={attachment.key || index}
+                            className="flex items-center gap-3 p-3 rounded-lg border border-border bg-white group"
+                          >
+                            <File className="h-5 w-5 text-primary flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-text-primary truncate">
+                                {attachment.filename}
+                              </p>
+                              {attachment.file_size && (
+                                <p className="text-xs text-text-muted">
+                                  {formatFileSize(attachment.file_size)}
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => handleRemoveAttachment(index)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
