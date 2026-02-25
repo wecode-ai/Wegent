@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import os
 
 import yaml
@@ -134,7 +133,6 @@ def build_pod_configuration(
         "username": username,
         "executor_name": executor_name,
         "namespace": namespace,
-        "task_str": json.dumps(task),
         "image": container_image,
         "auth_token": get_metadata_field(task, "auth_token"),
         "task_id": task_id,
