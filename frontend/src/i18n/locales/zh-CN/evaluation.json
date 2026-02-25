@@ -68,7 +68,11 @@
     "version_description": "查看此专题的已发布版本及其题目快照。",
     "view_versions": "查看版本",
     "no_versions": "暂无已发布版本",
-    "publish_hint": "请先发布至少一个题目，再发布专题"
+    "publish_hint": "请先发布至少一个题目，再发布专题",
+    "instructions": "考前须知",
+    "instructions_placeholder": "请输入考前须知（支持 Markdown 格式）。此内容将在答题人开始作答前展示。",
+    "instructions_hint": "支持 Markdown 格式。留空则不显示考前须知。",
+    "no_instructions": "暂未配置考前须知"
   },
   "versions": {
     "current": "当前版本",
@@ -115,6 +119,9 @@
     "criteria_attachments": "评分标准附件",
     "no_content": "暂无内容",
     "no_criteria": "暂无评分标准",
+    "instructions": "题目考前须知",
+    "instructions_placeholder": "请输入题目专属的考前须知（支持 Markdown 格式）。设置后将覆盖专题的考前须知。",
+    "instructions_hint": "留空则使用专题级别的考前须知。",
     "content_types": {
       "text": "文本",
       "url": "链接",
@@ -153,7 +160,11 @@
     "content": "作答内容",
     "content_placeholder": "请输入您的作答",
     "content_required": "请输入您的作答或上传附件",
-    "submit_hint": "上传附件和/或在下方输入您的作答内容",
+    "submit_hint": "请上传您的作答文件。如需补充说明，也可以使用文本输入。",
+    "show_text_input": "使用文本输入",
+    "show_text_input_hint": "如果无法上传文件，可使用文本输入（不推荐）",
+    "hide_text_input": "收起文本输入",
+    "upload_recommended": "推荐使用文件上传方式提交作答",
     "confirm_submit_title": "确认提交",
     "confirm_submit_description": "此操作将覆盖您之前的提交记录。确定要继续吗？",
     "submitted_at": "提交时间",
@@ -173,6 +184,8 @@
     "instructions": {
       "title": "考前须知",
       "description": "请仔细阅读以下注意事项后再开始作答：",
+      "no_custom_instructions": "此题目暂无特定考前须知。",
+      "default_notice": "请严格按照提交要求完成作答。",
       "time_limit": "作答时间限制",
       "no_limit": "无时间限制",
       "attempts": "作答次数",

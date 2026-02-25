@@ -68,7 +68,11 @@
     "version_description": "View published versions of this topic and their question snapshots.",
     "view_versions": "View Versions",
     "no_versions": "No published versions yet",
-    "publish_hint": "Publish at least one question before publishing the topic"
+    "publish_hint": "Publish at least one question before publishing the topic",
+    "instructions": "Exam Instructions",
+    "instructions_placeholder": "Enter exam instructions in Markdown format. These will be shown to respondents before they start answering.",
+    "instructions_hint": "Supports Markdown formatting. Leave empty to use no instructions for this topic.",
+    "no_instructions": "No instructions configured"
   },
   "versions": {
     "current": "Current",
@@ -115,6 +119,9 @@
     "criteria_attachments": "Criteria Attachments",
     "no_content": "No content",
     "no_criteria": "No grading criteria",
+    "instructions": "Question Instructions",
+    "instructions_placeholder": "Enter question-specific instructions in Markdown format. If set, these override the topic-level instructions.",
+    "instructions_hint": "Leave empty to use the topic-level instructions.",
     "content_types": {
       "text": "Text",
       "url": "URL",
@@ -153,7 +160,11 @@
     "content": "Answer Content",
     "content_placeholder": "Enter your answer",
     "content_required": "Please enter your answer or upload attachments",
-    "submit_hint": "Upload attachments and/or enter your answer text below",
+    "submit_hint": "Upload your answer files. You can also use the text input for additional notes.",
+    "show_text_input": "Use text input instead",
+    "show_text_input_hint": "If you cannot upload files, you can use the text input (not recommended)",
+    "hide_text_input": "Hide text input",
+    "upload_recommended": "File upload is the recommended submission method",
     "confirm_submit_title": "Confirm Submission",
     "confirm_submit_description": "This will overwrite your previous submission. Are you sure you want to continue?",
     "submitted_at": "Submitted At",
@@ -173,6 +184,8 @@
     "instructions": {
       "title": "Instructions",
       "description": "Please read the following carefully before answering:",
+      "no_custom_instructions": "No specific instructions for this question.",
+      "default_notice": "Please follow the submission requirements carefully.",
       "time_limit": "Time Limit",
       "no_limit": "No time limit",
       "attempts": "Attempts Allowed",

@@ -67,6 +67,7 @@ export interface Topic {
   updated_at: string
   is_active: boolean
   description?: string
+  instructions?: string
   question_count?: number
   published_question_count?: number
   creator_name?: string
@@ -75,6 +76,7 @@ export interface Topic {
 export interface TopicCreate {
   name: string
   description?: string
+  instructions?: string
   visibility?: string
   grading_team_id?: number
 }
@@ -82,6 +84,7 @@ export interface TopicCreate {
 export interface TopicUpdate {
   name?: string
   description?: string
+  instructions?: string
   visibility?: string
   grading_team_id?: number
 }
