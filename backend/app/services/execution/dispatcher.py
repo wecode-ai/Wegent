@@ -23,6 +23,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Optional
 
+import httpx
 from openai import AsyncOpenAI
 
 from shared.models import (
@@ -336,6 +337,8 @@ class ExecutionDispatcher:
                 await self._dispatch_sse(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.WEBSOCKET:
                 await self._dispatch_websocket(request, target, wrapped_emitter)
+            elif target.mode == CommunicationMode.POLLING:
+                await self._dispatch_polling(request, target, wrapped_emitter)
             else:
                 await self._dispatch_http_callback(request, target, wrapped_emitter)
         except Exception as e:
@@ -660,6 +663,361 @@ class ExecutionDispatcher:
             # Unregister stream to clean up
             await session_manager.unregister_stream(request.subtask_id)
 
+    async def _dispatch_polling(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Dispatch task via polling mode for long-running async APIs.
+
+        Used for Gemini Deep Research which requires:
+        1. Create a background research job
+        2. Poll for completion while streaming thinking progress
+        3. Stream the final report on completion
+
+        Communicates with Chat Shell's /v1/deep-research endpoints.
+
+        Args:
+            request: Execution request
+            target: Execution target configuration
+            emitter: Result emitter for event emission
+        """
+        from app.services.chat.storage.session import session_manager
+
+        cancel_event = await session_manager.register_stream(request.subtask_id)
+
+        task_id = request.task_id
+        subtask_id = request.subtask_id
+        message_id = request.message_id
+
+        # Send START event
+        await emitter.emit_start(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            message_id=message_id,
+            data={"shell_type": "Chat"},
+        )
+
+        model_config = request.model_config or {}
+        base_url = (target.url or "").rstrip("/")
+        deep_research_url = f"{base_url}/v1/deep-research"
+
+        gemini_base_url = (
+            model_config.get("base_url")
+            or "https://generativelanguage.googleapis.com"
+        )
+        agent = model_config.get("model_id", "deep-research-pro-preview-12-2025")
+        dr_model_config = {
+            "api_key": model_config.get("api_key", ""),
+            "base_url": gemini_base_url,
+            "default_headers": model_config.get("default_headers", {}),
+        }
+
+        offset = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+                # Step 1: Create deep research job
+                create_body = {
+                    "input": request.prompt if isinstance(request.prompt, str) else str(request.prompt),
+                    "agent": agent,
+                    "model_config": dr_model_config,
+                }
+                logger.info(
+                    f"[ExecutionDispatcher] POLLING create: url={deep_research_url}, "
+                    f"task_id={task_id}, subtask_id={subtask_id}"
+                )
+
+                create_resp = await client.post(deep_research_url, json=create_body)
+                if create_resp.status_code != 200:
+                    raise Exception(
+                        f"Failed to create deep research job: {create_resp.text}"
+                    )
+
+                create_data = create_resp.json()
+                job_id = create_data.get("interaction_id")
+                if not job_id:
+                    raise Exception(
+                        f"No interaction_id returned: {create_data}"
+                    )
+
+                logger.info(
+                    f"[ExecutionDispatcher] POLLING job created: job_id={job_id}, "
+                    f"task_id={task_id}"
+                )
+
+                # Step 2: Poll for completion, emit thinking progress
+                status_url = f"{deep_research_url}/{job_id}/status"
+                stream_url = f"{deep_research_url}/{job_id}/stream"
+                poll_interval = 5
+                max_polls = 720  # 1 hour
+
+                for poll_num in range(1, max_polls + 1):
+                    # Check cancellation
+                    if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
+                        logger.info(
+                            f"[ExecutionDispatcher] POLLING cancelled: "
+                            f"task_id={task_id}, subtask_id={subtask_id}"
+                        )
+                        await emitter.emit(
+                            ExecutionEvent(
+                                type=EventType.CANCELLED,
+                                task_id=task_id,
+                                subtask_id=subtask_id,
+                                message_id=message_id,
+                            )
+                        )
+                        return
+
+                    # Check status
+                    status_resp = await client.post(
+                        status_url, json={"model_config": dr_model_config}
+                    )
+                    if status_resp.status_code != 200:
+                        logger.warning(
+                            f"[ExecutionDispatcher] POLLING status check failed: "
+                            f"status={status_resp.status_code}"
+                        )
+                        await asyncio.sleep(poll_interval)
+                        continue
+
+                    status_data = status_resp.json()
+                    status = status_data.get("status", "in_progress")
+
+                    if status == "completed":
+                        logger.info(
+                            f"[ExecutionDispatcher] POLLING job completed: job_id={job_id}"
+                        )
+                        break
+                    elif status == "failed":
+                        raise Exception(
+                            status_data.get("error", "Deep research job failed")
+                        )
+
+                    # Fetch thinking progress from stream
+                    thinking_steps = await self._fetch_thought_summaries(
+                        client, stream_url, dr_model_config
+                    )
+                    if thinking_steps:
+                        await emitter.emit(
+                            ExecutionEvent(
+                                type=EventType.CHUNK,
+                                task_id=task_id,
+                                subtask_id=subtask_id,
+                                content="",
+                                offset=offset,
+                                result={
+                                    "shell_type": "Chat",
+                                    "thinking": thinking_steps,
+                                },
+                                message_id=message_id,
+                            )
+                        )
+
+                    await asyncio.sleep(poll_interval)
+                else:
+                    raise Exception("Deep research job timed out after 1 hour")
+
+                # Step 3: Clear thinking and stream final report
+                await emitter.emit(
+                    ExecutionEvent(
+                        type=EventType.CHUNK,
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        content="",
+                        offset=offset,
+                        result={"shell_type": "Chat", "thinking": []},
+                        message_id=message_id,
+                    )
+                )
+
+                full_content, annotations = await self._stream_final_report(
+                    client, stream_url, dr_model_config
+                )
+
+                if full_content:
+                    await emitter.emit(
+                        ExecutionEvent(
+                            type=EventType.CHUNK,
+                            task_id=task_id,
+                            subtask_id=subtask_id,
+                            content=full_content,
+                            offset=offset,
+                            message_id=message_id,
+                        )
+                    )
+                    offset += len(full_content)
+
+                # Emit DONE
+                result_data: dict[str, Any] = {"value": full_content}
+                if annotations:
+                    result_data["annotations"] = annotations
+                await emitter.emit(
+                    ExecutionEvent(
+                        type=EventType.DONE,
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        result=result_data,
+                        message_id=message_id,
+                    )
+                )
+
+                logger.info(
+                    f"[ExecutionDispatcher] POLLING completed: task_id={task_id}, "
+                    f"subtask_id={subtask_id}, content_length={len(full_content)}"
+                )
+
+        finally:
+            await session_manager.unregister_stream(subtask_id)
+
+    @staticmethod
+    async def _fetch_thought_summaries(
+        client: httpx.AsyncClient,
+        stream_url: str,
+        dr_model_config: dict,
+    ) -> list[dict]:
+        """Fetch thought summaries from deep research stream.
+
+        Returns thinking steps parsed from thought_summary events.
+        """
+        thought_summaries: list = []
+        try:
+            async with client.stream(
+                "POST",
+                stream_url,
+                json={"model_config": dr_model_config},
+                timeout=httpx.Timeout(30.0),
+            ) as response:
+                if response.status_code != 200:
+                    return thought_summaries
+
+                buffer = ""
+                current_event_type = ""
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+                    lines = buffer.split("\n")
+                    buffer = lines[-1]
+
+                    for line in lines[:-1]:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith("event: "):
+                            current_event_type = line[7:]
+                            continue
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                return thought_summaries
+                            try:
+                                data = json.loads(data_str)
+                                event_type = data.get("event_type", current_event_type)
+                                index = data.get("index")
+
+                                if event_type == "content.delta" and index == 0:
+                                    delta = data.get("delta", {})
+                                    if delta.get("type") == "thought_summary":
+                                        text = delta.get("content", {}).get("text", "")
+                                        if text:
+                                            clean = text.strip()
+                                            for prefix in ("```json", "```"):
+                                                if clean.startswith(prefix):
+                                                    clean = clean[len(prefix):]
+                                            if clean.endswith("```"):
+                                                clean = clean[:-3]
+                                            clean = clean.strip()
+                                            try:
+                                                summaries = json.loads(clean)
+                                                if isinstance(summaries, list):
+                                                    thought_summaries = [
+                                                        {
+                                                            "title": item.get("title", "Research Progress"),
+                                                            "next_action": "continue",
+                                                            "details": {
+                                                                "type": "text",
+                                                                "text": item.get("content", ""),
+                                                            },
+                                                        }
+                                                        for item in summaries
+                                                    ]
+                                            except json.JSONDecodeError:
+                                                pass
+
+                                elif event_type == "content.start" and index == 1:
+                                    return thought_summaries
+                            except json.JSONDecodeError:
+                                pass
+        except httpx.ReadTimeout:
+            pass
+        except Exception as e:
+            logger.warning(f"[ExecutionDispatcher] POLLING thought fetch error: {e}")
+        return thought_summaries
+
+    @staticmethod
+    async def _stream_final_report(
+        client: httpx.AsyncClient,
+        stream_url: str,
+        dr_model_config: dict,
+    ) -> tuple[str, list[dict]]:
+        """Stream the final report from deep research results.
+
+        Returns:
+            Tuple of (content, annotations).
+        """
+        full_content = ""
+        all_annotations: list[dict] = []
+        try:
+            async with client.stream(
+                "POST",
+                stream_url,
+                json={"model_config": dr_model_config},
+                timeout=httpx.Timeout(300.0),
+            ) as response:
+                if response.status_code != 200:
+                    raise Exception(
+                        f"Failed to stream results: status={response.status_code}"
+                    )
+
+                buffer = ""
+                current_event_type = ""
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+                    lines = buffer.split("\n")
+                    buffer = lines[-1]
+
+                    for line in lines[:-1]:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line.startswith("event: "):
+                            current_event_type = line[7:]
+                            continue
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                continue
+                            try:
+                                data = json.loads(data_str)
+                                event_type = data.get("event_type", current_event_type)
+                                index = data.get("index")
+
+                                if event_type == "content.delta" and index == 1:
+                                    delta = data.get("delta", {})
+                                    text = delta.get("text", "")
+                                    if text:
+                                        full_content += text
+                                    annotations = delta.get("annotations", [])
+                                    if annotations:
+                                        all_annotations.extend(annotations)
+                            except json.JSONDecodeError:
+                                pass
+        except Exception as e:
+            logger.error(f"[ExecutionDispatcher] POLLING final report error: {e}")
+            raise
+
+        return full_content, all_annotations
+
     async def _dispatch_websocket(
         self,
         request: ExecutionRequest,
@@ -838,6 +1196,8 @@ class ExecutionDispatcher:
             return await self._cancel_sse(request, target)
         elif target.mode == CommunicationMode.WEBSOCKET:
             return await self._cancel_websocket(request, target)
+        elif target.mode == CommunicationMode.POLLING:
+            return await self._cancel_sse(request, target)
         else:
             return await self._cancel_http(request, target)
 
