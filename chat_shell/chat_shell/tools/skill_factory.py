@@ -393,23 +393,23 @@ async def prepare_skill_tools(
 
     # Load MCP tools from all skills if any MCP servers are configured
     if skill_mcp_configs:
-        mcp_tools_by_server, skill_mcp_clients = await _load_skill_mcp_tools(
+        mcp_tools_with_server, skill_mcp_clients = await _load_skill_mcp_tools(
             skill_mcp_configs, task_id, task_data
         )
         mcp_clients.extend(skill_mcp_clients)
 
         # Calculate total tools count
-        total_mcp_tools = sum(len(tools) for tools in mcp_tools_by_server.values())
+        total_mcp_tools = sum(len(tools) for tools in mcp_tools_with_server.values())
 
         logger.info(
             "[skill_factory] Loaded %d MCP tools from %d servers",
             total_mcp_tools,
-            len(mcp_tools_by_server),
+            len(mcp_tools_with_server),
         )
 
         # Register MCP tools under their owning skills so they are only exposed
         # after the corresponding skill is loaded.
-        if load_skill_tool is not None and mcp_tools_by_server:
+        if load_skill_tool is not None and mcp_tools_with_server:
 
             def _dedupe_by_tool_name(items: list[Any]) -> list[Any]:
                 merged: list[Any] = []
@@ -428,7 +428,7 @@ async def prepare_skill_tools(
 
             # Process tools by server - since server names are prefixed with skill name,
             # we can directly map them to skills
-            for server_name, server_tools in mcp_tools_by_server.items():
+            for server_name, server_tools in mcp_tools_with_server.items():
                 # server_name format: "{skill_name}_{original_server_name}"
                 owner_skill = skill_mcp_server_owner.get(server_name)
 
@@ -467,10 +467,10 @@ async def prepare_skill_tools(
                 )
                 # Fallback: expose unassigned tools directly so functionality isn't lost.
                 tools.extend(unassigned)
-        elif load_skill_tool is None and mcp_tools_by_server:
+        elif load_skill_tool is None and mcp_tools_with_server:
             # Without LoadSkillTool we can't apply skill gating; keep previous behavior
             # and expose MCP tools directly.
-            for server_tools in mcp_tools_by_server.values():
+            for server_tools in mcp_tools_with_server.values():
                 tools.extend(server_tools)
 
     # Log summary of all skills loaded
@@ -502,8 +502,8 @@ async def _load_skill_mcp_tools(
         task_data: Optional task data for variable substitution
 
     Returns:
-        Tuple of (mcp_tools_by_server, mcp_clients) where:
-        - mcp_tools_by_server: Dict mapping server_name to list of tools
+        Tuple of (mcp_tools_with_server, mcp_clients) where:
+        - mcp_tools_with_server: Dict mapping server_name to list of tools
         - mcp_clients: List of MCPClient instances
     """
     from chat_shell.tools.mcp import MCPClient
@@ -517,7 +517,7 @@ async def _load_skill_mcp_tools(
         list(mcp_configs.keys()),
     )
 
-    mcp_tools_by_server: dict[str, list[Any]] = {}
+    mcp_tools_with_server: dict[str, list[Any]] = {}
     mcp_clients: list[Any] = []
     client: Any = None
 
@@ -529,20 +529,20 @@ async def _load_skill_mcp_tools(
             await asyncio.wait_for(client.connect(), timeout=30.0)
             if client.is_connected:
                 # Get tools organized by server name
-                mcp_tools_by_server = client.get_tools_by_server()
+                mcp_tools_with_server = client.get_tools_with_server()
                 mcp_clients.append(client)
 
                 # Calculate total tools count for logging
-                total_tools = sum(len(tools) for tools in mcp_tools_by_server.values())
+                total_tools = sum(len(tools) for tools in mcp_tools_with_server.values())
                 logger.info(
                     "[skill_factory] Loaded %d MCP tools from %d skill servers for task %d",
                     total_tools,
-                    len(mcp_tools_by_server),
+                    len(mcp_tools_with_server),
                     task_id,
                 )
 
                 # Log tool count per server
-                for server_name, tools in mcp_tools_by_server.items():
+                for server_name, tools in mcp_tools_with_server.items():
                     logger.debug(
                         "[skill_factory] Server '%s': %d tools",
                         server_name,
@@ -578,7 +578,7 @@ async def _load_skill_mcp_tools(
         if client is not None:
             await _safe_disconnect_client(client, task_id)
 
-    return mcp_tools_by_server, mcp_clients
+    return mcp_tools_with_server, mcp_clients
 
 
 async def _safe_disconnect_client(client: Any, task_id: int) -> None:

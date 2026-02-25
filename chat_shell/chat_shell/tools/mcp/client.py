@@ -407,7 +407,7 @@ class MCPClient:
         """List configured server names."""
         return list(self.connections.keys())
 
-    def get_tools_by_server(self) -> dict[str, list[BaseTool]]:
+    def get_tools_with_server(self) -> dict[str, list[BaseTool]]:
         """Get tools organized by server name.
 
         Returns:
@@ -415,7 +415,7 @@ class MCPClient:
         """
         return dict(self._tools)
 
-    def get_tools_count_by_server(self) -> dict[str, int]:
+    def get_tools_count_with_server(self) -> dict[str, int]:
         """Get tool counts per server.
 
         Returns:
