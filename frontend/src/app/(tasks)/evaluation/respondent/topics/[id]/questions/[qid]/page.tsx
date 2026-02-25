@@ -10,13 +10,13 @@ import dynamic from 'next/dynamic'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { respondentGetTopic, respondentGetTopicQuestions } from '@wecode/api/evaluation-respondent'
+import { respondentGetTopic, respondentListQuestions } from '@wecode/api/evaluation-respondent'
 import type { Topic } from '@wecode/types/evaluation'
 
 // Dynamic imports for code splitting
 const RespondentQuestionDesktop = dynamic(
   () =>
-    import('@/features/evaluation/respondent/components').then(mod => ({
+    import('@wecode/components/evaluation/respondent/components').then(mod => ({
       default: mod.RespondentQuestionDesktop,
     })),
   { ssr: false }
@@ -24,7 +24,7 @@ const RespondentQuestionDesktop = dynamic(
 
 const RespondentQuestionMobile = dynamic(
   () =>
-    import('@/features/evaluation/respondent/components').then(mod => ({
+    import('@wecode/components/evaluation/respondent/components').then(mod => ({
       default: mod.RespondentQuestionMobile,
     })),
   { ssr: false }
@@ -50,7 +50,7 @@ export default function RespondentQuestionPage() {
       try {
         const [topicData, questionsData] = await Promise.all([
           respondentGetTopic(topicId),
-          respondentGetTopicQuestions(topicId),
+          respondentListQuestions(topicId, {}),
         ])
         setTopic(topicData)
         setQuestionIds(questionsData.items.map(q => q.id))

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 
 interface DraftData {
   text: string
-  attachments: Array<{ key: string; filename: string; file_size: number }>
+  attachments: Array<{ key: string; filename: string; file_size?: number }>
   savedAt: string
 }
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { Panel, Group, Separator } from 'react-resizable-panels'
 import { RespondentProgressHeader } from './RespondentProgressHeader'
 import { QuestionPanel } from './QuestionPanel'
 import { AnswerPanel } from './AnswerPanel'
@@ -179,12 +179,12 @@ export function RespondentQuestionDesktop({
         hasNext={currentQuestionIndex < totalQuestions - 1}
       />
 
-      <PanelGroup direction="horizontal" className="flex-1">
+      <Group orientation="horizontal" className="flex-1">
         <Panel defaultSize={45} minSize={30} maxSize={60}>
           <QuestionPanel question={question} topic={topic} />
         </Panel>
 
-        <PanelResizeHandle className="w-1 bg-border hover:bg-primary/30" />
+        <Separator className="w-1 bg-border hover:bg-primary/30" />
 
         <Panel defaultSize={55} minSize={40} maxSize={70}>
           <AnswerPanel
@@ -199,7 +199,7 @@ export function RespondentQuestionDesktop({
             lastSaved={lastSaved}
           />
         </Panel>
-      </PanelGroup>
+      </Group>
 
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <AlertDialogContent>

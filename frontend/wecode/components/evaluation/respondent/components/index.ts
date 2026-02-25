@@ -1,4 +1,5 @@
 export { RespondentQuestionDesktop } from './RespondentQuestionDesktop'
+export { RespondentQuestionMobile } from './RespondentQuestionMobile'
 export { RespondentProgressHeader } from './RespondentProgressHeader'
 export { QuestionPanel } from './QuestionPanel'
 export { AnswerPanel } from './AnswerPanel'
