@@ -321,6 +321,8 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     bot_config = bots[0] if bots else {}
 
     if bot_config:
+        # Create a shallow copy of bot_config to avoid modifying the original
+        bot_config = bot_config.copy()
         # Extract MCP servers configuration
         mcp_servers = extract_mcp_servers_config(bot_config)
         if mcp_servers:

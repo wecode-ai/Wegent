@@ -158,7 +158,7 @@ def build_connections(
 
     Args:
         config: MCP servers configuration dict
-        task_data: Optional data source for variable substitution (dict or ExecutionRequest)
+        task_data: Optional ExecutionRequest for variable substitution
 
     Returns:
         Dict of server_name to Connection config

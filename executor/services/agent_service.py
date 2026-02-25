@@ -47,13 +47,9 @@ class AgentService:
                     cls._instance._agent_sessions = {}
         return cls._instance
 
-    def get_agent(self, agent_session_id: str) -> Optional[Agent]:
+    def get_agent(self, agent_session_id: int) -> Optional[Agent]:
         session = self._agent_sessions.get(agent_session_id)
         return session.agent if session else None
-
-    def _generate_agent_session_id(self, task_id: Any, subtask_id: Any) -> str:
-        """Generate a unique session ID for an agent based on task and subtask IDs."""
-        return f"agent_session_{task_id}"
 
     def create_agent(self, task_data: ExecutionRequest) -> Optional[Agent]:
         task_id = task_data.task_id
@@ -61,7 +57,7 @@ class AgentService:
 
         logger.info(f"task_id: [{task_id}] Creating agent")
 
-        if existing_agent := self.get_agent(f"{task_id}"):
+        if existing_agent := self.get_agent(task_id):
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Reusing existing agent"
             )
@@ -156,7 +152,7 @@ class AgentService:
         task_id = task_data.task_id
         subtask_id = task_data.subtask_id
         try:
-            agent = self.get_agent(f"{task_id}")
+            agent = self.get_agent(task_id)
 
             # If agent exists, update prompt
             if agent and hasattr(agent, "update_prompt") and task_data.prompt:
@@ -181,15 +177,15 @@ class AgentService:
             return TaskStatus.FAILED, str(e)
 
     async def _close_agent_session(
-        self, task_id: str, agent: Agent
+        self, task_id: int, agent: Agent
     ) -> Tuple[TaskStatus, Optional[str]]:
         try:
             agent_name = agent.get_name()
             if agent_name == "ClaudeCodeAgent":
-                await ClaudeCodeAgent.close_client(task_id)
+                await ClaudeCodeAgent.close_client(str(task_id))
                 logger.info(f"[{_format_task_log(task_id, -1)}] Closed Claude client")
             elif agent_name == "Agno":
-                await AgnoAgent.close_client(task_id)
+                await AgnoAgent.close_client(str(task_id))
                 logger.info(f"[{_format_task_log(task_id, -1)}] Closed Agno client")
             return TaskStatus.SUCCESS, None
         except Exception as e:
@@ -199,7 +195,7 @@ class AgentService:
             return TaskStatus.FAILED, str(e)
 
     async def delete_session_async(
-        self, task_id: str
+        self, task_id: int
     ) -> Tuple[TaskStatus, Optional[str]]:
         session = self._agent_sessions.get(task_id)
         if not session:
@@ -221,7 +217,7 @@ class AgentService:
             logger.exception(f"[{task_id}] Error deleting session: {e}")
             return TaskStatus.FAILED, str(e)
 
-    def delete_session(self, task_id: str) -> Tuple[TaskStatus, Optional[str]]:
+    def delete_session(self, task_id: int) -> Tuple[TaskStatus, Optional[str]]:
         try:
             return asyncio.run(self.delete_session_async(task_id))
         except RuntimeError as e:
@@ -303,14 +299,13 @@ class AgentService:
             agent = session.agent
             task_data = getattr(agent, "task_data", None)
 
-            # Get task information - support both ExecutionRequest object and dict
-            if task_data is None:
-                subtask_id = -1
-            elif isinstance(task_data, ExecutionRequest):
-                subtask_id = task_data.subtask_id
-            else:
-                subtask_id = task_data.get("subtask_id", -1)
-
+            # Get task information - support dict, ExecutionRequest object, or fallback
+            subtask_id = -1
+            if task_data is not None:
+                if isinstance(task_data, dict):
+                    subtask_id = task_data.get("subtask_id", -1)
+                elif hasattr(task_data, "subtask_id"):
+                    subtask_id = task_data.subtask_id
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Sending cancel event asynchronously"
             )

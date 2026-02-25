@@ -60,8 +60,23 @@ def resolve_value_from_source(
                 isinstance(current, list) and key.isdigit() and int(key) < len(current)
             ):
                 current = current[int(key)]
+            elif hasattr(current, key):
+                # Object attribute access (for ExecutionRequest and nested objects)
+                current = getattr(current, key)
             else:
-                return ""
+                # Try to convert object to dict using .dict(), .model_dump(), or .to_dict()
+                dict_from_object = None
+                if hasattr(current, "model_dump"):
+                    dict_from_object = current.model_dump()
+                elif hasattr(current, "dict"):
+                    dict_from_object = current.dict()
+                elif hasattr(current, "to_dict"):
+                    dict_from_object = current.to_dict()
+
+                if dict_from_object is not None and isinstance(dict_from_object, dict) and key in dict_from_object:
+                    current = dict_from_object[key]
+                else:
+                    return ""
 
         return str(current) if current is not None else ""
     except Exception:
@@ -246,14 +261,9 @@ class ConfigManager:
                 # Handle bot array - use the first bot configuration
                 team_members = []
                 for tmp_bot in bot_config:
-                    tmp_bot_options = {}
                     logger.info(
                         f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}"
                     )
-                    # Extract all non-None parameters from the first bot
-                    for key in valid_options:
-                        if key in tmp_bot and tmp_bot[key] is not None:
-                            tmp_bot_options[key] = tmp_bot[key]
                     team_members.append(tmp_bot)
 
                 options["team_members"] = team_members

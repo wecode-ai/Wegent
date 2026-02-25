@@ -3,31 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from executor.agents.dify.dify_agent import DifyAgent
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
-
-
-@dataclass
-class MockExecutionRequest:
-    """Mock ExecutionRequest for testing"""
-    task_id: int = 0
-    subtask_id: int = 0
-    prompt: str = ""
-    bot: list = field(default_factory=list)
-    user: dict = field(default_factory=dict)
-    user_id: int = 0
-    model_config: dict = field(default_factory=dict)
-    bot_prompt: str = ""
-    validation_params: dict = None
-    task_title: str = ""
-    subtask_title: str = ""
-    workspace: dict = field(default_factory=dict)
-    type: str = ""  # Task type (e.g., "validation" for validation tasks)
 
 
 def create_mock_emitter():
@@ -93,16 +75,10 @@ class TestDifyAgent:
     @pytest.fixture
     def task_data(self):
         """Sample task data for testing"""
-        return MockExecutionRequest(
+        return ExecutionRequest(
             task_id=123,
             subtask_id=456,
             prompt="Hello Dify",
-            bot_prompt=json.dumps(
-                {
-                    "difyAppId": "app-test-123",
-                    "params": {"customer_name": "John Doe", "language": "en-US"},
-                }
-            ),
             bot=[
                 {
                     "agent_config": {
@@ -124,14 +100,14 @@ class TestDifyAgent:
         assert agent is not None
         assert agent.task_id == 123
         assert agent.prompt == "Hello Dify"
-        assert agent.dify_app_id == "app-test-123"
-        assert agent.params == {"customer_name": "John Doe", "language": "en-US"}
+        # Without bot_prompt, dify_app_id and params come from config (empty)
+        assert agent.dify_app_id == "app-default-123"  # From DIFY_APP_ID in config
+        assert agent.params == {}  # No params in config
         assert agent.dify_config["api_key"] == "app-test-api-key"
         assert agent.dify_config["base_url"] == "https://api.dify.ai"
 
     def test_init_without_bot_prompt(self, task_data, mock_emitter):
         """Test DifyAgent initialization without bot_prompt"""
-        task_data.bot_prompt = ""
         agent = DifyAgent(task_data, mock_emitter)
 
         assert agent.dify_app_id == "app-default-123"  # Should use default from config
@@ -141,7 +117,13 @@ class TestDifyAgent:
         """Test parsing valid bot_prompt"""
         agent = DifyAgent(task_data, mock_emitter)
 
-        app_id, params = agent._parse_bot_prompt(task_data.bot_prompt)
+        bot_prompt_json = json.dumps(
+            {
+                "difyAppId": "app-test-123",
+                "params": {"customer_name": "John Doe", "language": "en-US"},
+            }
+        )
+        app_id, params = agent._parse_bot_prompt(bot_prompt_json)
 
         assert app_id == "app-test-123"
         assert params == {"customer_name": "John Doe", "language": "en-US"}
@@ -193,7 +175,6 @@ class TestDifyAgent:
     def test_validate_config_missing_app_id(self, task_data, mock_emitter):
         """Test config validation with missing app ID - app_id is now optional"""
         task_data.bot[0]["agent_config"]["env"]["DIFY_APP_ID"] = ""
-        task_data.bot_prompt = ""
         agent = DifyAgent(task_data, mock_emitter)
 
         result = agent._validate_config()

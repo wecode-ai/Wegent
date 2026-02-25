@@ -14,7 +14,7 @@ compatibility with specific shell types.
 
 import re
 import subprocess
-from typing import Any, Dict
+from typing import Any
 
 from executor.agents.base import Agent
 from shared.logger import setup_logger
@@ -174,7 +174,7 @@ class ImageValidatorAgent(Agent):
 
         return TaskStatus.COMPLETED
 
-    def _run_check(self, check: Dict[str, Any]) -> Dict[str, Any]:
+    def _run_check(self, check: dict[str, Any]) -> dict[str, Any]:
         """Run a single validation check"""
         name = check["name"]
         command = check["command"]

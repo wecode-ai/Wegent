@@ -135,11 +135,9 @@ def _get_nested_value(obj: Optional["ExecutionRequest"], path: str) -> Optional[
                 return None
         elif isinstance(current, dict):
             # Dict key access (for nested dicts like user, bot items)
-            # Check dict key first to avoid matching dict methods like 'items', 'get'
+            # Only access dict key if it exists, otherwise return None
             if key in current:
                 current = current[key]
-            elif hasattr(current, key):
-                current = getattr(current, key)
             else:
                 return None
         elif hasattr(current, key):

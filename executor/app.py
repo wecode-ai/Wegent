@@ -642,7 +642,7 @@ async def delete_session(
     """
     Delete an agent session for a specific task_id
     """
-    status, message = agent_service.delete_session(task_id)
+    status, message = agent_service.delete_session(int(task_id))
 
     if status == TaskStatus.SUCCESS:
         return {"message": message}

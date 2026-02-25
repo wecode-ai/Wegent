@@ -232,9 +232,7 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
 
     # Extract validation_id for validation tasks
     validation_params = task_data.validation_params or {}
-    validation_id = (
-        validation_params.get("validation_id") if validation_params else None
-    )
+    validation_id = validation_params.get("validation_id")
 
     # Send task started event using emitter
     result = await emitter.start()
