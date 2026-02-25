@@ -11,6 +11,8 @@ import { ToolBlock } from './components/ToolBlock'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { normalizeToolName } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
+import { processCitePatterns } from '../../../utils/processCitePatterns'
+import type { GeminiAnnotation } from '@/types/socket'
 
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
@@ -18,6 +20,7 @@ interface MixedContentViewProps {
   taskStatus?: string // For future use (e.g., showing pending states)
   theme: 'light' | 'dark'
   blocks?: MessageBlock[] // NEW: Block-based rendering support
+  annotations?: GeminiAnnotation[]
 }
 
 /**
@@ -34,6 +37,7 @@ const MixedContentView = memo(function MixedContentView({
   taskStatus,
   theme,
   blocks,
+  annotations,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
@@ -226,9 +230,12 @@ const MixedContentView = memo(function MixedContentView({
             return null
           }
           const key = 'blockId' in item ? item.blockId : `content-${index}`
+          const textContent = annotations && annotations.length > 0
+            ? processCitePatterns(item.content, annotations)
+            : item.content
           return (
             <div key={key} className="text-sm">
-              <EnhancedMarkdown source={item.content} theme={theme} />
+              <EnhancedMarkdown source={textContent} theme={theme} />
             </div>
           )
         } else if (item.type === 'tool') {
