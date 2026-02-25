@@ -31,23 +31,32 @@ class TestPermissionInheritance:
         test_db: Session,
         test_subgroup,
         test_group_owner,
+        test_group_maintainer2,
         _group_owner_member,
+        _group_maintainer2_member,
     ):
         """Owner of parent group should inherit permissions to subgroup via group role (not creator shortcut)."""
-        # Create KB in subgroup as owner (owner has access via inheritance)
+        # Create KB in subgroup as a different user (not group owner)
+        # This ensures we test true group-role inheritance, not the creator shortcut
         kb_data = KnowledgeBaseCreate(
             name="Subgroup KB",
-            description="KB in subgroup",
+            description="KB in subgroup created by another user",
             namespace=test_subgroup.name,
         )
         kb_id = KnowledgeService.create_knowledge_base(
             db=test_db,
-            user_id=test_group_owner.id,
+            user_id=test_group_maintainer2.id,
             data=kb_data,
         )
 
-        # Verify owner has manage permission via creator shortcut
+        # Get KB via Kind to verify ownership
         kb = test_db.query(Kind).filter(Kind.id == kb_id).first()
+
+        # Verify KB was created by maintainer2, not by group_owner
+        assert kb.user_id == test_group_maintainer2.id
+        assert kb.user_id != test_group_owner.id
+
+        # Verify owner has manage permission via group role inheritance (not creator shortcut)
         level = _get_user_kb_permission_level(test_db, kb, test_group_owner.id)
         assert level == "manage"
 
