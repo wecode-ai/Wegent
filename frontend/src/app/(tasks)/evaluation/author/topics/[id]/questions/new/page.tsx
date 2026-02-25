@@ -175,6 +175,9 @@ function NewQuestionContent() {
                 placeholder={t('questions.title_placeholder', 'Enter question title')}
                 maxLength={500}
               />
+              <p className="text-xs text-text-muted text-right">
+                {title.length}/500
+              </p>
             </div>
 
             {/* Tabs for editing */}
