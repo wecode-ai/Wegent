@@ -256,7 +256,12 @@ def _process_model_config_placeholders(
     # Build task_data dict for data_sources
     # This ensures ${task_data.user.name} placeholders work even without full task context
     if task_data is not None:
-        effective_task_data = task_data.to_dict()
+        if isinstance(task_data, dict):
+            effective_task_data = task_data
+        elif hasattr(task_data, "to_dict") and callable(task_data.to_dict):
+            effective_task_data = task_data.to_dict()
+        else:
+            effective_task_data = {}
     else:
         effective_task_data = {}
 
