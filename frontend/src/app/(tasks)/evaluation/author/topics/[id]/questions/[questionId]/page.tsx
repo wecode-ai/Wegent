@@ -118,7 +118,7 @@ function QuestionDetailContent() {
     if (!title.trim()) {
       toast({
         title: t('errors.save_failed'),
-        description: t('questions.question_title') + ' is required',
+        description: t('questions.title_placeholder'),
         variant: 'destructive',
       })
       return
@@ -128,7 +128,7 @@ function QuestionDetailContent() {
     if (!hasContent) {
       toast({
         title: t('errors.save_failed'),
-        description: t('questions.content') + ' is required',
+        description: t('questions.content_placeholder'),
         variant: 'destructive',
       })
       return
@@ -497,7 +497,7 @@ function QuestionDetailContent() {
                         className="font-mono text-sm"
                       />
                     )}
-                    <p className="text-xs text-text-muted">{t('grading.description')}</p>
+                    <p className="text-xs text-text-muted">{t('questions.criteria_placeholder')}</p>
                   </div>
 
                   {/* Criteria Attachments */}
