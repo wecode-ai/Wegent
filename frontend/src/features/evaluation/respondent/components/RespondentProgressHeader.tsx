@@ -25,7 +25,7 @@ export function RespondentProgressHeader({
   hasPrevious,
   hasNext,
 }: RespondentProgressHeaderProps) {
-  const { t: _t } = useTranslation('evaluation')
+  const { t } = useTranslation('evaluation')
   const progress = Math.round((currentQuestion / totalQuestions) * 100)
 
   return (
@@ -44,7 +44,13 @@ export function RespondentProgressHeader({
           <span className="text-sm text-text-muted">/</span>
           <span className="text-sm text-text-muted">{totalQuestions}</span>
         </div>
-        <div className="h-2 w-32 overflow-hidden rounded-full bg-border">
+        <div
+          className="h-2 w-32 overflow-hidden rounded-full bg-border"
+          role="progressbar"
+          aria-valuenow={progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
           <div
             className="h-full bg-primary transition-all duration-300"
             style={{ width: `${progress}%` }}
@@ -65,6 +71,7 @@ export function RespondentProgressHeader({
             className="h-8 w-8"
             onClick={onPrevious}
             disabled={!hasPrevious}
+            aria-label={t('actions.previous')}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -74,6 +81,7 @@ export function RespondentProgressHeader({
             className="h-8 w-8"
             onClick={onNext}
             disabled={!hasNext}
+            aria-label={t('actions.next')}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
