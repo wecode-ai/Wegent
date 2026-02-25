@@ -12,19 +12,20 @@ This module provides Git-related utilities for Claude Code agents.
 import json
 import os
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 
 logger = setup_logger("claude_code_git_operations")
 
 
-def set_git_env_variables(task_data: Dict[str, Any]) -> Dict[str, str]:
+def set_git_env_variables(task_data: ExecutionRequest) -> Dict[str, str]:
     """Extract git-related fields from task_data and set them as environment variables.
 
     Args:
-        task_data: The task data dictionary
+        task_data: The task data object
 
     Returns:
         Dictionary of environment variables that were set
@@ -39,7 +40,7 @@ def set_git_env_variables(task_data: Dict[str, Any]) -> Dict[str, str]:
 
     env_values = {}
     for source_key, env_key in git_fields.items():
-        value = task_data.get(source_key)
+        value = getattr(task_data, source_key, None)
         if value is not None:
             os.environ[env_key] = str(value)
             env_values[env_key] = value
@@ -50,18 +51,18 @@ def set_git_env_variables(task_data: Dict[str, Any]) -> Dict[str, str]:
     return env_values
 
 
-def get_git_token(git_domain: str, task_data: Dict[str, Any]) -> Optional[str]:
+def get_git_token(git_domain: str, task_data: ExecutionRequest) -> Optional[str]:
     """Get Git token from task_data or SSH file.
 
     Args:
         git_domain: Git domain (e.g., github.com, gitlab.com)
-        task_data: Task data dictionary
+        task_data: Task data object
 
     Returns:
         Git token or None if not found
     """
-    user_cfg = task_data.get("user", {})
-    git_token = user_cfg.get("git_token")
+    user_cfg = task_data.user
+    git_token = user_cfg.get("git_token") if user_cfg else None
 
     if git_token and git_token != "***":
         # Check if the token is encrypted and decrypt if needed
@@ -191,20 +192,19 @@ def authenticate_cli(git_domain: str, git_token: str) -> bool:
         )
         return False
 
-
-def setup_git_authentication(task_data: Dict[str, Any]) -> None:
+def setup_git_authentication(task_data: ExecutionRequest) -> None:
     """Setup complete Git authentication for a task.
 
     Sets environment variables, gets token, and authenticates CLI.
 
     Args:
-        task_data: Task data dictionary
+        task_data: Task data object
     """
     # Set git environment variables
     set_git_env_variables(task_data)
 
     # Configure GitLab/GitHub CLI authentication if git_domain is available
-    git_domain = task_data.get("git_domain")
+    git_domain = task_data.git_domain
     if not git_domain:
         logger.warning("No git_domain provided, skipping CLI authentication.")
         return

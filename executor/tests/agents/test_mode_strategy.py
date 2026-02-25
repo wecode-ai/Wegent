@@ -20,9 +20,9 @@ import pytest
 from executor.agents.claude_code.docker_mode_strategy import DockerModeStrategy
 from executor.agents.claude_code.local_mode_strategy import LocalModeStrategy
 from executor.agents.claude_code.mode_strategy import (
-    ExecutionModeStrategy,
     ModeStrategyFactory,
 )
+from shared.models.execution import ExecutionRequest
 
 
 class TestModeStrategyFactory:
@@ -400,10 +400,10 @@ class TestStrategyIntegration:
     @pytest.fixture
     def task_data(self):
         """Sample task data."""
-        return {
-            "task_id": 12345,
-            "subtask_id": 67890,
-            "bot": [
+        return ExecutionRequest(
+            task_id=12345,
+            subtask_id=67890,
+            bot=[
                 {
                     "agent_config": {
                         "env": {
@@ -413,7 +413,7 @@ class TestStrategyIntegration:
                     }
                 }
             ],
-        }
+        )
 
     @pytest.fixture
     def mock_emitter(self):

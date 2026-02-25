@@ -8,8 +8,6 @@
 
 import asyncio
 import json
-import os
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.agent import Agent as AgnoSDKAgent
@@ -24,14 +22,13 @@ from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
+from shared.models.execution import ExecutionRequest
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
 
 from .config_utils import ConfigManager
-from .mcp_manager import MCPManager
 from .member_builder import MemberBuilder
-from .model_factory import ModelFactory
 from .team_builder import TeamBuilder
 from .thinking_step_manager import ThinkingStepManager
 
@@ -93,14 +90,14 @@ class AgnoAgent(Agent):
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: ExecutionRequest,
         emitter: ResponsesAPIEmitter,
     ):
         """
         Initialize the Agno Agent
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data ExecutionRequest
             emitter: Emitter instance for sending events. Required parameter.
         """
         super().__init__(task_data, emitter)
@@ -108,10 +105,10 @@ class AgnoAgent(Agent):
         # Check if this subtask should start a new session (no conversation history)
         # This is used in pipeline mode when user confirms a stage and proceeds to next bot
         # The next bot should not inherit conversation history from previous bot
-        new_session = task_data.get("new_session", False)
+        new_session = task_data.new_session
         if new_session:
             # Use subtask_id as session_id to create a fresh session without history
-            self.session_id = task_data.get("subtask_id", self.task_id)
+            self.session_id = task_data.subtask_id or self.task_id
             logger.info(
                 f"Pipeline mode: new_session=True, using subtask_id {self.session_id} as session_id "
                 f"to avoid inheriting conversation history from previous bot"
@@ -119,14 +116,14 @@ class AgnoAgent(Agent):
         else:
             # Default behavior: use task_id as session_id to maintain conversation history
             self.session_id = self.task_id
-        self.prompt = task_data.get("prompt", "")
+        self.prompt = task_data.prompt or ""
         self.project_path = None
 
         self.team: Optional[Team] = None
         self.single_agent: Optional[AgnoSDKAgent] = None
         self.current_run_id: Optional[str] = None
 
-        self.mode = task_data.get("mode", "")
+        self.mode = task_data.mode or ""
         self.task_data = task_data
 
         # Accumulated reasoning content from DeepSeek R1 and similar models
@@ -335,7 +332,7 @@ class AgnoAgent(Agent):
         """
         # Download code if git_url is provided
         try:
-            git_url = self.task_data.get("git_url")
+            git_url = self.task_data.git_url
             if git_url and git_url != "":
                 self.add_thinking_step_by_key(
                     title_key="thinking.download_code",
@@ -372,12 +369,12 @@ class AgnoAgent(Agent):
                 "Starting Agno Agent",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             # Check if this is a subscription task - subscription tasks need to wait for completion
             # so the container can exit properly after task finishes
-            is_subscription = self.task_data.get("is_subscription", False)
+            is_subscription = self.task_data.is_subscription
 
             # Check if currently running in coroutine
             try:
@@ -476,7 +473,7 @@ class AgnoAgent(Agent):
                 "${{thinking.starting_agent_async}}",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             # Add trace event for async execution started
@@ -544,8 +541,8 @@ class AgnoAgent(Agent):
                 prompt = (
                     prompt + "\nCurrent working directory: " + self.options.get("cwd")
                 )
-            if self.task_data.get("git_url"):
-                prompt = prompt + "\nProject URL: " + self.task_data.get("git_url")
+            if self.task_data.git_url:
+                prompt = prompt + "\nProject URL: " + self.task_data.git_url
 
             logger.info(f"Executing Agno team with prompt: {prompt}")
 
@@ -698,7 +695,7 @@ class AgnoAgent(Agent):
             f"${{thinking.execution_failed}} {execution_type}: {error_message}",
             result=ExecutionResult(
                 thinking=self.thinking_manager.get_thinking_steps()
-            ).dict(),
+            ).model_dump(),
         )
 
         return TaskStatus.FAILED
@@ -1010,7 +1007,7 @@ class AgnoAgent(Agent):
                 "${{thinking.starting_agent_streaming}}",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             self.add_thinking_step_by_key(
@@ -1146,7 +1143,7 @@ class AgnoAgent(Agent):
                 "${{thinking.starting_team_streaming}}",
                 result=ExecutionResult(
                     thinking=self.thinking_manager.get_thinking_steps()
-                ).dict(),
+                ).model_dump(),
             )
 
             # Run with streaming enabled

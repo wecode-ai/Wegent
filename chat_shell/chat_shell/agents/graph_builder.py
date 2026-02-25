@@ -914,7 +914,11 @@ class LangGraphAgentBuilder:
             # This allows LLM to adjust its strategy based on the error
             async for token in self.stream_tokens(
                 messages=[
-                    msg.dict() if hasattr(msg, "dict") else msg
+                    (
+                        msg.model_dump()
+                        if hasattr(msg, "model_dump")
+                        else msg.dict() if hasattr(msg, "dict") else msg
+                    )
                     for msg in recovery_messages
                 ],
                 config=config,

@@ -23,7 +23,7 @@ import asyncio
 import concurrent.futures
 import inspect
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from langchain_core.tools.base import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -33,6 +33,7 @@ from langchain_mcp_adapters.sessions import (
     StreamableHttpConnection,
 )
 
+from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 from shared.utils.mcp_utils import replace_mcp_server_variables
 from shared.utils.sensitive_data_masker import mask_sensitive_data
@@ -148,7 +149,7 @@ def wrap_tool_with_protection(
 
 
 def build_connections(
-    config: dict[str, dict[str, Any]], task_data: dict[str, Any] | None = None
+    config: dict[str, dict[str, Any]], task_data: Optional[ExecutionRequest] = None
 ) -> dict[str, Connection]:
     """Build connection configs from server configuration dict.
 
@@ -157,7 +158,7 @@ def build_connections(
 
     Args:
         config: MCP servers configuration dict
-        task_data: Optional dict for variable substitution
+        task_data: Optional ExecutionRequest for variable substitution
 
     Returns:
         Dict of server_name to Connection config
@@ -166,8 +167,8 @@ def build_connections(
     if task_data:
         config = replace_mcp_server_variables(config, task_data)
         logger.debug(
-            "[MCP] Applied variable substitution to MCP config with task_data keys: %s",
-            task_data,
+            "[MCP] Applied variable substitution to MCP config for task_id: %s",
+            task_data.task_id if task_data else None,
         )
 
     connections = {}
@@ -233,13 +234,15 @@ class MCPClient:
     """
 
     def __init__(
-        self, config: dict[str, dict[str, Any]], task_data: dict[str, Any] | None = None
+        self,
+        config: dict[str, dict[str, Any]],
+        task_data: Optional[ExecutionRequest] = None,
     ):
         """Initialize MCP client.
 
         Args:
             config: MCP servers configuration dict. Supports ${{path}} placeholders.
-            task_data: Optional dict for variable substitution in config.
+            task_data: Optional ExecutionRequest for variable substitution.
         """
         self.config = config
         self.task_data = task_data

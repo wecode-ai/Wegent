@@ -399,11 +399,11 @@ class TaskRequestBuilder:
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
         agent_config = bot_spec.get("agent_config", {})
         user_info = {"id": user_id, "name": user_name}
-        task_data = {
-            "task_id": task_id,
-            "team_id": team_id,
-            "user": user_info,
-        }
+        task_data = ExecutionRequest(
+            task_id=task_id,
+            team_id=team_id,
+            user=user_info,
+        )
 
         # Process all placeholders in model_config (api_key + default_headers)
         model_config = _process_model_config_placeholders(

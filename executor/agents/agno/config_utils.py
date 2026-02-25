@@ -9,17 +9,103 @@
 import json
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("agno_config_utils")
 
 
-def resolve_value_from_source(
-    data_sources: Dict[str, Dict[str, Any]], source_spec: str
-) -> str:
+def parse_source_spec(source_spec: str) -> tuple[str, str]:
+    """
+    Parse source specification into source name and path.
+
+    Args:
+        source_spec: Source specification in format "source_name.path" or just "path"
+
+    Returns:
+        Tuple of (source_name, path)
+    """
+    if "." in source_spec:
+        # Format: "source_name.path"
+        parts = source_spec.split(".", 1)
+        return parts[0], parts[1]
+    else:
+        # Format: just "path", use default source
+        return "agent_config", source_spec
+
+
+def object_to_mapping(obj: Any) -> dict[str, Any] | None:
+    """
+    Try to convert object to dict using model_dump, dict, or to_dict methods.
+
+    Args:
+        obj: Object to convert
+
+    Returns:
+        Dict if conversion successful, None otherwise
+    """
+    if callable(getattr(obj, "model_dump", None)):
+        result = obj.model_dump()
+        if isinstance(result, dict):
+            return result
+    if callable(getattr(obj, "dict", None)):
+        result = obj.dict()
+        if isinstance(result, dict):
+            return result
+    if callable(getattr(obj, "to_dict", None)):
+        result = obj.to_dict()
+        if isinstance(result, dict):
+            return result
+    return None
+
+
+def resolve_path_step(current: Any, key: str) -> Any:
+    """
+    Resolve one step of the path navigation.
+
+    Handles dict lookup, list index, attribute access, or object_to_mapping fallback.
+
+    Args:
+        current: Current object being navigated
+        key: The key to resolve
+
+    Returns:
+        The resolved value, or raises exception if not found
+
+    Raises:
+        KeyError: If key not found in dict after trying object conversion
+        AttributeError: If attribute access fails
+        IndexError: If list index out of range
+    """
+    # Dict lookup
+    if isinstance(current, dict) and key in current:
+        return current[key]
+
+    # List index lookup
+    if isinstance(current, list) and key.isdigit() and int(key) < len(current):
+        return current[int(key)]
+
+    # Object attribute access (only for non-container objects)
+    if not isinstance(current, (dict, list)) and hasattr(current, key):
+        attr_value = getattr(current, key)
+        if callable(attr_value):
+            # Don't access callable methods (e.g., dict.items, list.append)
+            raise AttributeError("callable")
+        return attr_value
+
+    # Try to convert object to dict and lookup
+    dict_from_object = object_to_mapping(current)
+    if dict_from_object is not None and key in dict_from_object:
+        return dict_from_object[key]
+
+    # Not found
+    raise KeyError("not_found")
+
+
+def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) -> str:
     """
     Resolve value from specified data source using flexible notation
 
@@ -32,15 +118,7 @@ def resolve_value_from_source(
     """
     try:
         # Parse source specification
-        if "." in source_spec:
-            # Format: "source_name.path"
-            parts = source_spec.split(".", 1)
-            source_name = parts[0]
-            path = parts[1]
-        else:
-            # Format: just "path", use default source
-            source_name = "agent_config"
-            path = source_spec
+        source_name, path = parse_source_spec(source_spec)
 
         # Get the specified data source
         if source_name not in data_sources:
@@ -53,22 +131,15 @@ def resolve_value_from_source(
         current = data
 
         for key in keys:
-            if isinstance(current, dict) and key in current:
-                current = current[key]
-            elif (
-                isinstance(current, list) and key.isdigit() and int(key) < len(current)
-            ):
-                current = current[int(key)]
-            else:
-                return ""
+            current = resolve_path_step(current, key)
 
         return str(current) if current is not None else ""
-    except Exception:
+    except (AttributeError, TypeError, KeyError, ValueError, IndexError):
         return ""
 
 
 def replace_placeholders_with_sources(
-    template: str, data_sources: Dict[str, Dict[str, Any]]
+    template: str, data_sources: Dict[str, Any]
 ) -> str:
     """
     Replace placeholders in template with values from multiple data sources
@@ -83,7 +154,8 @@ def replace_placeholders_with_sources(
     # Find all placeholders in format ${source_spec}
     pattern = r"\$\{([^}]+)\}"
 
-    logger.info(f"data_sources:{data_sources}, template:{template}")
+    logger.info(f"data_sources keys:{list(data_sources.keys())}")
+    logger.debug(f"template:{mask_sensitive_data(template)}")
 
     def replace_match(match):
         source_spec = match.group(1)
@@ -174,7 +246,7 @@ class ConfigManager:
         return default_headers
 
     def build_default_headers_with_placeholders(
-        self, data_sources: Dict[str, Dict[str, Any]]
+        self, data_sources: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Build default headers with placeholder replacement
@@ -204,13 +276,13 @@ class ConfigManager:
 
         return default_headers
 
-    def extract_agno_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_agno_options(self, task_data: ExecutionRequest) -> Dict[str, Any]:
         """
         Extract Agno options from task data
         Collects all non-None configuration parameters from task_data
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data ExecutionRequest
 
         Returns:
             Dict containing valid Agno options
@@ -231,37 +303,31 @@ class ConfigManager:
 
         # Collect all non-None configuration parameters
         options = {}
-        bot_config = task_data.get("bot", {})
+        bot_config = task_data.bot
 
-        # Extract all non-None parameters from bot_config
-        if bot_config:
+        # Handle both single bot object and bot array
+        if bot_config and isinstance(bot_config, dict):
+            # Handle single bot object
+            logger.info("Found single bot configuration")
             for key in valid_options:
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
+        elif bot_config and isinstance(bot_config, list):
+            # Handle bot array - use the first bot configuration
+            team_members = list(bot_config)
+            options["team_members"] = team_members
 
-        # Handle both single bot object and bot array
-        if bot_config:
-            if isinstance(bot_config, list):
-                # Handle bot array - use the first bot configuration
-                team_members = []
-                for tmp_bot in bot_config:
-                    tmp_bot_options = {}
-                    logger.info(
-                        f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}"
-                    )
-                    # Extract all non-None parameters from the first bot
-                    for key in valid_options:
-                        if key in tmp_bot and tmp_bot[key] is not None:
-                            tmp_bot_options[key] = tmp_bot[key]
-                    team_members.append(tmp_bot)
+            logger.info(f"Found bot array with {len(bot_config)} bots")
 
-                options["team_members"] = team_members
-            else:
-                # Handle single bot object (original logic)
-                logger.info("Found single bot configuration")
+            # Also extract options from first bot if it's a dict
+            if isinstance(bot_config[0], dict):
+                first_bot = bot_config[0]
                 for key in valid_options:
-                    if key in bot_config and bot_config[key] is not None:
-                        options[key] = bot_config[key]
+                    # Skip team_members to avoid overwriting the aggregated list
+                    if key == "team_members":
+                        continue
+                    if key in first_bot and first_bot[key] is not None:
+                        options[key] = first_bot[key]
 
         logger.info(f"Extracted Agno options: {mask_sensitive_data(options)}")
         return options
