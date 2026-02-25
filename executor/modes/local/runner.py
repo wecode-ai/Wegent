@@ -70,7 +70,7 @@ class LocalRunner:
         self.task_queue: asyncio.Queue = asyncio.Queue()
 
         # Current task tracking
-        self.current_task: Optional[Dict[str, Any]] = None
+        self.current_task: Optional[ExecutionRequest] = None
         self.current_agent: Optional[Any] = None
 
         # Active sessions tracking (task_id -> session_info)
@@ -216,7 +216,7 @@ class LocalRunner:
         Note: Cancel callback will be sent by response_processor after SDK interrupt
         messages are fully processed, to avoid duplicate status updates to frontend.
         """
-        if self.current_task and self.current_task.get("task_id") == task_id:
+        if self.current_task and self.current_task.task_id == task_id:
             if self.current_agent and hasattr(self.current_agent, "cancel_run"):
                 self.current_agent.cancel_run()
                 logger.info(f"Cancelled task: task_id={task_id}")
@@ -245,7 +245,7 @@ class LocalRunner:
         logger.info(f"Closing session for task: task_id={task_id}")
 
         # If this is the current task, handle it
-        if self.current_task and self.current_task.get("task_id") == task_id:
+        if self.current_task and self.current_task.task_id == task_id:
             # Cancel the task if agent supports it
             if self.current_agent and hasattr(self.current_agent, "cancel_run"):
                 self.current_agent.cancel_run()
@@ -319,7 +319,7 @@ class LocalRunner:
                     self.current_task = task_data
                     await self._execute_task(task_data)
                 except Exception as e:
-                    task_id = task_data.get("task_id", -1)
+                    task_id = task_data.task_id if task_data else -1
                     logger.exception(
                         f"Task execution failed for task_id={task_id}: {e}"
                     )

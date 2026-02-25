@@ -17,7 +17,7 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
     }
     task_data = ExecutionRequest(
         backend_url="http://localhost:8000",
-        auth_token="token-123",
+        auth_token="test-token-",  # noqa: S106
     )
 
     replaced = replace_mcp_server_variables(mcp_servers, task_data)
@@ -26,7 +26,7 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
         replaced["wegent-knowledge"]["url"] == "http://localhost:8000/mcp/knowledge/sse"
     )
     assert (
-        replaced["wegent-knowledge"]["headers"]["Authorization"] == "Bearer token-123"
+        replaced["wegent-knowledge"]["headers"]["Authorization"] == "Bearer test-token-"
     )
 
 

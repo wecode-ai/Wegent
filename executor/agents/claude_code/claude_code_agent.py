@@ -330,7 +330,8 @@ class ClaudeCodeAgent(Agent):
             bots = self.task_data.bot
             if bots and len(bots) > 0:
                 bot_config = bots[0]
-                user_name = self.task_data.user.get("name", "unknown") if self.task_data.user else "unknown"
+                user = self.task_data.user if self.task_data.user else {}
+                user_name = user.get("user_name") or user.get("name") or "unknown"
                 git_url = self.task_data.git_url or ""
                 # Get config from bot using config_manager
                 agent_config = create_claude_model_config(

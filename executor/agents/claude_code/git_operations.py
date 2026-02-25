@@ -217,7 +217,6 @@ def setup_git_authentication(task_data: ExecutionRequest) -> None:
         return
 
     authenticate_cli(git_domain, git_token)
-    authenticate_cli(git_domain, git_token)
 
 
 def add_to_git_exclude(project_path: str, pattern: str) -> None:

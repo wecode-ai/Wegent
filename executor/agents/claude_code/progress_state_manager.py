@@ -274,10 +274,6 @@ class ProgressStateManager:
         """
         current_time = datetime.now().isoformat()
 
-        # Extract task information from task_data
-        user_info = self.task_data.user if self.task_data.user else {}
-        bot_info = self.task_data.bot[0] if self.task_data.bot else {}
-
         # Determine summary value: prioritize result_value, otherwise use subtask_title or prompt
         summary = ""
         if result_value:

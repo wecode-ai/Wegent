@@ -213,7 +213,7 @@ class Agent:
             logger.info("git url is empty, skip download code")
             return
 
-        user_config = self.task_data.user
+        user_config = self.task_data.user if self.task_data.user else {}
         git_token = user_config.get("git_token")
         # Handle encrypted tokens
         if git_token and is_token_encrypted(git_token):
@@ -222,7 +222,7 @@ class Agent:
             )
             git_token = decrypt_git_token(git_token)
 
-        username = user_config.get("user_name")
+        username = user_config.get("user_name") if user_config else None
         branch_name = self.task_data.branch_name
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(

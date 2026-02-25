@@ -359,7 +359,6 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                 options[key] = bot_config[key]
 
     return options
-    return options
 
 
 def get_claude_config_dir(task_id: int, cwd: Optional[str] = None) -> str:

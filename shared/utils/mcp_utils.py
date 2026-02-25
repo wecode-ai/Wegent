@@ -133,15 +133,18 @@ def _get_nested_value(obj: Optional["ExecutionRequest"], path: str) -> Optional[
             except ValueError:
                 # Key is not a valid integer
                 return None
+        elif isinstance(current, dict):
+            # Dict key access (for nested dicts like user, bot items)
+            # Check dict key first to avoid matching dict methods like 'items', 'get'
+            if key in current:
+                current = current[key]
+            elif hasattr(current, key):
+                current = getattr(current, key)
+            else:
+                return None
         elif hasattr(current, key):
             # Object attribute access (for ExecutionRequest and nested objects)
             current = getattr(current, key)
-        elif isinstance(current, dict):
-            # Dict key access (for nested dicts like user, bot items)
-            if key in current:
-                current = current[key]
-            else:
-                return None
         else:
             return None
 

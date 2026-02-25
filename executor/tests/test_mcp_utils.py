@@ -212,16 +212,18 @@ class TestReplaceMcpServerVariables:
         assert result == {}
 
     def test_empty_task_data(self):
-        """Test with empty task_data - should return unchanged"""
+        """Test with empty ExecutionRequest - user.name resolves to None, so placeholder is preserved."""
         mcp_servers = {"key": "${{user.name}}"}
-        task_data = ExecutionRequest()  # Empty ExecutionRequest
+        task_data = ExecutionRequest()  # Empty ExecutionRequest, user=None
         result = replace_mcp_server_variables(mcp_servers, task_data)
+        # user.name resolves to None, so placeholder is preserved
         assert result == {"key": "${{user.name}}"}
 
     def test_none_task_data(self):
-        """Test with None task_data - should return unchanged"""
+        """Test with None task_data - should trigger early return with unchanged config."""
         mcp_servers = {"key": "${{user.name}}"}
         result = replace_mcp_server_variables(mcp_servers, None)
+        # None task_data triggers early return, config unchanged
         assert result == {"key": "${{user.name}}"}
 
     def test_top_level_placeholders(self):

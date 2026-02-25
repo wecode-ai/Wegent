@@ -301,10 +301,15 @@ class AgentService:
                 return
 
             agent = session.agent
-            task_data = getattr(agent, "task_data", {})
+            task_data = getattr(agent, "task_data", None)
 
-            # Get task information
-            subtask_id = task_data.get("subtask_id", -1)
+            # Get task information - support both ExecutionRequest object and dict
+            if task_data is None:
+                subtask_id = -1
+            elif isinstance(task_data, ExecutionRequest):
+                subtask_id = task_data.subtask_id
+            else:
+                subtask_id = task_data.get("subtask_id", -1)
 
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Sending cancel event asynchronously"
