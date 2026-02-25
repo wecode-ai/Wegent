@@ -255,6 +255,7 @@
     "copy_prompt": "复制提示词",
     "create_task": "使用此提示词创建新任务",
     "final_prompt_hint": "这是基于您的回答精炼出的需求。您可以复制它或直接创建新的代码任务。",
+    "readonly_hint": "这是一个分享的任务。您可以复制提示词在自己的对话中使用。",
     "answers_submitted": "已提交",
     "waiting_response": "等待响应中...",
     "my_answers": "我的回答",
