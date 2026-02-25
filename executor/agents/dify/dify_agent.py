@@ -64,9 +64,13 @@ class DifyAgent(Agent):
         super().__init__(task_data, emitter)
 
         self.prompt = task_data.prompt or ""
-        # Extract bot_prompt from task_data.bot (first bot's bot_prompt)
+        # Extract bot_prompt from task_data.bot (single bot or first bot in list)
         bots = task_data.bot
-        if bots and len(bots) > 0:
+        if isinstance(bots, dict):
+            # Single bot object
+            self.bot_prompt = bots.get("bot_prompt", "")
+        elif bots and len(bots) > 0:
+            # List of bots - use first bot
             bot = bots[0]
             if isinstance(bot, dict):
                 self.bot_prompt = bot.get("bot_prompt", "")
@@ -136,8 +140,15 @@ class DifyAgent(Agent):
         # Try to extract from bot -> agent_config -> env
         # Note: task_data uses "bot" key, not "team_members"
         bots = task_data.bot
-        if bots and len(bots) > 0:
+        bot = None
+        if isinstance(bots, dict):
+            # Single bot object
+            bot = bots
+        elif bots and len(bots) > 0:
+            # List of bots - use first bot
             bot = bots[0]
+
+        if bot:
             if isinstance(bot, dict):
                 agent_config = bot.get("agent_config", {})
             else:
@@ -181,11 +192,27 @@ class DifyAgent(Agent):
                         # Pass through dict/Mapping objects directly
                         config["params"] = dict(dify_params)
                     elif isinstance(dify_params, str):
-                        # Parse JSON string
-                        config["params"] = json.loads(dify_params)
+                        # Parse JSON string and validate result is a mapping
+                        parsed = json.loads(dify_params)
+                        if isinstance(parsed, (dict, Mapping)):
+                            config["params"] = parsed
+                        else:
+                            logger.warning(
+                                f"DIFY_PARAMS parsed to non-mapping type {type(parsed).__name__}, "
+                                f"using empty params"
+                            )
+                            config["params"] = {}
                     elif isinstance(dify_params, bytes):
-                        # Decode bytes and parse JSON
-                        config["params"] = json.loads(dify_params.decode("utf-8"))
+                        # Decode bytes and parse JSON, validate result is a mapping
+                        parsed = json.loads(dify_params.decode("utf-8"))
+                        if isinstance(parsed, (dict, Mapping)):
+                            config["params"] = parsed
+                        else:
+                            logger.warning(
+                                f"DIFY_PARAMS parsed to non-mapping type {type(parsed).__name__}, "
+                                f"using empty params"
+                            )
+                            config["params"] = {}
                     else:
                         # Log warning for unsupported types
                         logger.warning(

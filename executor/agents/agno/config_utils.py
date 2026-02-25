@@ -64,11 +64,11 @@ def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) ->
             else:
                 # Try to convert object to dict using .dict(), .model_dump(), or .to_dict()
                 dict_from_object = None
-                if hasattr(current, "model_dump"):
+                if callable(getattr(current, "model_dump", None)):
                     dict_from_object = current.model_dump()
-                elif hasattr(current, "dict"):
+                elif callable(getattr(current, "dict", None)):
                     dict_from_object = current.dict()
-                elif hasattr(current, "to_dict"):
+                elif callable(getattr(current, "to_dict", None)):
                     dict_from_object = current.to_dict()
 
                 if (
@@ -81,7 +81,7 @@ def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) ->
                     return ""
 
         return str(current) if current is not None else ""
-    except (AttributeError, TypeError, KeyError, ValueError):
+    except (AttributeError, TypeError, KeyError, ValueError, IndexError):
         return ""
 
 
