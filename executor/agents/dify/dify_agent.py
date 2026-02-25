@@ -117,7 +117,7 @@ class DifyAgent(Agent):
             f"app_mode={self.app_mode}, conversation_id={self.conversation_id}"
         )
 
-    def _extract_dify_config(self, task_data: ExecutionRequest) -> Dict[str, str]:
+    def _extract_dify_config(self, task_data: ExecutionRequest) -> Dict[str, Any]:
         """
         Extract Dify configuration from task_data
 

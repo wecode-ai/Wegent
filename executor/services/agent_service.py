@@ -79,12 +79,12 @@ class AgentService:
             else:
                 # For regular tasks, get shell_type from bot config
                 bot_config = task_data.bot
-                if isinstance(bot_config, list):
-                    shell_type = (
-                        bot_config[0].get("shell_type", "").strip().lower()
-                        if bot_config
-                        else ""
-                    )
+                if isinstance(bot_config, dict):
+                    # Handle single bot object
+                    shell_type = bot_config.get("shell_type", "").strip().lower()
+                elif isinstance(bot_config, list) and bot_config:
+                    # Handle bot array - use the first bot's shell_type
+                    shell_type = bot_config[0].get("shell_type", "").strip().lower()
                 else:
                     shell_type = ""
 
@@ -184,7 +184,7 @@ class AgentService:
     ) -> Tuple[TaskStatus, Optional[str]]:
         try:
             agent_name = agent.get_name()
-            if agent_name == "ClaudeCodeAgent":
+            if agent_name == "ClaudeCode":
                 await ClaudeCodeAgent.close_client(str(task_id))
                 logger.info(
                     f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Claude client"

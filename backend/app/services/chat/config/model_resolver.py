@@ -315,7 +315,8 @@ def extract_and_process_model_config(
         user_id: Current user's ID
         user_name: Current user's username
         agent_config: Optional agent config from bot (for chat mode)
-        task_data: Optional task data (for chat mode)
+        task_data: Optional[ExecutionRequest] containing task-specific data
+            used for placeholder substitution (e.g., ${task_data.user.name})
 
     Returns:
         Dict with fully processed model configuration:

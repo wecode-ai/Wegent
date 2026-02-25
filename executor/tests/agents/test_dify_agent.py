@@ -137,7 +137,9 @@ class TestDifyAgent:
         assert app_id == "app-test-123"
         assert params == {"customer_name": "John Doe", "language": "en-US"}
 
-    def test_parse_bot_prompt_invalid_json(self, task_data, mock_emitter) -> None:
+    def test_parse_bot_prompt_invalid_json(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test parsing invalid JSON bot_prompt"""
         agent = DifyAgent(task_data, mock_emitter)
 
@@ -146,7 +148,9 @@ class TestDifyAgent:
         assert app_id is None
         assert params == {}
 
-    def test_parse_bot_prompt_empty(self, task_data, mock_emitter) -> None:
+    def test_parse_bot_prompt_empty(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test parsing empty bot_prompt"""
         agent = DifyAgent(task_data, mock_emitter)
 
@@ -155,7 +159,9 @@ class TestDifyAgent:
         assert app_id is None
         assert params == {}
 
-    def test_validate_config_success(self, task_data, mock_emitter) -> None:
+    def test_validate_config_success(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test config validation with valid config"""
         agent = DifyAgent(task_data, mock_emitter)
 
@@ -163,7 +169,9 @@ class TestDifyAgent:
 
         assert result is True
 
-    def test_validate_config_missing_api_key(self, task_data, mock_emitter) -> None:
+    def test_validate_config_missing_api_key(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test config validation with missing API key"""
         task_data.bot[0]["agent_config"]["env"]["DIFY_API_KEY"] = ""
         agent = DifyAgent(task_data, mock_emitter)
@@ -172,7 +180,9 @@ class TestDifyAgent:
 
         assert result is False
 
-    def test_validate_config_missing_base_url(self, task_data, mock_emitter) -> None:
+    def test_validate_config_missing_base_url(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test config validation with missing base URL"""
         task_data.bot[0]["agent_config"]["env"]["DIFY_BASE_URL"] = ""
         agent = DifyAgent(task_data, mock_emitter)
@@ -181,7 +191,9 @@ class TestDifyAgent:
 
         assert result is False
 
-    def test_validate_config_missing_app_id(self, task_data, mock_emitter) -> None:
+    def test_validate_config_missing_app_id(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test config validation with missing app ID - app_id is now optional"""
         task_data.bot[0]["agent_config"]["env"]["DIFY_APP_ID"] = ""
         agent = DifyAgent(task_data, mock_emitter)
@@ -192,7 +204,9 @@ class TestDifyAgent:
         assert result is True
 
     @patch("executor.agents.dify.dify_agent.requests.post")
-    def test_call_dify_api_success(self, mock_post, task_data, mock_emitter) -> None:
+    def test_call_dify_api_success(
+        self, mock_post: MagicMock, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test successful Dify API call"""
         # Mock streaming response
         mock_response = MagicMock()
@@ -213,7 +227,7 @@ class TestDifyAgent:
 
     @patch("executor.agents.dify.dify_agent.requests.post")
     def test_call_dify_api_error_response(
-        self, mock_post, task_data, mock_emitter
+        self, mock_post: MagicMock, task_data: ExecutionRequest, mock_emitter: MagicMock
     ) -> None:
         """Test Dify API call with error response"""
         # Mock error response
@@ -232,7 +246,9 @@ class TestDifyAgent:
         assert "Dify API error" in str(exc_info.value)
 
     @patch("executor.agents.dify.dify_agent.requests.post")
-    def test_call_dify_api_http_error(self, mock_post, task_data, mock_emitter) -> None:
+    def test_call_dify_api_http_error(
+        self, mock_post: MagicMock, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test Dify API call with HTTP error"""
         # Mock HTTP error
         mock_response = MagicMock()
@@ -248,7 +264,11 @@ class TestDifyAgent:
     @patch.object(DifyAgent, "_call_dify_api")
     @patch.object(DifyAgent, "_validate_config")
     def test_execute_success(
-        self, mock_validate, mock_call_api, task_data, mock_emitter
+        self,
+        mock_validate: MagicMock,
+        mock_call_api: MagicMock,
+        task_data: ExecutionRequest,
+        mock_emitter: MagicMock,
     ) -> None:
         """Test successful execution"""
         mock_validate.return_value = True
@@ -266,7 +286,10 @@ class TestDifyAgent:
 
     @patch.object(DifyAgent, "_validate_config")
     def test_execute_invalid_config(
-        self, mock_validate, task_data, mock_emitter
+        self,
+        mock_validate: MagicMock,
+        task_data: ExecutionRequest,
+        mock_emitter: MagicMock,
     ) -> None:
         """Test execution with invalid config"""
         mock_validate.return_value = False
@@ -279,7 +302,11 @@ class TestDifyAgent:
     @patch.object(DifyAgent, "_call_dify_api")
     @patch.object(DifyAgent, "_validate_config")
     def test_execute_no_answer(
-        self, mock_validate, mock_call_api, task_data, mock_emitter
+        self,
+        mock_validate: MagicMock,
+        mock_call_api: MagicMock,
+        task_data: ExecutionRequest,
+        mock_emitter: MagicMock,
     ) -> None:
         """Test execution with no answer from API"""
         mock_validate.return_value = True
@@ -293,7 +320,11 @@ class TestDifyAgent:
     @patch.object(DifyAgent, "_call_dify_api")
     @patch.object(DifyAgent, "_validate_config")
     def test_execute_api_exception(
-        self, mock_validate, mock_call_api, task_data, mock_emitter
+        self,
+        mock_validate: MagicMock,
+        mock_call_api: MagicMock,
+        task_data: ExecutionRequest,
+        mock_emitter: MagicMock,
     ) -> None:
         """Test execution with API exception"""
         mock_validate.return_value = True
@@ -304,7 +335,9 @@ class TestDifyAgent:
 
         assert result == TaskStatus.FAILED
 
-    def test_conversation_id_management(self, task_data, mock_emitter) -> None:
+    def test_conversation_id_management(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test conversation ID management"""
         # Clear any existing conversation state before test
         DifyAgent.clear_conversation(task_data.task_id)
@@ -326,7 +359,9 @@ class TestDifyAgent:
         agent3 = DifyAgent(task_data, mock_emitter)
         assert agent3.conversation_id == ""
 
-    def test_get_name(self, task_data, mock_emitter) -> None:
+    def test_get_name(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test get_name method"""
         agent = DifyAgent(task_data, mock_emitter)
 
