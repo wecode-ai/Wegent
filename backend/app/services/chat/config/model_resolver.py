@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
@@ -227,7 +228,7 @@ def _process_model_config_placeholders(
     user_id: int,
     user_name: str,
     agent_config: Optional[Dict[str, Any]] = None,
-    task_data: Optional[Dict[str, Any]] = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> Dict[str, Any]:
     """
     Process placeholders in model_config (api_key and default_headers).
@@ -252,9 +253,13 @@ def _process_model_config_placeholders(
         "user_name": user_name or "",
     }
 
-    # Build task_data with user info if not provided
+    # Build task_data dict for data_sources
     # This ensures ${task_data.user.name} placeholders work even without full task context
-    effective_task_data = task_data or {}
+    if task_data is not None:
+        effective_task_data = task_data.to_dict()
+    else:
+        effective_task_data = {}
+
     if "user" not in effective_task_data:
         effective_task_data = {**effective_task_data, "user": user_info}
 
@@ -295,7 +300,7 @@ def extract_and_process_model_config(
     user_id: int,
     user_name: str,
     agent_config: Optional[Dict[str, Any]] = None,
-    task_data: Optional[Dict[str, Any]] = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> Dict[str, Any]:
     """
     Extract model configuration from spec and process all placeholders.
