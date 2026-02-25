@@ -7,6 +7,7 @@ Project API endpoints for managing projects and project-task associations.
 
 Projects are containers for organizing tasks. Each task can belong to one project.
 """
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 

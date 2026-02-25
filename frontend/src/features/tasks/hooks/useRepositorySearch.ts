@@ -272,41 +272,23 @@ export function useRepositorySearch({
 
     const selectRepository = async () => {
       const hasGit = hasGitInfo()
-      console.log('[RepositorySelector] Effect triggered', {
-        hasGitInfo: hasGit,
-        user: user ? 'loaded' : 'null',
-        gitInfoLength: user?.git_info?.length || 0,
-        selectedTaskDetail: selectedTaskDetail?.git_repo || 'none',
-        selectedRepo: selectedRepo?.git_repo || 'none',
-        disabled,
-        reposLength: repos.length,
-      })
 
       if (!hasGit) {
-        console.log('[RepositorySelector] No git info, exiting')
         return
       }
 
       // Scenario 1: Task is selected - use task's repository
       if (selectedTaskDetail?.git_repo) {
-        console.log(
-          '[RepositorySelector] Scenario 1: Task selected, repo:',
-          selectedTaskDetail.git_repo
-        )
-
         if (selectedRepo?.git_repo === selectedTaskDetail.git_repo) {
-          console.log('[RepositorySelector] Already selected, no change needed')
           return
         }
 
         const repoInList = repos.find(r => r.git_repo === selectedTaskDetail.git_repo)
         if (repoInList) {
-          console.log('[RepositorySelector] Found in list, selecting:', repoInList.git_repo)
           handleRepoChange(repoInList)
           return
         }
 
-        console.log('[RepositorySelector] Not in list, searching via API')
         try {
           setLoading(true)
           const result = await githubApis.searchRepositories(selectedTaskDetail.git_repo, {
@@ -318,7 +300,6 @@ export function useRepositorySearch({
           if (result && result.length > 0) {
             const matched =
               result.find(r => r.git_repo === selectedTaskDetail.git_repo) ?? result[0]
-            console.log('[RepositorySelector] Found via API, selecting:', matched.git_repo)
             handleRepoChange(matched)
             setError(null)
           } else {
@@ -343,42 +324,22 @@ export function useRepositorySearch({
 
       // Scenario 2: No task selected and no repo selected - load repos and restore from localStorage
       if (!selectedTaskDetail && !selectedRepo && !disabled) {
-        console.log('[RepositorySelector] Scenario 2: Load repos and restore from localStorage')
-
         let repoList = repos
         if (repoList.length === 0 && !hasInitiallyLoaded) {
-          console.log('[RepositorySelector] Repos not loaded, loading now...')
           repoList = await loadRepositories()
-          console.log('[RepositorySelector] Loaded repos count:', repoList.length)
           if (canceled || repoList.length === 0) {
-            console.log('[RepositorySelector] Load failed or canceled')
             return
           }
         }
 
         const lastRepo = getLastRepo()
-        console.log('[RepositorySelector] Last repo from storage:', lastRepo)
 
         if (lastRepo) {
           const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId)
           if (repoToRestore) {
-            console.log(
-              '[RepositorySelector] ✅ Restoring repo from localStorage:',
-              repoToRestore.git_repo
-            )
             handleRepoChange(repoToRestore)
-          } else {
-            console.log('[RepositorySelector] ❌ Repo not found in list, ID:', lastRepo.repoId)
           }
-        } else {
-          console.log('[RepositorySelector] No last repo in storage, repos loaded but no selection')
         }
-      } else {
-        console.log('[RepositorySelector] Scenario 2 conditions not met:', {
-          hasTaskDetail: !!selectedTaskDetail,
-          hasSelectedRepo: !!selectedRepo,
-          disabled,
-        })
       }
     }
 

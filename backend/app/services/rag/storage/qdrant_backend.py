@@ -31,6 +31,7 @@ from qdrant_client.http import models as qdrant_models
 
 from app.services.rag.retrieval.filters import parse_metadata_filters
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.storage.chunk_metadata import ChunkMetadata
 
 
 class QdrantBackend(BaseStorageBackend):
@@ -107,42 +108,27 @@ class QdrantBackend(BaseStorageBackend):
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
-        knowledge_id: str,
-        doc_ref: str,
-        source_file: str,
-        created_at: str,
+        chunk_metadata: ChunkMetadata,
         embed_model,
         **kwargs,
     ) -> Dict:
         """
-        Add metadata to nodes and index them into Qdrant.
+        Index nodes into Qdrant.
+
+        Note: Metadata is already applied to nodes by the indexer layer via
+        chunk_metadata.apply_to_nodes() before calling this method.
 
         Args:
-            nodes: List of nodes to index
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID (doc_xxx format)
-            source_file: Source file name
-            created_at: Creation timestamp
+            nodes: List of nodes to index (metadata already applied)
+            chunk_metadata: ChunkMetadata instance containing document metadata
             embed_model: Embedding model
             **kwargs: Additional parameters (e.g., user_id for per_user strategy)
 
         Returns:
             Indexing result dict
         """
-        # Add metadata to nodes
-        for idx, node in enumerate(nodes):
-            node.metadata.update(
-                {
-                    "knowledge_id": knowledge_id,
-                    "doc_ref": doc_ref,
-                    "source_file": source_file,
-                    "chunk_index": idx,
-                    "created_at": created_at,
-                }
-            )
-
         # Get collection name
-        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        collection_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
 
         # Index nodes (LlamaIndex auto-creates collection if needed)
         vector_store = self.create_vector_store(collection_name)

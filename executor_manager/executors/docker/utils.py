@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import PORT_RANGE_MAX, PORT_RANGE_MIN
 from shared.logger import setup_logger
+from shared.models.openai_converter import get_metadata_field
 from shared.utils.ip_util import get_host_ip, is_ip_address
 
 logger = setup_logger(__name__)
@@ -35,7 +36,9 @@ def build_callback_url(task: dict) -> str:
     Returns:
         str: Callback URL
     """
-    callback_url = task.get("callback_url", os.getenv("CALLBACK_URL", ""))
+    callback_url = get_metadata_field(
+        task, "callback_url", os.getenv("CALLBACK_URL", "")
+    )
     if not callback_url:
         # Get the host IP that's accessible from containers
         # 127.0.0.1 won't work for container-to-container communication

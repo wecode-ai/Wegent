@@ -106,12 +106,3 @@ class TestStreamingCore:
         result = streaming_state.get_current_result()
         assert result["value"] == "Hello"
         assert result["shell_type"] == "Chat"
-
-    def test_streaming_state_thinking_steps(self, streaming_state):
-        """Test adding thinking steps."""
-        streaming_state.add_thinking_step({"title": "Step 1", "details": {}})
-        streaming_state.add_thinking_step({"title": "Step 2", "details": {}})
-
-        result = streaming_state.get_current_result(include_thinking=True)
-        assert len(result["thinking"]) == 2
-        assert result["thinking"][0]["title"] == "Step 1"

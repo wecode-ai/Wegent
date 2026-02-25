@@ -12,7 +12,7 @@ import React, {
 } from 'react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Loader2, XIcon, SettingsIcon, Edit, Wand2, Download, ExternalLink } from 'lucide-react'
+import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import McpConfigImportModal from './McpConfigImportModal'
+import McpConfigEditModal from './McpConfigEditModal'
 import McpProviderModal from './McpProviderModal'
 import SkillManagementModal from './skills/SkillManagementModal'
 import DifyBotConfig from './DifyBotConfig'
@@ -41,6 +42,12 @@ import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/a
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
+import {
+  mergeMcpConfigs,
+  parseMcpConfig,
+  removeMcpServer,
+  stringifyMcpConfig,
+} from '../utils/mcpConfig'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -170,6 +177,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [agentConfigError, setAgentConfigError] = useState(false)
 
+  const [mcpEditModalOpen, setMcpEditModalOpen] = useState(false)
   const [importModalVisible, setImportModalVisible] = useState(false)
   const [providerModalOpen, setProviderModalOpen] = useState(false)
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false)
@@ -178,6 +186,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Check if current agent is Dify
   const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName])
+  const mcpAgentType = useMemo(
+    () => (isValidAgentType(agentName) ? agentName : undefined),
+    [agentName]
+  )
+
+  const mcpConfigState = useMemo(() => {
+    try {
+      return {
+        config: parseMcpConfig(mcpConfig),
+        parseError: false,
+      }
+    } catch {
+      return {
+        config: {} as Record<string, unknown>,
+        parseError: true,
+      }
+    }
+  }, [mcpConfig])
+  const mcpServerNames = useMemo(() => Object.keys(mcpConfigState.config), [mcpConfigState.config])
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -201,10 +228,19 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     })
   }, [toast, t])
 
-  // Handle MCP configuration import
-  const handleImportMcpConfig = useCallback(() => {
+  const handleOpenMcpEditModal = useCallback(() => {
+    if (readOnly) {
+      return
+    }
+    setMcpEditModalOpen(true)
+  }, [readOnly])
+
+  const handleOpenMcpImportModal = useCallback(() => {
+    if (readOnly) {
+      return
+    }
     setImportModalVisible(true)
-  }, [])
+  }, [readOnly])
 
   // Handle import server from provider
   const handleImportServerFromProvider = useCallback(
@@ -217,7 +253,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       headers?: Record<string, string>
     }) => {
       try {
-        const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {}
+        const currentConfig = parseMcpConfig(mcpConfig)
         const serverKey = server.id.replace(/[@\/]/g, '_')
 
         const newServer: Record<string, unknown> = {
@@ -232,12 +268,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           newServer.headers = server.headers
         }
 
-        const mergedConfig = {
-          ...currentConfig,
+        const mergedConfig = mergeMcpConfigs(currentConfig, {
           [serverKey]: newServer,
-        }
-
-        setMcpConfig(JSON.stringify(mergedConfig, null, 2))
+        })
+        setMcpConfig(stringifyMcpConfig(mergedConfig))
       } catch {
         toast({
           variant: 'destructive',
@@ -254,27 +288,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       try {
         // Update MCP configuration
         if (mode === 'replace') {
-          // Replace mode: directly use new configuration
-          setMcpConfig(JSON.stringify(config, null, 2))
+          setMcpConfig(stringifyMcpConfig(config))
           toast({
             title: t('common:bot.import_success'),
           })
         } else {
-          // Append mode: merge existing configuration with new configuration
-          try {
-            const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {}
-            const mergedConfig = { ...currentConfig, ...config }
-            setMcpConfig(JSON.stringify(mergedConfig, null, 2))
-            toast({
-              title: t('common:bot.append_success'),
-            })
-          } catch {
-            toast({
-              variant: 'destructive',
-              title: t('common:bot.errors.mcp_config_json'),
-            })
-            return
-          }
+          const currentConfig = parseMcpConfig(mcpConfig)
+          const mergedConfig = mergeMcpConfigs(currentConfig, config)
+          setMcpConfig(stringifyMcpConfig(mergedConfig))
+          toast({
+            title: t('common:bot.append_success'),
+          })
         }
         setImportModalVisible(false)
       } catch {
@@ -285,6 +309,30 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     },
     [mcpConfig, toast, t]
+  )
+
+  const handleMcpEditSave = useCallback((config: Record<string, unknown>) => {
+    setMcpConfig(stringifyMcpConfig(config))
+  }, [])
+
+  const handleDeleteMcpServer = useCallback(
+    (serverName: string) => {
+      if (readOnly) {
+        return
+      }
+
+      try {
+        const currentConfig = parseMcpConfig(mcpConfig)
+        const nextConfig = removeMcpServer(currentConfig, serverName)
+        setMcpConfig(stringifyMcpConfig(nextConfig))
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: t('common:bot.errors.mcp_config_json'),
+        })
+      }
+    },
+    [mcpConfig, readOnly, toast, t]
   )
 
   // Template handlers
@@ -1580,52 +1628,75 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               {/* MCP Config */}
               <div className="flex flex-col flex-grow">
                 <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center">
-                    <label className="block text-base font-medium text-text-primary">
+                  <div className="flex items-center gap-1.5">
+                    <label className="block text-base font-medium leading-8 text-text-primary">
                       {t('common:bot.mcp_config')}
                     </label>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleOpenMcpEditModal}
+                      disabled={readOnly}
+                      className="h-8 text-xs disabled:cursor-not-allowed"
+                    >
+                      {t('common:bot.edit_mcp_json')}
+                    </Button>
+                    <span className="text-text-muted text-xs">|</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleOpenMcpImportModal}
+                      disabled={readOnly}
+                      className="h-8 text-xs disabled:cursor-not-allowed"
+                    >
+                      {t('common:bot.add_mcp_json')}
+                    </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    {process.env.NEXT_PUBLIC_MCP_MARKET_URL && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          window.open(process.env.NEXT_PUBLIC_MCP_MARKET_URL, '_blank')
-                        }
-                        className="text-xs gap-1.5"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        {t('common:bot.mcp_market')}
-                      </Button>
-                    )}
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => setProviderModalOpen(true)}
-                      className="text-xs gap-1.5"
+                      disabled={readOnly}
+                      className="text-xs gap-1.5 disabled:cursor-not-allowed"
                     >
                       {t('common:mcpProviders.provider_button')}
                     </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => handleImportMcpConfig()}
-                      className="text-xs gap-1.5"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      {t('common:bot.import_mcp_button')}
-                    </Button>
                   </div>
                 </div>
-                <textarea
-                  value={mcpConfig}
-                  readOnly={true}
-                  className={`w-full px-4 py-2 bg-base-secondary rounded-md text-text-primary focus:outline-none font-mono text-base flex-grow resize-y custom-scrollbar border border-border cursor-text min-h-[120px]`}
-                  placeholder={t(
-                    'common:bot.mcp_config_readonly_placeholder',
-                    'MCP configuration is read-only. Please use the Import button to modify.'
+                <div className="w-full bg-base-secondary rounded-md border border-border min-h-[120px] flex-grow overflow-hidden">
+                  {mcpConfigState.parseError ? (
+                    <div className="px-4 py-3 text-sm text-red-500">
+                      {t('common:bot.errors.mcp_config_json')}
+                    </div>
+                  ) : mcpServerNames.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-text-muted">
+                      {t('common:bot.no_mcp_servers')}
+                    </div>
+                  ) : (
+                    <div className="max-h-44 overflow-y-auto custom-scrollbar divide-y divide-border">
+                      {mcpServerNames.map(serverName => (
+                        <div
+                          key={serverName}
+                          className="flex min-h-11 items-center justify-between px-4 py-2.5"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm text-text-primary truncate">{serverName}</div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDeleteMcpServer(serverName)}
+                            disabled={readOnly}
+                            className="h-7 px-2 text-xs text-text-muted hover:text-red-500"
+                          >
+                            {t('common:actions.delete')}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                />
+                </div>
               </div>
             </>
           )}
@@ -1672,13 +1743,24 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         )}
       </div>
 
+      {/* MCP Configuration Edit Modal */}
+      <McpConfigEditModal
+        open={mcpEditModalOpen}
+        onOpenChange={setMcpEditModalOpen}
+        initialConfig={mcpConfig}
+        onSave={handleMcpEditSave}
+        toast={toast}
+        agentType={mcpAgentType}
+      />
+
       {/* MCP Configuration Import Modal */}
       <McpConfigImportModal
         visible={importModalVisible}
         onClose={() => setImportModalVisible(false)}
         onImport={handleImportConfirm}
         toast={toast}
-        agentType={agentName as 'ClaudeCode' | 'Agno'}
+        agentType={mcpAgentType}
+        mode="append-only"
       />
 
       {/* MCP Provider Modal */}

@@ -129,7 +129,6 @@ export default function ExternalApiParamsInput({
       if (!forceRefresh) {
         const cachedData = getCachedParameters(teamId)
         if (cachedData) {
-          console.log('[ExternalApiParamsInput] Using cached parameters for team', teamId)
           setParamFields(cachedData.parameters)
           setHasFetched(true)
 
@@ -176,7 +175,6 @@ export default function ExternalApiParamsInput({
       setError('')
 
       try {
-        console.log('[ExternalApiParamsInput] Fetching parameters from API for team', teamId)
         const response = await teamApis.getTeamInputParameters(teamId)
 
         if (response.has_parameters) {

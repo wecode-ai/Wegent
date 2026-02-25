@@ -1,14 +1,48 @@
 """
 API v1 schemas for chat_shell.
 
-Defines request and response schemas for /v1/response API.
-Design inspired by Anthropic Messages API + OpenAI Responses API.
+Defines request and response schemas for /v1/responses API.
 """
 
-from enum import Enum
 from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
+
+# Import only what we actually use from shared module
+from shared.models.responses_api import (
+    ResponsesAPIStreamEvents,
+    ResponsesAPIStreamingResponse,
+)
+
+__all__ = [
+    # From shared.models.responses_api
+    "ResponsesAPIStreamEvents",
+    "ResponsesAPIStreamingResponse",
+    # Request schemas (defined in this module)
+    "ModelConfig",
+    "MessageContent",
+    "MessageItem",
+    "InputConfig",
+    "BuiltinToolConfig",
+    "CustomToolFunction",
+    "CustomTool",
+    "MCPServerConfig",
+    "SkillConfig",
+    "ToolsConfig",
+    "FeaturesConfig",
+    "Metadata",
+    "AttachmentConfig",
+    "KnowledgeContextItem",
+    "KnowledgeContext",
+    "ToolResultItem",
+    "ResponseRequest",
+    # Other schemas
+    "CancelRequest",
+    "CancelResponse",
+    "StorageHealth",
+    "ModelProviderHealth",
+    "HealthResponse",
+]
 
 # ============================================================
 # Request Schemas
@@ -336,7 +370,7 @@ class ToolResultItem(BaseModel):
 
 class ResponseRequest(BaseModel):
     """
-    /v1/response API request schema.
+    /v1/responses API request schema.
 
     Design inspired by Anthropic Messages API + OpenAI Responses API.
     Supports flexible tool provision and multimodal interaction.
@@ -396,227 +430,6 @@ class ResponseRequest(BaseModel):
 
     class Config:
         populate_by_name = True
-
-
-# ============================================================
-# Response/Event Schemas
-# ============================================================
-
-
-class ResponseEventType(str, Enum):
-    """SSE event types."""
-
-    RESPONSE_START = "response.start"
-    CONTENT_DELTA = "content.delta"
-    THINKING_DELTA = "thinking.delta"
-    REASONING_DELTA = "reasoning.delta"
-    TOOL_START = "tool.start"
-    TOOL_PROGRESS = "tool.progress"
-    TOOL_DONE = "tool.done"
-    TOOL_CALL_REQUIRED = "tool.call_required"
-    SOURCES_UPDATE = "sources.update"
-    CLARIFICATION = "clarification"
-    TOOL_LIMIT_REACHED = "tool_limit_reached"
-    RESPONSE_DONE = "response.done"
-    RESPONSE_CANCELLED = "response.cancelled"
-    ERROR = "response.error"
-
-
-class ContentDelta(BaseModel):
-    """Content delta event data."""
-
-    type: str = Field("text", description="Content type: text or image")
-    text: Optional[str] = Field(None, description="Text content")
-    data: Optional[str] = Field(None, description="Base64 image data")
-    # NEW: Include full result for streaming mixed content rendering
-    result: Optional[dict] = Field(
-        None,
-        description="Full result data including thinking, blocks, sources for real-time rendering",
-    )
-    # NEW: Block ID for text block streaming (incremental append to specific block)
-    block_id: Optional[str] = Field(
-        None,
-        description="Block ID for text streaming - identifies which text block to append content to",
-    )
-    # NEW: Block offset for incremental rendering within current text block
-    block_offset: Optional[int] = Field(
-        None,
-        description="Character offset within the current text block for incremental rendering",
-    )
-
-
-class ThinkingDelta(BaseModel):
-    """Thinking delta event data."""
-
-    text: str = Field(..., description="Thinking content")
-
-
-class ReasoningDelta(BaseModel):
-    """Reasoning delta event data (for DeepSeek R1 etc.)."""
-
-    text: str = Field(..., description="Reasoning content")
-
-
-class ToolStart(BaseModel):
-    """Tool start event data."""
-
-    id: str = Field(..., description="Tool call ID")
-    name: str = Field(..., description="Tool name")
-    input: dict = Field(..., description="Tool input")
-    display_name: Optional[str] = Field(None, description="Display name for UI")
-    blocks: Optional[list[dict[str, Any]]] = Field(
-        None, description="Current message blocks for mixed content rendering"
-    )
-
-
-class ToolProgress(BaseModel):
-    """Tool progress event data."""
-
-    id: str = Field(..., description="Tool call ID")
-    progress: int = Field(..., ge=0, le=100, description="Progress percentage")
-    message: Optional[str] = Field(None, description="Progress message")
-
-
-class ToolDone(BaseModel):
-    """Tool done event data."""
-
-    id: str = Field(..., description="Tool call ID")
-    output: Any = Field(..., description="Tool output")
-    duration_ms: Optional[int] = Field(None, description="Execution duration in ms")
-    error: Optional[str] = Field(None, description="Error message if failed")
-    sources: Optional[list[dict]] = Field(None, description="Source references")
-    display_name: Optional[str] = Field(
-        None, description="Display name for UI (updates title on completion)"
-    )
-    blocks: Optional[list[dict[str, Any]]] = Field(
-        None, description="Current message blocks for mixed content rendering"
-    )
-
-
-class ToolCallRequired(BaseModel):
-    """Tool call required event data (for client-side execution)."""
-
-    id: str = Field(..., description="Tool call ID")
-    name: str = Field(..., description="Tool name")
-    input: dict = Field(..., description="Tool input")
-
-
-class SourceItem(BaseModel):
-    """Source reference item for knowledge base citations."""
-
-    index: Optional[int] = Field(None, description="Source index number (1, 2, 3...)")
-    title: str = Field(..., description="Source title/document name")
-    kb_id: Optional[int] = Field(None, description="Knowledge base ID")
-    url: Optional[str] = Field(None, description="Source URL (for web sources)")
-    snippet: Optional[str] = Field(None, description="Content snippet")
-
-
-class SourcesUpdate(BaseModel):
-    """Sources update event data."""
-
-    sources: list[SourceItem] = Field(..., description="Source references")
-
-
-class ClarificationOption(BaseModel):
-    """Clarification option."""
-
-    label: str = Field(..., description="Option label")
-    value: str = Field(..., description="Option value")
-
-
-class Clarification(BaseModel):
-    """Clarification event data."""
-
-    question: str = Field(..., description="Clarification question")
-    options: Optional[list[ClarificationOption]] = Field(None, description="Options")
-
-
-class ToolLimitReached(BaseModel):
-    """Tool limit reached event data."""
-
-    max_calls: int = Field(..., description="Max allowed tool calls")
-    message: str = Field(..., description="Limit message")
-
-
-class UsageInfo(BaseModel):
-    """Token usage information."""
-
-    input_tokens: int = Field(..., description="Input tokens")
-    output_tokens: int = Field(..., description="Output tokens")
-    total_tokens: Optional[int] = Field(None, description="Total tokens")
-    cache_read_input_tokens: Optional[int] = Field(
-        None, description="Cache read tokens"
-    )
-    cache_creation_input_tokens: Optional[int] = Field(
-        None, description="Cache creation tokens"
-    )
-
-
-class ResponseDone(BaseModel):
-    """Response done event data.
-
-    Uses extra="allow" to pass through additional fields from upstream
-    without needing to explicitly define them here. This ensures new fields
-    (like loaded_skills) are automatically forwarded to backend.
-    """
-
-    model_config = {"extra": "allow"}
-
-    id: str = Field(..., description="Response ID")
-    usage: Optional[UsageInfo] = Field(None, description="Token usage")
-    stop_reason: str = Field(
-        ..., description="Stop reason: end_turn, tool_use, max_tokens"
-    )
-    sources: Optional[list[SourceItem]] = Field(None, description="Source references")
-    blocks: Optional[list[dict[str, Any]]] = Field(
-        None, description="Message blocks for mixed text/tool rendering"
-    )
-    silent_exit: Optional[bool] = Field(
-        None,
-        description="Whether this was a silent exit (subscription task decided not to respond)",
-    )
-    silent_exit_reason: Optional[str] = Field(
-        None, description="Reason for silent exit (for logging)"
-    )
-
-
-class ResponseCancelled(BaseModel):
-    """Response cancelled event data."""
-
-    id: str = Field(..., description="Response ID")
-    partial_content: Optional[str] = Field(
-        None, description="Partial content generated"
-    )
-
-
-class ErrorEvent(BaseModel):
-    """Error event data."""
-
-    code: str = Field(..., description="Error code")
-    message: str = Field(..., description="Error message")
-    details: Optional[dict] = Field(None, description="Error details")
-
-
-class ResponseEvent(BaseModel):
-    """Generic response event."""
-
-    event: ResponseEventType = Field(..., description="Event type")
-    data: Union[
-        ContentDelta,
-        ThinkingDelta,
-        ReasoningDelta,
-        ToolStart,
-        ToolProgress,
-        ToolDone,
-        ToolCallRequired,
-        SourcesUpdate,
-        Clarification,
-        ToolLimitReached,
-        ResponseDone,
-        ResponseCancelled,
-        ErrorEvent,
-        dict,
-    ] = Field(..., description="Event data")
 
 
 # ============================================================

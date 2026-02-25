@@ -11,12 +11,14 @@ from typing import Dict, List, Optional, Type
 from app.schemas.kind import Retriever
 from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
+from app.services.rag.storage.milvus_backend import MilvusBackend
 from app.services.rag.storage.qdrant_backend import QdrantBackend
 
 # Registry of storage backend classes by type
 STORAGE_BACKEND_REGISTRY: Dict[str, Type[BaseStorageBackend]] = {
     "elasticsearch": ElasticsearchBackend,
     "qdrant": QdrantBackend,
+    "milvus": MilvusBackend,
 }
 
 

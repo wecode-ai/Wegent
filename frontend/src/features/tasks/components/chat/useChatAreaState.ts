@@ -388,7 +388,6 @@ export function useChatAreaState({
       if (!defaultConfig) {
         // No default configured for this mode, return null
         // This allows all teams to be shown in QuickAccessCards
-        console.log('[useChatAreaState] No default team configured for mode:', taskType)
         return null
       }
 
@@ -406,24 +405,9 @@ export function useChatAreaState({
         const publicTeam = matchedTeams.find(team => team.user_id === 0)
         const selectedTeam = publicTeam || matchedTeams[0]
 
-        console.log(
-          '[useChatAreaState] Found default team for mode:',
-          taskType,
-          selectedTeam.name,
-          normalizedNamespace,
-          'isPublic:',
-          selectedTeam.user_id === 0
-        )
         return selectedTeam
       }
 
-      // No match found, return null (configured default team doesn't exist in list)
-      console.log(
-        '[useChatAreaState] Configured default team not found in list for mode:',
-        taskType,
-        defaultConfig.name,
-        normalizedNamespace
-      )
       return null
     },
     [defaultTeamsConfig, taskType]
@@ -437,7 +421,6 @@ export function useChatAreaState({
   // Restore to default team
   const restoreDefaultTeam = useCallback(() => {
     if (defaultTeam) {
-      console.log('[useChatAreaState] Restoring to default team:', defaultTeam.name)
       setSelectedTeam(defaultTeam)
       setIsUsingDefaultTeam(true)
       // Reset external API params when restoring
@@ -450,7 +433,6 @@ export function useChatAreaState({
   // Also clears repository if the new team doesn't require a workspace
   const handleTeamChange = useCallback(
     (team: Team | null) => {
-      console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null')
       setSelectedTeam(team)
 
       // Reset external API params when team changes
@@ -465,7 +447,6 @@ export function useChatAreaState({
         // Clear repository and branch if the new team doesn't require a workspace
         // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
         if (team && !teamRequiresWorkspace(team)) {
-          console.log('[ChatArea] Team does not require workspace, clearing repo and branch')
           setSelectedRepo(null)
           setSelectedBranch(null)
         }

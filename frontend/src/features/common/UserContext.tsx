@@ -69,9 +69,6 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const isAuth = userApis.isAuthenticated()
 
       if (!isAuth) {
-        console.log(
-          'UserContext: User not authenticated, clearing user state and redirecting to login'
-        )
         setUser(null)
         setIsLoading(false)
         redirectToLogin()
@@ -98,7 +95,6 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
     // Listen for OIDC login success event
     const handleOidcLoginSuccess = () => {
-      console.log('Received OIDC login success event, refreshing user information')
       fetchUser()
     }
 
@@ -109,7 +105,6 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const isAuth = userApis.isAuthenticated()
       // Use userRef.current to avoid closure capturing stale user state
       if (!isAuth && userRef.current) {
-        console.log('Token expired, auto logout')
         setUser(null)
         redirectToLogin()
       }
@@ -123,7 +118,6 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   }, [])
 
   const logout = () => {
-    console.log('Executing logout operation')
     userApis.logout()
     setUser(null)
     redirectToLogin()

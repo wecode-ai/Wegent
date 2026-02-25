@@ -19,11 +19,11 @@ class TestKBPromptMarkerDetection:
     def setup_method(self):
         """Set up test fixtures."""
         # Import here to avoid import issues in non-package tests
-        from chat_shell.interface import ChatRequest
         from chat_shell.services.context import ChatContext
+        from shared.models.execution import ExecutionRequest
 
         self.ChatContext = ChatContext
-        self.ChatRequest = ChatRequest
+        self.ExecutionRequest = ExecutionRequest
 
     def _create_context(self, system_prompt: str = "") -> "ChatContext":
         """Create ChatContext with given system prompt."""

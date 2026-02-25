@@ -28,17 +28,17 @@ class TestHealthEndpoints:
         assert data["status"] == "running"
 
 
-class TestChatRequest:
-    """Tests for ChatRequest data structure."""
+class TestExecutionRequest:
+    """Tests for ExecutionRequest data structure."""
 
-    def test_chat_request_to_dict(self):
-        """Test ChatRequest serialization."""
-        from chat_shell.interface import ChatRequest
+    def test_execution_request_to_dict(self):
+        """Test ExecutionRequest serialization."""
+        from shared.models.execution import ExecutionRequest
 
-        request = ChatRequest(
+        request = ExecutionRequest(
             task_id=1,
             subtask_id=2,
-            message="Hello",
+            prompt="Hello",  # ExecutionRequest uses 'prompt' instead of 'message'
             user_id=3,
             user_name="test_user",
             team_id=4,
@@ -47,25 +47,26 @@ class TestChatRequest:
             enable_web_search=False,
         )
 
-        data = request.__dict__
+        data = request.to_dict()
         assert data["task_id"] == 1
         assert data["subtask_id"] == 2
-        assert data["message"] == "Hello"
+        assert data["prompt"] == "Hello"
         assert data["user_id"] == 3
         assert data["enable_tools"] is True
         assert data["enable_web_search"] is False
 
 
-class TestChatEvent:
-    """Tests for ChatEvent data structure."""
+class TestExecutionEvent:
+    """Tests for ExecutionEvent data structure."""
 
-    def test_chat_event_to_sse(self):
-        """Test ChatEvent SSE formatting."""
-        from chat_shell.interface import ChatEvent, ChatEventType
+    def test_execution_event_to_sse(self):
+        """Test ExecutionEvent SSE formatting."""
+        from shared.models.execution import EventType, ExecutionEvent
 
-        event = ChatEvent(
-            type=ChatEventType.CHUNK,
-            data={"content": "Hello", "offset": 0},
+        event = ExecutionEvent(
+            type=EventType.CHUNK.value,
+            content="Hello",
+            offset=0,
         )
 
         sse = event.to_sse()

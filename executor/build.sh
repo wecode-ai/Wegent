@@ -6,9 +6,6 @@
 
 set -e
 
-echo "Installing PyInstaller..."
-pip install pyinstaller
-
 echo "Building executor binary..."
 cd /app/executor
 pyinstaller executor.spec --clean

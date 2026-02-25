@@ -274,6 +274,7 @@ export interface TaskDetail {
   member_count?: number // Number of active members in the group
   app?: TaskApp | null // App preview information (set by expose_service tool)
   device_id?: string | null // Device ID used for execution (for task history)
+  preserve_executor?: boolean // Whether to preserve executor pod after task completion
 }
 
 /** Correction data stored in subtask.result.correction */

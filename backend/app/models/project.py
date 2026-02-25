@@ -8,6 +8,7 @@ Project model for organizing tasks into projects.
 Projects are containers for tasks, allowing users to categorize and organize
 their tasks. Each task can belong to one project (one-to-many relationship).
 """
+
 from datetime import datetime
 
 from sqlalchemy import (

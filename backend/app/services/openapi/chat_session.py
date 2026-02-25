@@ -37,9 +37,11 @@ class ChatSessionSetup(NamedTuple):
     system_prompt: str
     bot_name: str  # First bot's name for MCP loading
     bot_namespace: str  # First bot's namespace for MCP loading
-    preload_skills: List[str]  # Preload skills from ChatConfig
-    skill_names: List[str]  # Available skill names from ChatConfig
-    skill_configs: List[Dict[str, Any]]  # Full skill configurations from ChatConfig
+    preload_skills: List[str]  # Preload skills from ExecutionRequest
+    skill_names: List[str]  # Available skill names from ExecutionRequest
+    skill_configs: List[
+        Dict[str, Any]
+    ]  # Full skill configurations from ExecutionRequest
 
 
 def setup_chat_session(
@@ -68,34 +70,7 @@ def setup_chat_session(
     Returns:
         ChatSessionSetup with task, subtasks, and config
     """
-    from app.services.chat.config import ChatConfigBuilder
-
-    # Build chat configuration
-    config_builder = ChatConfigBuilder(
-        db=db,
-        team=team,
-        user_id=user.id,
-        user_name=user.user_name,
-    )
-
-    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
-    preload_skills = tool_settings.get("preload_skills", [])
-    try:
-        chat_config = config_builder.build(
-            override_model_name=model_info.get("model_id"),
-            force_override=model_info.get("model_id") is not None,
-            enable_clarification=False,
-            enable_deep_thinking=enable_deep_thinking,
-            task_id=task_id or 0,
-            preload_skills=preload_skills,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    model_config = chat_config.model_config
-    system_prompt = chat_config.system_prompt
-
-    # Get bot IDs from team members
+    # Get bot IDs from team members first (needed for subtask creation)
     team_crd = Team.model_validate(team.json)
     if not team_crd.spec.members:
         raise HTTPException(
@@ -301,6 +276,33 @@ def setup_chat_session(
     db.refresh(user_subtask)
     db.refresh(assistant_subtask)
 
+    # Build configuration using unified TaskRequestBuilder
+    from app.services.execution import TaskRequestBuilder
+
+    builder = TaskRequestBuilder(db)
+    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    preload_skills = tool_settings.get("preload_skills", [])
+
+    try:
+        execution_request = builder.build(
+            subtask=assistant_subtask,
+            task=task,
+            user=user,
+            team=team,
+            message=input_text,
+            override_model_name=model_info.get("model_id"),
+            force_override=model_info.get("model_id") is not None,
+            enable_clarification=False,
+            enable_deep_thinking=enable_deep_thinking,
+            preload_skills=preload_skills,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Extract config from ExecutionRequest
+    model_config = execution_request.model_config
+    system_prompt = execution_request.system_prompt
+
     # Store user message in long-term memory (fire-and-forget)
     # Only store if enable_chat_bot=True (wegent_chat_bot tool is enabled)
     # This runs in background and doesn't block the main flow
@@ -391,9 +393,9 @@ def setup_chat_session(
         system_prompt=system_prompt,
         bot_name=first_bot_name,
         bot_namespace=first_bot_namespace,
-        preload_skills=chat_config.preload_skills,
-        skill_names=chat_config.skill_names,
-        skill_configs=chat_config.skill_configs,
+        preload_skills=execution_request.preload_skills,
+        skill_names=execution_request.skill_names,
+        skill_configs=execution_request.skill_configs,
     )
 
 

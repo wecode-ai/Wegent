@@ -2,34 +2,20 @@
 API v1 module for chat_shell.
 """
 
-from chat_shell.api.v1.schemas import (  # Request schemas; Response/Event schemas; Other
+from chat_shell.api.v1.schemas import (  # Request schemas
     AttachmentConfig,
     CancelRequest,
     CancelResponse,
-    Clarification,
-    ContentDelta,
-    ErrorEvent,
     FeaturesConfig,
     HealthResponse,
     InputConfig,
     KnowledgeContext,
     Metadata,
     ModelConfig,
-    ReasoningDelta,
-    ResponseCancelled,
-    ResponseDone,
-    ResponseEvent,
-    ResponseEventType,
     ResponseRequest,
-    SourcesUpdate,
-    ThinkingDelta,
-    ToolCallRequired,
-    ToolDone,
-    ToolLimitReached,
-    ToolProgress,
+    ResponsesAPIStreamEvents,
+    ResponsesAPIStreamingResponse,
     ToolsConfig,
-    ToolStart,
-    UsageInfo,
 )
 
 __all__ = [
@@ -42,25 +28,11 @@ __all__ = [
     "Metadata",
     "AttachmentConfig",
     "KnowledgeContext",
-    # Response/Event schemas
-    "ResponseEvent",
-    "ResponseEventType",
-    "ContentDelta",
-    "ThinkingDelta",
-    "ReasoningDelta",
-    "ToolStart",
-    "ToolProgress",
-    "ToolDone",
-    "ToolCallRequired",
-    "SourcesUpdate",
-    "Clarification",
-    "ToolLimitReached",
-    "ResponseDone",
-    "ResponseCancelled",
-    "ErrorEvent",
+    # OpenAI Responses API types
+    "ResponsesAPIStreamEvents",
+    "ResponsesAPIStreamingResponse",
     # Other
     "CancelRequest",
     "CancelResponse",
     "HealthResponse",
-    "UsageInfo",
 ]

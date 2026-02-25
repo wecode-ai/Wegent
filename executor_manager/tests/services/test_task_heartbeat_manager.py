@@ -529,12 +529,11 @@ class TestRunningTaskTracker:
             return_value=mock_heartbeat,
         )
 
-        # Mock TaskApiClient (imported inside method)
-        mock_api_client = MagicMock()
-        mock_api_client.update_task_status_by_fields.return_value = (True, {})
+        # Mock CallbackClient.send_error (imported inside method)
+        mock_send_error = AsyncMock(return_value=True)
         mocker.patch(
-            "executor_manager.clients.task_api_client.TaskApiClient",
-            return_value=mock_api_client,
+            "executor_manager.clients.callback_client.CallbackClient.send_error",
+            mock_send_error,
         )
 
         await tracker._handle_task_dead(
@@ -544,10 +543,9 @@ class TestRunningTaskTracker:
             last_heartbeat=time.time() - 60,
         )
 
-        # Verify task marked as failed with OOM message
-        mock_api_client.update_task_status_by_fields.assert_called_once()
-        call_kwargs = mock_api_client.update_task_status_by_fields.call_args[1]
-        assert call_kwargs["status"] == "FAILED"
+        # Verify task marked as failed with OOM message via callback
+        mock_send_error.assert_called_once()
+        call_kwargs = mock_send_error.call_args[1]
         assert "Out Of Memory" in call_kwargs["error_message"]
 
         # Verify cleanup
@@ -582,12 +580,11 @@ class TestRunningTaskTracker:
             return_value=mock_heartbeat,
         )
 
-        # Mock TaskApiClient (imported inside method)
-        mock_api_client = MagicMock()
-        mock_api_client.update_task_status_by_fields.return_value = (True, {})
+        # Mock CallbackClient.send_error (imported inside method)
+        mock_send_error = AsyncMock(return_value=True)
         mocker.patch(
-            "executor_manager.clients.task_api_client.TaskApiClient",
-            return_value=mock_api_client,
+            "executor_manager.clients.callback_client.CallbackClient.send_error",
+            mock_send_error,
         )
 
         await tracker._handle_task_dead(
@@ -597,8 +594,8 @@ class TestRunningTaskTracker:
             last_heartbeat=time.time() - 60,
         )
 
-        # Verify error message mentions SIGKILL
-        call_kwargs = mock_api_client.update_task_status_by_fields.call_args[1]
+        # Verify error message mentions SIGKILL via callback
+        call_kwargs = mock_send_error.call_args[1]
         assert "SIGKILL" in call_kwargs["error_message"]
         assert "137" in call_kwargs["error_message"]
 
@@ -631,11 +628,11 @@ class TestRunningTaskTracker:
             return_value=mock_heartbeat,
         )
 
-        # Mock TaskApiClient (imported inside method)
-        mock_api_client = MagicMock()
+        # Mock CallbackClient.send_error (imported inside method)
+        mock_send_error = AsyncMock(return_value=True)
         mocker.patch(
-            "executor_manager.clients.task_api_client.TaskApiClient",
-            return_value=mock_api_client,
+            "executor_manager.clients.callback_client.CallbackClient.send_error",
+            mock_send_error,
         )
 
         await tracker._handle_task_dead(
@@ -646,7 +643,7 @@ class TestRunningTaskTracker:
         )
 
         # Should NOT mark as failed - normal exit
-        mock_api_client.update_task_status_by_fields.assert_not_called()
+        mock_send_error.assert_not_called()
 
         # But should cleanup
         mock_heartbeat.delete_heartbeat.assert_called_once()
@@ -680,12 +677,19 @@ class TestRunningTaskTracker:
             return_value=mock_heartbeat,
         )
 
-        # Mock TaskApiClient - task already completed (imported inside method)
+        # Mock TaskApiClient for get_task_status (imported inside method)
         mock_api_client = MagicMock()
         mock_api_client.get_task_status.return_value = {"status": "COMPLETED"}
         mocker.patch(
             "executor_manager.clients.task_api_client.TaskApiClient",
             return_value=mock_api_client,
+        )
+
+        # Mock CallbackClient.send_error (imported inside method)
+        mock_send_error = AsyncMock(return_value=True)
+        mocker.patch(
+            "executor_manager.clients.callback_client.CallbackClient.send_error",
+            mock_send_error,
         )
 
         await tracker._handle_task_dead(
@@ -699,7 +703,7 @@ class TestRunningTaskTracker:
         mock_api_client.get_task_status.assert_called_once_with(123, 456)
 
         # Should NOT mark as failed - task already completed
-        mock_api_client.update_task_status_by_fields.assert_not_called()
+        mock_send_error.assert_not_called()
 
         # Should cleanup tracker
         mock_heartbeat.delete_heartbeat.assert_called_once()
@@ -733,13 +737,19 @@ class TestRunningTaskTracker:
             return_value=mock_heartbeat,
         )
 
-        # Mock TaskApiClient - task still running (imported inside method)
+        # Mock TaskApiClient for get_task_status (imported inside method)
         mock_api_client = MagicMock()
         mock_api_client.get_task_status.return_value = {"status": "RUNNING"}
-        mock_api_client.update_task_status_by_fields.return_value = (True, {})
         mocker.patch(
             "executor_manager.clients.task_api_client.TaskApiClient",
             return_value=mock_api_client,
+        )
+
+        # Mock CallbackClient.send_error (imported inside method)
+        mock_send_error = AsyncMock(return_value=True)
+        mocker.patch(
+            "executor_manager.clients.callback_client.CallbackClient.send_error",
+            mock_send_error,
         )
 
         await tracker._handle_task_dead(
@@ -749,10 +759,9 @@ class TestRunningTaskTracker:
             last_heartbeat=time.time() - 60,
         )
 
-        # Should mark as failed
-        mock_api_client.update_task_status_by_fields.assert_called_once()
-        call_kwargs = mock_api_client.update_task_status_by_fields.call_args[1]
-        assert call_kwargs["status"] == "FAILED"
+        # Should mark as failed via callback
+        mock_send_error.assert_called_once()
+        call_kwargs = mock_send_error.call_args[1]
         assert "removed unexpectedly" in call_kwargs["error_message"]
 
     @pytest.mark.asyncio

@@ -111,6 +111,10 @@ export function KnowledgeBaseClassicPageMobile({
     if (knowledgeBase.namespace === 'default') {
       return knowledgeBase.user_id === user.id
     }
+    // Organization knowledge base - only admin can manage
+    if (knowledgeBase.namespace === 'organization') {
+      return user.role === 'admin'
+    }
     // Group knowledge base - check group role
     // Developer or higher can edit, Maintainer or higher can delete
     const groupRole = groupRoleMap.get(knowledgeBase.namespace)

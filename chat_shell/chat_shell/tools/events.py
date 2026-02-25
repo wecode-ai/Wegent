@@ -5,28 +5,32 @@
 """Tool event handling for Chat Service.
 
 This module provides handlers for tool start/end events during streaming,
-including thinking step generation and event emission.
+emitting tool events via unified ResponsesAPIEmitter.
 """
 
+import asyncio
+import json
 import logging
+import time
 from typing import Any, Callable
 
 from chat_shell.services.streaming.core import should_display_tool_details
-from shared.telemetry.decorators import add_span_event, set_span_attribute
+from shared.models import ResponsesAPIEmitter
+from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
 
 
 def create_tool_event_handler(
     state: Any,
-    emitter: Any,
+    emitter: ResponsesAPIEmitter,
     agent_builder: Any,
 ) -> Callable[[str, dict], None]:
     """Create a tool event handler function.
 
     Args:
         state: Streaming state to update
-        emitter: Stream emitter for events
+        emitter: ResponsesAPIEmitter for events
         agent_builder: Agent builder for tool registry access
 
     Returns:
@@ -34,7 +38,7 @@ def create_tool_event_handler(
     """
 
     def handle_tool_event(kind: str, event_data: dict):
-        """Handle tool events and add thinking steps."""
+        """Handle tool events and emit tool data via ResponsesAPIEmitter."""
         tool_name = event_data.get("name", "unknown")
         run_id = event_data.get("run_id", "")
 
@@ -50,9 +54,20 @@ def create_tool_event_handler(
     return handle_tool_event
 
 
+def _run_async(coro):
+    """Run async coroutine from sync context."""
+    try:
+        loop = asyncio.get_running_loop()
+        # We're in an async context, create a task
+        loop.create_task(coro)
+    except RuntimeError:
+        # No running event loop, run directly
+        asyncio.run(coro)
+
+
 def _handle_tool_start(
     state: Any,
-    emitter: Any,
+    emitter: ResponsesAPIEmitter,
     agent_builder: Any,
     tool_name: str,
     run_id: str,
@@ -71,12 +86,15 @@ def _handle_tool_start(
     serializable_input = _make_serializable(tool_input)
 
     # Generate tool_use_id (prefer from event, fallback to run_id + timestamp)
-    import time
-
     tool_use_id = event_data.get("tool_use_id")
     if not tool_use_id:
         # Fallback: generate unique ID from run_id + timestamp
         tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
+
+    # Store tool_use_id mapping for tool_end to use the same ID
+    if not hasattr(state, "_tool_use_id_map"):
+        state._tool_use_id_map = {}
+    state._tool_use_id_map[run_id] = tool_use_id
 
     # Add OpenTelemetry span event for tool start
     add_span_event(
@@ -93,69 +111,29 @@ def _handle_tool_start(
         f"[TOOL_START] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})"
     )
 
-    # Build friendly title and extract display_name
-    title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
-
-    # Extract display_name from tool instance
-    # Try multiple sources:
-    # 1. tool_registry (for registered tools)
-    # 2. agent_builder.all_tools (includes all tools including dynamically loaded skill tools)
-    tool_instance = None
-
-    # First try tool_registry
-    if agent_builder.tool_registry:
-        tool_instance = agent_builder.tool_registry.get(tool_name)
-
-    # If not found, search in agent_builder.all_tools (includes skill tools)
-    if not tool_instance and hasattr(agent_builder, "all_tools"):
-        for tool in agent_builder.all_tools:
-            if tool.name == tool_name:
-                tool_instance = tool
-                break
-
+    # Extract display_name from tool instance for frontend display
+    tool_instance = _get_tool_instance(agent_builder, tool_name)
     display_name = (
         getattr(tool_instance, "display_name", None) if tool_instance else None
     )
 
-    thinking_step = {
-        "title": title,
-        "next_action": "continue",
-        "run_id": run_id,  # Keep for backward compatibility
-        "tool_use_id": tool_use_id,  # Standard identifier
-        "details": {
-            "type": "tool_use",
-            "tool_name": tool_name,
-            "name": tool_name,
-            "status": "started",
-        },
-    }
+    # Emit tool_start event via ResponsesAPIEmitter
+    # Only include arguments if tool is in whitelist
+    arguments = serializable_input if should_display_tool_details(tool_name) else None
 
-    # Only include input if tool is in whitelist
-    if should_display_tool_details(tool_name):
-        thinking_step["details"]["input"] = serializable_input
-
-    state.add_thinking_step(thinking_step)
-
-    # Add tool block for mixed content rendering
-    state.append_tool_block(tool_use_id, tool_name, serializable_input, display_name)
-
-    # Emit chunk with thinking data synchronously using emit_json
-    current_result = state.get_current_result(
-        include_value=False, slim_thinking=True, include_blocks=True
+    _run_async(
+        emitter.tool_start(
+            call_id=tool_use_id,
+            name=tool_name,
+            arguments=arguments,
+            display_name=display_name,
+        )
     )
-    chunk_data = {
-        "type": "chunk",
-        "content": "",
-        "offset": state.offset,
-        "subtask_id": state.subtask_id,
-        "result": current_result,
-    }
-    emitter.emit_json(chunk_data)
 
 
 def _handle_tool_end(
     state: Any,
-    emitter: Any,
+    emitter: ResponsesAPIEmitter,
     agent_builder: Any,
     tool_name: str,
     run_id: str,
@@ -168,36 +146,28 @@ def _handle_tool_end(
     serializable_output = _make_output_serializable(tool_output)
 
     # Extract tool input from event_data for load_skill tracking
-    # This is the original input before any filtering by should_display_tool_details
     raw_tool_input = event_data.get("data", {}).get("input", {})
     tool_input = _make_serializable(raw_tool_input) if raw_tool_input else {}
 
-    # Find matching start step first to get the tool_use_id that was created
-    # This ensures we use the same ID for updating the block
-    matching_start_idx = None
-    tool_use_id = event_data.get("tool_use_id")  # Try from event first
-
+    # Get tool_use_id from event, or from saved mapping, or generate new one
+    tool_use_id = event_data.get("tool_use_id")
     if not tool_use_id:
-        # Search for matching tool_start step to get the tool_use_id
-        for idx, step in enumerate(state.thinking):
-            if (
-                step.get("run_id") == run_id
-                and step.get("details", {}).get("status") == "started"
-            ):
-                matching_start_idx = idx
-                # Use the tool_use_id from the start step
-                tool_use_id = step.get("tool_use_id")
-                break
-
-    # If still no tool_use_id, generate one as fallback (should rarely happen)
-    if not tool_use_id:
-        import time
-
-        tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
-        logger.warning(
-            "[TOOL_END] No tool_use_id from event or matching start step, generated: %s",
-            tool_use_id,
-        )
+        # Try to get from saved mapping (set by tool_start)
+        tool_use_id_map = getattr(state, "_tool_use_id_map", {})
+        tool_use_id = tool_use_id_map.get(run_id)
+        if tool_use_id:
+            logger.info(
+                "[TOOL_END] Using saved tool_use_id from tool_start: %s",
+                tool_use_id,
+            )
+            # Clean up the mapping
+            del tool_use_id_map[run_id]
+        else:
+            tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
+            logger.warning(
+                "[TOOL_END] No tool_use_id from event or mapping, generated: %s",
+                tool_use_id,
+            )
 
     # Add OpenTelemetry span event for tool end
     output_str = str(serializable_output)
@@ -218,90 +188,13 @@ def _handle_tool_end(
     # Check for MCP silent_exit marker in tool output
     _check_silent_exit_marker(state, tool_name, serializable_output)
 
-    # Process tool output and extract metadata
-    title, sources = _process_tool_output(tool_name, serializable_output)
-
-    # Detect success/failure status from tool output
-    status = "completed"
-    error_msg = None
-    if isinstance(serializable_output, str):
-        try:
-            import json
-
-            parsed_output = json.loads(serializable_output)
-            if isinstance(parsed_output, dict):
-                # Check for explicit success field
-                if parsed_output.get("success") is False:
-                    status = "failed"
-                    error_msg = parsed_output.get("error", "Task failed")
-                    title = (
-                        f"Failed: {error_msg[:50]}..."
-                        if len(str(error_msg)) > 50
-                        else f"Failed: {error_msg}"
-                    )
-                elif parsed_output.get("success") is True:
-                    status = "completed"
-        except json.JSONDecodeError:
-            pass
-
-    # Add sources to state
+    # Process tool output and extract sources for knowledge base citations
+    sources = _extract_sources(tool_name, serializable_output)
     if sources:
         state.add_sources(sources)
 
-    # Try to get better title from display_name
-    if status == "completed" and title == f"Tool completed: {tool_name}":
-        title = _build_tool_end_title(agent_builder, tool_name, run_id, state, title)
-
-    # If we didn't find matching_start_idx earlier, search again for insertion position
-    if matching_start_idx is None:
-        for idx, step in enumerate(state.thinking):
-            # Try to match using tool_use_id first, fallback to run_id
-            step_id = step.get("tool_use_id") or step.get("run_id")
-            if (
-                step_id == tool_use_id
-                and step.get("details", {}).get("status") == "started"
-            ):
-                matching_start_idx = idx
-                break
-
-    result_step = {
-        "title": title,
-        "next_action": "continue",
-        "run_id": run_id,  # Keep for backward compatibility
-        "tool_use_id": tool_use_id,  # Standard identifier
-        "details": {
-            "type": "tool_result",
-            "tool_name": tool_name,
-            "status": status,
-        },
-    }
-
-    # Only include output if tool is in whitelist
-    if should_display_tool_details(tool_name):
-        result_step["details"]["output"] = serializable_output
-        result_step["details"]["content"] = serializable_output
-
-    # Add error field if failed
-    if status == "failed" and error_msg:
-        result_step["details"]["error"] = error_msg
-
-    if matching_start_idx is not None:
-        state.thinking.insert(matching_start_idx + 1, result_step)
-    else:
-        state.add_thinking_step(result_step)
-
-    # Update tool block with output and status
-    state.update_tool_block(
-        tool_use_id,
-        tool_output=serializable_output,
-        status="done" if status == "completed" else "error",
-        is_error=(status == "failed"),
-    )
-
     # Track loaded skills for persistence across conversation turns
-    # When load_skill tool completes successfully, record the skill name
-    if tool_name == "load_skill" and status == "completed":
-        # Get skill_name directly from tool_input (extracted from event_data)
+    if tool_name == "load_skill":
         skill_name = (
             tool_input.get("skill_name") if isinstance(tool_input, dict) else None
         )
@@ -325,35 +218,55 @@ def _handle_tool_end(
                 skill_name,
             )
 
-    # Emit chunk with thinking data synchronously using emit_json
-    current_result = state.get_current_result(
-        include_value=False, slim_thinking=True, include_blocks=True
+    # Emit tool_done event via ResponsesAPIEmitter
+    # Only include arguments if tool is in whitelist
+    arguments = tool_input if should_display_tool_details(tool_name) else None
+
+    _run_async(
+        emitter.tool_done(
+            call_id=tool_use_id,
+            name=tool_name,
+            arguments=arguments,
+        )
     )
-    chunk_data = {
-        "type": "chunk",
-        "content": "",
-        "offset": state.offset,
-        "subtask_id": state.subtask_id,
-        "result": current_result,
-    }
-    emitter.emit_json(chunk_data)
 
 
-def _process_tool_output(
-    tool_name: str, tool_output: Any
-) -> tuple[str, list[dict[str, Any]]]:
-    """Process tool output and extract sources.
+def _get_tool_instance(agent_builder: Any, tool_name: str) -> Any:
+    """Get tool instance from agent builder.
+
+    Args:
+        agent_builder: Agent builder with tool registry
+        tool_name: Name of the tool
+
+    Returns:
+        Tool instance or None
+    """
+    tool_instance = None
+
+    # First try tool_registry
+    if agent_builder.tool_registry:
+        tool_instance = agent_builder.tool_registry.get(tool_name)
+
+    # If not found, search in agent_builder.all_tools (includes skill tools)
+    if not tool_instance and hasattr(agent_builder, "all_tools"):
+        for tool in agent_builder.all_tools:
+            if tool.name == tool_name:
+                tool_instance = tool
+                break
+
+    return tool_instance
+
+
+def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:
+    """Extract sources from tool output for knowledge base citations.
 
     Args:
         tool_name: Name of the tool
         tool_output: Output from the tool
 
     Returns:
-        Tuple of (title, sources)
+        List of source dictionaries
     """
-    import json
-
-    title = f"Tool completed: {tool_name}"
     sources: list[dict[str, Any]] = []
 
     # Extract sources from knowledge_base_search results
@@ -364,8 +277,7 @@ def _process_tool_output(
                 logger.info(
                     f"[TOOL_OUTPUT] knowledge_base_search parsed output: "
                     f"has_sources={'sources' in parsed}, "
-                    f"sources_count={len(parsed.get('sources', []))}, "
-                    f"sources={parsed.get('sources', [])}"
+                    f"sources_count={len(parsed.get('sources', []))}"
                 )
                 if isinstance(parsed, dict) and "sources" in parsed:
                     kb_sources = parsed.get("sources", [])
@@ -374,8 +286,6 @@ def _process_tool_output(
                         logger.info(
                             f"[TOOL_OUTPUT] Extracted {len(kb_sources)} sources from knowledge_base_search"
                         )
-                    result_count = parsed.get("count", 0)
-                    title = f"检索完成，找到 {result_count} 条结果"
             except json.JSONDecodeError as e:
                 logger.warning(f"[TOOL_OUTPUT] Failed to parse tool output: {e}")
 
@@ -388,9 +298,8 @@ def _process_tool_output(
             urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', tool_output)
             for url in urls[:5]:  # Limit to 5 sources
                 sources.append({"type": "url", "url": url})
-            title = f"搜索完成，找到 {len(urls)} 个结果"
 
-    return title, sources
+    return sources
 
 
 def _make_serializable(value: Any) -> Any:
@@ -418,98 +327,6 @@ def _make_output_serializable(tool_output: Any) -> Any:
     return tool_output
 
 
-def _build_tool_start_title(
-    agent_builder: Any,
-    tool_name: str,
-    serializable_input: Any,
-) -> str:
-    """Build friendly title for tool start event."""
-    tool_instance = None
-    if agent_builder.tool_registry:
-        tool_instance = agent_builder.tool_registry.get(tool_name)
-
-    display_name = (
-        getattr(tool_instance, "display_name", None) if tool_instance else None
-    )
-
-    if display_name:
-        title = display_name
-        # For load_skill, append the skill's friendly display name
-        if tool_name == "load_skill" and tool_instance:
-            skill_name_param = (
-                serializable_input.get("skill_name", "")
-                if isinstance(serializable_input, dict)
-                else ""
-            )
-            if skill_name_param:
-                skill_display = skill_name_param
-                if hasattr(tool_instance, "get_skill_display_name"):
-                    try:
-                        skill_display = tool_instance.get_skill_display_name(
-                            skill_name_param
-                        )
-                    except Exception:
-                        pass
-                title = f"{display_name}：{skill_display}"
-    elif tool_name == "web_search":
-        query = (
-            serializable_input if isinstance(serializable_input, dict) else {}
-        ).get("query", "")
-        title = f"正在搜索: {query}" if query else "正在进行网页搜索"
-    else:
-        title = f"正在使用工具: {tool_name}"
-
-    return title
-
-
-def _build_tool_end_title(
-    agent_builder: Any,
-    tool_name: str,
-    run_id: str,
-    state: Any,
-    default_title: str,
-) -> str:
-    """Build friendly title for tool end event."""
-    tool_instance = None
-    if agent_builder.tool_registry:
-        tool_instance = agent_builder.tool_registry.get(tool_name)
-
-    display_name = (
-        getattr(tool_instance, "display_name", None) if tool_instance else None
-    )
-
-    if not display_name:
-        return default_title
-
-    # Remove "正在" prefix for cleaner display
-    if display_name.startswith("正在"):
-        base_title = display_name[2:]
-    else:
-        base_title = display_name
-
-    # For load_skill, append the skill's friendly display name
-    if tool_name == "load_skill" and tool_instance:
-        # Find the matching tool_start step to get the skill_name
-        for step in state.thinking:
-            if (
-                step.get("run_id") == run_id
-                and step.get("details", {}).get("status") == "started"
-            ):
-                start_input = step.get("details", {}).get("input", {})
-                if isinstance(start_input, dict):
-                    skill_name_param = start_input.get("skill_name", "")
-                    if skill_name_param and hasattr(
-                        tool_instance, "get_skill_display_name"
-                    ):
-                        skill_display = tool_instance.get_skill_display_name(
-                            skill_name_param
-                        )
-                        return f"{base_title}：{skill_display}"
-                break
-
-    return base_title
-
-
 def _check_silent_exit_marker(state: Any, tool_name: str, tool_output: Any) -> None:
     """Check for MCP silent_exit marker in tool output.
 
@@ -521,8 +338,6 @@ def _check_silent_exit_marker(state: Any, tool_name: str, tool_output: Any) -> N
         tool_name: Name of the tool
         tool_output: Output from the tool
     """
-    import json
-
     if not isinstance(tool_output, str):
         return
 

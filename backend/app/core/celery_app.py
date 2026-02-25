@@ -40,7 +40,10 @@ celery_app = Celery(
     "wegent",
     broker=broker_url,
     backend=result_backend,
-    include=["app.tasks.subscription_tasks"],
+    include=[
+        "app.tasks.subscription_tasks",
+        "app.tasks.knowledge_tasks",
+    ],
 )
 
 # Celery configuration

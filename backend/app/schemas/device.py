@@ -21,6 +21,27 @@ class DeviceStatusEnum(str, Enum):
     BUSY = "busy"
 
 
+class DeviceType(str, Enum):
+    """Device type enumeration.
+
+    Defines the type of device, supporting local devices and cloud providers.
+    """
+
+    LOCAL = "local"
+    CLOUD = "cloud"
+
+
+class DeviceConnectionMode(str, Enum):
+    """Device connection mode enumeration.
+
+    Defines how the device connects to the backend.
+    """
+
+    WEBSOCKET = "websocket"
+    # Future connection modes (not implemented yet):
+    # API = "api"  # For cloud provider API-based connections
+
+
 # Maximum concurrent tasks per device
 MAX_DEVICE_SLOTS = 5
 
@@ -46,8 +67,15 @@ class DeviceInfo(BaseModel):
     last_heartbeat: Optional[datetime] = Field(
         None, description="Last heartbeat timestamp"
     )
+    # Device type and connection mode
+    device_type: DeviceType = Field(
+        DeviceType.LOCAL, description="Device type (local or cloud)"
+    )
+    connection_mode: DeviceConnectionMode = Field(
+        DeviceConnectionMode.WEBSOCKET, description="How device connects to backend"
+    )
     capabilities: Optional[List[str]] = Field(
-        None, description="Device capabilities/tags"
+        None, description="Device capabilities/tags (e.g., 'gpu', 'high-memory')"
     )
     slot_used: int = Field(0, description="Number of slots currently in use")
     slot_max: int = Field(MAX_DEVICE_SLOTS, description="Maximum concurrent task slots")
@@ -62,6 +90,8 @@ class DeviceInfo(BaseModel):
         None, description="Latest available executor version"
     )
     update_available: bool = Field(False, description="Whether an update is available")
+    # Network information
+    client_ip: Optional[str] = Field(None, description="Device's client IP address")
 
     class Config:
         from_attributes = True
@@ -89,10 +119,23 @@ class DeviceRegisterPayload(BaseModel):
         max_length=100,
         description="Device name (self-provided)",
     )
+    device_type: DeviceType = Field(
+        DeviceType.LOCAL,
+        description="Device type (default: local)",
+    )
+    capabilities: Optional[List[str]] = Field(
+        None,
+        description="Device capabilities/tags (e.g., 'gpu', 'high-memory')",
+    )
     executor_version: Optional[str] = Field(
         None,
         max_length=50,
         description="Executor version (e.g., '1.0.0')",
+    )
+    client_ip: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Device's client IP address",
     )
 
 

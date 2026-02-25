@@ -16,6 +16,7 @@ import {
   Search,
   BookOpen,
   FolderOpen,
+  Building2,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
@@ -37,11 +38,13 @@ import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
+import { useUser } from '@/features/common/UserContext'
+import { getOrganizationNamespace } from '@/apis/knowledge'
 import type { Group } from '@/types/group'
 import type { KnowledgeBase, KnowledgeBaseType, SummaryModelRef } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
-type DocumentTabType = 'personal' | 'group' | 'external'
+type DocumentTabType = 'personal' | 'group' | 'organization' | 'external'
 
 interface DocumentTab {
   id: DocumentTabType
@@ -62,6 +65,11 @@ const tabs: DocumentTab[] = [
     icon: <Users className="w-4 h-4" />,
   },
   {
+    id: 'organization',
+    labelKey: 'knowledge:document.tabs.organization',
+    icon: <Building2 className="w-4 h-4" />,
+  },
+  {
     id: 'external',
     labelKey: 'knowledge:document.tabs.external',
     icon: <Globe className="w-4 h-4" />,
@@ -73,11 +81,13 @@ export function KnowledgeDocumentPage() {
   const { t } = useTranslation()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { user } = useUser()
 
   // Get initial tab from URL parameter
   const getInitialTab = useCallback((): DocumentTabType => {
     const tab = searchParams.get('tab')
     if (tab === 'group') return 'group'
+    if (tab === 'organization') return 'organization'
     if (tab === 'external') return 'external'
     return 'personal' // default
   }, [searchParams])
@@ -92,11 +102,14 @@ export function KnowledgeDocumentPage() {
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [createForGroup, setCreateForGroup] = useState<string | null>(null)
+  const [createForOrganization, setCreateForOrganization] = useState(false)
   const [createKbType, setCreateKbType] = useState<KnowledgeBaseType>('notebook')
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
   const [sharingKb, setSharingKb] = useState<KnowledgeBase | null>(null)
 
+  // Organization namespace (fetched from API)
+  const [orgNamespace, setOrgNamespace] = useState<string | null>(null)
   // Refresh key for group knowledge bases
   const [groupRefreshKey, setGroupRefreshKey] = useState(0)
 
@@ -106,6 +119,12 @@ export function KnowledgeDocumentPage() {
 
   // Personal knowledge bases
   const personalKb = useKnowledgeBases({ scope: 'personal' })
+
+  // Organization knowledge bases
+  const organizationKb = useKnowledgeBases({ scope: 'organization' })
+
+  // Check if user is admin
+  const isAdmin = user?.role === 'admin'
 
   // Load default teams config and teams list on mount
   useEffect(() => {
@@ -169,9 +188,27 @@ export function KnowledgeDocumentPage() {
     loadGroups()
   }, [])
 
-  const handleCreateKb = (groupName: string | null, kbType: KnowledgeBaseType) => {
+  // Load organization namespace on mount
+  useEffect(() => {
+    const loadOrgNamespace = async () => {
+      try {
+        const response = await getOrganizationNamespace()
+        setOrgNamespace(response.namespace)
+      } catch (error) {
+        console.error('Failed to load organization namespace:', error)
+      }
+    }
+    loadOrgNamespace()
+  }, [])
+
+  const handleCreateKb = (
+    groupName: string | null,
+    kbType: KnowledgeBaseType,
+    isOrganization = false
+  ) => {
     setCreateForGroup(groupName)
     setCreateKbType(kbType)
+    setCreateForOrganization(isOrganization)
     setShowCreateDialog(true)
   }
 
@@ -182,16 +219,20 @@ export function KnowledgeDocumentPage() {
     summary_enabled?: boolean
     summary_model_ref?: Parameters<typeof personalKb.create>[0]['summary_model_ref'] | null
   }) => {
-    await personalKb.create({
+    const kbService = createForOrganization ? organizationKb : personalKb
+    // Use fetched organization namespace or fallback to 'organization'
+    const namespace = createForOrganization
+      ? (orgNamespace ?? 'organization')
+      : createForGroup || 'default'
+    await kbService.create({
       name: data.name,
       description: data.description,
-      namespace: createForGroup || 'default',
+      namespace,
       retrieval_config: data.retrieval_config,
       summary_enabled: data.summary_enabled,
       summary_model_ref: data.summary_model_ref,
       kb_type: createKbType,
     })
-
     // Save summary model to knowledge team's preference for notebook type
     // This allows the model selector in notebook chat page to pre-select the configured model
     if (createKbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
@@ -199,19 +240,27 @@ export function KnowledgeDocumentPage() {
     }
 
     setShowCreateDialog(false)
-    // Refresh the appropriate list based on whether it's a group or personal knowledge base
-    if (createForGroup) {
+    // Refresh the appropriate list based on whether it's a group, organization, or personal knowledge base
+    if (createForOrganization) {
+      organizationKb.refresh()
+    } else if (createForGroup) {
       setGroupRefreshKey(prev => prev + 1)
     } else {
       personalKb.refresh()
     }
     setCreateForGroup(null)
+    setCreateForOrganization(false)
     setCreateKbType('notebook')
   }
 
   const handleUpdate = async (data: Parameters<typeof personalKb.update>[1]) => {
     if (!editingKb) return
-    await personalKb.update(editingKb.id, data)
+    // Use organizationKb service if editing organization knowledge base
+    const isOrgKb = orgNamespace
+      ? editingKb.namespace === orgNamespace
+      : editingKb.namespace === 'organization'
+    const kbService = isOrgKb ? organizationKb : personalKb
+    await kbService.update(editingKb.id, data)
 
     // Save summary model to knowledge team's preference for notebook type
     // This allows the model selector in notebook chat page to pre-select the configured model
@@ -219,8 +268,10 @@ export function KnowledgeDocumentPage() {
       saveSummaryModelToPreference(data.summary_model_ref)
     }
 
-    // Refresh the appropriate list based on whether it's a group or personal knowledge base
-    if (editingKb.namespace !== 'default') {
+    // Refresh the appropriate list based on whether it's a group, organization, or personal knowledge base
+    if (isOrgKb) {
+      organizationKb.refresh()
+    } else if (editingKb.namespace !== 'default') {
       // Group knowledge base - trigger refresh via refreshKey
       setGroupRefreshKey(prev => prev + 1)
     }
@@ -229,9 +280,16 @@ export function KnowledgeDocumentPage() {
 
   const handleDelete = async () => {
     if (!deletingKb) return
-    await personalKb.remove(deletingKb.id)
-    // Refresh the appropriate list based on whether it's a group or personal knowledge base
-    if (deletingKb.namespace !== 'default') {
+    // Use organizationKb service if deleting organization knowledge base
+    const isOrgKb = orgNamespace
+      ? deletingKb.namespace === orgNamespace
+      : deletingKb.namespace === 'organization'
+    const kbService = isOrgKb ? organizationKb : personalKb
+    await kbService.remove(deletingKb.id)
+    // Refresh the appropriate list based on whether it's a group, organization, or personal knowledge base
+    if (isOrgKb) {
+      organizationKb.refresh()
+    } else if (deletingKb.namespace !== 'default') {
       // Group knowledge base - trigger refresh via refreshKey
       setGroupRefreshKey(prev => prev + 1)
     }
@@ -328,6 +386,19 @@ export function KnowledgeDocumentPage() {
           />
         )}
 
+        {activeTab === 'organization' && (
+          <OrganizationKnowledgeContent
+            knowledgeBases={organizationKb.knowledgeBases}
+            loading={organizationKb.loading}
+            isAdmin={isAdmin}
+            onSelectKb={handleSelectKb}
+            onEditKb={setEditingKb}
+            onDeleteKb={setDeletingKb}
+            onShareKb={setSharingKb}
+            onCreateKb={kbType => handleCreateKb(null, kbType, true)}
+          />
+        )}
+
         {activeTab === 'external' && (
           <div className="flex flex-col items-center justify-center py-16 text-text-muted">
             <Globe className="w-12 h-12 mb-4 opacity-50" />
@@ -343,12 +414,13 @@ export function KnowledgeDocumentPage() {
           setShowCreateDialog(open)
           if (!open) {
             setCreateForGroup(null)
+            setCreateForOrganization(false)
             setCreateKbType('notebook')
           }
         }}
         onSubmit={handleCreate}
-        loading={personalKb.loading}
-        scope={createForGroup ? 'group' : 'personal'}
+        loading={personalKb.loading || organizationKb.loading}
+        scope={createForOrganization ? 'organization' : createForGroup ? 'group' : 'personal'}
         groupName={createForGroup || undefined}
         kbType={createKbType}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
@@ -359,7 +431,7 @@ export function KnowledgeDocumentPage() {
         onOpenChange={open => !open && setEditingKb(null)}
         knowledgeBase={editingKb}
         onSubmit={handleUpdate}
-        loading={personalKb.loading}
+        loading={personalKb.loading || organizationKb.loading}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
       />
 
@@ -368,7 +440,7 @@ export function KnowledgeDocumentPage() {
         onOpenChange={open => !open && setDeletingKb(null)}
         knowledgeBase={deletingKb}
         onConfirm={handleDelete}
-        loading={personalKb.loading}
+        loading={personalKb.loading || organizationKb.loading}
       />
 
       <ShareLinkDialog
@@ -596,11 +668,13 @@ function GroupKnowledgeContent({
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Filter groups based on search query
+  // Filter out organization-level groups, then filter based on search query
   const filteredGroups = useMemo(() => {
-    if (!searchQuery.trim()) return groups
+    // First, exclude organization-level groups
+    const nonOrgGroups = groups.filter(group => group.level !== 'organization')
+    if (!searchQuery.trim()) return nonOrgGroups
     const query = searchQuery.toLowerCase()
-    return groups.filter(
+    return nonOrgGroups.filter(
       group =>
         group.name.toLowerCase().includes(query) ||
         group.display_name?.toLowerCase().includes(query)
@@ -920,6 +994,208 @@ function GroupKnowledgeBaseList({
               <p>{t('knowledge:document.knowledgeBase.noResults')}</p>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Organization knowledge content component
+interface OrganizationKnowledgeContentProps {
+  knowledgeBases: KnowledgeBase[]
+  loading: boolean
+  isAdmin: boolean
+  onSelectKb: (kb: KnowledgeBase) => void
+  onEditKb: (kb: KnowledgeBase) => void
+  onDeleteKb: (kb: KnowledgeBase) => void
+  onShareKb: (kb: KnowledgeBase) => void
+  onCreateKb: (kbType: KnowledgeBaseType) => void
+}
+
+function OrganizationKnowledgeContent({
+  knowledgeBases,
+  loading,
+  isAdmin,
+  onSelectKb,
+  onEditKb,
+  onDeleteKb,
+  onShareKb,
+  onCreateKb,
+}: OrganizationKnowledgeContentProps) {
+  const { t } = useTranslation()
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const filteredKnowledgeBases = useMemo(() => {
+    if (!searchQuery.trim()) return knowledgeBases
+    const query = searchQuery.toLowerCase()
+    return knowledgeBases.filter(
+      kb => kb.name.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
+    )
+  }, [knowledgeBases, searchQuery])
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spinner />
+      </div>
+    )
+  }
+
+  // Empty state - different for admin vs non-admin
+  if (knowledgeBases.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16">
+        {isAdmin ? (
+          // Admin: show create button
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Card
+                padding="lg"
+                className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
+              >
+                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                  <Plus className="w-8 h-8 text-primary" />
+                </div>
+                <h3 className="font-medium text-base mb-2 text-text-primary">
+                  {t('knowledge:document.knowledgeBase.create')}
+                </h3>
+                <p className="text-sm text-text-muted text-center">
+                  {t('knowledge:document.knowledgeBase.createDesc')}
+                </p>
+              </Card>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="w-56">
+              <DropdownMenuItem
+                onClick={() => onCreateKb('notebook')}
+                className="flex items-start gap-3 py-3"
+              >
+                <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeNotebook')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.notebookDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onCreateKb('classic')}
+                className="flex items-start gap-3 py-3"
+              >
+                <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeClassic')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.classicDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          // Non-admin: show hint message
+          <div className="flex flex-col items-center justify-center text-text-secondary">
+            <Building2 className="w-12 h-12 mb-4 opacity-50" />
+            <p className="text-sm mb-2">{t('knowledge:document.noOrgKnowledgeBase')}</p>
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.noOrgKnowledgeBaseHint')}
+            </p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col items-center">
+      {/* Search bar */}
+      <div className="mb-4 w-full max-w-4xl">
+        <div className="relative w-full max-w-md mx-auto">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+          <input
+            type="text"
+            className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+            placeholder={t('knowledge:document.knowledgeBase.search')}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {/* Add knowledge base card with dropdown - only show for admin */}
+        {!searchQuery && isAdmin && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Card
+                padding="sm"
+                className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
+              >
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                  <Plus className="w-6 h-6 text-primary" />
+                </div>
+                <h3 className="font-medium text-sm">
+                  {t('knowledge:document.knowledgeBase.create')}
+                </h3>
+              </Card>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="w-56">
+              <DropdownMenuItem
+                onClick={() => onCreateKb('notebook')}
+                className="flex items-start gap-3 py-3"
+              >
+                <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeNotebook')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.notebookDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onCreateKb('classic')}
+                className="flex items-start gap-3 py-3"
+              >
+                <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeClassic')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.classicDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        {/* Knowledge base cards */}
+        {filteredKnowledgeBases.map(kb => (
+          <KnowledgeBaseCard
+            key={kb.id}
+            knowledgeBase={kb}
+            onClick={() => onSelectKb(kb)}
+            onEdit={isAdmin ? () => onEditKb(kb) : undefined}
+            onDelete={isAdmin ? () => onDeleteKb(kb) : undefined}
+            onShare={isAdmin ? () => onShareKb(kb) : undefined}
+            canEdit={isAdmin}
+            canDelete={isAdmin}
+            canShare={isAdmin}
+          />
+        ))}
+      </div>
+
+      {/* No results message */}
+      {searchQuery && filteredKnowledgeBases.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
+          <FileText className="w-12 h-12 mb-4 opacity-50" />
+          <p>{t('knowledge:document.knowledgeBase.noResults')}</p>
         </div>
       )}
     </div>

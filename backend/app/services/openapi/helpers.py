@@ -251,90 +251,62 @@ def extract_input_text(input_data: Union[str, List[InputItem]]) -> str:
     return ""
 
 
-# Shell types that support direct chat (bypass executor)
-DIRECT_CHAT_SHELL_TYPES = ["Chat"]
-
-
-def is_direct_chat_shell(shell_type: str) -> bool:
+def get_team_shell_type(db: Session, team: Kind) -> str:
     """
-    Check if the shell type supports direct chat.
+    Get the shell type of the first bot in the team.
 
-    Args:
-        shell_type: The shell type to check
-
-    Returns:
-        bool: True if the shell type supports direct chat
-    """
-    return shell_type in DIRECT_CHAT_SHELL_TYPES
-
-
-def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
-    """
-    Check if the team supports direct chat mode.
-
-    Returns True only if ALL bots in the team use Chat Shell type.
-    This is a simplified version of the check from chat.py.
+    This is used to determine the execution mode for the team.
 
     Args:
         db: Database session
         team: Team Kind object
-        user_id: User ID for lookup
 
     Returns:
-        True if team supports direct chat
+        Shell type string (e.g., "Chat", "ClaudeCode", "Agno", "Dify")
     """
     import logging
 
     logger = logging.getLogger(__name__)
     team_crd = Team.model_validate(team.json)
-    logger.info(
-        f"[OPENAPI_HELPERS] check_team_supports_direct_chat: team={team.namespace}/{team.name}, user_id={user_id}, team.user_id={team.user_id}"
+
+    if not team_crd.spec.members:
+        logger.warning(
+            f"[OPENAPI_HELPERS] Team has no members: {team.namespace}/{team.name}"
+        )
+        return "Chat"  # Default to Chat
+
+    # Get the first member's bot
+    first_member = team_crd.spec.members[0]
+    bot = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.BOT,
+        first_member.botRef.namespace,
+        first_member.botRef.name,
     )
 
-    for member in team_crd.spec.members:
-        # Find bot using kindReader
-        bot = kindReader.get_by_name_and_namespace(
-            db,
-            team.user_id,
-            KindType.BOT,
-            member.botRef.namespace,
-            member.botRef.name,
+    if not bot:
+        logger.warning(
+            f"[OPENAPI_HELPERS] Bot not found: {first_member.botRef.namespace}/{first_member.botRef.name}"
         )
+        return "Chat"  # Default to Chat
 
-        if not bot:
-            logger.warning(
-                f"[OPENAPI_HELPERS] Bot not found: {member.botRef.namespace}/{member.botRef.name} for team.user_id={team.user_id}"
-            )
-            return False
+    # Get shell type
+    bot_crd = Bot.model_validate(bot.json)
+    shell = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.SHELL,
+        bot_crd.spec.shellRef.namespace,
+        bot_crd.spec.shellRef.name,
+    )
 
-        # Get shell type
-        bot_crd = Bot.model_validate(bot.json)
-        logger.info(
-            f"[OPENAPI_HELPERS] Found bot: {bot.namespace}/{bot.name}, shellRef={bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
+    if not shell or not shell.json:
+        logger.warning(
+            f"[OPENAPI_HELPERS] Shell not found: {bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
         )
+        return "Chat"  # Default to Chat
 
-        # Query shell using kindReader (will fallback to public if not found personally)
-        shell = kindReader.get_by_name_and_namespace(
-            db,
-            team.user_id,
-            KindType.SHELL,
-            bot_crd.spec.shellRef.namespace,
-            bot_crd.spec.shellRef.name,
-        )
-
-        if not shell or not shell.json:
-            logger.warning(
-                f"[OPENAPI_HELPERS] Shell not found: {bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
-            )
-            return False
-
-        shell_crd = Shell.model_validate(shell.json)
-        shell_type = shell_crd.spec.shellType
-        logger.info(
-            f"[OPENAPI_HELPERS] Found shell: {shell.namespace}/{shell.name}, shellType={shell_type}, is_direct_chat={is_direct_chat_shell(shell_type)}"
-        )
-
-        if not is_direct_chat_shell(shell_type):
-            return False
-
+    shell_crd = Shell.model_validate(shell.json)
+    return shell_crd.spec.shellType
     return True

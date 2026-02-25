@@ -7,6 +7,7 @@ Project service for managing projects and project-task associations.
 
 Projects are containers for organizing tasks. Each task can belong to one project.
 """
+
 from typing import Optional
 
 from fastapi import HTTPException

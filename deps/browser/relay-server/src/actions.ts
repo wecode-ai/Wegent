@@ -12,12 +12,25 @@ export type ActRequest =
   | { kind: "type"; ref: string; text: string; submit?: boolean; slowly?: boolean }
   | { kind: "press"; key: string }
   | { kind: "hover"; ref: string }
+  | { kind: "scrollIntoView"; ref: string }
   | { kind: "drag"; startRef: string; endRef: string }
   | { kind: "select"; ref: string; values: string[] }
   | { kind: "fill"; fields: Array<{ ref: string; value: string }> }
   | { kind: "scroll"; ref?: string; direction?: "up" | "down" | "left" | "right"; amount?: number }
-  | { kind: "wait"; timeMs?: number; text?: string; textGone?: string; selector?: string }
-  | { kind: "resize"; width: number; height: number };
+  | {
+      kind: "wait";
+      timeMs?: number;
+      text?: string;
+      textGone?: string;
+      selector?: string;
+      url?: string;
+      loadState?: "load" | "domcontentloaded" | "networkidle";
+      fn?: string;
+      timeoutMs?: number;
+    }
+  | { kind: "resize"; width: number; height: number }
+  | { kind: "close"; targetId?: string }
+  | { kind: "evaluate"; fn: string; ref?: string };
 
 export type ActResult = {
   ok: boolean;
@@ -308,6 +321,41 @@ export async function hover(ref: string, opts?: ActionExecOptions): Promise<ActR
 }
 
 /**
+ * Scroll an element into view
+ */
+export async function scrollIntoView(ref: string, opts?: ActionExecOptions): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
+  try {
+    const el = await findElementByRef(client, ref);
+    const x = Math.round(el.x);
+    const y = Math.round(el.y);
+    await client.send("Runtime.enable", {});
+    await client.send("Runtime.evaluate", {
+      expression: `(() => {
+        const x = ${x};
+        const y = ${y};
+        const target = document.elementFromPoint(x, y);
+        if (!target) {
+          return false;
+        }
+        target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        return true;
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    if (ownsClient) {
+      client.close();
+    }
+  }
+}
+
+/**
  * Drag from one element to another
  */
 export async function drag(
@@ -519,11 +567,20 @@ export async function wait(opts: {
   text?: string;
   textGone?: string;
   selector?: string;
+  url?: string;
+  loadState?: "load" | "domcontentloaded" | "networkidle";
+  fn?: string;
+  timeoutMs?: number;
   client?: BrowserClient;
 }): Promise<ActResult> {
   const client = opts.client ?? (await createBrowserClient());
   const ownsClient = !opts.client;
   try {
+    const maxWait = Math.max(100, Math.floor(opts.timeoutMs ?? 10000));
+    const start = Date.now();
+    const pollIntervalMs = 200;
+    const withinWait = () => Date.now() - start < maxWait;
+
     // Simple time wait
     if (opts.timeMs) {
       await new Promise((r) => setTimeout(r, opts.timeMs));
@@ -532,9 +589,7 @@ export async function wait(opts: {
 
     // Wait for text to appear
     if (opts.text) {
-      const maxWait = 10000;
-      const start = Date.now();
-      while (Date.now() - start < maxWait) {
+      while (withinWait()) {
         const result = (await client.send("Runtime.evaluate", {
           expression: `document.body.innerText.includes(${JSON.stringify(opts.text)})`,
           returnByValue: true,
@@ -542,16 +597,14 @@ export async function wait(opts: {
         if (result?.result?.value) {
           return { ok: true };
         }
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
       }
       return { ok: false, error: `Text not found after ${maxWait}ms: ${opts.text}` };
     }
 
     // Wait for text to disappear
     if (opts.textGone) {
-      const maxWait = 10000;
-      const start = Date.now();
-      while (Date.now() - start < maxWait) {
+      while (withinWait()) {
         const result = (await client.send("Runtime.evaluate", {
           expression: `!document.body.innerText.includes(${JSON.stringify(opts.textGone)})`,
           returnByValue: true,
@@ -559,16 +612,14 @@ export async function wait(opts: {
         if (result?.result?.value) {
           return { ok: true };
         }
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
       }
       return { ok: false, error: `Text still present after ${maxWait}ms: ${opts.textGone}` };
     }
 
     // Wait for selector
     if (opts.selector) {
-      const maxWait = 10000;
-      const start = Date.now();
-      while (Date.now() - start < maxWait) {
+      while (withinWait()) {
         const result = (await client.send("Runtime.evaluate", {
           expression: `!!document.querySelector(${JSON.stringify(opts.selector)})`,
           returnByValue: true,
@@ -576,9 +627,59 @@ export async function wait(opts: {
         if (result?.result?.value) {
           return { ok: true };
         }
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
       }
       return { ok: false, error: `Selector not found after ${maxWait}ms: ${opts.selector}` };
+    }
+
+    if (opts.url) {
+      while (withinWait()) {
+        const result = (await client.send("Runtime.evaluate", {
+          expression: "location.href",
+          returnByValue: true,
+        })) as { result?: { value?: string } };
+        const currentUrl = String(result?.result?.value ?? "");
+        if (currentUrl.includes(opts.url)) {
+          return { ok: true };
+        }
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
+      return { ok: false, error: `URL not matched after ${maxWait}ms: ${opts.url}` };
+    }
+
+    if (opts.loadState) {
+      while (withinWait()) {
+        const result = (await client.send("Runtime.evaluate", {
+          expression: "document.readyState",
+          returnByValue: true,
+        })) as { result?: { value?: string } };
+        const readyState = String(result?.result?.value ?? "");
+        const reached =
+          (opts.loadState === "domcontentloaded" &&
+            (readyState === "interactive" || readyState === "complete")) ||
+          (opts.loadState === "load" && readyState === "complete") ||
+          (opts.loadState === "networkidle" && readyState === "complete");
+        if (reached) {
+          return { ok: true };
+        }
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
+      return { ok: false, error: `Load state not reached after ${maxWait}ms: ${opts.loadState}` };
+    }
+
+    if (opts.fn) {
+      while (withinWait()) {
+        const result = (await client.send("Runtime.evaluate", {
+          expression: `(() => !!(${opts.fn}))()`,
+          awaitPromise: true,
+          returnByValue: true,
+        })) as { result?: { value?: boolean } };
+        if (Boolean(result?.result?.value)) {
+          return { ok: true };
+        }
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
+      return { ok: false, error: `Condition not met after ${maxWait}ms` };
     }
 
     return { ok: true };
@@ -619,6 +720,91 @@ export async function resize(
 }
 
 /**
+ * Close a tab
+ */
+export async function close(targetId?: string, opts?: ActionExecOptions): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
+  try {
+    if (typeof targetId === "string" && targetId.trim()) {
+      await client.send("Target.closeTarget", { targetId: targetId.trim() });
+      return { ok: true };
+    }
+
+    const targets = (await client.send("Target.getTargets")) as {
+      targetInfos?: Array<{ targetId?: string; type?: string }>;
+    };
+    const pageTarget = targets?.targetInfos?.find((item) => item.type === "page" && item.targetId);
+    if (!pageTarget?.targetId) {
+      return { ok: false, error: "No page target found to close" };
+    }
+
+    await client.send("Target.closeTarget", { targetId: pageTarget.targetId });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    if (ownsClient) {
+      client.close();
+    }
+  }
+}
+
+/**
+ * Evaluate JavaScript expression
+ */
+export async function evaluateAction(
+  fn: string,
+  opts?: { ref?: string; client?: BrowserClient }
+): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
+  try {
+    let expression = `(() => {
+      const value = (${fn});
+      return typeof value === "function" ? value() : value;
+    })()`;
+    if (opts?.ref) {
+      const el = await findElementByRef(client, opts.ref);
+      expression = `(() => {
+        const target = document.elementFromPoint(${Math.round(el.x)}, ${Math.round(el.y)});
+        if (!target) {
+          throw new Error('Element not found for ref: ${opts.ref}');
+        }
+        const value = (${fn});
+        return typeof value === "function" ? value(target) : value;
+      })()`;
+    }
+
+    await client.send("Runtime.enable", {});
+    const result = (await client.send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    })) as {
+      exceptionDetails?: { text?: string; exception?: { description?: string } };
+    };
+
+    if (result?.exceptionDetails) {
+      return {
+        ok: false,
+        error:
+          result.exceptionDetails.exception?.description ??
+          result.exceptionDetails.text ??
+          "Evaluation failed",
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    if (ownsClient) {
+      client.close();
+    }
+  }
+}
+
+/**
  * Execute action from request object
  */
 export async function executeAction(
@@ -643,6 +829,8 @@ export async function executeAction(
       return press(request.key, opts);
     case "hover":
       return hover(request.ref, opts);
+    case "scrollIntoView":
+      return scrollIntoView(request.ref, opts);
     case "drag":
       return drag(request.startRef, request.endRef, opts);
     case "select":
@@ -662,10 +850,21 @@ export async function executeAction(
         text: request.text,
         textGone: request.textGone,
         selector: request.selector,
+        url: request.url,
+        loadState: request.loadState,
+        fn: request.fn,
+        timeoutMs: request.timeoutMs,
         client: opts?.client,
       });
     case "resize":
       return resize(request.width, request.height, opts);
+    case "close":
+      return close(request.targetId, opts);
+    case "evaluate":
+      return evaluateAction(request.fn, {
+        ref: request.ref,
+        client: opts?.client,
+      });
     default:
       return { ok: false, error: `Unknown action kind: ${(request as ActRequest).kind}` };
   }

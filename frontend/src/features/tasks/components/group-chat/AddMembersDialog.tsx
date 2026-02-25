@@ -97,7 +97,7 @@ export function AddMembersDialog({
           // Trigger callback immediately after conversion to update UI
           onMembersAdded?.()
         } catch (conversionError) {
-          console.log('Task conversion for invite link:', conversionError)
+          console.error('Task conversion for invite link:', conversionError)
         }
 
         // Generate invite link
@@ -138,7 +138,7 @@ export function AddMembersDialog({
         // to avoid race condition where UI refreshes before additions complete
       } catch (conversionError) {
         // Ignore conversion errors - task might already be a group chat
-        console.log('Task conversion:', conversionError)
+        console.error('Task conversion:', conversionError)
       }
 
       // Add registered members one by one
@@ -191,7 +191,7 @@ export function AddMembersDialog({
             await taskMemberApi.convertToGroupChat(taskId)
           } catch (conversionError) {
             // Ignore conversion errors - task might already be a group chat
-            console.log('Task conversion for invite link:', conversionError)
+            console.error('Task conversion for invite link:', conversionError)
           }
 
           const response = await taskMemberApi.generateInviteLink(taskId, 0)

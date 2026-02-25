@@ -402,5 +402,6 @@ export PORT="$PORT"
 export NETWORK="$NETWORK_NAME"
 
 # Start with uvicorn directly (using uv's virtual environment)
+# --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage from file scanning
 source .venv/bin/activate 2>/dev/null || true
-uvicorn main:app --host "$HOST" --port "$PORT" --reload
+uvicorn main:app --host "$HOST" --port "$PORT" --reload --reload-exclude '.venv/*' --reload-exclude '__pycache__/*' --reload-exclude '*.pyc' --reload-exclude '.git/*'

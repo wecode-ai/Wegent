@@ -273,18 +273,21 @@ export default function UnifiedRepositorySelector({
   }, [isOpen, selectedRepo])
 
   // Auto-open popover when requiresWorkspace changes from false to true (e.g., team switch)
-  // and no repo is currently selected
+  // and no repo is currently selected.
+  // For existing tasks loaded from URL, do not auto-open on refresh; repository restoration
+  // is handled by useRepositorySearch and this avoids disruptive popup flicker.
   useEffect(() => {
     const prevValue = prevRequiresWorkspaceRef.current
     prevRequiresWorkspaceRef.current = requiresWorkspace
 
     // If changed from false to true and no repo selected, auto-open
-    if (!prevValue && requiresWorkspace && !selectedRepo) {
+    const isExistingTask = Boolean(selectedTaskDetail?.id)
+    if (!prevValue && requiresWorkspace && !selectedRepo && !isExistingTask) {
       setTimeout(() => {
         setIsOpen(true)
       }, 100)
     }
-  }, [requiresWorkspace, selectedRepo])
+  }, [requiresWorkspace, selectedRepo, selectedTaskDetail?.id])
 
   // Navigate to settings page
   const handleIntegrationClick = () => {

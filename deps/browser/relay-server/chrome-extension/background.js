@@ -7,10 +7,21 @@ const BADGE = {
   error: { text: '!', color: '#F44336' },
 }
 
+const AUTO_ATTACH_DELAY_MS = {
+  relayUnavailable: 3000,
+  attachedHealthy: 8000,
+  noAttachableTab: 1000,
+  attachFailed: 1000,
+  afterSuccess: 8000,
+}
+
 /** @type {WebSocket|null} */
 let relayWs = null
 /** @type {Promise<void>|null} */
 let relayConnectPromise = null
+/** @type {number|null} */
+let autoAttachTimer = null
+let autoAttachRunning = false
 
 let debuggerListenersInstalled = false
 let nextSession = 1
@@ -349,61 +360,77 @@ chrome.runtime.onInstalled.addListener(() => {
   void chrome.runtime.openOptionsPage()
 })
 
+function scheduleAutoAttach(delayMs) {
+  if (autoAttachTimer !== null) {
+    clearTimeout(autoAttachTimer)
+  }
+  autoAttachTimer = setTimeout(() => {
+    autoAttachTimer = null
+    void tryAutoAttach()
+  }, delayMs)
+}
+
 // Auto-attach: continuously try to attach when relay is available and no tab is attached
 async function tryAutoAttach() {
+  if (autoAttachRunning) return
+  autoAttachRunning = true
+
   // Check if relay server is available
-  const port = await getRelayPort()
-  const httpBase = `http://127.0.0.1:${port}`
-
   try {
-    await fetch(`${httpBase}/`, { method: 'HEAD', signal: AbortSignal.timeout(2000) })
-  } catch {
-    // Relay not available, retry later
-    setTimeout(tryAutoAttach, 3000)
-    return
+    const port = await getRelayPort()
+    const httpBase = `http://127.0.0.1:${port}`
+
+    try {
+      await fetch(`${httpBase}/`, { method: 'HEAD', signal: AbortSignal.timeout(2000) })
+    } catch {
+      // Relay not available, retry later.
+      scheduleAutoAttach(AUTO_ATTACH_DELAY_MS.relayUnavailable)
+      return
+    }
+
+    // Check if any tab is already attached
+    const hasAttachedTab = Array.from(tabs.values()).some(t => t.state === 'connected')
+    if (hasAttachedTab) {
+      // Already healthy, check less frequently.
+      scheduleAutoAttach(AUTO_ATTACH_DELAY_MS.attachedHealthy)
+      return
+    }
+
+    // Relay is available but no tab attached, get active tab
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true })
+    const tabId = active?.id
+    const url = active?.url || ''
+
+    // Skip non-attachable pages and retry quickly.
+    if (!tabId || url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url === '' || url === 'about:blank') {
+      scheduleAutoAttach(AUTO_ATTACH_DELAY_MS.noAttachableTab)
+      return
+    }
+
+    // Auto-attach to current tab
+    tabs.set(tabId, { state: 'connecting' })
+    setBadge(tabId, 'connecting')
+
+    try {
+      await ensureRelayConnection()
+      await attachTab(tabId)
+      console.log('Auto-attached to tab:', tabId, url)
+      scheduleAutoAttach(AUTO_ATTACH_DELAY_MS.afterSuccess)
+    } catch (err) {
+      tabs.delete(tabId)
+      setBadge(tabId, 'off')
+      console.warn('Auto-attach failed:', err instanceof Error ? err.message : String(err))
+      scheduleAutoAttach(AUTO_ATTACH_DELAY_MS.attachFailed)
+    }
+  } finally {
+    autoAttachRunning = false
   }
-
-  // Check if any tab is already attached
-  const hasAttachedTab = Array.from(tabs.values()).some(t => t.state === 'connected')
-  if (hasAttachedTab) {
-    // Already have an attached tab, check again later in case it gets detached
-    setTimeout(tryAutoAttach, 5000)
-    return
-  }
-
-  // Relay is available but no tab attached, get active tab
-  const [active] = await chrome.tabs.query({ active: true, currentWindow: true })
-  const tabId = active?.id
-  const url = active?.url || ''
-
-  // Skip chrome:// pages but keep retrying
-  if (!tabId || url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url === '' || url === 'about:blank') {
-    setTimeout(tryAutoAttach, 2000)
-    return
-  }
-
-  // Auto-attach to current tab
-  tabs.set(tabId, { state: 'connecting' })
-  setBadge(tabId, 'connecting')
-
-  try {
-    await ensureRelayConnection()
-    await attachTab(tabId)
-    console.log('Auto-attached to tab:', tabId, url)
-  } catch (err) {
-    tabs.delete(tabId)
-    setBadge(tabId, 'off')
-    console.warn('Auto-attach failed:', err instanceof Error ? err.message : String(err))
-  }
-
-  // Keep checking
-  setTimeout(tryAutoAttach, 3000)
 }
 
 // Also try auto-attach when tab is activated
 chrome.tabs.onActivated.addListener(() => {
-  setTimeout(tryAutoAttach, 500)
+  scheduleAutoAttach(200)
 })
 
 // Start auto-attach loop on extension load
-tryAutoAttach()
+scheduleAutoAttach(0)

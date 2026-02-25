@@ -5,6 +5,7 @@
 """
 Gerrit repository provider implementation
 """
+
 import asyncio
 import base64
 import hashlib

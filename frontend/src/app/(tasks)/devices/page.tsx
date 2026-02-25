@@ -41,6 +41,7 @@ import {
   MessageCircleQuestion,
   Plus,
   ChevronUp,
+  Cloud,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -54,6 +55,12 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { getSocketUrl } from '@/lib/runtime-config'
 import { LocalExecutorGuide } from '@/features/devices/components/LocalExecutorGuide'
+
+// Device type constants matching backend DeviceType enum
+const DEVICE_TYPE = {
+  LOCAL: 'local',
+  CLOUD: 'cloud',
+} as const
 
 export default function DevicesPage() {
   const { t } = useTranslation('devices')
@@ -119,6 +126,24 @@ export default function DevicesPage() {
       return a.name.localeCompare(b.name)
     })
   }, [devices])
+
+  // Group devices by type (local vs cloud)
+  const { localDevices, cloudDevices } = useMemo(() => {
+    const local: DeviceInfo[] = []
+    const cloud: DeviceInfo[] = []
+
+    for (const device of sortedDevices) {
+      // Check device_type field, default to 'local' for backward compatibility
+      const deviceType = (device as DeviceInfo & { device_type?: string }).device_type || 'local'
+      if (deviceType === DEVICE_TYPE.LOCAL) {
+        local.push(device)
+      } else {
+        cloud.push(device)
+      }
+    }
+
+    return { localDevices: local, cloudDevices: cloud }
+  }, [sortedDevices])
 
   // Handle starting a task with a device
   const handleStartTask = useCallback(
@@ -363,129 +388,206 @@ export default function DevicesPage() {
               </div>
             )}
 
-            {/* Device list */}
+            {/* Local Devices Section */}
             {sortedDevices.length > 0 && (
-              <div className="grid gap-4">
-                {sortedDevices.map(device => (
-                  <div
-                    key={device.device_id}
-                    className={cn(
-                      'bg-surface border rounded-lg p-4',
-                      device.is_default ? 'border-primary' : 'border-border'
-                    )}
-                  >
-                    {/* Device info row */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                          <Monitor className="w-5 h-5 text-primary" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-medium text-text-primary">{device.name}</h4>
-                            {device.is_default && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
-                                <Star className="w-3 h-3 fill-current" />
-                                {t('default_device')}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm text-text-muted">{device.device_id}</p>
-                            {device.status !== 'offline' && (
-                              <VersionBadge
-                                executorVersion={device.executor_version}
-                                latestVersion={device.latest_version}
-                                updateAvailable={device.update_available}
-                              />
-                            )}
-                          </div>
-                          {/* Slot indicator - only show for online devices */}
-                          {device.status !== 'offline' && (
-                            <div className="mt-1">
-                              <SlotIndicator
-                                used={device.slot_used}
-                                max={device.slot_max}
-                                runningTasks={device.running_tasks}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))}
-                          />
-                          <span className="text-sm text-text-secondary">
-                            {getStatusText(device.status)}
-                          </span>
-                        </div>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div>
-                                <Button
-                                  variant="default"
-                                  size="sm"
-                                  onClick={() => handleStartTask(device.device_id)}
-                                  disabled={
-                                    device.status !== 'online' ||
-                                    device.slot_used >= device.slot_max
-                                  }
-                                  className="flex items-center gap-2"
-                                >
-                                  <Play className="w-4 h-4" />
-                                  {device.slot_used >= device.slot_max
-                                    ? t('slots_full')
-                                    : t('start_task')}
-                                </Button>
-                              </div>
-                            </TooltipTrigger>
-                            {device.slot_used >= device.slot_max && device.status === 'online' && (
-                              <TooltipContent>
-                                <p className="text-sm">{t('slots_full_hint')}</p>
-                              </TooltipContent>
-                            )}
-                          </Tooltip>
-                        </TooltipProvider>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                              <MoreVertical className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {!device.is_default && (
-                              <DropdownMenuItem onClick={() => handleSetDefault(device)}>
-                                <Star className="w-4 h-4 mr-2" />
-                                {t('set_as_default')}
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem danger onClick={() => handleDeleteDevice(device)}>
-                              <Trash2 className="w-4 h-4 mr-2" />
-                              {t('delete_device')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-
-                    {/* Running tasks list */}
-                    {device.running_tasks.length > 0 && (
-                      <RunningTasksList
-                        tasks={device.running_tasks}
-                        deviceName={device.name}
-                        onCancelTask={handleCancelTask}
-                      />
-                    )}
+              <div className="space-y-6">
+                {/* Local Devices */}
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Monitor className="w-5 h-5 text-text-secondary" />
+                    <h3 className="text-sm font-medium text-text-secondary">
+                      {t('local_devices_section')}
+                    </h3>
+                    <span className="text-xs text-text-muted">({localDevices.length})</span>
                   </div>
-                ))}
+                  {localDevices.length > 0 ? (
+                    <div className="grid gap-4">
+                      {localDevices.map(device => (
+                        <DeviceCard
+                          key={device.device_id}
+                          device={device}
+                          onStartTask={handleStartTask}
+                          onSetDefault={handleSetDefault}
+                          onDelete={handleDeleteDevice}
+                          onCancelTask={handleCancelTask}
+                          getStatusColor={getStatusColor}
+                          getStatusText={getStatusText}
+                          t={t}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-text-muted py-4 text-center border border-dashed border-border rounded-lg">
+                      {t('no_local_devices')}
+                    </div>
+                  )}
+                </div>
+
+                {/* Cloud Devices Section (placeholder for future) */}
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Cloud className="w-5 h-5 text-text-secondary" />
+                    <h3 className="text-sm font-medium text-text-secondary">
+                      {t('cloud_devices_section')}
+                    </h3>
+                    <span className="text-xs text-text-muted">({cloudDevices.length})</span>
+                  </div>
+                  {cloudDevices.length > 0 ? (
+                    <div className="grid gap-4">
+                      {cloudDevices.map(device => (
+                        <DeviceCard
+                          key={device.device_id}
+                          device={device}
+                          onStartTask={handleStartTask}
+                          onSetDefault={handleSetDefault}
+                          onDelete={handleDeleteDevice}
+                          onCancelTask={handleCancelTask}
+                          getStatusColor={getStatusColor}
+                          getStatusText={getStatusText}
+                          t={t}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-text-muted py-4 text-center border border-dashed border-border rounded-lg">
+                      {t('cloud_devices_coming_soon')}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Device card component extracted for reuse
+interface DeviceCardProps {
+  device: DeviceInfo
+  onStartTask: (deviceId: string) => void
+  onSetDefault: (device: DeviceInfo) => void
+  onDelete: (device: DeviceInfo) => void
+  onCancelTask: (taskId: number) => Promise<void>
+  getStatusColor: (status: string) => string
+  getStatusText: (status: string) => string
+  t: (key: string, params?: Record<string, unknown>) => string
+}
+
+function DeviceCard({
+  device,
+  onStartTask,
+  onSetDefault,
+  onDelete,
+  onCancelTask,
+  getStatusColor,
+  getStatusText,
+  t,
+}: DeviceCardProps) {
+  return (
+    <div
+      className={cn(
+        'bg-surface border rounded-lg p-4',
+        device.is_default ? 'border-primary' : 'border-border'
+      )}
+    >
+      {/* Device info row */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+            <Monitor className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="font-medium text-text-primary">{device.name}</h4>
+              {device.is_default && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
+                  <Star className="w-3 h-3 fill-current" />
+                  {t('default_device')}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-text-muted">{device.device_id}</p>
+              {device.status !== 'offline' && (
+                <VersionBadge
+                  executorVersion={device.executor_version}
+                  latestVersion={device.latest_version}
+                  updateAvailable={device.update_available}
+                />
+              )}
+            </div>
+            {/* Slot indicator - only show for online devices */}
+            {device.status !== 'offline' && (
+              <div className="mt-1">
+                <SlotIndicator
+                  used={device.slot_used}
+                  max={device.slot_max}
+                  runningTasks={device.running_tasks}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))} />
+            <span className="text-sm text-text-secondary">{getStatusText(device.status)}</span>
+          </div>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => onStartTask(device.device_id)}
+                    disabled={device.status !== 'online' || device.slot_used >= device.slot_max}
+                    className="flex items-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    {device.slot_used >= device.slot_max ? t('slots_full') : t('start_task')}
+                  </Button>
+                </div>
+              </TooltipTrigger>
+              {device.slot_used >= device.slot_max && device.status === 'online' && (
+                <TooltipContent>
+                  <p className="text-sm">{t('slots_full_hint')}</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <MoreVertical className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {!device.is_default && (
+                <DropdownMenuItem onClick={() => onSetDefault(device)}>
+                  <Star className="w-4 h-4 mr-2" />
+                  {t('set_as_default')}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem danger onClick={() => onDelete(device)}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                {t('delete_device')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Running tasks list */}
+      {device.running_tasks.length > 0 && (
+        <RunningTasksList
+          tasks={device.running_tasks}
+          deviceName={device.name}
+          onCancelTask={onCancelTask}
+        />
+      )}
     </div>
   )
 }

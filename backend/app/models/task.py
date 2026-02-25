@@ -8,6 +8,7 @@ Task model for storing Task and Workspace CRD resources.
 This table is separated from the kinds table for better query performance
 and data management efficiency.
 """
+
 from datetime import datetime
 
 from sqlalchemy import (

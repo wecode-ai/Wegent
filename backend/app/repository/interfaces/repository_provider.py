@@ -5,6 +5,7 @@
 """
 Repository provider interface, defining methods related to code repositories
 """
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 

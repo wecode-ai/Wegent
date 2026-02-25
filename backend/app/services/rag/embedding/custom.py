@@ -34,6 +34,7 @@ class CustomEmbedding(BaseEmbedding):
         headers: Optional[Dict[str, str]] = None,
         api_key: Optional[str] = None,
         embed_batch_size: int = 10,
+        dimensions: Optional[int] = None,
         **kwargs,
     ):
         # Merge api_key into headers if provided
@@ -50,6 +51,11 @@ class CustomEmbedding(BaseEmbedding):
             api_key=api_key,
             **kwargs,
         )
+
+        # Set dimension from Model CRD config if provided
+        # This allows Milvus to create collections with the correct dimension
+        if dimensions is not None:
+            self._dimension = dimensions
 
     def _get_query_embedding(self, query: str) -> List[float]:
         """Get embedding for a query string."""

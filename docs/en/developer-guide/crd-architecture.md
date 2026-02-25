@@ -51,6 +51,8 @@ Wegent is built on Kubernetes-style declarative API and CRD (Custom Resource Def
 | 🤝 | **Collaboration** | Collaboration mode | Interaction pattern between Bots |
 | 💼 | **Workspace** | Work environment | Isolated code workspace |
 | 🎯 | **Task** | Task | Work unit assigned to a Team |
+| 📱 | **Device** | Local device | Local executor connection (new) |
+| 🧩 | **Skill** | Skill | On-demand capability package |
 
 ### Resource Hierarchy
 
@@ -62,6 +64,27 @@ Bot (Ghost + Shell + optional Model)           ← UI: Bot
 Team (multiple Bots with roles)                ← UI: Agent
    ↓
 Task (Team + Workspace) → Subtasks
+   ↓
+Device (optional, local executor)              ← UI: Local Device
+```
+
+### Kind Resource Identification
+
+⚠️ **CRITICAL:** A Kind resource is uniquely identified by THREE fields: `namespace`, `name`, and `user_id`.
+
+```python
+# ✅ CORRECT - Use all three fields to locate a Kind
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name,
+    Kind.user_id == user_id
+).first()
+
+# ❌ WRONG - Missing user_id, may return wrong resource
+kind = db.query(Kind).filter(
+    Kind.namespace == namespace,
+    Kind.name == name
+).first()
 ```
 
 ### Database Table Mapping
@@ -70,7 +93,7 @@ Task (Team + Workspace) → Subtasks
 
 | CRD Kind | Database Table | Model Class |
 |----------|----------------|-------------|
-| Ghost, Model, Shell, Bot, Team, Skill | `kinds` | `Kind` |
+| Ghost, Model, Shell, Bot, Team, Skill, Device | `kinds` | `Kind` |
 | **Task, Workspace** | **`tasks`** | **`TaskResource`** |
 | **Skill Binary** | **`skill_binaries`** | **`SkillBinary`** |
 
@@ -170,6 +193,8 @@ spec:
   supportModel:
     - "openai"
     - "anthropic"
+  # Optional: base image configuration
+  baseImage: "wegent-executor:latest"
 status:
   state: "Available"
 ```
@@ -304,6 +329,8 @@ kind: Task
 metadata:
   name: implement-feature
   namespace: default
+  labels:
+    preserveExecutor: "true"  # Optional: preserve executor, don't auto-cleanup
 spec:
   title: "Implement new feature"
   prompt: "Please implement a user authentication feature with JWT tokens"
@@ -313,11 +340,81 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  deviceRef:  # Optional: specify local device for execution
+    name: my-local-device
+    namespace: default
 status:
   state: "Available"
   status: "PENDING"
   progress: 0
 ```
+
+### New Task Features
+
+| Feature | Description |
+|---------|-------------|
+| **preserveExecutor** | Label, set to "true" to preserve executor container without auto-cleanup |
+| **deviceRef** | Optional reference to specify using a local device for task execution |
+
+---
+
+## 📱 Device - Local Device (New)
+
+Device is the CRD representation of local executors, allowing users to connect their local development environment to execute tasks.
+
+### Device Types
+
+| Type | Description | Connection Method |
+|------|-------------|-------------------|
+| **local** | Local device | WebSocket |
+| **cloud** | Cloud device (future expansion) | API |
+
+### YAML Configuration Example
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Device
+metadata:
+  name: my-local-device
+  namespace: default
+spec:
+  deviceType: "local"
+  connectionMode: "websocket"
+  isDefault: true  # Whether this is the default device (only one per user)
+  displayName: "My MacBook Pro"
+  description: "Local development machine"
+status:
+  state: "Connected"
+  lastHeartbeat: "2024-01-15T10:30:00Z"
+```
+
+### Device Provider Pattern
+
+Device uses the Strategy pattern for implementation, supporting future expansion of new device types:
+
+```python
+# Base provider interface
+class BaseDeviceProvider:
+    async def connect(self, device: Device) -> bool
+    async def disconnect(self, device: Device) -> bool
+    async def execute(self, device: Device, task: Task) -> Result
+
+# Local device provider
+class LocalDeviceProvider(BaseDeviceProvider):
+    # WebSocket connection implementation
+
+# Factory class
+class DeviceProviderFactory:
+    def get_provider(self, device_type: str) -> BaseDeviceProvider
+```
+
+### Core Features
+
+- 📱 Execute tasks on local development environment
+- 🔌 WebSocket real-time connection
+- 🎯 Default device singleton control (one default per user)
+- 🔄 Heartbeat detection and auto-reconnect
+- 🔐 Secure authentication
 
 ---
 
@@ -345,6 +442,7 @@ graph LR
 - ✅ Clearly define the agent's expertise
 - ✅ Provide clear behavioral guidelines
 - ✅ Configure necessary MCP tools
+- ✅ Reference relevant skills
 
 ### 2. Bot Composition
 - ✅ Create specialized Bots for different tasks
@@ -356,6 +454,15 @@ graph LR
 - ✅ Define clear member roles
 - ✅ Provide clear task prompts for each member
 
+### 4. Device Usage
+- ✅ Use Device for faster iteration during local development
+- ✅ Set default device appropriately
+- ✅ Ensure stable device connection
+
+### 5. Task Management
+- ✅ Use `preserveExecutor` for complex tasks to preserve executor
+- ✅ Specify `deviceRef` for local development
+
 ---
 
 ## 🔗 Related Resources
@@ -363,3 +470,5 @@ graph LR
 - [YAML Specification](../reference/yaml-specification.md) - Complete YAML configuration format
 - [Collaboration Models](../concepts/collaboration-models.md) - Detailed explanation of collaboration patterns
 - [Core Concepts](../concepts/core-concepts.md) - Platform overview and feature introduction
+- [Skill System](../concepts/skill-system.md) - Skill development and usage guide
+- [Local Device Architecture](./local-device-architecture.md) - Detailed local device design

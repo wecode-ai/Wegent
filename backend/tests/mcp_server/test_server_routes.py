@@ -40,7 +40,7 @@ def test_knowledge_mcp_root_returns_metadata_json():
 def test_get_mcp_knowledge_config_uses_sse_endpoint():
     config = get_mcp_knowledge_config(
         backend_url="http://localhost:8000",
-        task_token="test-token",
+        auth_token="test-token",
     )
 
     assert (

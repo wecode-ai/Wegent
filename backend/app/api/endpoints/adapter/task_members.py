@@ -27,7 +27,7 @@ from app.schemas.task_member import (
     TaskMemberListResponse,
     TaskMemberResponse,
 )
-from app.services.chat.ws_emitter import get_ws_emitter
+from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.task_invite_service import task_invite_service
 from app.services.task_member_service import task_member_service
 
@@ -48,27 +48,22 @@ async def _emit_task_invited(
     Emit task:invited event to notify user about group chat invitation.
     This is called as a background task to avoid blocking the HTTP response.
     """
-    ws_emitter = get_ws_emitter()
-    if ws_emitter:
-        try:
-            await ws_emitter.emit_task_invited(
-                user_id=user_id,
-                task_id=task_id,
-                title=title,
-                team_id=team_id,
-                team_name=team_name,
-                invited_by={
-                    "user_id": invited_by_user_id,
-                    "user_name": invited_by_user_name,
-                },
-            )
-            logger.debug(
-                f"Emitted task:invited event for user {user_id}, task {task_id}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to emit task:invited event: {e}")
-    else:
-        logger.warning("WebSocket emitter not initialized, skipping task:invited event")
+    extended_emitter = get_extended_emitter()
+    try:
+        await extended_emitter.emit_task_invited(
+            user_id=user_id,
+            task_id=task_id,
+            title=title,
+            team_id=team_id,
+            team_name=team_name,
+            invited_by={
+                "user_id": invited_by_user_id,
+                "user_name": invited_by_user_name,
+            },
+        )
+        logger.debug(f"Emitted task:invited event for user {user_id}, task {task_id}")
+    except Exception as e:
+        logger.error(f"Failed to emit task:invited event: {e}")
 
 
 # ============ Member Management API ============

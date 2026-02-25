@@ -17,6 +17,10 @@ Cross-platform support:
 - Device ID generation works on macOS, Linux, and Windows
 - File permissions use platform abstraction for security
 
+Configuration:
+- Preferred: Use DeviceConfig from device-config.json
+- Fallback: Environment variables (backward compatibility)
+
 Example:
     # Using JWT Token
     export WEGENT_AUTH_TOKEN="eyJhbG..."
@@ -30,10 +34,11 @@ import hashlib
 import os
 import platform
 import re
+import socket
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import socketio
 
@@ -41,6 +46,9 @@ from executor.config import config
 from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
 from shared.logger import setup_logger
+
+if TYPE_CHECKING:
+    from executor.config.device_config import DeviceConfig
 
 logger = setup_logger("websocket_client")
 
@@ -70,6 +78,7 @@ class WebSocketClient:
         reconnection_attempts: int = 0,  # 0 = infinite
         reconnection_delay: Optional[int] = None,
         reconnection_delay_max: Optional[int] = None,
+        device_config: Optional["DeviceConfig"] = None,
     ):
         """Initialize the WebSocket client.
 
@@ -81,13 +90,32 @@ class WebSocketClient:
             reconnection_attempts: Max reconnection attempts (0 for infinite).
             reconnection_delay: Initial reconnection delay in seconds.
             reconnection_delay_max: Maximum reconnection delay in seconds.
+            device_config: Optional DeviceConfig instance from config file.
         """
-        self.backend_url = backend_url or config.WEGENT_BACKEND_URL
-        self.auth_token = self._normalize_token(auth_token or config.WEGENT_AUTH_TOKEN)
+        self._device_config = device_config
 
-        # Device identification
-        self.device_id = self._generate_device_id()
-        self.device_name = self._get_device_name()
+        # Use device_config if provided, otherwise fall back to env vars
+        if device_config:
+            self.backend_url = (
+                backend_url
+                or device_config.connection.backend_url
+                or config.WEGENT_BACKEND_URL
+            )
+            self.auth_token = self._normalize_token(
+                auth_token
+                or device_config.connection.auth_token
+                or config.WEGENT_AUTH_TOKEN
+            )
+            # Use device_id and device_name from config if provided
+            self.device_id = device_config.device_id or self._generate_device_id()
+            self.device_name = device_config.device_name or self._get_device_name()
+        else:
+            self.backend_url = backend_url or config.WEGENT_BACKEND_URL
+            self.auth_token = self._normalize_token(
+                auth_token or config.WEGENT_AUTH_TOKEN
+            )
+            self.device_id = self._generate_device_id()
+            self.device_name = self._get_device_name()
 
         # Reconnection settings
         reconnection_delay = reconnection_delay or config.LOCAL_RECONNECT_DELAY
@@ -276,6 +304,54 @@ class WebSocketClient:
         """Get device name from system."""
         return f"{platform.system()} - {platform.node()}"
 
+    def _get_client_ip(self) -> str:
+        """Get the local IP address of the default route interface.
+
+        This method attempts to determine the IP address of the interface
+        used for the default route (internet connection). Falls back to
+        127.0.0.1 if detection fails.
+
+        Returns:
+            Local IP address string.
+        """
+        try:
+            # Method 1: Try to connect to a public DNS server to determine
+            # which interface would be used for internet traffic
+            # This doesn't actually send any data, just sets up the socket
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(2)
+                # Google's public DNS server (8.8.8.8)
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                if ip and ip != "127.0.0.1":
+                    return ip
+        except Exception:
+            logger.debug("Failed to detect IP via UDP socket", exc_info=True)
+
+        try:
+            # Method 2: Get hostname resolution
+            ip = socket.gethostbyname(socket.gethostname())
+            if ip and ip != "127.0.0.1":
+                return ip
+        except Exception:
+            logger.debug("Failed to detect IP via hostname resolution", exc_info=True)
+
+        try:
+            # Method 3: Try to get IP from network interfaces (Linux only)
+            result = subprocess.run(
+                ["hostname", "-I"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                ips = result.stdout.strip().split()
+                for ip in ips:
+                    if ip and not ip.startswith("127."):
+                        return ip
+        except Exception:
+            logger.debug("Failed to detect IP via hostname -I", exc_info=True)
+
+        # Fallback to localhost
+        return "127.0.0.1"
+
     def _setup_internal_handlers(self) -> None:
         """Setup internal event handlers for connection lifecycle."""
 
@@ -397,6 +473,7 @@ class WebSocketClient:
                 "device_id": self.device_id,
                 "name": self.device_name,
                 "executor_version": get_version(),
+                "client_ip": self._get_client_ip(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 

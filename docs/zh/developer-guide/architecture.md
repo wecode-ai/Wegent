@@ -30,12 +30,14 @@ graph TB
     subgraph "🖥️ 管理平台层"
         Frontend["🌐 Next.js 前端<br/>React 19 + TypeScript"]
         Backend["⚙️ FastAPI 后端<br/>Python + SQLAlchemy"]
+        ChatShell["💬 Chat Shell<br/>LangGraph + Multi-LLM"]
         API["🚀 声明式 API<br/>Kubernetes 风格"]
     end
 
     subgraph "📊 数据层"
         MySQL[("💾 MySQL 数据库<br/>v9.4")]
         Redis[("🔴 Redis 缓存<br/>v7")]
+        Celery["⚡ Celery<br/>异步任务队列"]
     end
 
     subgraph "🔍 执行层"
@@ -43,6 +45,7 @@ graph TB
         Executor1["🚀 Executor 1<br/>隔离沙箱"]
         Executor2["🚀 Executor 2<br/>隔离沙箱"]
         ExecutorN["🚀 Executor N<br/>隔离沙箱"]
+        LocalDevice["📱 本地设备<br/>WebSocket 连接"]
     end
 
     subgraph "🤖 智能体层"
@@ -51,42 +54,59 @@ graph TB
         Dify["✨ Dify<br/>外部 API 智能体"]
     end
 
+    subgraph "📚 知识层"
+        KnowledgeOrch["🎼 KnowledgeOrchestrator<br/>统一知识管理"]
+        RAG["🔍 RAG<br/>检索增强生成"]
+        Embedding["📊 Embedding<br/>向量化服务"]
+    end
 
     %% 系统交互
     Frontend --> API
     API --> Backend
+    Backend --> ChatShell
     Backend --> MySQL
     Backend --> Redis
+    Backend --> Celery
     Backend --> ExecutorManager
+    Backend --> KnowledgeOrch
     ExecutorManager --> Executor1
     ExecutorManager --> Executor2
     ExecutorManager --> ExecutorN
+    Backend --> LocalDevice
 
     %% AI 程序集成
     Executor1 --> Claude
     Executor2 --> Agno
     ExecutorN --> Dify
 
+    %% 知识层集成
+    KnowledgeOrch --> RAG
+    KnowledgeOrch --> Embedding
+    ChatShell --> KnowledgeOrch
+
     %% 样式
     classDef platform fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
     classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     classDef execution fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     classDef agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef knowledge fill:#fce4ec,stroke:#c2185b,stroke-width:2px
 
-    class Frontend,Backend,API platform
-    class MySQL,Redis data
-    class ExecutorManager,Executor1,Executor2,ExecutorN execution
+    class Frontend,Backend,ChatShell,API platform
+    class MySQL,Redis,Celery data
+    class ExecutorManager,Executor1,Executor2,ExecutorN,LocalDevice execution
     class Claude,Agno,Dify agent
+    class KnowledgeOrch,RAG,Embedding knowledge
 ```
 
 ### 架构层次说明
 
 | 层次 | 职责 | 核心技术 |
 |------|------|----------|
-| **管理平台层** | 用户交互、资源管理、API 服务 | Next.js 15, FastAPI, React 19 |
-| **数据层** | 数据持久化、缓存管理 | MySQL 9.4, Redis 7 |
-| **执行层** | 任务调度、容器编排、资源隔离 | Docker, Python |
+| **管理平台层** | 用户交互、资源管理、API 服务、对话处理 | Next.js 15, FastAPI, React 19, Chat Shell |
+| **数据层** | 数据持久化、缓存管理、异步任务调度 | MySQL 9.4, Redis 7, Celery |
+| **执行层** | 任务调度、容器编排、资源隔离、本地设备管理 | Docker, Python, WebSocket |
 | **智能体层** | AI 能力提供、代码执行、对话处理、外部 API 集成 | Claude Code, Agno, Dify |
+| **知识层** | 知识库管理、RAG 检索、向量化服务 | KnowledgeOrchestrator, Embedding |
 
 ---
 
@@ -98,29 +118,53 @@ graph TB
 - 提供用户界面，支持资源定义和管理
 - 实现任务创建、监控和结果展示
 - 提供实时交互和状态更新
+- 管理本地设备和执行器
 
 **技术栈**：
 - **框架**: Next.js 15 (App Router)
-- **UI 库**: React 19, Ant Design 5
-- **样式**: Tailwind CSS 3
-- **状态管理**: React Hooks
-- **国际化**: i18next
-- **图标**: Heroicons, Tabler Icons
+- **UI 库**: React 19, shadcn/ui
+- **样式**: Tailwind CSS 3.4
+- **状态管理**: React Context + Hooks
+- **国际化**: i18next 25.5
+- **图标**: Heroicons, Tabler Icons, Lucide React
 
 **核心特性**：
 - 🎨 配置驱动的 UI，支持 YAML 可视化编辑
-- 🔄 实时任务状态更新
+- 🔄 实时任务状态更新（WebSocket）
 - 🌍 多语言支持（中文/英文）
-- 📱 响应式设计
+- 📱 响应式设计（移动端/桌面端组件分离）
+- 📱 本地设备管理界面
+- 💭 思考过程可视化
 
 **关键文件结构**：
 ```
-frontend/
+frontend/src/
 ├── app/              # Next.js App Router
-├── components/       # React 组件
-├── public/          # 静态资源
-└── package.json     # 依赖配置
+│   ├── (tasks)/     # 任务相关页面
+│   ├── (settings)/  # 设置相关页面
+│   └── admin/       # 管理员页面
+├── features/        # 功能模块
+│   ├── admin/       # 管理后台
+│   ├── devices/     # 设备管理（新）
+│   ├── feed/        # 发现与订阅
+│   ├── knowledge/   # 知识库管理
+│   ├── settings/    # 代理配置
+│   └── tasks/       # 任务核心功能
+├── components/      # 通用组件
+│   ├── ui/          # shadcn/ui 基础组件
+│   └── common/      # 业务通用组件
+└── hooks/           # 自定义 Hooks
 ```
+
+**功能模块**：
+
+| 模块 | 用途 |
+|------|------|
+| **tasks** | 任务创建、聊天、群聊、工作台 |
+| **devices** | 本地设备管理、执行器指南 |
+| **knowledge** | 知识库、文档、权限管理 |
+| **settings** | 智能体、模型、Shell、技能配置 |
+| **feed** | 订阅市场、触发器管理 |
 
 ---
 
@@ -131,23 +175,28 @@ frontend/
 - 管理用户认证和授权
 - 协调执行层进行任务调度
 - 提供 WebSocket 支持实时聊天通信（Socket.IO）
+- 统一知识管理（KnowledgeOrchestrator）
+- 管理本地设备连接
 
 **技术栈**：
 - **框架**: FastAPI 0.68+
 - **ORM**: SQLAlchemy 2.0
 - **数据库驱动**: PyMySQL
-- **认证**: JWT (PyJWT), OAuth (Authlib)
+- **认证**: JWT (PyJWT), OAuth (Authlib), OIDC
 - **异步支持**: asyncio, aiohttp
 - **缓存**: Redis 客户端
 - **实时通信**: Socket.IO (python-socketio) 配合 Redis 适配器
+- **异步任务**: Celery
 
 **核心特性**：
 - 🚀 高性能异步 API
 - 🔒 基于 JWT 的认证机制
 - 📝 完整的 CRUD 操作支持
 - 🔄 实时状态同步
-- 🛡️ 数据加密（AES）
+- 🛡️ 数据加密（AES-256-CBC）
 - 👥 基于角色的访问控制（管理员/普通用户）
+- 🎼 统一知识管理（KnowledgeOrchestrator）
+- 📱 本地设备管理（Device Provider）
 
 **API 设计**：
 ```
@@ -159,8 +208,24 @@ frontend/
 ├── /teams           # Team 资源管理
 ├── /workspaces      # Workspace 资源管理
 ├── /tasks           # Task 资源管理
+├── /devices         # Device 设备管理（新）
+├── /knowledge       # 知识库管理
+├── /groups          # 组织/组管理
+├── /share           # 分享链接管理
 └── /admin           # 管理员操作（用户管理、公共模型）
 ```
+
+**服务层架构**：
+
+| 服务 | 职责 |
+|------|------|
+| **KindService** | CRD 资源统一管理 |
+| **KnowledgeOrchestrator** | 知识管理统一入口（REST API + MCP 工具） |
+| **DeviceService** | 本地设备管理 |
+| **ChatService** | 聊天处理和 RAG |
+| **SubtaskService** | 子任务管理 |
+| **GroupService** | 多租户分组管理 |
+| **UserService** | 用户管理 |
 
 **关键依赖**：
 ```python
@@ -169,28 +234,99 @@ SQLAlchemy >= 2.0.28   # ORM
 PyJWT >= 2.8.0         # JWT 认证
 Redis >= 4.5.0         # 缓存
 httpx >= 0.19.0        # HTTP 客户端
+python-socketio >= 5.0 # Socket.IO 服务端
+celery >= 5.0          # 异步任务
 ```
 
 ---
 
-### 3. 💯 Executor Manager (执行管理器)
+### 3. 💬 Chat Shell（对话引擎）
+
+**职责**：
+- 提供轻量级 AI 对话引擎
+- 支持多种 LLM 模型（Anthropic、OpenAI、Google）
+- 管理对话上下文和会话存储
+- 集成 MCP 工具和技能系统
+- 支持知识库检索增强（RAG）
+
+**技术栈**：
+- **框架**: FastAPI
+- **代理框架**: LangGraph + LangChain
+- **LLM**: Anthropic, OpenAI, Google Gemini
+- **存储**: SQLite, Remote API
+- **可观测性**: OpenTelemetry
+
+**三种部署模式**：
+
+| 模式 | 描述 | 使用场景 |
+|------|------|----------|
+| **HTTP** | 独立 HTTP 服务 `/v1/response` | 生产环境 |
+| **Package** | Python 包，被 Backend 导入 | 单体部署 |
+| **CLI** | 命令行交互界面 | 开发测试 |
+
+**核心特性**：
+- 🤖 多 LLM 支持（Anthropic、OpenAI、Google）
+- 🛠️ MCP 工具集成（Model Context Protocol）
+- 📚 技能动态加载
+- 💾 多存储后端（SQLite、Remote）
+- 📊 消息压缩（超出上下文限制时自动压缩）
+- 📈 OpenTelemetry 集成
+
+**模块结构**：
+```
+chat_shell/chat_shell/
+├── main.py           # FastAPI 应用入口
+├── agent.py          # ChatAgent 代理创建
+├── interface.py      # 统一接口定义
+├── agents/           # LangGraph 代理构建
+├── api/              # REST API 端点
+│   └── v1/          # V1 版本 API
+├── services/         # 业务逻辑层
+│   ├── chat_service.py
+│   └── streaming/   # 流式响应
+├── tools/            # 工具系统
+│   ├── builtin/     # 内置工具（WebSearch 等）
+│   ├── mcp/         # MCP 工具集成
+│   └── sandbox/     # 沙箱执行环境
+├── storage/          # 会话存储
+│   ├── sqlite/      # SQLite 存储
+│   └── remote/      # 远程存储
+├── models/           # LLM 模型工厂
+├── messages/         # 消息处理
+├── compression/      # 上下文压缩
+└── skills/           # 技能加载
+```
+
+---
+
+### 4. 💯 Executor Manager (执行管理器)
 
 **职责**：
 - 管理 Executor 生命周期
 - 任务队列和调度
 - 资源分配和限流
 - 回调处理
+- 支持多种部署模式
 
 **技术栈**：
 - **语言**: Python
 - **容器管理**: Docker SDK
 - **网络**: Docker 网络桥接
+- **调度**: APScheduler
+
+**部署模式**：
+
+| 模式 | 描述 | 使用场景 |
+|------|------|----------|
+| **Docker** | 使用 Docker SDK 管理本地容器 | 标准部署 |
+| **Local Device** | 连接本地设备执行 | 开发环境 |
 
 **核心特性**：
 - 🎯 最大并发任务数控制（默认 5）
 - 🔧 动态端口分配（10001-10100）
 - 🐳 Docker 容器编排
 - 📊 任务状态追踪
+- 📱 本地设备支持
 
 **配置参数**：
 ```yaml
@@ -203,7 +339,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 
 ---
 
-### 4. 🚀 Executor (执行器)
+### 5. 🚀 Executor (执行器)
 
 **职责**：
 - 提供隔离的沙箱环境
@@ -216,11 +352,22 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 - **运行时**: Claude Code, Agno, Dify
 - **版本控制**: Git
 
+**Agent 类型**：
+
+| Agent | 类型 | 说明 |
+|-------|------|------|
+| **ClaudeCode** | local_engine | Claude Code SDK，支持 Git、MCP、技能 |
+| **Agno** | local_engine | 多代理协作，SQLite 会话管理 |
+| **Dify** | external_api | 代理到 Dify 平台 |
+| **ImageValidator** | validator | 自定义基础镜像验证 |
+
 **核心特性**：
 - 🔒 完全隔离的执行环境
 - 💼 独立的工作空间
-- 🔄 自动清理机制
+- 🔄 自动清理机制（可通过 `preserveExecutor` 保留）
 - 📝 实时日志输出
+- 🛠️ MCP 工具支持
+- 📚 技能动态加载
 
 **生命周期**：
 ```mermaid
@@ -231,11 +378,12 @@ graph LR
     Completed --> Cleanup["清理"]
     Failed --> Cleanup
     Cleanup --> Deleted["删除"]
+    Running -.-> |preserveExecutor| Preserved["保留"]
 ```
 
 ---
 
-### 5. 💾 数据库 (MySQL)
+### 6. 💾 数据库 (MySQL)
 
 **职责**：
 - 持久化存储所有资源定义
@@ -247,14 +395,14 @@ graph LR
 **核心表结构**：
 ```
 wegent_db/
-├── ghosts           # Ghost 定义
-├── models           # Model 配置
-├── shells           # Shell 配置
-├── bots             # Bot 实例
-├── teams            # Team 定义
-├── workspaces       # Workspace 配置
-├── tasks            # Task 记录
+├── kinds            # CRD 资源（Ghost, Model, Shell, Bot, Team, Skill, Device）
+├── tasks            # Task 和 Workspace 资源（独立表）
+├── skill_binaries   # 技能二进制包
 ├── users            # 用户信息（含角色字段）
+├── groups           # 组织/组
+├── namespace_members # 命名空间成员
+├── knowledge_bases  # 知识库
+├── documents        # 文档
 └── public_models    # 系统级公共模型
 ```
 
@@ -263,16 +411,18 @@ wegent_db/
 - 支持事务和关联查询
 - 自动时间戳管理
 - 软删除支持
+- CRD 资源通过 (namespace, name, user_id) 三元组唯一标识
 
 ---
 
-### 6. 🔴 缓存 (Redis)
+### 7. 🔴 缓存 (Redis)
 
 **职责**：
 - 任务状态缓存
 - 会话管理
 - 实时数据临时存储
 - 任务过期管理
+- Socket.IO 多实例适配器
 
 **版本**: Redis 7
 
@@ -281,6 +431,49 @@ wegent_db/
 - 💻 代码任务状态缓存（2小时过期）
 - 🎯 执行器删除延迟控制
 - 📊 实时状态更新
+- 🔌 Socket.IO Redis 适配器（多实例通信）
+
+---
+
+### 8. ⚡ Celery（异步任务）
+
+**职责**：
+- 知识库文档索引（异步）
+- 文档摘要生成
+- 长时间运行任务处理
+
+**核心任务**：
+
+| 任务 | 用途 |
+|------|------|
+| `index_document_task` | 文档向量化索引 |
+| `generate_document_summary_task` | 文档摘要生成 |
+
+---
+
+### 9. 🎼 KnowledgeOrchestrator（知识编排器）
+
+**职责**：
+- 统一 REST API 和 MCP 工具的知识管理
+- 自动选择 retriever、embedding model、summary model
+- 协调 Celery 异步任务
+
+**架构**：
+```
+Entry Layer (REST/MCP)
+    ↓
+KnowledgeOrchestrator
+    ↓
+Service Layer (knowledge_service.py)
+    ↓
+Celery Tasks (异步处理)
+```
+
+**核心特性**：
+- 🔗 统一入口：REST API 和 MCP 工具共享相同的业务逻辑
+- 🤖 自动模型选择：Task → Team → Bot → Model 链式解析
+- 📚 多作用域支持：个人、组、组织三级知识库
+- ⚡ 异步索引：通过 Celery 处理大文档
 
 ---
 
@@ -373,12 +566,14 @@ sequenceDiagram
   "runtime": "React 19",
   "language": "TypeScript 5.7",
   "ui": [
-    "Ant Design 5.27",
+    "shadcn/ui",
     "Tailwind CSS 3.4",
+    "Lucide React",
     "Heroicons 2.2"
   ],
   "i18n": "i18next 25.5",
   "markdown": "react-markdown",
+  "realtime": "socket.io-client",
   "devTools": [
     "ESLint 9.17",
     "Prettier 3.4",
@@ -398,7 +593,8 @@ sequenceDiagram
     "auth": [
         "PyJWT >= 2.8.0",
         "python-jose 3.3.0",
-        "passlib 1.7.4"
+        "passlib 1.7.4",
+        "authlib"  # OIDC 支持
     ],
     "async": [
         "asyncio >= 3.4.3",
@@ -406,14 +602,33 @@ sequenceDiagram
         "httpx >= 0.19.0"
     ],
     "cache": "redis >= 4.5.0",
+    "realtime": "python-socketio >= 5.0",
+    "tasks": "celery >= 5.0",
     "security": [
         "cryptography >= 41.0.5",
         "pycryptodome >= 3.20.0"
     ],
+    "telemetry": "opentelemetry-*",
     "testing": [
         "pytest >= 7.4.0",
         "pytest-asyncio >= 0.21.0"
     ]
+}
+```
+
+### Chat Shell 技术栈
+
+```python
+{
+    "framework": "FastAPI",
+    "agent": "LangGraph + LangChain",
+    "llm": [
+        "langchain-anthropic",
+        "langchain-openai",
+        "langchain-google-genai"
+    ],
+    "storage": "SQLite / Remote API",
+    "telemetry": "opentelemetry-*"
 }
 ```
 
@@ -429,6 +644,10 @@ cache:
 container:
   docker: "latest"
   docker-compose: "latest"
+
+task_queue:
+  celery: "5.0+"
+  broker: "redis"
 
 executor_engines:
   - "Claude Code (Anthropic)"
@@ -481,10 +700,11 @@ status:
 ### 4. 安全优先
 
 - 🔒 JWT 认证机制
-- 🛡️ AES 加密敏感数据
+- 🛡️ AES-256-CBC 加密敏感数据
 - 🔐 沙箱环境隔离
 - 🚫 最小权限原则
 - 👥 基于角色的访问控制（管理员/普通用户）
+- 🔑 OIDC 企业单点登录支持
 
 ### 5. 可观测性
 
@@ -492,6 +712,7 @@ status:
 - 📊 状态追踪和监控
 - 🔍 详细的错误信息
 - 📈 性能指标收集
+- 🔭 OpenTelemetry 集成（分布式追踪）
 
 ---
 
@@ -513,6 +734,15 @@ frontend:
 backend:
   replicas: 5
   session: redis
+  socket_adapter: redis  # Socket.IO 多实例支持
+```
+
+#### Chat Shell 扩展
+```yaml
+# 独立服务，支持多实例
+chat_shell:
+  replicas: 2
+  storage: remote  # 远程存储支持多实例
 ```
 
 #### 执行器扩展
@@ -561,6 +791,17 @@ architecture:
 - 生产环境
 - 高并发需求
 - 大规模团队
+
+```yaml
+architecture:
+  frontend: "多实例 + Nginx 负载均衡"
+  backend: "多实例 + API 网关 + Redis Socket.IO 适配器"
+  chat_shell: "多实例 + 远程存储"
+  mysql: "主从复制 + 读写分离"
+  redis: "Redis Cluster"
+  celery: "多 Worker"
+  executor: "动态扩展"
+```
 
 #### 3. 云原生部署（Kubernetes）
 ```yaml
@@ -619,6 +860,8 @@ logger.info("task.created",
 - [协作模式详解](../concepts/collaboration-models.md) - 深入了解协作模式
 - [YAML 配置规范](../reference/yaml-specification.md) - 完整的配置说明
 - [CRD 架构](./crd-architecture.md) - CRD 设计详情
+- [技能系统](../concepts/skill-system.md) - 技能开发和集成
+- [本地设备架构](./local-device-architecture.md) - 本地设备支持
 
 ---
 

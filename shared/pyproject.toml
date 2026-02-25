@@ -16,23 +16,23 @@ dependencies = [
     "cryptography>=42.0.4",
     "httpx>=0.26.0",
     "requests>=2.31.0",
-
+    "dacite>=1.8.0", # For dataclass deserialization
+    "litellm>=1.72.0", # For OpenAI Responses API types
     # Database ORM
     "sqlalchemy>=2.0.25",
     "pymysql>=1.1.0",
     "asyncmy>=0.2.9",
-
     # OpenTelemetry core packages
     "opentelemetry-api>=1.27.0",
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp>=1.27.0",
-
     # OpenTelemetry instrumentation packages
     "opentelemetry-instrumentation-fastapi>=0.48b0",
     "opentelemetry-instrumentation-httpx>=0.48b0",
     "opentelemetry-instrumentation-requests>=0.48b0",
     "opentelemetry-instrumentation-system-metrics>=0.48b0",
     "opentelemetry-instrumentation-redis>=0.48b0",
+    "pydantic>=2.12.5",
 ]
 
 [dependency-groups]

@@ -13,14 +13,13 @@ Supports two startup modes:
 2. Use uvicorn: uvicorn main:app --host 0.0.0.0 --port 8001
 """
 
-import threading
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
 
 from executor_manager.services.sandbox import get_sandbox_manager
 from routers.routers import app  # Import the FastAPI app defined in routes.py
-from scheduler.scheduler import TaskScheduler
 
 # Import the shared logger
 from shared.logger import setup_logger
@@ -34,7 +33,7 @@ logger = setup_logger(__name__)
 async def lifespan(app):
     """
     FastAPI application lifecycle manager.
-    Starts the task scheduler when the application starts, and performs cleanup operations when the application shuts down.
+    Starts the task queue consumers when the application starts, and performs cleanup operations when the application shuts down.
     """
     # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
     otel_config = get_otel_config("wegent-executor-manager")
@@ -81,52 +80,28 @@ async def lifespan(app):
             f"Executor binary extraction error: {e}, custom base images may not work"
         )
 
-    # Check dispatch mode to determine whether to start scheduler or queue consumer
-    import os
-
-    dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "pull")
     service_pool = os.getenv("SERVICE_POOL", "default")
 
-    scheduler_instance = None
-    scheduler_thread = None
     task_consumer = None
     offline_consumer = None
 
-    if dispatch_mode == "push":
-        # Push mode: start task queue consumers for async processing
-        # Start both online (immediate) and offline (21:00-08:00) consumers
-        logger.info(
-            f"Push mode enabled: starting task queue consumers for pool '{service_pool}'"
-        )
-        try:
-            from executor_manager.services.task_queue_consumer import TaskQueueConsumer
+    # Start task queue consumers for async processing
+    # Start both online (immediate) and offline (21:00-08:00) consumers
+    logger.info(f"Starting task queue consumers for pool '{service_pool}'")
+    try:
+        from executor_manager.services.task_queue_consumer import TaskQueueConsumer
 
-            # Online consumer - processes tasks immediately
-            task_consumer = TaskQueueConsumer(service_pool, queue_type="online")
-            task_consumer.start()
-            logger.info(f"Online task queue consumer started for pool '{service_pool}'")
+        # Online consumer - processes tasks immediately
+        task_consumer = TaskQueueConsumer(service_pool, queue_type="online")
+        task_consumer.start()
+        logger.info(f"Online task queue consumer started for pool '{service_pool}'")
 
-            # Offline consumer - only processes during 21:00-08:00
-            offline_consumer = TaskQueueConsumer(service_pool, queue_type="offline")
-            offline_consumer.start()
-            logger.info(
-                f"Offline task queue consumer started for pool '{service_pool}'"
-            )
-        except Exception as e:
-            logger.error(f"Failed to start task queue consumers: {e}")
-    else:
-        # Pull mode (default): start the task scheduler
-        logger.info("Pull mode enabled: starting task scheduler")
-        scheduler_instance = TaskScheduler()
-
-        # Start the scheduler in a separate thread
-        scheduler_thread = threading.Thread(
-            target=start_scheduler, args=(scheduler_instance,)
-        )
-        scheduler_thread.daemon = True
-        scheduler_thread.start()
-
-        logger.info("Task scheduler started successfully")
+        # Offline consumer - only processes during 21:00-08:00
+        offline_consumer = TaskQueueConsumer(service_pool, queue_type="offline")
+        offline_consumer.start()
+        logger.info(f"Offline task queue consumer started for pool '{service_pool}'")
+    except Exception as e:
+        logger.error(f"Failed to start task queue consumers: {e}")
 
     # Start SandboxManager scheduler for GC
     sandbox_manager = get_sandbox_manager()
@@ -149,11 +124,6 @@ async def lifespan(app):
         logger.info("Stopping offline task queue consumer...")
         offline_consumer.stop()
 
-    # Stop task scheduler if running
-    if scheduler_instance:
-        logger.info("Stopping task scheduler...")
-        scheduler_instance.stop()
-
     # Stop SandboxManager garbage collection
     if sandbox_manager:
         logger.info("Stopping SandboxManager...")
@@ -165,17 +135,6 @@ async def lifespan(app):
 
         shutdown_telemetry()
         logger.info("OpenTelemetry shutdown completed")
-
-
-def start_scheduler(scheduler):
-    """Start the task scheduler in a separate thread"""
-    try:
-        logger.info("Starting task scheduling service...")
-        scheduler.start()
-    except Exception as e:
-        logger.error(f"Scheduler service startup failed: {e}")
-        return 1
-    return 0
 
 
 # Set the FastAPI application's lifecycle manager

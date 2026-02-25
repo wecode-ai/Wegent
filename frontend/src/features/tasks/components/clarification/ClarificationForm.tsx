@@ -75,24 +75,13 @@ export default function ClarificationForm({
   const isSubmitted = useMemo(() => {
     if (messages.length === 0) return false
 
-    console.log('[ClarificationForm] Checking submission status:', {
-      currentMessageIndex,
-      totalMessages: messages.length,
-      questionIds: data.questions.map(q => q.question_id),
-    })
-
     // Check if there's any user message after the current message index
     const messagesAfter = messages.slice(currentMessageIndex + 1)
-    console.log(
-      '[ClarificationForm] Messages after current:',
-      messagesAfter.map((m, idx) => ({ index: currentMessageIndex + 1 + idx, type: m.type }))
-    )
 
     const hasUserMessageAfter = messagesAfter.some(msg => msg.type === 'user')
-    console.log('[ClarificationForm] Has user message after:', hasUserMessageAfter)
 
     return hasUserMessageAfter
-  }, [messages, currentMessageIndex, data.questions])
+  }, [messages, currentMessageIndex])
 
   // Initialize default answers for questions with recommended options
   useEffect(() => {
@@ -187,10 +176,6 @@ export default function ClarificationForm({
         description: questionTitles,
       })
 
-      console.log(
-        'Unanswered questions:',
-        unansweredQuestions.map(q => q.question_id)
-      )
       return
     }
 

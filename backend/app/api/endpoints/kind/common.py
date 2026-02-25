@@ -5,6 +5,7 @@
 """
 Common helper functions and constants for kind API endpoints to reduce code duplication
 """
+
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status

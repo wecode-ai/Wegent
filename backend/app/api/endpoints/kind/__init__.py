@@ -5,6 +5,7 @@
 """
 Kubernetes-style API endpoints
 """
+
 from fastapi import APIRouter
 
 from app.api.endpoints.kind.batch import router as batch_router

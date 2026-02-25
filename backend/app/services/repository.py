@@ -5,6 +5,7 @@
 """
 Repository aggregation service for handling multiple repository providers
 """
+
 import asyncio
 import logging
 from typing import Any, Dict, List

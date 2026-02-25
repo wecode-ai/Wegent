@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 import subprocess
 from unittest.mock import MagicMock, Mock, call, patch
 
@@ -99,6 +100,7 @@ class TestDockerExecutor:
         image = executor._get_executor_image(sample_task)
         assert image == "test/executor:latest"
 
+    @patch.dict(os.environ, {"EXECUTOR_IMAGE": ""}, clear=False)
     def test_get_executor_image_missing(self, executor):
         """Test getting executor image when missing"""
         task = {}

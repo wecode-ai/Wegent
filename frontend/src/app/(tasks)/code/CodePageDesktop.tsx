@@ -18,6 +18,7 @@ import WorkbenchToggle from '@/features/layout/WorkbenchToggle'
 import { OpenMenu } from '@/features/tasks/components/input'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { Team, WorkbenchData } from '@/types/api'
+import type { MessageBlock } from '@/features/tasks/components/message/thinking/types'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskStateMachine } from '@/features/tasks/hooks/useTaskStateMachine'
@@ -129,69 +130,48 @@ export function CodePageDesktop() {
     return calculateOpenLinks(selectedTaskDetail)
   }, [selectedTaskDetail])
 
-  // Type for thinking data
-  type ThinkingStep = {
-    title: string
-    next_action: string
-    details?: Record<string, unknown>
-  }
-
   // Use reactive state machine hook for real-time updates
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
 
-  // Get real-time thinking and workbench data from state machine
+  // Get real-time blocks and workbench data from state machine
   // Priority: state machine (real-time) > selectedTaskDetail (API polling)
-  const { thinkingData, workbenchData } = useMemo(() => {
+  const { blocksData, workbenchData } = useMemo(() => {
     // Try to get data from state machine first (real-time updates via WebSocket)
     if (taskState?.messages && taskState.messages.size > 0) {
-      // Find the latest AI message with result data (iterate in reverse order to get the newest)
-      // Priority: streaming message > completed message with result
-      let latestAiMessageWithResult: {
-        thinking: ThinkingStep[] | null
-        workbench: WorkbenchData | null
-      } | null = null
+      // Aggregate blocks from all AI messages (for timeline display)
+      // Priority for workbench: streaming message > completed message with result
+      const allBlocks: MessageBlock[] = []
+      let latestWorkbench: WorkbenchData | null = null
 
       for (const msg of taskState.messages.values()) {
         if (msg.type === 'ai') {
-          // For streaming messages, always use their result (real-time updates)
-          if (msg.status === 'streaming' && msg.result) {
-            const result = msg.result as { thinking?: unknown[]; workbench?: WorkbenchData }
-            const thinking =
-              result.thinking && Array.isArray(result.thinking)
-                ? (result.thinking as ThinkingStep[])
-                : null
-            const workbench = result.workbench || null
-            // Streaming message takes highest priority, return immediately
-            return {
-              thinkingData: thinking,
-              workbenchData: workbench || selectedTaskDetail?.workbench || null,
-            }
-          }
-          // For completed messages, keep track of the latest one with result
+          // Collect blocks from all AI messages
           if (msg.result) {
-            const result = msg.result as { thinking?: unknown[]; workbench?: WorkbenchData }
-            const thinking =
-              result.thinking && Array.isArray(result.thinking)
-                ? (result.thinking as ThinkingStep[])
-                : null
-            const workbench = result.workbench || null
-            latestAiMessageWithResult = { thinking, workbench }
+            const result = msg.result as { blocks?: MessageBlock[]; workbench?: WorkbenchData }
+            if (result.blocks && Array.isArray(result.blocks)) {
+              allBlocks.push(...result.blocks)
+            }
+            // For streaming messages, always use their workbench (real-time updates)
+            if (msg.status === 'streaming' && result.workbench) {
+              latestWorkbench = result.workbench
+            } else if (!latestWorkbench && result.workbench) {
+              latestWorkbench = result.workbench
+            }
           }
         }
       }
 
-      // If we found a completed AI message with result, use it
-      if (latestAiMessageWithResult) {
+      // Return aggregated blocks and latest workbench
+      if (allBlocks.length > 0 || latestWorkbench) {
         return {
-          thinkingData: latestAiMessageWithResult.thinking,
-          workbenchData:
-            latestAiMessageWithResult.workbench || selectedTaskDetail?.workbench || null,
+          blocksData: allBlocks.length > 0 ? allBlocks : null,
+          workbenchData: latestWorkbench || selectedTaskDetail?.workbench || null,
         }
       }
     }
 
     // Fallback to selectedTaskDetail workbench data only (subtasks are now managed by TaskStateMachine)
-    return { thinkingData: null, workbenchData: selectedTaskDetail?.workbench || null }
+    return { blocksData: null, workbenchData: selectedTaskDetail?.workbench || null }
   }, [taskState, selectedTaskDetail])
 
   // Save last active tab to localStorage
@@ -297,8 +277,9 @@ export function CodePageDesktop() {
               }
               taskTitle={selectedTaskDetail?.title}
               taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
-              thinking={thinkingData}
+              blocks={blocksData}
               app={selectedTaskDetail?.app}
+              taskStatus={selectedTaskDetail?.status}
             />
           )}
         </div>

@@ -120,7 +120,7 @@ const PublicRetrieverList: React.FC = () => {
   }, [fetchRetrievers])
 
   // Fetch retrieval methods for a storage type from API
-  const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant') => {
+  const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant' | 'milvus') => {
     setLoadingRetrievalMethods(true)
     try {
       const response = await retrieverApis.getStorageTypeRetrievalMethods(type)
@@ -225,7 +225,7 @@ const PublicRetrieverList: React.FC = () => {
       name: retriever.name,
       displayName: retriever.displayName || '',
       namespace: retriever.namespace,
-      storageType: (storageConfig.type as 'elasticsearch' | 'qdrant') || 'elasticsearch',
+      storageType: (storageConfig.type as 'elasticsearch' | 'qdrant' | 'milvus') || 'elasticsearch',
       url: storageConfig.url || '',
       username: storageConfig.username || '',
       password: (storageConfig as { password?: string }).password || '',
@@ -238,7 +238,7 @@ const PublicRetrieverList: React.FC = () => {
     }
   }
 
-  const handleStorageTypeChange = async (value: 'elasticsearch' | 'qdrant') => {
+  const handleStorageTypeChange = async (value: 'elasticsearch' | 'qdrant' | 'milvus') => {
     const config = STORAGE_TYPE_CONFIG[value]
     const availableMethods = await fetchRetrievalMethods(value)
 
@@ -449,6 +449,7 @@ const PublicRetrieverList: React.FC = () => {
   const getStorageTypeLabel = (storageType: string): string => {
     if (storageType === 'elasticsearch') return 'Elasticsearch'
     if (storageType === 'qdrant') return 'Qdrant'
+    if (storageType === 'milvus') return 'Milvus'
     return storageType
   }
 

@@ -12,6 +12,9 @@ COPY executor/pyproject.toml /app/executor/pyproject.toml
 
 RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
 
+# Install PyInstaller for building standalone binary (using uv for speed)
+RUN uv pip install --system pyinstaller
+
 # Copy source code
 COPY executor /app/executor
 COPY shared /app/shared

@@ -1017,6 +1017,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dacite"
+version = "1.9.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/a0/7ca79796e799a3e782045d29bf052b5cde7439a2bbb17f15ff44f7aacc63/dacite-1.9.2.tar.gz", hash = "sha256:6ccc3b299727c7aa17582f0021f6ae14d5de47c7227932c47fec4cdfefd26f09", size = 22420, upload-time = "2025-02-05T09:27:29.757Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/35/386550fd60316d1e37eccdda609b074113298f23cef5bddb2049823fe666/dacite-1.9.2-py3-none-any.whl", hash = "sha256:053f7c3f5128ca2e9aceb66892b1a3c8936d02c686e707bee96e19deef4bc4a0", size = 16600, upload-time = "2025-02-05T09:27:24.345Z" },
+]
+
+[[package]]
 name = "dataclasses-json"
 version = "0.6.7"
 source = { registry = "https://pypi.org/simple" }
@@ -2396,6 +2405,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/e8/55642cac8306287cd9ab283fd35936d20b0f5e7ab1b74d2219693878c971/llama_index_vector_stores_elasticsearch-0.5.1.tar.gz", hash = "sha256:a89291160917a2ba5089aa1157c493d0b9c7e455e975945a6b92f4a1f4bd9251", size = 8243, upload-time = "2025-09-08T20:47:52.966Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/21/15/7fb6567a41bad87b0e5f1b98413f63e4757bbb9b1633587cef7b51b1747a/llama_index_vector_stores_elasticsearch-0.5.1-py3-none-any.whl", hash = "sha256:ee529d6437b89e0cba14e5909bbc4df90c7e9a6efe3b079a6b1a7ff7eeaa5071", size = 8638, upload-time = "2025-09-08T20:47:52.17Z" },
+]
+
+[[package]]
+name = "llama-index-vector-stores-milvus"
+version = "0.9.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "llama-index-core" },
+    { name = "pymilvus" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ef/79/72bf70fac3b77770a5c2b1b7d441aa1998bb522d50fe88b0f9c4071854e5/llama_index_vector_stores_milvus-0.9.6.tar.gz", hash = "sha256:6d38ac5939a570e0240687f54fbee4e1ff6c5faa2d28d25377a3f38d2ca07e2b", size = 15584, upload-time = "2026-01-13T11:46:41.394Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/04/98359849c095b5a3eb06f0649865a30b5a733b9fdbfeac3c6951253f804c/llama_index_vector_stores_milvus-0.9.6-py3-none-any.whl", hash = "sha256:916cbd9b07035ec137905970ef6a49dd77d3ece6e0a79271db35705cca5f5f84", size = 15792, upload-time = "2026-01-13T11:46:39.708Z" },
 ]
 
 [[package]]
@@ -4134,6 +4156,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pymilvus"
+version = "2.6.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "orjson" },
+    { name = "pandas" },
+    { name = "protobuf" },
+    { name = "python-dotenv" },
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b6/c9/d83e22ae440f2331769e15f4d55e42af39215a04a412b0513a4e30a94089/pymilvus-2.6.3.tar.gz", hash = "sha256:10647808f201003d24eead2890722ffcba4b1ef713eff86c8da9623f93071ed9", size = 1343434, upload-time = "2025-10-31T06:26:07.985Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/33/b0309aefe3d2046262c6174dd5765449064e31ae364839f4eb572777f44e/pymilvus-2.6.3-py3-none-any.whl", hash = "sha256:c8551491a194ecfb0b22d44aa809ce749bf6969f2fa8d321523833e2d6c1313d", size = 273801, upload-time = "2025-10-31T06:26:06.002Z" },
+]
+
+[[package]]
 name = "pymysql"
 version = "1.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -5723,6 +5762,7 @@ dependencies = [
     { name = "llama-index-embeddings-openai" },
     { name = "llama-index-readers-file" },
     { name = "llama-index-vector-stores-elasticsearch" },
+    { name = "llama-index-vector-stores-milvus" },
     { name = "llama-index-vector-stores-qdrant" },
     { name = "lxml" },
     { name = "markdown" },
@@ -5748,6 +5788,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "pymilvus" },
     { name = "pymysql" },
     { name = "pypdf2" },
     { name = "pytesseract" },
@@ -5765,6 +5806,7 @@ dependencies = [
     { name = "regex" },
     { name = "requests" },
     { name = "slowapi" },
+    { name = "socksio" },
     { name = "sqlalchemy" },
     { name = "structlog" },
     { name = "tenacity" },
@@ -5822,6 +5864,7 @@ requires-dist = [
     { name = "llama-index-embeddings-openai", specifier = ">=0.3.0" },
     { name = "llama-index-readers-file", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-elasticsearch", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-milvus", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
     { name = "lxml", specifier = ">=4.9.0" },
     { name = "markdown", specifier = ">=3.5.0" },
@@ -5847,6 +5890,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.5.3" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "pyjwt", specifier = ">=2.8.0" },
+    { name = "pymilvus", specifier = ">=2.4.0,<2.6.4" },
     { name = "pymysql", specifier = ">=1.1.0" },
     { name = "pypdf2", specifier = ">=3.0.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
@@ -5864,6 +5908,7 @@ requires-dist = [
     { name = "regex", specifier = ">=2023.8.8" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "slowapi", specifier = ">=0.1.9" },
+    { name = "socksio", specifier = ">=1.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.25" },
     { name = "structlog", specifier = ">=23.1.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
@@ -6019,7 +6064,9 @@ source = { editable = "../shared" }
 dependencies = [
     { name = "asyncmy" },
     { name = "cryptography" },
+    { name = "dacite" },
     { name = "httpx" },
+    { name = "litellm" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-instrumentation-fastapi" },
@@ -6028,6 +6075,7 @@ dependencies = [
     { name = "opentelemetry-instrumentation-requests" },
     { name = "opentelemetry-instrumentation-system-metrics" },
     { name = "opentelemetry-sdk" },
+    { name = "pydantic" },
     { name = "pymysql" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -6038,7 +6086,9 @@ dependencies = [
 requires-dist = [
     { name = "asyncmy", specifier = ">=0.2.9" },
     { name = "cryptography", specifier = ">=42.0.4" },
+    { name = "dacite", specifier = ">=1.8.0" },
     { name = "httpx", specifier = ">=0.26.0" },
+    { name = "litellm", specifier = ">=1.72.0" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.27.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.48b0" },
@@ -6047,6 +6097,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-requests", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-system-metrics", specifier = ">=0.48b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
+    { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pymysql", specifier = ">=1.1.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "requests", specifier = ">=2.31.0" },

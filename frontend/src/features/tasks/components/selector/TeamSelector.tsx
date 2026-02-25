@@ -115,7 +115,6 @@ export default function TeamSelector({
         if (lastSyncedTaskIdRef.current !== taskDetail.id || selectedTeam?.id !== detailTeamId) {
           const teamFromDetail = filteredTeams.find(t => t.id === detailTeamId)
           if (teamFromDetail) {
-            console.log('[TeamSelector] Syncing team from task detail:', teamFromDetail.name)
             setSelectedTeam(teamFromDetail)
             lastSyncedTaskIdRef.current = taskDetail.id
             hasInitializedRef.current = true
@@ -125,7 +124,6 @@ export default function TeamSelector({
             const teamObject =
               typeof taskDetail.team === 'object' ? (taskDetail.team as Team) : null
             if (teamObject) {
-              console.log('[TeamSelector] Using team object from detail:', teamObject.name)
               setSelectedTeam(teamObject)
               lastSyncedTaskIdRef.current = taskDetail.id
               hasInitializedRef.current = true
@@ -137,11 +135,6 @@ export default function TeamSelector({
           return
         }
       } else {
-        // URL and taskDetail don't match - wait for correct taskDetail to load
-        console.log('[TeamSelector] Waiting for taskDetail to match URL', {
-          taskIdFromUrl,
-          taskDetailId: taskDetail.id,
-        })
         return
       }
     }
@@ -154,7 +147,6 @@ export default function TeamSelector({
       if (lastTeamId) {
         const lastTeam = filteredTeams.find(t => t.id === lastTeamId)
         if (lastTeam) {
-          console.log('[TeamSelector] Restoring team from localStorage:', lastTeam.name)
           setSelectedTeam(lastTeam)
           hasInitializedRef.current = true
           lastSyncedTaskIdRef.current = null
@@ -162,7 +154,6 @@ export default function TeamSelector({
         }
       }
       // No saved preference or team not found, select first team
-      console.log('[TeamSelector] Selecting first team:', filteredTeams[0].name)
       setSelectedTeam(filteredTeams[0])
       hasInitializedRef.current = true
       lastSyncedTaskIdRef.current = null
@@ -175,12 +166,10 @@ export default function TeamSelector({
     if (selectedTeam) {
       const exists = filteredTeams.some(t => t.id === selectedTeam.id)
       if (!exists) {
-        console.log('[TeamSelector] Current team not in filtered list, selecting first')
         setSelectedTeam(filteredTeams[0])
       }
     } else if (!taskIdFromUrl) {
       // No selection and no task - select first team
-      console.log('[TeamSelector] No selection, selecting first team')
       setSelectedTeam(filteredTeams[0])
     }
   }, [filteredTeams, taskDetail, taskIdFromUrl, selectedTeam, setSelectedTeam, currentMode])

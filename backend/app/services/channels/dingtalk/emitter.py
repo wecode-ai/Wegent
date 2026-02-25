@@ -5,7 +5,7 @@
 """
 Response Emitters for DingTalk Stream.
 
-This module provides ChatEventEmitter implementations for DingTalk:
+This module provides ResultEmitter implementations for DingTalk:
 - SyncResponseEmitter: Re-exported from generic emitter module
 - StreamingResponseEmitter: DingTalk-specific streaming via AI Card
 """
@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 # Re-export SyncResponseEmitter from generic module for backward compatibility
 from app.services.channels.emitter import SyncResponseEmitter
-from app.services.chat.trigger.emitter import ChatEventEmitter
+from app.services.execution.emitters import ResultEmitter
+from shared.models import ExecutionEvent
 
 if TYPE_CHECKING:
     from dingtalk_stream import ChatbotMessage
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["SyncResponseEmitter", "StreamingResponseEmitter"]
 
 
-class StreamingResponseEmitter(ChatEventEmitter):
+class StreamingResponseEmitter(ResultEmitter):
     """Streaming response emitter for DingTalk using AI Card.
 
     This emitter uses DingTalk's AIMarkdownCardInstance to send streaming
@@ -142,30 +143,60 @@ class StreamingResponseEmitter(ChatEventEmitter):
                     f"[StreamingEmitter] Failed to send streaming update: {e}"
                 )
 
-    async def emit_chat_start(
+    async def emit(self, event: ExecutionEvent) -> None:
+        """Emit a single event.
+
+        Args:
+            event: Execution event to emit
+        """
+        from shared.models import EventType
+
+        if event.type == EventType.START:
+            await self.emit_start(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                message_id=event.message_id,
+            )
+        elif event.type == EventType.CHUNK:
+            await self.emit_chunk(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                content=event.content or "",
+                offset=event.offset,
+            )
+        elif event.type == EventType.DONE:
+            await self.emit_done(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                result=event.result,
+            )
+        elif event.type == EventType.ERROR:
+            await self.emit_error(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                error=event.error or "Unknown error",
+            )
+
+    async def emit_start(
         self,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int] = None,
-        shell_type: str = "Chat",
+        **kwargs,
     ) -> None:
-        """Emit chat:start event - create and start the AI card."""
-        logger.info(
-            f"[StreamingEmitter] chat:start task={task_id} subtask={subtask_id}"
-        )
+        """Emit start event - create and start the AI card."""
+        logger.info(f"[StreamingEmitter] start task={task_id} subtask={subtask_id}")
         await self._ensure_card_started()
 
-    async def emit_chat_chunk(
+    async def emit_chunk(
         self,
         task_id: int,
         subtask_id: int,
         content: str,
         offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        block_id: Optional[str] = None,
-        block_offset: Optional[int] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:chunk event - send streaming update to DingTalk."""
+        """Emit chunk event - send streaming update to DingTalk."""
         if not content:
             return
 
@@ -176,23 +207,20 @@ class StreamingResponseEmitter(ChatEventEmitter):
         # Use throttling to reduce API calls
         await self._send_streaming_update(content)
 
-    async def emit_chat_done(
+    async def emit_done(
         self,
         task_id: int,
         subtask_id: int,
-        offset: int,
-        result: Optional[Dict[str, Any]] = None,
-        message_id: Optional[int] = None,
+        result: Optional[dict] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:done event - finalize the AI card."""
+        """Emit done event - finalize the AI card."""
         if self._finished:
-            logger.warning(
-                "[StreamingEmitter] emit_chat_done called but already finished"
-            )
+            logger.warning("[StreamingEmitter] emit_done called but already finished")
             return
 
         logger.info(
-            f"[StreamingEmitter] chat:done task={task_id} subtask={subtask_id} "
+            f"[StreamingEmitter] done task={task_id} subtask={subtask_id} "
             f"full_content_len={len(self._full_content)}, pending_len={len(self._pending_content)}"
         )
 
@@ -223,19 +251,19 @@ class StreamingResponseEmitter(ChatEventEmitter):
         except Exception as e:
             logger.exception(f"[StreamingEmitter] Failed to finish AI card: {e}")
 
-    async def emit_chat_error(
+    async def emit_error(
         self,
         task_id: int,
         subtask_id: int,
         error: str,
-        message_id: Optional[int] = None,
+        **kwargs,
     ) -> None:
-        """Emit chat:error event - mark the AI card as failed."""
+        """Emit error event - mark the AI card as failed."""
         if self._finished:
             return
 
         logger.warning(
-            f"[StreamingEmitter] chat:error task={task_id} subtask={subtask_id} "
+            f"[StreamingEmitter] error task={task_id} subtask={subtask_id} "
             f"error={error}"
         )
 
@@ -253,52 +281,37 @@ class StreamingResponseEmitter(ChatEventEmitter):
                 f"[StreamingEmitter] Failed to mark AI card as failed: {e}"
             )
 
-    async def emit_chat_cancelled(
+    async def emit_cancelled(
         self,
         task_id: int,
         subtask_id: int,
+        **kwargs,
     ) -> None:
-        """Emit chat:cancelled event - finalize the AI card with partial content."""
+        """Emit cancelled event - mark the AI card as cancelled."""
         if self._finished:
             return
 
-        logger.info(
-            f"[StreamingEmitter] chat:cancelled task={task_id} subtask={subtask_id}"
-        )
+        logger.info(f"[StreamingEmitter] cancelled task={task_id} subtask={subtask_id}")
 
         try:
             # Ensure card is started
             if not await self._ensure_card_started():
                 return
 
-            # Send any remaining content and finish
-            if self._pending_content:
-                self._full_content += self._pending_content
-                self._pending_content = ""
+            # Add cancellation note to content
+            self._full_content += "\n\n⚠️ 任务已取消"
 
-            # Add cancellation note and finish
-            self._full_content += "\n\n*(Cancelled)*"
-
-            # Send final streaming update before finish
+            # Send final content and finish the card
             self._card.ai_streaming(self._full_content, append=False)
             await asyncio.sleep(0.1)
-
             self._card.ai_finish(self._full_content)
             self._finished = True
 
         except Exception as e:
-            logger.exception(f"[StreamingEmitter] Failed to cancel AI card: {e}")
+            logger.exception(
+                f"[StreamingEmitter] Failed to mark AI card as cancelled: {e}"
+            )
 
-    async def emit_chat_bot_complete(
-        self,
-        user_id: int,
-        task_id: int,
-        subtask_id: int,
-        content: str,
-        result: Dict[str, Any],
-    ) -> None:
-        """Emit chat:bot_complete event (no-op for streaming emitter)."""
-        logger.debug(
-            f"[StreamingEmitter] chat:bot_complete user={user_id} task={task_id} "
-            f"subtask={subtask_id} (skipped)"
-        )
+    async def close(self) -> None:
+        """Close the emitter and release resources."""
+        pass

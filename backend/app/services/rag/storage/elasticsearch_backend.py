@@ -29,6 +29,7 @@ from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
 from app.services.rag.retrieval.filters import parse_metadata_filters
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.storage.chunk_metadata import ChunkMetadata
 from shared.telemetry.decorators import add_span_event
 
 
@@ -112,22 +113,19 @@ class ElasticsearchBackend(BaseStorageBackend):
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
-        knowledge_id: str,
-        doc_ref: str,
-        source_file: str,
-        created_at: str,
+        chunk_metadata: ChunkMetadata,
         embed_model,
         **kwargs,
     ) -> Dict:
         """
-        Add metadata to nodes and index them into Elasticsearch.
+        Index nodes into Elasticsearch.
+
+        Note: Metadata is already applied to nodes by the indexer layer via
+        chunk_metadata.apply_to_nodes() before calling this method.
 
         Args:
-            nodes: List of nodes to index
-            knowledge_id: Knowledge base ID
-            doc_ref: Document reference ID (doc_xxx format)
-            source_file: Source file name
-            created_at: Creation timestamp
+            nodes: List of nodes to index (metadata already applied)
+            chunk_metadata: ChunkMetadata instance containing document metadata
             embed_model: Embedding model
             **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 
@@ -141,41 +139,21 @@ class ElasticsearchBackend(BaseStorageBackend):
         add_span_event(
             "elasticsearch.index_with_metadata.started",
             {
-                "knowledge_id": knowledge_id,
-                "doc_ref": doc_ref,
-                "source_file": source_file,
+                "knowledge_id": chunk_metadata.knowledge_id,
+                "doc_ref": chunk_metadata.doc_ref,
+                "source_file": chunk_metadata.source_file,
                 "node_count": len(nodes),
-            },
-        )
-
-        # Add metadata to nodes
-        for idx, node in enumerate(nodes):
-            node.metadata.update(
-                {
-                    "knowledge_id": knowledge_id,
-                    "doc_ref": doc_ref,  # Our custom doc_xxx ID
-                    "source_file": source_file,
-                    "chunk_index": idx,
-                    "created_at": created_at,
-                }
-            )
-
-        add_span_event(
-            "elasticsearch.metadata_added",
-            {
-                "node_count": len(nodes),
-                "doc_ref": doc_ref,
             },
         )
 
         # Get index name
-        index_name = self.get_index_name(knowledge_id, **kwargs)
+        index_name = self.get_index_name(chunk_metadata.knowledge_id, **kwargs)
 
         add_span_event(
             "elasticsearch.index_name_resolved",
             {
                 "index_name": index_name,
-                "knowledge_id": knowledge_id,
+                "knowledge_id": chunk_metadata.knowledge_id,
             },
         )
 
@@ -202,7 +180,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             {
                 "indexed_count": len(nodes),
                 "index_name": index_name,
-                "doc_ref": doc_ref,
+                "doc_ref": chunk_metadata.doc_ref,
                 "status": "success",
             },
         )

@@ -29,8 +29,6 @@ from app.schemas.shared_task import (
     TaskShareResponse,
 )
 from app.schemas.task import (
-    ConfirmStageRequest,
-    ConfirmStageResponse,
     PipelineStageInfo,
     TaskCreate,
     TaskDetail,
@@ -217,12 +215,17 @@ def get_task(
 @router.get("/{task_id}/skills", response_model=TaskSkillsResponse)
 def get_task_skills(
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
     """Get all skills associated with a task.
 
     Follows the chain: task → team → bots → ghosts → skills
+
+    Supports multiple authentication methods:
+    - JWT Token (standard user authentication)
+    - API Key (for executor/service authentication)
+    - Task Token (for executor task-based authentication)
 
     Returns:
         TaskSkillsResponse with task_id, team_id, team_namespace,
@@ -270,37 +273,6 @@ async def cancel_task(
         task_id=task_id,
         user_id=current_user.id,
         background_task_runner=background_tasks.add_task,
-    )
-
-
-@router.post("/{task_id}/confirm-stage", response_model=ConfirmStageResponse)
-def confirm_pipeline_stage(
-    request: ConfirmStageRequest,
-    task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Confirm a pipeline stage and proceed to the next stage.
-
-    For pipeline mode teams with requireConfirmation=true on a member,
-    the task will pause after that stage completes and wait for user confirmation.
-
-    Args:
-        request: Contains confirmed_prompt and action (continue/retry)
-        task_id: Task ID
-        current_user: Current authenticated user
-        db: Database session
-
-    Returns:
-        ConfirmStageResponse with stage info
-    """
-    return task_kinds_service.confirm_pipeline_stage(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-        confirmed_prompt=request.confirmed_prompt,
-        action=request.action,
     )
 
 
@@ -684,3 +656,42 @@ def delete_task_services(
     db.refresh(task)
 
     return {"app": app_data}
+
+
+@router.post("/{task_id}/preserve-executor")
+def set_preserve_executor(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Set preserve executor flag for a task.
+
+    When this flag is set, the executor pod for this task will not be cleaned up
+    by the cleanup_stale_executors job even after the task is completed.
+    This is useful for important tasks that need to retain their execution environment.
+
+    Only task owner or group chat members can set this flag.
+    """
+    return task_kinds_service.set_preserve_executor(
+        db=db, task_id=task_id, user_id=current_user.id, preserve=True
+    )
+
+
+@router.delete("/{task_id}/preserve-executor")
+def cancel_preserve_executor(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Cancel preserve executor flag for a task.
+
+    Removes the preserve flag, allowing the executor pod to be cleaned up
+    by the cleanup_stale_executors job when the task expires.
+
+    Only task owner or group chat members can cancel this flag.
+    """
+    return task_kinds_service.set_preserve_executor(
+        db=db, task_id=task_id, user_id=current_user.id, preserve=False
+    )

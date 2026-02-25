@@ -66,7 +66,7 @@ export function InviteLinkDialog({
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat or user might not be owner
         // The important part is the generateInviteLink call below
-        console.log('Task conversion:', conversionError)
+        console.error('Task conversion:', conversionError)
       }
 
       // Generate the invite link

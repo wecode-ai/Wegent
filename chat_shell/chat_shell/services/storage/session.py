@@ -56,6 +56,10 @@ class SessionManager:
         local_event = self._local_events.get(subtask_id)
         return local_event is not None and local_event.is_set()
 
+    def get_active_stream_count(self) -> int:
+        """Get the number of active streams."""
+        return len(self._local_events)
+
     # ==================== No-op methods for compatibility ====================
     # These methods exist for interface compatibility but do nothing
     # as Redis caching is not needed in HTTP mode

@@ -358,17 +358,14 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const triggerAutoRefresh = useCallback(async () => {
     // Prevent duplicate refreshes
     if (isAutoRefreshingRef.current) {
-      console.log('[TaskContext] Auto-refresh already in progress, skipping')
       return
     }
 
     isAutoRefreshingRef.current = true
     setIsRefreshing(true)
-    console.log('[TaskContext] Starting auto-refresh...')
 
     try {
       await refreshTasks()
-      console.log('[TaskContext] Auto-refresh completed')
     } catch (error) {
       // Silent error handling - don't affect user operation
       console.error('[TaskContext] Auto-refresh failed:', error)
@@ -383,7 +380,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   usePageVisibility({
     minHiddenTime: MIN_HIDDEN_DURATION_MS,
     onVisible: (wasHiddenFor: number) => {
-      console.log(`[TaskContext] Page became visible after ${wasHiddenFor}ms hidden`)
       if (wasHiddenFor >= MIN_HIDDEN_DURATION_MS) {
         triggerAutoRefresh()
       }
@@ -393,7 +389,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // WebSocket reconnect recovery: refresh task list when WebSocket reconnects
   useEffect(() => {
     const unsubscribe = onReconnect(() => {
-      console.log('[TaskContext] WebSocket reconnected, refreshing task list...')
       triggerAutoRefresh()
     })
 
@@ -632,7 +627,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Handle task app update via WebSocket (sent to task room when expose_service updates app data)
   const handleTaskAppUpdate = useCallback(
     (data: TaskAppUpdatePayload) => {
-      console.log('[TaskContext] Received task:app_update', data)
       // Only update if this is the currently selected task
       if (selectedTask && selectedTask.id === data.task_id) {
         setSelectedTaskDetail(prev => {
@@ -737,10 +731,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       // Only join task room when WebSocket is connected
       // This prevents duplicate joins when both selectedTask and isConnected change
       if (isConnected) {
-        console.log(
-          '[TaskContext] joinTask called from selectedTask useEffect, taskId:',
-          selectedTask.id
-        )
         joinTask(selectedTask.id)
       }
 

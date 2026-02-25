@@ -30,9 +30,18 @@ class ModelAdapter:
         config = {}
         display_name = None
         if isinstance(kind.json, dict):
-            model_crd = Model.model_validate(kind.json)
-            config = model_crd.spec.modelConfig
-            display_name = model_crd.metadata.displayName
+            # Check if json has proper CRD structure (metadata and spec)
+            if "metadata" in kind.json and "spec" in kind.json:
+                try:
+                    model_crd = Model.model_validate(kind.json)
+                    config = model_crd.spec.modelConfig
+                    display_name = model_crd.metadata.displayName
+                except Exception:
+                    # Fallback for invalid CRD structure
+                    config = kind.json
+            else:
+                # Legacy format: json contains config directly
+                config = kind.json
 
         return {
             "id": kind.id,

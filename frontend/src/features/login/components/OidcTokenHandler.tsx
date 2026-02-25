@@ -60,7 +60,6 @@ export default function OidcTokenHandler() {
       router.replace(url.pathname + url.search)
 
       setTimeout(() => {
-        console.log('Trigger user status refresh')
         window.dispatchEvent(new Event('common:oidc-login-success'))
       }, 100)
     }

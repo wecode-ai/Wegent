@@ -83,7 +83,7 @@ def update_subtask_on_cancel(
         subtask: Subtask to update
         partial_content: Optional partial content to save
     """
-    subtask.status = SubtaskStatus.COMPLETED
+    subtask.status = SubtaskStatus.CANCELLED
     subtask.progress = 100
     subtask.completed_at = datetime.now()
     subtask.updated_at = datetime.now()
@@ -106,7 +106,7 @@ def update_task_on_cancel(db: Session, task: TaskResource) -> None:
 
     task_crd = Task.model_validate(task.json)
     if task_crd.status:
-        task_crd.status.status = "COMPLETED"
+        task_crd.status.status = "CANCELLED"
         task_crd.status.errorMessage = ""
         task_crd.status.updatedAt = datetime.now()
         task_crd.status.completedAt = datetime.now()

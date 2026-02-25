@@ -41,6 +41,15 @@ export const STORAGE_TYPE_CONFIG = {
     },
     fallbackRetrievalMethods: ['vector'] as const,
   },
+  milvus: {
+    defaultUrl: 'http://localhost:19530/default',
+    recommendedIndexMode: 'per_user' as const,
+    authFields: {
+      supportsUsernamePassword: true,
+      supportsApiKey: false,
+    },
+    fallbackRetrievalMethods: ['vector', 'keyword', 'hybrid'] as const,
+  },
 } as const
 
 // Retrieval method labels for display
@@ -56,7 +65,7 @@ export interface RetrieverFormData {
   name: string
   displayName: string
   namespace: string
-  storageType: 'elasticsearch' | 'qdrant'
+  storageType: 'elasticsearch' | 'qdrant' | 'milvus'
   url: string
   username: string
   password: string
@@ -94,7 +103,7 @@ interface RetrieverFormFieldsProps {
   setShowPassword: (show: boolean) => void
   showApiKey: boolean
   setShowApiKey: (show: boolean) => void
-  handleStorageTypeChange: (value: 'elasticsearch' | 'qdrant') => void
+  handleStorageTypeChange: (value: 'elasticsearch' | 'qdrant' | 'milvus') => void
   handleRetrievalMethodToggle: (method: RetrievalMethodType, checked: boolean) => void
 }
 
@@ -161,6 +170,7 @@ export const RetrieverFormFields: React.FC<RetrieverFormFieldsProps> = ({
           <SelectContent>
             <SelectItem value="elasticsearch">Elasticsearch</SelectItem>
             <SelectItem value="qdrant">Qdrant</SelectItem>
+            <SelectItem value="milvus">Milvus</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -180,7 +190,9 @@ export const RetrieverFormFields: React.FC<RetrieverFormFieldsProps> = ({
         <p className="text-xs text-text-muted">
           {formData.storageType === 'elasticsearch'
             ? t('common:retrievers.connection_url_hint_es')
-            : t('common:retrievers.connection_url_hint_qdrant')}
+            : formData.storageType === 'milvus'
+              ? t('common:retrievers.connection_url_hint_milvus')
+              : t('common:retrievers.connection_url_hint_qdrant')}
         </p>
       </div>
 

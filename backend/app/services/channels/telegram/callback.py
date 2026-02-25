@@ -25,7 +25,7 @@ from app.services.channels.callback import (
 )
 
 if TYPE_CHECKING:
-    from app.services.chat.trigger.emitter import ChatEventEmitter
+    from app.services.execution.emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ class TelegramCallbackService(BaseChannelCallbackService[TelegramCallbackInfo]):
 
     async def _create_emitter(
         self, task_id: int, subtask_id: int, callback_info: TelegramCallbackInfo
-    ) -> Optional["ChatEventEmitter"]:
+    ) -> Optional["ResultEmitter"]:
         """Create a streaming emitter for Telegram.
 
         Args:

@@ -23,6 +23,47 @@ English | [简体中文](README_zh.md)
 
 ---
 
+## 🏗️ Architecture Overview
+
+```mermaid
+graph TB
+    subgraph Access["Entry Layer"]
+        direction TB
+        Web["🌐 Web"]
+        IM["💬 IM Tools"]
+        API["🔌 API"]
+    end
+
+    subgraph Features["Feature Layer"]
+        direction TB
+        Chat["💬 Chat"]
+        Code["💻 Coding"]
+        Feed["📡 Feed"]
+        Knowledge["📚 Knowledge"]
+    end
+
+    subgraph Agents["Agent Layer"]
+        direction TB
+        ChatShell["🗣️ Wegent Chat"]
+        ClaudeCode["🧠 Claude Code"]
+        Agno["🤝 Agno"]
+        Dify["✨ Dify"]
+    end
+
+    subgraph Execution["Execution Environment"]
+        direction TB
+        Docker["🐳 Agent Sandbox"]
+        Cloud["☁️ Cloud Device"]
+        Local["💻 Local Device"]
+    end
+
+    Access --> Features
+    Features --> Agents
+    Agents --> Execution
+```
+
+---
+
 ## ✨ Core Features
 
 ### 💬 Cha Agent
@@ -82,6 +123,13 @@ Run AI tasks on your local machine with full control:
 - **Default Device**: Set a preferred device for quick task execution
 - **Secure Connection**: Connect to Wegent backend via authenticated WebSocket
 
+### 💬 IM Integration
+
+Integrate AI agents into your favorite IM tools:
+
+- **DingTalk Bot**: Deploy agents as DingTalk bots for team collaboration
+- **Telegram Bot**: Connect agents to Telegram for personal or group chats
+
 ### 🔧 Customization
 
 All features above are fully customizable:
@@ -123,20 +171,6 @@ Then open http://localhost:3000 in your browser.
 | translator | Multi-language translation |
 | dev-team | Git workflow: branch → code → commit → PR |
 | wiki-team | Codebase Wiki documentation generation |
-
----
-
-## 🏗️ Architecture
-
-```
-Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
-```
-
-**Core Concepts:**
-- **Ghost** (prompt) + **Shell** (environment) + **Model** = **Bot**
-- Multiple **Bots** + **Collaboration Mode** = **Team**
-
-> See [Core Concepts](https://wecode-ai.github.io/wegent-docs/en/concepts/core-concepts) | [YAML Spec](https://wecode-ai.github.io/wegent-docs/en/reference/yaml-specification)
 
 ---
 
@@ -185,17 +219,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/johnny0120">
-            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
-            <br />
-            <sub><b>Johnny0120</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/FicoHu">
             <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
             <br />
             <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/johnny0120">
+            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+            <br />
+            <sub><b>Johnny0120</b></sub>
         </a>
     </td>
     <td align="center">
@@ -235,17 +269,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
-            <br />
-            <sub><b>Icycrystal4</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/parabala">
             <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
             <br />
             <sub><b>Parabala</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+            <br />
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">

@@ -103,5 +103,9 @@
   "apikey_name_placeholder": "我的设备",
   "cancel": "取消",
   "create": "创建",
-  "creating": "创建中..."
+  "creating": "创建中...",
+  "local_devices_section": "本地设备",
+  "cloud_devices_section": "云端设备",
+  "no_local_devices": "暂无本地设备连接。请使用上方指南添加设备。",
+  "cloud_devices_coming_soon": "云端设备支持即将推出。"
 }

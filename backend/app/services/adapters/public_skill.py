@@ -5,6 +5,7 @@
 """
 Public Skill service for managing system-level Skills (user_id=0)
 """
+
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException

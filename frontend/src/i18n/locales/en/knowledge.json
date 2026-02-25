@@ -32,8 +32,12 @@
     "tabs": {
       "personal": "Personal",
       "group": "Group",
+      "organization": "Organization",
       "external": "External"
     },
+    "noOrgKnowledgeBase": "No organization knowledge base",
+    "noOrgKnowledgeBaseHint": "Organization knowledge bases are managed by administrators. All members can view.",
+    "orgKnowledgeBaseReadOnly": "You have view-only access.",
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
