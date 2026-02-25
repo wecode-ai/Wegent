@@ -38,7 +38,7 @@ class TestDifyAgent:
         with (
             patch("executor.agents.dify.dify_agent.requests.get") as mock_get,
             patch("executor.agents.base.CallbackClient") as mock_callback_cls,
-            patch("shared.models.responses_api_factory.EmitterBuilder") as mock_builder_cls,
+            patch("shared.models.EmitterBuilder") as mock_builder_cls,
         ):
             # Mock GET response for _get_app_mode()
             mock_get_response = MagicMock()
@@ -203,7 +203,9 @@ class TestDifyAgent:
         assert mock_post.called
 
     @patch("executor.agents.dify.dify_agent.requests.post")
-    def test_call_dify_api_error_response(self, mock_post, task_data, mock_emitter) -> None:
+    def test_call_dify_api_error_response(
+        self, mock_post, task_data, mock_emitter
+    ) -> None:
         """Test Dify API call with error response"""
         # Mock error response
         mock_response = MagicMock()
@@ -254,7 +256,9 @@ class TestDifyAgent:
         assert mock_call_api.called
 
     @patch.object(DifyAgent, "_validate_config")
-    def test_execute_invalid_config(self, mock_validate, task_data, mock_emitter) -> None:
+    def test_execute_invalid_config(
+        self, mock_validate, task_data, mock_emitter
+    ) -> None:
         """Test execution with invalid config"""
         mock_validate.return_value = False
 
