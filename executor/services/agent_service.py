@@ -11,7 +11,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
@@ -28,7 +28,7 @@ logger = setup_logger("agent_service")
 MISSING_SUBTASK_ID = -1
 
 
-def _format_task_log(task_id, subtask_id):
+def _format_task_log(task_id: Union[int, str], subtask_id: Union[int, str]) -> str:
     return f"task_id: {task_id}.{subtask_id}"
 
 
@@ -84,7 +84,13 @@ class AgentService:
                     shell_type = bot_config.get("shell_type", "").strip().lower()
                 elif isinstance(bot_config, list) and bot_config:
                     # Handle bot array - use the first bot's shell_type
-                    shell_type = bot_config[0].get("shell_type", "").strip().lower()
+                    first_bot = bot_config[0]
+                    if isinstance(first_bot, dict):
+                        shell_type = first_bot.get("shell_type", "").strip().lower()
+                    else:
+                        shell_type = (
+                            getattr(first_bot, "shell_type", "").strip().lower()
+                        )
                 else:
                     shell_type = ""
 
@@ -194,12 +200,13 @@ class AgentService:
                 logger.info(
                     f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Agno client"
                 )
-            return TaskStatus.SUCCESS, None
         except Exception as e:
             logger.exception(
-                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Error closing agent: {e}"
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Error closing agent"
             )
             return TaskStatus.FAILED, str(e)
+        else:
+            return TaskStatus.SUCCESS, None
 
     async def delete_session_async(
         self, task_id: int
@@ -221,7 +228,7 @@ class AgentService:
                 f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Session deleted",
             )
         except Exception as e:
-            logger.exception(f"[{task_id}] Error deleting session: {e}")
+            logger.exception(f"[{task_id}] Error deleting session")
             return TaskStatus.FAILED, str(e)
 
     def delete_session(self, task_id: int) -> Tuple[TaskStatus, Optional[str]]:
@@ -229,7 +236,7 @@ class AgentService:
             return asyncio.run(self.delete_session_async(task_id))
         except RuntimeError as e:
             if "already running" in str(e):
-                logger.error(
+                logger.exception(
                     f"[{task_id}] delete_session() cannot run inside an active event loop; "
                     f"use delete_session_async()"
                 )
@@ -237,10 +244,10 @@ class AgentService:
                     TaskStatus.FAILED,
                     "delete_session() cannot run inside an active event loop; use delete_session_async()",
                 )
-            logger.exception(f"[{task_id}] Runtime error deleting session: {e}")
+            logger.exception(f"[{task_id}] Runtime error deleting session")
             return TaskStatus.FAILED, str(e)
         except Exception as e:
-            logger.exception(f"[{task_id}] Unexpected error deleting session: {e}")
+            logger.exception(f"[{task_id}] Unexpected error deleting session")
             return TaskStatus.FAILED, str(e)
 
     def cancel_task(self, task_id: int) -> Tuple[TaskStatus, Optional[str]]:
@@ -386,13 +393,13 @@ class AgentService:
         error_detail: Dict[str, str] = {}
         agent_types = {s.agent.get_name() for s in self._agent_sessions.values()}
 
-        if "ClaudeCodeAgent" in agent_types:
+        if "ClaudeCode" in agent_types:
             status, msg = await self._close_claude_sessions()
             if status == TaskStatus.SUCCESS:
                 results.append("Claude")
             else:
                 errors.append("Claude")
-                error_detail["ClaudeCodeAgent"] = msg or "Unknown error"
+                error_detail["ClaudeCode"] = msg or "Unknown error"
 
         if "Agno" in agent_types:
             status, msg = await self._close_agno_sessions()
@@ -400,7 +407,7 @@ class AgentService:
                 results.append("Agno")
             else:
                 errors.append("Agno")
-                error_detail["AgnoAgent"] = msg or "Unknown error"
+                error_detail["Agno"] = msg or "Unknown error"
 
         self._agent_sessions.clear()
 

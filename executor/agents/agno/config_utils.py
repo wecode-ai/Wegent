@@ -102,7 +102,7 @@ def replace_placeholders_with_sources(
     pattern = r"\$\{([^}]+)\}"
 
     logger.info(f"data_sources keys:{list(data_sources.keys())}")
-    logger.debug(f"template:{template}")
+    logger.debug(f"template:{mask_sensitive_data(template)}")
 
     def replace_match(match):
         source_spec = match.group(1)
@@ -261,18 +261,22 @@ class ConfigManager:
                     options[key] = bot_config[key]
         elif bot_config and isinstance(bot_config, list):
             # Handle bot array - use the first bot configuration
-            team_members = []
-            for tmp_bot in bot_config:
-                logger.info(
-                    f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}"
-                )
-                team_members.append(tmp_bot)
-
+            team_members = list(bot_config)
             options["team_members"] = team_members
+
+            # Log after constructing team_members
+            first_bot_name = "unnamed"
+            if team_members and isinstance(team_members[0], dict):
+                first_bot_name = team_members[0].get("name", "unnamed")
+            logger.info(f"Found bot array with {len(bot_config)} bots")
+
             # Also extract options from first bot if it's a dict
-            if bot_config and isinstance(bot_config[0], dict):
+            if isinstance(bot_config[0], dict):
                 first_bot = bot_config[0]
                 for key in valid_options:
+                    # Skip team_members to avoid overwriting the aggregated list
+                    if key == "team_members":
+                        continue
                     if key in first_bot and first_bot[key] is not None:
                         options[key] = first_bot[key]
 

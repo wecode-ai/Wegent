@@ -279,7 +279,7 @@ def _process_model_config_placeholders(
         processed_api_key = replace_placeholders_with_sources(api_key, data_sources)
         if processed_api_key:
             model_config["api_key"] = processed_api_key
-            logger.info(
+            logger.debug(
                 f"[model_resolver] Processed api_key placeholder, from: {api_key} "
             )
 

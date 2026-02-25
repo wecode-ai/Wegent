@@ -67,7 +67,11 @@ class DifyAgent(Agent):
         # Extract bot_prompt from task_data.bot (first bot's bot_prompt)
         bots = task_data.bot
         if bots and len(bots) > 0:
-            self.bot_prompt = bots[0].get("bot_prompt", "")
+            bot = bots[0]
+            if isinstance(bot, dict):
+                self.bot_prompt = bot.get("bot_prompt", "")
+            else:
+                self.bot_prompt = getattr(bot, "bot_prompt", "")
         else:
             self.bot_prompt = ""
 
@@ -134,26 +138,48 @@ class DifyAgent(Agent):
         bots = task_data.bot
         if bots and len(bots) > 0:
             bot = bots[0]
-            agent_config = bot.get("agent_config", {})
+            if isinstance(bot, dict):
+                agent_config = bot.get("agent_config", {})
+            else:
+                agent_config = getattr(bot, "agent_config", {}) or {}
 
             # agent_config structure: {"env": {"DIFY_API_KEY": "xxx", "DIFY_BASE_URL": "xxx"}}
-            env = agent_config.get("env", {})
+            if isinstance(agent_config, dict):
+                env = agent_config.get("env", {})
+            else:
+                env = getattr(agent_config, "env", {}) or {}
 
             # Extract and decrypt API key
-            api_key = env.get("DIFY_API_KEY", "")
+            if isinstance(env, dict):
+                api_key = env.get("DIFY_API_KEY", "")
+            else:
+                api_key = getattr(env, "DIFY_API_KEY", "")
             if api_key and is_data_encrypted(api_key):
                 api_key = decrypt_sensitive_data(api_key) or ""
 
             config["api_key"] = api_key
-            config["base_url"] = env.get(
-                "DIFY_BASE_URL", "https://api.dify.ai"
-            )  # Default base URL
-            config["app_id"] = env.get("DIFY_APP_ID", "")
+            if isinstance(env, dict):
+                config["base_url"] = env.get(
+                    "DIFY_BASE_URL", "https://api.dify.ai"
+                )  # Default base URL
+                config["app_id"] = env.get("DIFY_APP_ID", "")
+            else:
+                config["base_url"] = getattr(
+                    env, "DIFY_BASE_URL", "https://api.dify.ai"
+                )
+                config["app_id"] = getattr(env, "DIFY_APP_ID", "")
 
             # Extract params if exists
-            if env.get("DIFY_PARAMS"):
+            dify_params = (
+                env.get("DIFY_PARAMS")
+                if isinstance(env, dict)
+                else getattr(env, "DIFY_PARAMS", None)
+            )
+            if dify_params:
                 try:
-                    params_str = env.get("DIFY_PARAMS", "{}")
+                    params_str = (
+                        dify_params if isinstance(env, dict) else str(dify_params)
+                    )
                     config["params"] = (
                         json.loads(params_str)
                         if isinstance(params_str, str)
