@@ -39,6 +39,7 @@ from app.services.group_permission import (
     get_effective_role_in_group,
     get_user_groups,
 )
+from shared.telemetry.decorators import trace_sync
 
 # Permission level mapping for group knowledge base operations
 # Owner/Maintainer -> MANAGE, Developer -> EDIT, Reporter -> VIEW
@@ -50,6 +51,7 @@ GROUP_ROLE_TO_PERMISSION_LEVEL = {
 }
 
 
+@trace_sync("knowledge.get_user_kb_permission_level")
 def _get_user_kb_permission_level(
     db: Session,
     kb: Kind,
@@ -111,6 +113,7 @@ def _get_user_kb_permission_level(
     return None
 
 
+@trace_sync("knowledge.check_kb_permission")
 def _check_kb_permission(
     db: Session,
     kb: Kind,

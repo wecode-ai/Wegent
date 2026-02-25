@@ -20,15 +20,7 @@ from app.services.knowledge.knowledge_service import (
     _get_user_kb_permission_level,
 )
 
-# Import shared fixtures
-from .test_group_kb_fixtures import (
-    group_developer_member,
-    group_owner_member,
-    test_group,
-    test_group_developer,
-    test_group_owner,
-    test_subgroup,
-)
+# Fixtures are now defined in conftest.py and automatically discovered by pytest
 
 
 class TestPermissionInheritance:
@@ -39,7 +31,7 @@ class TestPermissionInheritance:
         test_db: Session,
         test_subgroup,
         test_group_owner,
-        group_owner_member,
+        _group_owner_member,
     ):
         """Owner of parent group should inherit permissions to subgroup."""
         # Create KB in subgroup as owner (owner has access via inheritance)
@@ -66,8 +58,8 @@ class TestPermissionInheritance:
         test_subgroup,
         test_group_owner,
         test_group_developer,
-        group_owner_member,
-        group_developer_member,
+        _group_owner_member,
+        _group_developer_member,
     ):
         """Developer of parent group should inherit edit permission to subgroup."""
         # Create KB in subgroup as owner (owner has access via inheritance)
@@ -94,8 +86,8 @@ class TestPermissionInheritance:
         test_subgroup,
         test_group_owner,
         test_group_developer,
-        group_owner_member,
-        group_developer_member,
+        _group_owner_member,
+        _group_developer_member,
     ):
         """Developer should be able to edit documents in subgroup KB."""
         # Create KB in subgroup as owner (owner has access via inheritance)

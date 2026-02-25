@@ -22,22 +22,7 @@ from app.services.knowledge.knowledge_service import (
     _get_user_kb_permission_level,
 )
 
-# Import shared fixtures
-from .test_group_kb_fixtures import (
-    group_developer_member,
-    group_kb,
-    group_kb_document,
-    group_maintainer_member,
-    group_owner_member,
-    group_reporter_member,
-    subgroup_kb,
-    test_group,
-    test_group_developer,
-    test_group_maintainer,
-    test_group_owner,
-    test_group_reporter,
-    test_subgroup,
-)
+# Fixtures are now defined in conftest.py and automatically discovered by pytest
 
 
 class TestCreateKnowledgeBase:
@@ -48,7 +33,7 @@ class TestCreateKnowledgeBase:
         test_db: Session,
         test_group,
         test_group_owner,
-        group_owner_member,
+        _group_owner_member,
     ):
         """Owner should be able to create knowledge base."""
         kb_data = KnowledgeBaseCreate(
@@ -68,7 +53,7 @@ class TestCreateKnowledgeBase:
         test_db: Session,
         test_group,
         test_group_maintainer,
-        group_maintainer_member,
+        _group_maintainer_member,
     ):
         """Maintainer should be able to create knowledge base."""
         kb_data = KnowledgeBaseCreate(
@@ -88,7 +73,7 @@ class TestCreateKnowledgeBase:
         test_db: Session,
         test_group,
         test_group_developer,
-        group_developer_member,
+        _group_developer_member,
     ):
         """Developer should NOT be able to create knowledge base."""
         kb_data = KnowledgeBaseCreate(
@@ -108,7 +93,7 @@ class TestCreateKnowledgeBase:
         test_db: Session,
         test_group,
         test_group_reporter,
-        group_reporter_member,
+        _group_reporter_member,
     ):
         """Reporter should NOT be able to create knowledge base."""
         kb_data = KnowledgeBaseCreate(
@@ -152,7 +137,7 @@ class TestUpdateKnowledgeBase:
         test_db: Session,
         group_kb,
         test_group_maintainer,
-        group_maintainer_member,
+        _group_maintainer_member,
     ):
         """Maintainer should be able to update knowledge base."""
         update_data = KnowledgeBaseUpdate(
@@ -173,7 +158,7 @@ class TestUpdateKnowledgeBase:
         test_db: Session,
         group_kb,
         test_group_developer,
-        group_developer_member,
+        _group_developer_member,
     ):
         """Developer should be able to update name and description."""
         update_data = KnowledgeBaseUpdate(
@@ -194,7 +179,7 @@ class TestUpdateKnowledgeBase:
         test_db: Session,
         group_kb,
         test_group_developer,
-        group_developer_member,
+        _group_developer_member,
     ):
         """Developer should NOT be able to update retrieval config."""
         update_data = KnowledgeBaseUpdate(
@@ -218,7 +203,7 @@ class TestUpdateKnowledgeBase:
         test_db: Session,
         group_kb,
         test_group_reporter,
-        group_reporter_member,
+        _group_reporter_member,
     ):
         """Reporter should NOT be able to update knowledge base."""
         update_data = KnowledgeBaseUpdate(
@@ -243,8 +228,8 @@ class TestDeleteKnowledgeBase:
         test_group,
         test_group_owner,
         test_group_maintainer,
-        group_owner_member,
-        group_maintainer_member,
+        _group_owner_member,
+        _group_maintainer_member,
     ):
         """Owner should be able to delete knowledge base."""
         # Create a KB first
@@ -272,8 +257,8 @@ class TestDeleteKnowledgeBase:
         test_group,
         test_group_owner,
         test_group_maintainer,
-        group_owner_member,
-        group_maintainer_member,
+        _group_owner_member,
+        _group_maintainer_member,
     ):
         """Maintainer should be able to delete knowledge base."""
         # Create a KB as owner first
@@ -300,7 +285,7 @@ class TestDeleteKnowledgeBase:
         test_db: Session,
         group_kb,
         test_group_developer,
-        group_developer_member,
+        _group_developer_member,
     ):
         """Developer should NOT be able to delete knowledge base."""
         with pytest.raises(ValueError, match="Only Owner or Maintainer"):
@@ -315,7 +300,7 @@ class TestDeleteKnowledgeBase:
         test_db: Session,
         group_kb,
         test_group_reporter,
-        group_reporter_member,
+        _group_reporter_member,
     ):
         """Reporter should NOT be able to delete knowledge base."""
         with pytest.raises(ValueError, match="Only Owner or Maintainer"):
@@ -356,7 +341,7 @@ class TestCreateDocument:
         test_db: Session,
         group_kb,
         test_group_maintainer,
-        group_maintainer_member,
+        _group_maintainer_member,
     ):
         """Maintainer should be able to create document."""
         doc_data = KnowledgeDocumentCreate(
@@ -378,7 +363,7 @@ class TestCreateDocument:
         test_db: Session,
         group_kb,
         test_group_developer,
-        group_developer_member,
+        _group_developer_member,
     ):
         """Developer should be able to create document."""
         doc_data = KnowledgeDocumentCreate(
@@ -400,7 +385,7 @@ class TestCreateDocument:
         test_db: Session,
         group_kb,
         test_group_reporter,
-        group_reporter_member,
+        _group_reporter_member,
     ):
         """Reporter should NOT be able to create document."""
         doc_data = KnowledgeDocumentCreate(
@@ -443,7 +428,7 @@ class TestUpdateDocument:
         test_db: Session,
         group_kb_document,
         test_group_maintainer,
-        group_maintainer_member,
+        _group_maintainer_member,
     ):
         """Maintainer should be able to update document."""
         update_data = KnowledgeDocumentUpdate(name="Updated by Maintainer")
@@ -460,7 +445,7 @@ class TestUpdateDocument:
         test_db: Session,
         group_kb_document,
         test_group_developer,
-        group_developer_member,
+        _group_developer_member,
     ):
         """Developer should be able to update document."""
         update_data = KnowledgeDocumentUpdate(name="Updated by Developer")
@@ -477,7 +462,7 @@ class TestUpdateDocument:
         test_db: Session,
         group_kb_document,
         test_group_reporter,
-        group_reporter_member,
+        _group_reporter_member,
     ):
         """Reporter should NOT be able to update document."""
         update_data = KnowledgeDocumentUpdate(name="Updated by Reporter")
@@ -527,8 +512,8 @@ class TestDeleteDocument:
         group_kb,
         test_group_owner,
         test_group_maintainer,
-        group_owner_member,
-        group_maintainer_member,
+        _group_owner_member,
+        _group_maintainer_member,
     ):
         """Maintainer should be able to delete document."""
         # Create a document as owner first
@@ -558,7 +543,7 @@ class TestDeleteDocument:
         group_kb,
         test_group_owner,
         test_group_developer,
-        group_developer_member,
+        _group_developer_member,
     ):
         """Developer should NOT be able to delete document."""
         # Create a document as owner first
@@ -588,7 +573,7 @@ class TestDeleteDocument:
         group_kb,
         test_group_owner,
         test_group_reporter,
-        group_reporter_member,
+        _group_reporter_member,
     ):
         """Reporter should NOT be able to delete document."""
         # Create a document as owner first

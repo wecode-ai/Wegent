@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 
-# Import all models to ensure they're registered with Base
-from app.models import *
+# Import app.models to ensure all models are registered with Base
+import app.models
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
@@ -122,7 +122,7 @@ def test_subgroup(
 
 
 @pytest.fixture(scope="function")
-def group_owner_member(
+def _group_owner_member(
     test_db: Session, test_group: Namespace, test_group_owner: User
 ) -> NamespaceMember:
     """Add owner as member of the group."""
@@ -138,7 +138,7 @@ def group_owner_member(
 
 
 @pytest.fixture(scope="function")
-def group_maintainer_member(
+def _group_maintainer_member(
     test_db: Session, test_group: Namespace, test_group_maintainer: User
 ) -> NamespaceMember:
     """Add maintainer as member of the group."""
@@ -154,7 +154,7 @@ def group_maintainer_member(
 
 
 @pytest.fixture(scope="function")
-def group_developer_member(
+def _group_developer_member(
     test_db: Session, test_group: Namespace, test_group_developer: User
 ) -> NamespaceMember:
     """Add developer as member of the group."""
@@ -170,7 +170,7 @@ def group_developer_member(
 
 
 @pytest.fixture(scope="function")
-def group_reporter_member(
+def _group_reporter_member(
     test_db: Session, test_group: Namespace, test_group_reporter: User
 ) -> NamespaceMember:
     """Add reporter as member of the group."""
@@ -190,7 +190,7 @@ def group_kb(
     test_db: Session,
     test_group: Namespace,
     test_group_owner: User,
-    group_owner_member: NamespaceMember,
+    _group_owner_member: NamespaceMember,
 ) -> Kind:
     """Create a knowledge base in the test group."""
     kb_data = KnowledgeBaseCreate(
@@ -212,7 +212,7 @@ def subgroup_kb(
     test_db: Session,
     test_subgroup: Namespace,
     test_group_owner: User,
-    group_owner_member: NamespaceMember,
+    _group_owner_member: NamespaceMember,
 ) -> Kind:
     """Create a knowledge base in the test subgroup."""
     kb_data = KnowledgeBaseCreate(
