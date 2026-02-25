@@ -242,7 +242,7 @@ export function RespondentQuestionDesktop({
         <div className="flex items-center gap-6">
           {/* Progress Bar with Label */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted">答题进度</span>
+            <span className="text-xs text-text-muted">{t('ui.progress')}</span>
             <div className="flex items-center gap-2">
               <div className="w-24 h-2 bg-border rounded-full overflow-hidden">
                 <div
@@ -257,7 +257,7 @@ export function RespondentQuestionDesktop({
           {/* Timer with Label */}
           <div className="flex items-center gap-2 text-text-secondary bg-surface px-3 py-1.5 rounded-lg">
             <Clock className="h-4 w-4" />
-            <span className="text-xs text-text-muted">已用时间</span>
+            <span className="text-xs text-text-muted">{t('ui.time_spent')}</span>
             <span className="text-sm font-medium tabular-nums">{formattedTime}</span>
           </div>
 
@@ -294,7 +294,7 @@ export function RespondentQuestionDesktop({
           {/* Panel Header */}
           <div className="sticky top-0 z-10 bg-white border-b border-border px-8 py-4 flex items-center gap-2">
             <HelpCircle className="h-5 w-5 text-primary" />
-            <span className="font-medium text-text-primary">题目内容</span>
+            <span className="font-medium text-text-primary">{t('ui.question_content')}</span>
           </div>
 
           <div className="max-w-2xl mx-auto p-8">
@@ -312,7 +312,7 @@ export function RespondentQuestionDesktop({
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-amber-700">
-                          {showInstructions ? '点击收起' : '点击展开'}
+                          {showInstructions ? '收起' : '展开'}
                         </span>
                         {showInstructions ? (
                           <ChevronUp className="h-4 w-4 text-amber-700" />
@@ -323,7 +323,7 @@ export function RespondentQuestionDesktop({
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
-                    <CardContent className="pt-0">
+                    <CardContent className="pt-0 pb-4 px-4">
                       <div className="p-4 rounded-lg bg-white/50">
                         <div className="prose prose-sm max-w-none text-amber-800">
                           <EnhancedMarkdown
@@ -357,89 +357,89 @@ export function RespondentQuestionDesktop({
           {/* Panel Header */}
           <div className="sticky top-0 z-10 bg-surface border-b border-border px-8 py-4 flex items-center gap-2">
             <Edit3 className="h-5 w-5 text-primary" />
-            <span className="font-medium text-text-primary">作答区域</span>
+            <span className="font-medium text-text-primary">{t('ui.answer_area')}</span>
           </div>
 
           <div className="max-w-2xl mx-auto p-8 space-y-6">
             {/* Last Submitted Answer */}
             {lastSubmittedAnswer && (
-              <Card className="border-0 shadow-sm bg-blue-50/50">
-                <CardHeader className="pb-3">
-                  <Collapsible open={showLastSubmitted} onOpenChange={setShowLastSubmitted}>
-                    <CollapsibleTrigger asChild>
-                      <button className="w-full flex items-center justify-between text-left">
-                        <CardTitle className="text-base font-semibold flex items-center gap-2 text-blue-900">
-                          <History className="h-4 w-4" />
-                          上次提交内容
-                          <span className="text-xs font-normal text-blue-600">
-                            (
-                            {new Date(lastSubmittedAnswer.submitted_at).toLocaleString('zh-CN', {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                            )
-                          </span>
-                        </CardTitle>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-blue-600">
-                            {showLastSubmitted ? '收起' : '展开'}
-                          </span>
-                          {showLastSubmitted ? (
-                            <ChevronUp className="h-4 w-4 text-blue-600" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4 text-blue-600" />
-                          )}
+              <Card className="border-blue-200 bg-blue-50/50">
+                <Collapsible open={showLastSubmitted} onOpenChange={setShowLastSubmitted}>
+                  <CollapsibleTrigger asChild>
+                    <button className="w-full flex items-center justify-between p-4 text-left hover:bg-blue-50/80 transition-colors rounded-t-lg">
+                      <div className="flex items-center gap-2 text-blue-900">
+                        <History className="h-4 w-4" />
+                        <span className="text-sm font-medium">{t('ui.last_submitted')}</span>
+                        <span className="text-xs text-blue-600">
+                          (
+                          {new Date(lastSubmittedAnswer.submitted_at).toLocaleString('zh-CN', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          )
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-blue-600">
+                          {showLastSubmitted ? '收起' : '展开'}
+                        </span>
+                        {showLastSubmitted ? (
+                          <ChevronUp className="h-4 w-4 text-blue-600" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-blue-600" />
+                        )}
+                      </div>
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <CardContent className="pt-0 pb-4 px-4">
+                      {/* Last submitted text */}
+                      {typeof lastSubmittedAnswer.content_data?.text === 'string' && (
+                        <div className="p-3 rounded-lg bg-white border border-blue-100">
+                          <p className="text-sm text-text-secondary mb-2">
+                            {t('ui.text_answer')}：
+                          </p>
+                          <p className="text-sm text-text-primary whitespace-pre-wrap">
+                            {lastSubmittedAnswer.content_data.text}
+                          </p>
                         </div>
-                      </button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <CardContent className="pt-4 px-0 pb-0 space-y-4">
-                        {/* Last submitted text */}
-                        {typeof lastSubmittedAnswer.content_data?.text === 'string' && (
-                          <div className="p-3 rounded-lg bg-white border border-blue-100">
-                            <p className="text-sm text-text-secondary mb-2">文字作答：</p>
-                            <p className="text-sm text-text-primary whitespace-pre-wrap">
-                              {lastSubmittedAnswer.content_data.text}
-                            </p>
-                          </div>
-                        )}
+                      )}
 
-                        {/* Last submitted attachments */}
-                        {lastSubmittedAttachments && lastSubmittedAttachments.length > 0 && (
+                      {/* Last submitted attachments */}
+                      {lastSubmittedAttachments && lastSubmittedAttachments.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-sm text-text-secondary">
+                            {t('ui.attachments')} ({lastSubmittedAttachments.length})：
+                          </p>
                           <div className="space-y-2">
-                            <p className="text-sm text-text-secondary">
-                              附件 ({lastSubmittedAttachments.length})：
-                            </p>
-                            <div className="space-y-2">
-                              {lastSubmittedAttachments.map((attachment, index) => (
-                                <a
-                                  key={attachment.key || index}
-                                  href={`/api/evaluation/respondent/files/${attachment.key}?filename=${encodeURIComponent(attachment.filename)}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="flex items-center gap-3 p-3 rounded-lg border border-blue-100 bg-white hover:bg-blue-50 transition-colors group"
-                                >
-                                  <File className="h-4 w-4 text-blue-600" />
-                                  <span className="text-sm text-text-primary truncate flex-1">
-                                    {attachment.filename}
+                            {lastSubmittedAttachments.map((attachment, index) => (
+                              <a
+                                key={attachment.key || index}
+                                href={`/api/evaluation/respondent/files/${attachment.key}?filename=${encodeURIComponent(attachment.filename)}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-3 p-3 rounded-lg border border-blue-100 bg-white hover:bg-blue-50 transition-colors group"
+                              >
+                                <File className="h-4 w-4 text-blue-600" />
+                                <span className="text-sm text-text-primary truncate flex-1">
+                                  {attachment.filename}
+                                </span>
+                                {attachment.file_size && (
+                                  <span className="text-xs text-text-muted">
+                                    {formatFileSize(attachment.file_size)}
                                   </span>
-                                  {attachment.file_size && (
-                                    <span className="text-xs text-text-muted">
-                                      {formatFileSize(attachment.file_size)}
-                                    </span>
-                                  )}
-                                  <Download className="h-4 w-4 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                </a>
-                              ))}
-                            </div>
+                                )}
+                                <Download className="h-4 w-4 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </a>
+                            ))}
                           </div>
-                        )}
-                      </CardContent>
-                    </CollapsibleContent>
-                  </Collapsible>
-                </CardHeader>
+                        </div>
+                      )}
+                    </CardContent>
+                  </CollapsibleContent>
+                </Collapsible>
               </Card>
             )}
 
@@ -448,7 +448,7 @@ export function RespondentQuestionDesktop({
               <CardHeader className="pb-4">
                 <CardTitle className="text-lg font-semibold flex items-center gap-2">
                   <Upload className="h-5 w-5 text-primary" />
-                  {lastSubmittedAnswer ? '重新作答' : '提交作答'}
+                  {lastSubmittedAnswer ? t('ui.resubmit') : t('ui.submit_answer')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">

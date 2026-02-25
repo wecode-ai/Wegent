@@ -279,7 +279,20 @@
     "creating": "Creating...",
     "download": "Download",
     "previous": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "expand": "Expand",
+    "collapse": "Collapse"
+  },
+  "ui": {
+    "question_content": "Question Content",
+    "answer_area": "Answer Area",
+    "progress": "Progress",
+    "time_spent": "Time Spent",
+    "last_submitted": "Last Submitted",
+    "text_answer": "Text Answer",
+    "attachments": "Attachments",
+    "resubmit": "Resubmit",
+    "submit_answer": "Submit Answer"
   },
   "common": {
     "all": "All",

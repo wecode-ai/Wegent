@@ -279,7 +279,20 @@
     "creating": "创建中...",
     "download": "下载",
     "previous": "上一题",
-    "next": "下一题"
+    "next": "下一题",
+    "expand": "展开",
+    "collapse": "收起"
+  },
+  "ui": {
+    "question_content": "题目内容",
+    "answer_area": "作答区域",
+    "progress": "答题进度",
+    "time_spent": "已用时间",
+    "last_submitted": "上次提交内容",
+    "text_answer": "文字作答",
+    "attachments": "附件",
+    "resubmit": "重新作答",
+    "submit_answer": "提交作答"
   },
   "common": {
     "all": "全部",

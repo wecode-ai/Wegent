@@ -76,6 +76,9 @@ export function EvaluationFileUpload({
 
       const filesToUpload = Array.from(files).slice(0, remainingSlots)
 
+      // Collect all uploaded attachments first
+      const uploadedAttachments: EvalAttachment[] = []
+
       // Upload files sequentially (one by one) to avoid race conditions
       for (const file of filesToUpload) {
         const fileId = `${file.name}-${Date.now()}-${Math.random()}`
@@ -112,9 +115,7 @@ export function EvaluationFileUpload({
             file_size: file.size,
             content_type: file.type,
           }
-
-          // Update attachments using ref to avoid stale closure in sequential uploads
-          onChange([...attachmentsRef.current, newAttachment])
+          uploadedAttachments.push(newAttachment)
 
           // Remove from uploading state
           setUploadingFiles(prev => {
@@ -137,8 +138,13 @@ export function EvaluationFileUpload({
           })
         }
       }
+
+      // Update attachments once at the end with all uploaded files
+      if (uploadedAttachments.length > 0) {
+        onChange([...attachments, ...uploadedAttachments])
+      }
     },
-    [topicId, questionId, fileType, onChange, maxFiles, disabled, uploadingFiles.size]
+    [topicId, questionId, fileType, onChange, maxFiles, disabled, uploadingFiles.size, attachments]
   )
 
   const handleRemove = useCallback(
