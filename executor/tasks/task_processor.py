@@ -287,7 +287,7 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
             done_result = {"validation_id": validation_id, "stage": "completed"}
             # Try to retrieve detailed validation results from the agent
             try:
-                agent = agent_service.get_agent(f"{task_data.task_id}")
+                agent = agent_service.get_agent(task_data.task_id)
                 if agent and hasattr(agent, "validation_result"):
                     done_result["value"] = json.dumps(agent.validation_result)
             except Exception as e:

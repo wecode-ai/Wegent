@@ -20,6 +20,7 @@ import os
 from typing import Any, Dict, Optional
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 logger = setup_logger(__name__)
 
@@ -95,14 +96,17 @@ def get_env_json(
         return default
 
 
-def get_task_info() -> Optional[Dict[str, Any]]:
+def get_task_info() -> Optional[ExecutionRequest]:
     """
     Get task information from environment or file.
 
     Returns:
-        Task info dict or None
+        ExecutionRequest instance or None
     """
-    return get_env_json("TASK_INFO")
+    data = get_env_json("TASK_INFO")
+    if data is None:
+        return None
+    return ExecutionRequest.from_dict(data)
 
 
 def get_auth_token() -> Optional[str]:

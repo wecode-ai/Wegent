@@ -19,7 +19,7 @@ logger = setup_logger("agno_config_utils")
 
 
 def resolve_value_from_source(
-    data_sources: Dict[str, Dict[str, Any]], source_spec: str
+    data_sources: Dict[str, Any], source_spec: str
 ) -> str:
     """
     Resolve value from specified data source using flexible notation
@@ -73,7 +73,11 @@ def resolve_value_from_source(
                 elif hasattr(current, "to_dict"):
                     dict_from_object = current.to_dict()
 
-                if dict_from_object is not None and isinstance(dict_from_object, dict) and key in dict_from_object:
+                if (
+                    dict_from_object is not None
+                    and isinstance(dict_from_object, dict)
+                    and key in dict_from_object
+                ):
                     current = dict_from_object[key]
                 else:
                     return ""
@@ -84,7 +88,7 @@ def resolve_value_from_source(
 
 
 def replace_placeholders_with_sources(
-    template: str, data_sources: Dict[str, Dict[str, Any]]
+    template: str, data_sources: Dict[str, Any]
 ) -> str:
     """
     Replace placeholders in template with values from multiple data sources
@@ -190,7 +194,7 @@ class ConfigManager:
         return default_headers
 
     def build_default_headers_with_placeholders(
-        self, data_sources: Dict[str, Dict[str, Any]]
+        self, data_sources: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Build default headers with placeholder replacement

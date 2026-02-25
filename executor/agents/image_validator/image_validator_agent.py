@@ -77,7 +77,7 @@ class ImageValidatorAgent(Agent):
         self,
         task_data: ExecutionRequest,
         emitter: ResponsesAPIEmitter,
-    ):
+    ) -> None:
         super().__init__(task_data, emitter)
 
         # Get validation parameters from task data

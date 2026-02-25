@@ -637,12 +637,12 @@ async def openai_responses(request: Request):
 
 @app.delete("/api/tasks/session")
 async def delete_session(
-    task_id: str = Query(..., description="Task ID to delete session for")
+    task_id: int = Query(..., description="Task ID to delete session for")
 ):
     """
     Delete an agent session for a specific task_id
     """
-    status, message = agent_service.delete_session(int(task_id))
+    status, message = await agent_service.delete_session_async(task_id)
 
     if status == TaskStatus.SUCCESS:
         return {"message": message}
