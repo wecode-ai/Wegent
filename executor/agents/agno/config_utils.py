@@ -37,7 +37,7 @@ def parse_source_spec(source_spec: str) -> tuple[str, str]:
         return "agent_config", source_spec
 
 
-def object_to_mapping(obj: Any) -> Dict[str, Any] | None:
+def object_to_mapping(obj: Any) -> dict[str, Any] | None:
     """
     Try to convert object to dict using model_dump, dict, or to_dict methods.
 
@@ -93,7 +93,7 @@ def resolve_path_step(current: Any, key: str) -> Any:
         attr_value = getattr(current, key)
         if callable(attr_value):
             # Don't access callable methods (e.g., dict.items, list.append)
-            raise KeyError(f"Attribute {key} is callable")
+            raise AttributeError("callable")
         return attr_value
 
     # Try to convert object to dict and lookup
@@ -102,7 +102,7 @@ def resolve_path_step(current: Any, key: str) -> Any:
         return dict_from_object[key]
 
     # Not found
-    raise KeyError(f"Key {key} not found")
+    raise KeyError("not_found")
 
 
 def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) -> str:

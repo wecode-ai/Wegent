@@ -154,9 +154,9 @@ class DifyAgent(Agent):
             return ""
 
         if isinstance(bot, dict):
-            return bot.get("bot_prompt", "")
+            return str(bot.get("bot_prompt", "") or "")
         else:
-            return getattr(bot, "bot_prompt", "")
+            return str(getattr(bot, "bot_prompt", "") or "")
 
     def _extract_env_from_task(self, task_data: ExecutionRequest) -> Any:
         """
