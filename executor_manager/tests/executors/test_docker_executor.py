@@ -7,7 +7,9 @@ import subprocess
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
+import requests
 
+from executor_manager.executors.docker import executor as docker_executor_module
 from executor_manager.executors.docker.executor import DockerExecutor
 from shared.status import TaskStatus
 
@@ -107,14 +109,13 @@ class TestDockerExecutor:
         with pytest.raises(ValueError, match="Executor image not provided"):
             executor._get_executor_image(task)
 
-    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
-    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    @patch.object(docker_executor_module, "find_available_port")
+    @patch.object(docker_executor_module, "build_callback_url")
     def test_prepare_docker_command(
-        self, mock_callback, mock_get_ports, executor, sample_task
+        self, mock_callback, mock_find_port, executor, sample_task
     ):
         """Test preparing Docker run command"""
-        # Mock get_docker_used_ports to avoid actual Docker command execution
-        mock_get_ports.return_value = set()
+        mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
 
         task_info = executor._extract_task_info(sample_task)
@@ -133,11 +134,39 @@ class TestDockerExecutor:
         assert executor_image in cmd
         assert any("task_id=123" in str(item) for item in cmd)
         assert any("subtask_id=456" in str(item) for item in cmd)
+        assert not any(
+            isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
+        )
 
-    @patch("executor_manager.executors.docker.utils.subprocess.run")
-    def test_submit_executor_existing_container_success(
-        self, mock_run, executor, mock_requests
+    @patch.object(docker_executor_module, "find_available_port")
+    @patch.object(docker_executor_module, "build_callback_url")
+    def test_prepare_docker_command_sandbox_env_vars(
+        self, mock_callback, mock_find_port, executor
     ):
+        """Test sandbox command uses sandbox-specific env vars without TASK_INFO."""
+        mock_find_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+        sandbox_task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "type": "sandbox",
+            "auth_token": "token-123",
+        }
+
+        task_info = executor._extract_task_info(sandbox_task)
+        cmd = executor._prepare_docker_command(
+            sandbox_task, task_info, "sandbox-executor", "test/executor:latest"
+        )
+
+        assert "AUTH_TOKEN=token-123" in cmd
+        assert "TASK_ID=123" in cmd
+        assert not any(
+            isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
+        )
+
+    def test_submit_executor_existing_container_success(self, executor):
         """Test submitting executor to existing container successfully"""
         task = {
             "task_id": 123,
@@ -146,25 +175,26 @@ class TestDockerExecutor:
             "executor_name": "existing-executor",
         }
 
-        # Mock subprocess.run calls:
-        # 1. check_container_ownership
-        # 2. get_container_ports
-        mock_run.side_effect = [
-            MagicMock(stdout="existing-executor\n", returncode=0),  # ownership check
-            MagicMock(stdout="0.0.0.0:8080->8080/tcp\n", returncode=0),  # get ports
-        ]
-
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"status": "success"}
-        mock_requests.post.return_value = mock_response
-
-        result = executor.submit_executor(task)
+        with (
+            patch.object(
+                executor, "wait_instance_ready", return_value={"port": 8080}
+            ) as mock_wait_ready,
+            patch.object(
+                executor,
+                "dispatch_task_to_instance",
+                return_value={"status": "success", "error_msg": ""},
+            ) as mock_dispatch,
+            patch.object(executor, "register_task_for_heartbeat") as mock_register,
+        ):
+            result = executor.submit_executor(task)
 
         assert result["status"] == "success"
         assert result["executor_name"] == "existing-executor"
+        mock_wait_ready.assert_called_once_with("existing-executor")
+        mock_dispatch.assert_called_once_with(task, "existing-executor", {"port": 8080})
+        mock_register.assert_called_once()
 
-    @patch("executor_manager.executors.docker.utils.subprocess.run")
-    def test_submit_executor_existing_container_no_ports(self, mock_run, executor):
+    def test_submit_executor_existing_container_no_ports(self, executor):
         """Test submitting executor to existing container with no ports"""
         task = {
             "task_id": 123,
@@ -173,15 +203,14 @@ class TestDockerExecutor:
             "executor_name": "existing-executor",
         }
 
-        # Mock subprocess.run calls:
-        # 1. check_container_ownership - container exists
-        # 2. get_container_ports - no ports found (empty output)
-        mock_run.side_effect = [
-            MagicMock(stdout="existing-executor\n", returncode=0),  # ownership check
-            MagicMock(stdout="", returncode=0),  # get ports - empty
-        ]
-
-        result = executor.submit_executor(task)
+        with patch.object(
+            executor,
+            "wait_instance_ready",
+            side_effect=RuntimeError(
+                "Container existing-executor exists but has no ports mapped"
+            ),
+        ):
+            result = executor.submit_executor(task)
 
         assert result["status"] == "failed"
         assert "has no ports mapped" in result["error_msg"]
@@ -213,6 +242,148 @@ class TestDockerExecutor:
 
         assert result["status"] == "failed"
         assert "Docker run error" in result["error_msg"]
+
+    def test_create_new_container_dispatches_initial_task_for_regular_tasks(
+        self, executor, sample_task, mock_subprocess
+    ):
+        """Test new regular container dispatches the first request after startup."""
+        status = {"executor_name": "new-executor"}
+        task_info = executor._extract_task_info(sample_task)
+
+        with (
+            patch.object(
+                executor,
+                "_prepare_docker_command",
+                return_value=["docker", "run", "dummy"],
+            ),
+            patch.object(
+                executor, "_dispatch_initial_task_to_new_container"
+            ) as mock_dispatch,
+            patch.object(
+                executor, "_wait_for_container_ready", return_value=8080
+            ) as mock_wait_ready,
+            patch.object(executor, "register_task_for_heartbeat"),
+        ):
+            mock_subprocess.run.reset_mock()
+            mock_subprocess.run.return_value = MagicMock(
+                stdout="container-id\n", returncode=0
+            )
+
+            executor._create_new_container(sample_task, task_info, status)
+
+            mock_wait_ready.assert_called_once_with("new-executor")
+            mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
+
+    def test_create_new_container_does_not_dispatch_for_sandbox(
+        self, executor, mock_subprocess
+    ):
+        """Test sandbox container startup does not auto-dispatch first task."""
+        sandbox_task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "type": "sandbox",
+        }
+        status = {"executor_name": "sandbox-executor"}
+        task_info = executor._extract_task_info(sandbox_task)
+
+        with (
+            patch.object(
+                executor,
+                "_prepare_docker_command",
+                return_value=["docker", "run", "dummy"],
+            ),
+            patch.object(
+                executor, "_dispatch_initial_task_to_new_container"
+            ) as mock_dispatch,
+            patch.object(executor, "_wait_for_container_ready") as mock_wait_ready,
+            patch.object(executor, "register_task_for_heartbeat"),
+        ):
+            mock_subprocess.run.reset_mock()
+            mock_subprocess.run.return_value = MagicMock(
+                stdout="container-id\n", returncode=0
+            )
+
+            executor._create_new_container(sandbox_task, task_info, status)
+
+            mock_wait_ready.assert_not_called()
+            mock_dispatch.assert_not_called()
+
+    @patch.dict(
+        os.environ,
+        {
+            "EXECUTOR_READY_MAX_RETRIES": "2",
+            "EXECUTOR_READY_INTERVAL": "0",
+            "EXECUTOR_READY_SUCCESS_THRESHOLD": "1",
+        },
+        clear=False,
+    )
+    def test_wait_for_container_ready_success(self, executor):
+        """Test wait_ready returns port when container is healthy."""
+        with (
+            patch.object(
+                executor,
+                "get_container_status",
+                return_value={"exists": True, "status": "running"},
+            ),
+            patch.object(executor, "_get_container_port", return_value=(8081, None)),
+            patch.object(executor, "_is_container_http_ready", return_value=True),
+        ):
+            port = executor._wait_for_container_ready("ready-container")
+
+        assert port == 8081
+
+    @patch.dict(
+        os.environ,
+        {
+            "EXECUTOR_READY_MAX_RETRIES": "2",
+            "EXECUTOR_READY_INTERVAL": "0",
+            "EXECUTOR_READY_SUCCESS_THRESHOLD": "1",
+        },
+        clear=False,
+    )
+    def test_wait_for_container_ready_timeout(self, executor):
+        """Test wait_ready raises timeout error when container never becomes ready."""
+        with (
+            patch.object(
+                executor,
+                "get_container_status",
+                return_value={"exists": True, "status": "running"},
+            ),
+            patch.object(
+                executor,
+                "_get_container_port",
+                return_value=(None, "container port not available"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="failed to become ready"):
+                executor._wait_for_container_ready("not-ready-container")
+
+    @patch.dict(
+        os.environ,
+        {
+            "EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES": "2",
+            "EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL": "0",
+            "EXECUTOR_INITIAL_DISPATCH_TIMEOUT": "1",
+        },
+        clear=False,
+    )
+    def test_dispatch_initial_task_retries_then_succeeds(self, executor, sample_task):
+        """Test initial dispatch retries on transient request errors."""
+        success_response = MagicMock()
+        success_response.status_code = 200
+
+        with patch.object(
+            executor,
+            "_send_task_to_container",
+            side_effect=[requests.RequestException("temporary"), success_response],
+        ) as mock_send:
+            executor._dispatch_initial_task_to_new_container(
+                sample_task, "new-executor", 8080
+            )
+
+        assert mock_send.call_count == 2
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_delete_executor_success(self, mock_run, executor):
