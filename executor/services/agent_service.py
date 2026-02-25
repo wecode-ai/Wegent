@@ -81,16 +81,17 @@ class AgentService:
                 bot_config = task_data.bot
                 if isinstance(bot_config, dict):
                     # Handle single bot object
-                    shell_type = bot_config.get("shell_type", "").strip().lower()
+                    raw_shell_type = bot_config.get("shell_type", "")
+                    shell_type = str(raw_shell_type or "").strip().lower()
                 elif isinstance(bot_config, list) and bot_config:
                     # Handle bot array - use the first bot's shell_type
                     first_bot = bot_config[0]
                     if isinstance(first_bot, dict):
-                        shell_type = first_bot.get("shell_type", "").strip().lower()
+                        raw_shell_type = first_bot.get("shell_type", "")
+                        shell_type = str(raw_shell_type or "").strip().lower()
                     else:
-                        shell_type = (
-                            getattr(first_bot, "shell_type", "").strip().lower()
-                        )
+                        raw_shell_type = getattr(first_bot, "shell_type", "")
+                        shell_type = str(raw_shell_type or "").strip().lower()
                 else:
                     shell_type = ""
 

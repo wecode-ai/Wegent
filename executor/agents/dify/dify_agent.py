@@ -8,7 +8,7 @@
 
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 import requests
 
@@ -177,15 +177,23 @@ class DifyAgent(Agent):
             )
             if dify_params:
                 try:
-                    params_str = (
-                        dify_params if isinstance(env, dict) else str(dify_params)
-                    )
-                    config["params"] = (
-                        json.loads(params_str)
-                        if isinstance(params_str, str)
-                        else params_str
-                    )
-                except json.JSONDecodeError as e:
+                    if isinstance(dify_params, (dict, Mapping)):
+                        # Pass through dict/Mapping objects directly
+                        config["params"] = dict(dify_params)
+                    elif isinstance(dify_params, str):
+                        # Parse JSON string
+                        config["params"] = json.loads(dify_params)
+                    elif isinstance(dify_params, bytes):
+                        # Decode bytes and parse JSON
+                        config["params"] = json.loads(dify_params.decode("utf-8"))
+                    else:
+                        # Log warning for unsupported types
+                        logger.warning(
+                            f"DIFY_PARAMS has unsupported type {type(dify_params).__name__}, "
+                            f"using empty params"
+                        )
+                        config["params"] = {}
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
                     logger.warning(
                         f"Failed to parse DIFY_PARAMS: {e}, using empty params"
                     )

@@ -264,10 +264,6 @@ class ConfigManager:
             team_members = list(bot_config)
             options["team_members"] = team_members
 
-            # Log after constructing team_members
-            first_bot_name = "unnamed"
-            if team_members and isinstance(team_members[0], dict):
-                first_bot_name = team_members[0].get("name", "unnamed")
             logger.info(f"Found bot array with {len(bot_config)} bots")
 
             # Also extract options from first bot if it's a dict
