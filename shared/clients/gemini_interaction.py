@@ -293,6 +293,16 @@ class GeminiInteractionClient:
                         event_count,
                     )
 
+            except httpx.TimeoutException:
+                logger.info(
+                    "[GEMINI_CLIENT][STREAM] Read timeout after %.0fs: id=%s, events_received=%d",
+                    stream_timeout or 0,
+                    interaction_id,
+                    event_count,
+                )
+                raise GeminiInteractionError(
+                    f"Stream read timeout after {stream_timeout}s",
+                )
             except httpx.RequestError as e:
                 logger.error("[GEMINI_CLIENT] Stream request error: %s", e)
                 raise GeminiInteractionError(f"Stream request failed: {e}")
