@@ -256,7 +256,7 @@ function RespondentQuestionDetailContent() {
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-text-primary">{question.title}</h1>
         <div className="mt-2 flex items-center gap-2 text-sm text-text-muted">
-          <Badge variant="outline" className="text-xs">
+          <Badge variant="info" className="text-xs">
             v{question.current_version || '-'}
           </Badge>
           {topic && <span>{topic.name}</span>}
@@ -311,7 +311,7 @@ function RespondentQuestionDetailContent() {
                     <span className="text-sm text-text-secondary">
                       {t('answers.instructions.time_limit')}
                     </span>
-                    <Badge variant="outline" className="text-xs">
+                    <Badge variant="info" className="text-xs">
                       {t('answers.instructions.no_limit')}
                     </Badge>
                   </div>
@@ -319,7 +319,7 @@ function RespondentQuestionDetailContent() {
                     <span className="text-sm text-text-secondary">
                       {t('answers.instructions.attempts')}
                     </span>
-                    <Badge variant="outline" className="text-xs">
+                    <Badge variant="info" className="text-xs">
                       {t('answers.instructions.unlimited')}
                     </Badge>
                   </div>
@@ -386,7 +386,7 @@ function RespondentQuestionDetailContent() {
                 <div className="flex items-center gap-2">
                   <Upload className="h-4 w-4 text-primary" />
                   <Label className="font-medium">{t('questions.attachments')}</Label>
-                  <Badge variant="outline" className="text-xs">
+                  <Badge variant="info" className="text-xs">
                     {t('answers.upload_recommended')}
                   </Badge>
                 </div>
@@ -492,7 +492,7 @@ function RespondentQuestionDetailContent() {
                               {t('answers.latest')}
                             </Badge>
                           )}
-                          <Badge variant="outline" className="text-xs">
+                          <Badge variant="info" className="text-xs">
                             v{answer.question_version}
                           </Badge>
                         </div>
