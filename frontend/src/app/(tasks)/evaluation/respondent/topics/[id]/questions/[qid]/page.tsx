@@ -356,16 +356,16 @@ function RespondentQuestionDetailContent() {
                 <p className="py-4 text-center text-text-muted">{t('questions.no_content')}</p>
               )}
 
-              {/* Question attachments */}
-              {question.content_data?.attachments &&
-                (question.content_data.attachments as EvalAttachment[]).length > 0 && (
+              {(question.content_data?.attachments as EvalAttachment[] | undefined)?.length
+                ? (
                   <div className="space-y-2 pt-2">
                     <Label className="text-text-secondary">
                       {t('questions.content_attachments')}
                     </Label>
-                    {renderAttachmentList(question.content_data.attachments as EvalAttachment[])}
+                    {renderAttachmentList(question.content_data?.attachments as EvalAttachment[])}
                   </div>
-                )}
+                )
+                : null}
             </CardContent>
           </Card>
         </TabsContent>
