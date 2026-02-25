@@ -4,6 +4,6 @@
 
 """HTTP clients for external services."""
 
-from chat_shell.clients.gemini_interaction import GeminiInteractionClient
+from shared.clients.gemini_interaction import GeminiInteractionClient
 
 __all__ = ["GeminiInteractionClient"]

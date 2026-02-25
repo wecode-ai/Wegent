@@ -119,10 +119,8 @@ class ExecutionRouter:
         # Priority 0: Protocol-based routing (e.g., gemini-deep-research)
         protocol = request.model_config.get("protocol") if request.model_config else None
         if protocol == "gemini-deep-research" and not device_id:
-            chat_shell_url = self.EXECUTION_SERVICES["Chat"]["url"]
             return ExecutionTarget(
                 mode=CommunicationMode.POLLING,
-                url=chat_shell_url,
             )
 
         # Priority 1: device_id specified, use WebSocket mode
