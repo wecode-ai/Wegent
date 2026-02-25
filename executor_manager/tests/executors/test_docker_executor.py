@@ -133,6 +133,37 @@ class TestDockerExecutor:
         assert executor_image in cmd
         assert any("task_id=123" in str(item) for item in cmd)
         assert any("subtask_id=456" in str(item) for item in cmd)
+        assert not any(
+            isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
+        )
+
+    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
+    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    def test_prepare_docker_command_sandbox_env_vars(
+        self, mock_callback, mock_get_ports, executor
+    ):
+        """Test sandbox command uses sandbox-specific env vars without TASK_INFO."""
+        mock_get_ports.return_value = set()
+        mock_callback.return_value = "http://callback.url"
+        sandbox_task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "type": "sandbox",
+            "auth_token": "token-123",
+        }
+
+        task_info = executor._extract_task_info(sandbox_task)
+        cmd = executor._prepare_docker_command(
+            sandbox_task, task_info, "sandbox-executor", "test/executor:latest"
+        )
+
+        assert "AUTH_TOKEN=token-123" in cmd
+        assert "TASK_ID=123" in cmd
+        assert not any(
+            isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
+        )
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_submit_executor_existing_container_success(
@@ -213,6 +244,67 @@ class TestDockerExecutor:
 
         assert result["status"] == "failed"
         assert "Docker run error" in result["error_msg"]
+
+    def test_create_new_container_dispatches_initial_task_for_regular_tasks(
+        self, executor, sample_task, mock_subprocess
+    ):
+        """Test new regular container dispatches the first request after startup."""
+        status = {"executor_name": "new-executor"}
+        task_info = executor._extract_task_info(sample_task)
+
+        with (
+            patch.object(
+                executor,
+                "_prepare_docker_command",
+                return_value=["docker", "run", "dummy"],
+            ),
+            patch.object(
+                executor, "_dispatch_initial_task_to_new_container"
+            ) as mock_dispatch,
+            patch.object(executor, "register_task_for_heartbeat"),
+        ):
+            mock_subprocess.run.reset_mock()
+            mock_subprocess.run.return_value = MagicMock(
+                stdout="container-id\n", returncode=0
+            )
+
+            executor._create_new_container(sample_task, task_info, status)
+
+            mock_dispatch.assert_called_once_with(sample_task, "new-executor")
+
+    def test_create_new_container_does_not_dispatch_for_sandbox(
+        self, executor, mock_subprocess
+    ):
+        """Test sandbox container startup does not auto-dispatch first task."""
+        sandbox_task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "type": "sandbox",
+        }
+        status = {"executor_name": "sandbox-executor"}
+        task_info = executor._extract_task_info(sandbox_task)
+
+        with (
+            patch.object(
+                executor,
+                "_prepare_docker_command",
+                return_value=["docker", "run", "dummy"],
+            ),
+            patch.object(
+                executor, "_dispatch_initial_task_to_new_container"
+            ) as mock_dispatch,
+            patch.object(executor, "register_task_for_heartbeat"),
+        ):
+            mock_subprocess.run.reset_mock()
+            mock_subprocess.run.return_value = MagicMock(
+                stdout="container-id\n", returncode=0
+            )
+
+            executor._create_new_container(sandbox_task, task_info, status)
+
+            mock_dispatch.assert_not_called()
 
     @patch("executor_manager.executors.docker.utils.subprocess.run")
     def test_delete_executor_success(self, mock_run, executor):

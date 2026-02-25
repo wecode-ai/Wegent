@@ -12,7 +12,6 @@ Docker executor for running tasks in Docker containers.
 Uses unified ExecutionRequest from shared.models.execution.
 """
 
-import json
 import os
 import subprocess
 import time
@@ -315,6 +314,7 @@ class DockerExecutor(Executor):
         executor_name = status["executor_name"]
         task_id = task_info["task_id"]
         is_validation_task = get_metadata_field(task, "type") == "validation"
+        is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
 
         # Check for custom base_image from bot configuration
         base_image = self._get_base_image_from_task(task)
@@ -371,6 +371,22 @@ class DockerExecutor(Executor):
             if base_image:
                 self._check_container_health(task, executor_name, is_validation_task)
 
+            # For non-sandbox tasks, dispatch the first HTTP request after startup.
+            # Sandbox containers are intentionally started idle and wait for /execute requests.
+            if not is_sandbox_task:
+                try:
+                    self._dispatch_initial_task_to_new_container(task, executor_name)
+                except Exception:
+                    # Avoid leaking an idle container when initial dispatch fails.
+                    try:
+                        delete_container(executor_name)
+                    except Exception as cleanup_error:
+                        logger.warning(
+                            f"Failed to cleanup container {executor_name} after "
+                            f"initial dispatch failure: {cleanup_error}"
+                        )
+                    raise
+
         except subprocess.CalledProcessError as e:
             # For validation tasks, report image pull or container start failure
             if is_validation_task:
@@ -390,6 +406,61 @@ class DockerExecutor(Executor):
                     valid=False,
                 )
             raise
+
+    def _dispatch_initial_task_to_new_container(
+        self, task: Dict[str, Any], executor_name: str
+    ) -> None:
+        """Dispatch first task request to a newly created container.
+
+        Retries until the container API is reachable or timeout is exceeded.
+
+        Args:
+            task: Task payload in OpenAI Responses API format
+            executor_name: Container name
+
+        Raises:
+            RuntimeError: If request dispatch fails after all retries
+        """
+        max_retries = max(
+            int(os.getenv("EXECUTOR_INITIAL_REQUEST_MAX_RETRIES", "30")), 1
+        )
+        retry_interval = max(
+            float(os.getenv("EXECUTOR_INITIAL_REQUEST_RETRY_INTERVAL", "1")), 0
+        )
+        last_error = "unknown error"
+
+        for attempt in range(1, max_retries + 1):
+            port, port_error = self._get_container_port(executor_name)
+            if port is None:
+                last_error = port_error or "container port not ready"
+            else:
+                try:
+                    response = self._send_task_to_container(
+                        task, DEFAULT_DOCKER_HOST, port
+                    )
+                    if response.status_code == 200:
+                        logger.info(
+                            f"Initial task dispatched successfully to new container {executor_name}"
+                        )
+                        return
+
+                    response_text = getattr(response, "text", "") or ""
+                    last_error = (
+                        f"status={response.status_code}, response={response_text[:500]}"
+                    )
+                except requests.RequestException as e:
+                    last_error = str(e)
+
+            logger.debug(
+                f"Initial task dispatch attempt {attempt}/{max_retries} failed for "
+                f"{executor_name}: {last_error}"
+            )
+            if attempt < max_retries and retry_interval > 0:
+                time.sleep(retry_interval)
+
+        raise RuntimeError(
+            f"Failed to dispatch initial task to container {executor_name}: {last_error}"
+        )
 
     def _check_container_health(
         self, task: Dict[str, Any], executor_name: str, is_validation_task: bool
@@ -606,9 +677,6 @@ class DockerExecutor(Executor):
         subtask_id = task_info["subtask_id"]
         user_name = task_info["user_name"]
 
-        # Convert task to JSON string
-        task_str = json.dumps(task)
-
         # Basic command
         cmd = [
             "docker",
@@ -641,12 +709,10 @@ class DockerExecutor(Executor):
             logger.info("Disabled seccomp for compatibility with older kernel")
 
         # Environment variables
-        # For sandbox type, do NOT set TASK_INFO to prevent auto-execution
-        # Sandbox containers should wait for execute requests via API
+        # Do NOT set TASK_INFO to avoid startup auto-execution.
+        # executor_manager dispatches task requests explicitly after container startup.
         is_sandbox = get_metadata_field(task, "type") == "sandbox"
-        if not is_sandbox:
-            cmd.extend(["-e", f"TASK_INFO={task_str}"])
-        else:
+        if is_sandbox:
             # For sandbox mode, pass auth_token and task_id via environment variables
             # so the container can call Backend API to fetch and download skills
             auth_token = get_metadata_field(task, "auth_token")
