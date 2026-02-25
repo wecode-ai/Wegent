@@ -227,9 +227,7 @@ class TestDeleteKnowledgeBase:
         test_db: Session,
         test_group,
         test_group_owner,
-        test_group_maintainer,
         _group_owner_member,
-        _group_maintainer_member,
     ):
         """Owner should be able to delete knowledge base."""
         # Create a KB first

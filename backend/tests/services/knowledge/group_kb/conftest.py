@@ -9,10 +9,9 @@ Shared fixtures for group knowledge base permission tests.
 import pytest
 from sqlalchemy.orm import Session
 
-from app.core.security import get_password_hash
-
 # Import app.models to ensure all models are registered with Base
 import app.models
+from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
@@ -79,6 +78,21 @@ def test_group_reporter(test_db: Session) -> User:
         user_name="groupreporter",
         password_hash=get_password_hash("reporter123"),
         email="reporter@example.com",
+        is_active=True,
+    )
+    test_db.add(user)
+    test_db.commit()
+    test_db.refresh(user)
+    return user
+
+
+@pytest.fixture(scope="function")
+def test_group_maintainer2(test_db: Session) -> User:
+    """Create a test user who will be group maintainer (for inheritance testing)."""
+    user = User(
+        user_name="groupmaintainer2",
+        password_hash=get_password_hash("maintainer2_123"),
+        email="maintainer2@example.com",
         is_active=True,
     )
     test_db.add(user)
@@ -186,6 +200,22 @@ def _group_reporter_member(
 
 
 @pytest.fixture(scope="function")
+def _group_maintainer2_member(
+    test_db: Session, test_group: Namespace, test_group_maintainer2: User
+) -> NamespaceMember:
+    """Add maintainer2 as Maintainer member of parent group for inheritance testing."""
+    member = NamespaceMember(
+        group_name=test_group.name,
+        user_id=test_group_maintainer2.id,
+        role=GroupRole.Maintainer.value,
+        is_active=True,
+    )
+    test_db.add(member)
+    test_db.commit()
+    return member
+
+
+@pytest.fixture(scope="function")
 def group_kb(
     test_db: Session,
     test_group: Namespace,
@@ -211,10 +241,10 @@ def group_kb(
 def subgroup_kb(
     test_db: Session,
     test_subgroup: Namespace,
-    test_group_owner: User,
-    _group_owner_member: NamespaceMember,
+    test_group_maintainer2: User,
+    _group_maintainer2_member: NamespaceMember,
 ) -> Kind:
-    """Create a knowledge base in the test subgroup."""
+    """Create a knowledge base in the test subgroup with a non-owner user."""
     kb_data = KnowledgeBaseCreate(
         name="Test Subgroup KB",
         description="A test knowledge base in subgroup",
@@ -222,7 +252,7 @@ def subgroup_kb(
     )
     kb_id = KnowledgeService.create_knowledge_base(
         db=test_db,
-        user_id=test_group_owner.id,
+        user_id=test_group_maintainer2.id,
         data=kb_data,
     )
     kb = test_db.query(Kind).filter(Kind.id == kb_id).first()

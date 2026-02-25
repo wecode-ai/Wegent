@@ -33,7 +33,7 @@ class TestPermissionInheritance:
         test_group_owner,
         _group_owner_member,
     ):
-        """Owner of parent group should inherit permissions to subgroup."""
+        """Owner of parent group should inherit permissions to subgroup via group role (not creator shortcut)."""
         # Create KB in subgroup as owner (owner has access via inheritance)
         kb_data = KnowledgeBaseCreate(
             name="Subgroup KB",
@@ -46,15 +46,48 @@ class TestPermissionInheritance:
             data=kb_data,
         )
 
-        # Verify owner has manage permission
+        # Verify owner has manage permission via creator shortcut
         kb = test_db.query(Kind).filter(Kind.id == kb_id).first()
+        level = _get_user_kb_permission_level(test_db, kb, test_group_owner.id)
+        assert level == "manage"
+
+    def test_noncreator_owner_inherits_to_subgroup(
+        self,
+        test_db: Session,
+        test_subgroup,
+        test_group_owner,
+        test_group_maintainer2,
+        _group_owner_member,
+        _group_maintainer2_member,
+    ):
+        """Owner of parent group should inherit manage permission to subgroup KB created by another user."""
+        # Create KB in subgroup as a different user (not group owner)
+        # The maintainer2 is a Maintainer in parent group, so can create in subgroup
+        kb_data = KnowledgeBaseCreate(
+            name="Subgroup KB For Inheritance Test",
+            description="KB in subgroup created by Maintainer in parent group",
+            namespace=test_subgroup.name,
+        )
+        kb_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_group_maintainer2.id,
+            data=kb_data,
+        )
+
+        # Get KB
+        kb = test_db.query(Kind).filter(Kind.id == kb_id).first()
+
+        # Verify KB was created by maintainer2, not by group_owner
+        assert kb.user_id == test_group_maintainer2.id
+        assert kb.user_id != test_group_owner.id
+
+        # Verify group_owner has manage permission via inheritance (not creator shortcut)
         level = _get_user_kb_permission_level(test_db, kb, test_group_owner.id)
         assert level == "manage"
 
     def test_developer_inherits_to_subgroup(
         self,
         test_db: Session,
-        test_group,
         test_subgroup,
         test_group_owner,
         test_group_developer,
@@ -82,7 +115,6 @@ class TestPermissionInheritance:
     def test_developer_can_edit_in_subgroup(
         self,
         test_db: Session,
-        test_group,
         test_subgroup,
         test_group_owner,
         test_group_developer,

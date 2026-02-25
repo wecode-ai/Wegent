@@ -133,6 +133,9 @@ def _check_kb_permission(
 
     Returns:
         True if user has permission, False otherwise
+
+    Raises:
+        ValueError: If required_level is not a valid permission level
     """
     user_level = _get_user_kb_permission_level(db, kb, user_id)
 
@@ -146,7 +149,20 @@ def _check_kb_permission(
         "view": 1,
     }
 
-    return level_hierarchy.get(user_level, 0) >= level_hierarchy.get(required_level, 0)
+    # Validate required_level is a valid key
+    if required_level not in level_hierarchy:
+        raise ValueError(
+            f"Invalid required_level '{required_level}'. "
+            f"Must be one of: {', '.join(level_hierarchy.keys())}"
+        )
+
+    # Validate user_level is a valid key (defensive check)
+    if user_level not in level_hierarchy:
+        # This should not happen if _get_user_kb_permission_level is correct,
+        # but handle it defensively to prevent security issues
+        return False
+
+    return level_hierarchy[user_level] >= level_hierarchy[required_level]
 
 
 def _is_organization_namespace(db: Session, namespace_name: str) -> bool:
