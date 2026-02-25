@@ -299,13 +299,10 @@ class AgentService:
             agent = session.agent
             task_data = getattr(agent, "task_data", None)
 
-            # Get task information - support dict, ExecutionRequest object, or fallback
+            # Get task information from ExecutionRequest
             subtask_id = -1
             if task_data is not None:
-                if isinstance(task_data, dict):
-                    subtask_id = task_data.get("subtask_id", -1)
-                elif hasattr(task_data, "subtask_id"):
-                    subtask_id = task_data.subtask_id
+                subtask_id = task_data.subtask_id
             logger.info(
                 f"[{_format_task_log(task_id, subtask_id)}] Sending cancel event asynchronously"
             )
