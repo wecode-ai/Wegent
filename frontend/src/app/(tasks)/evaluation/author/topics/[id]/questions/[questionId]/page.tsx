@@ -65,6 +65,8 @@ function QuestionDetailContent() {
   const [criteriaText, setCriteriaText] = useState('')
   const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
   const [showCriteriaPreview, setShowCriteriaPreview] = useState(false)
+  const [instructionsText, setInstructionsText] = useState('')
+  const [showInstructionsPreview, setShowInstructionsPreview] = useState(false)
 
   const loadQuestion = useCallback(async () => {
     setLoading(true)
@@ -77,6 +79,7 @@ function QuestionDetailContent() {
       setContentAttachments((questionData.content_data?.attachments as EvalAttachment[]) || [])
       setCriteriaText((questionData.criteria_data?.text as string) || '')
       setCriteriaAttachments((questionData.criteria_data?.attachments as EvalAttachment[]) || [])
+      setInstructionsText((questionData.content_data?.instructions as string) || '')
     } catch (_error) {
       toast({
         title: t('errors.load_failed'),
@@ -103,10 +106,12 @@ function QuestionDetailContent() {
       setContentAttachments((question.content_data?.attachments as EvalAttachment[]) || [])
       setCriteriaText((question.criteria_data?.text as string) || '')
       setCriteriaAttachments((question.criteria_data?.attachments as EvalAttachment[]) || [])
+      setInstructionsText((question.content_data?.instructions as string) || '')
     }
     setIsEditing(false)
     setShowContentPreview(false)
     setShowCriteriaPreview(false)
+    setShowInstructionsPreview(false)
   }
 
   const handleSave = async () => {
@@ -138,6 +143,9 @@ function QuestionDetailContent() {
       }
       if (contentAttachments.length > 0) {
         contentData.attachments = contentAttachments
+      }
+      if (instructionsText.trim()) {
+        contentData.instructions = instructionsText.trim()
       }
 
       // Build criteria_data - use MIXED type if has both text and attachments
@@ -374,9 +382,10 @@ function QuestionDetailContent() {
 
               {/* Tabs for editing */}
               <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-                <TabsList className="grid w-full grid-cols-2">
+                <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="content">{t('questions.content')}</TabsTrigger>
                   <TabsTrigger value="criteria">{t('questions.criteria')}</TabsTrigger>
+                  <TabsTrigger value="instructions">{t('questions.instructions')}</TabsTrigger>
                 </TabsList>
 
                 {/* Content Tab */}
@@ -504,6 +513,57 @@ function QuestionDetailContent() {
                     />
                   </div>
                 </TabsContent>
+
+                {/* Instructions Tab */}
+                <TabsContent value="instructions" className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="instructionsText">{t('questions.instructions')} (Markdown)</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowInstructionsPreview(!showInstructionsPreview)}
+                      >
+                        {showInstructionsPreview ? (
+                          <>
+                            <EyeOff className="mr-1 h-4 w-4" />
+                            {t('actions.edit')}
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="mr-1 h-4 w-4" />
+                            {t('questions.preview', 'Preview')}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    {showInstructionsPreview ? (
+                      <div className="min-h-[150px] rounded-lg border border-border bg-surface p-4">
+                        {instructionsText.trim() ? (
+                          <EnhancedMarkdown
+                            source={instructionsText}
+                            theme={theme === 'dark' ? 'dark' : 'light'}
+                          />
+                        ) : (
+                          <p className="text-text-muted">{t('topics.no_instructions')}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <Textarea
+                        id="instructionsText"
+                        value={instructionsText}
+                        onChange={e => setInstructionsText(e.target.value)}
+                        placeholder={t('questions.instructions_placeholder')}
+                        rows={8}
+                        className="font-mono text-sm"
+                      />
+                    )}
+                    <p className="text-xs text-text-muted">
+                      {t('questions.instructions_hint')}
+                    </p>
+                  </div>
+                </TabsContent>
               </Tabs>
             </div>
           ) : (
@@ -538,6 +598,21 @@ function QuestionDetailContent() {
                   <p className="text-text-muted">{t('questions.no_criteria')}</p>
                 )}
                 {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[] | undefined, t('questions.criteria_attachments'))}
+              </div>
+
+              {/* Display mode - Instructions */}
+              <div className="space-y-2">
+                <Label className="text-text-secondary">{t('questions.instructions')}</Label>
+                {typeof question.content_data?.instructions === 'string' && question.content_data.instructions ? (
+                  <div className="rounded-lg border border-border bg-surface p-4">
+                    <EnhancedMarkdown
+                      source={question.content_data.instructions as string}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-xs text-text-muted">{t('questions.instructions_hint')}</p>
+                )}
               </div>
 
               {/* Metadata */}
