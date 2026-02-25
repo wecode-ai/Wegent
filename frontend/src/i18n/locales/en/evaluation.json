@@ -277,7 +277,9 @@
     "delete": "Delete",
     "refresh": "Refresh",
     "creating": "Creating...",
-    "download": "Download"
+    "download": "Download",
+    "previous": "Previous",
+    "next": "Next"
   },
   "common": {
     "all": "All",

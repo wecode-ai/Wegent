@@ -277,7 +277,9 @@
     "delete": "删除",
     "refresh": "刷新",
     "creating": "创建中...",
-    "download": "下载"
+    "download": "下载",
+    "previous": "上一题",
+    "next": "下一题"
   },
   "common": {
     "all": "全部",
