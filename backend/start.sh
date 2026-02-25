@@ -294,6 +294,10 @@ unset VIRTUAL_ENV
 unset PYTHONHOME
 export PATH=$(echo $PATH | tr ':' '\n' | grep -v '/venv/bin' | grep -v '/.venv/bin' | tr '\n' ':' | sed 's/:$//')
 
+# Set NO_PROXY to bypass proxy for localhost connections
+export NO_PROXY="localhost,127.0.0.1,::1"
+export no_proxy="localhost,127.0.0.1,::1"
+
 # Remove old venv if exists
 if [ -d "venv" ]; then
     echo -e "${YELLOW}Removing old venv directory...${NC}"
