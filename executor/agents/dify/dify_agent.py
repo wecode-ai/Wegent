@@ -65,19 +65,7 @@ class DifyAgent(Agent):
 
         self.prompt = task_data.prompt or ""
         # Extract bot_prompt from task_data.bot (single bot or first bot in list)
-        bots = task_data.bot
-        if isinstance(bots, dict):
-            # Single bot object
-            self.bot_prompt = bots.get("bot_prompt", "")
-        elif bots and len(bots) > 0:
-            # List of bots - use first bot
-            bot = bots[0]
-            if isinstance(bot, dict):
-                self.bot_prompt = bot.get("bot_prompt", "")
-            else:
-                self.bot_prompt = getattr(bot, "bot_prompt", "")
-        else:
-            self.bot_prompt = ""
+        self.bot_prompt = self._get_bot_prompt(task_data)
 
         # Extract Dify configuration from Model environment variables
         self.dify_config = self._extract_dify_config(task_data)
@@ -125,6 +113,126 @@ class DifyAgent(Agent):
             f"app_mode={self.app_mode}, conversation_id={self.conversation_id}"
         )
 
+    def _get_first_bot(self, task_data_or_bots: Any) -> Any:
+        """
+        Extract the first bot from task_data or bots attribute.
+
+        Handles both dict (single bot) and list (multiple bots) cases.
+
+        Args:
+            task_data_or_bots: Either an ExecutionRequest or the bots attribute
+
+        Returns:
+            The first bot object/dict, or None if not found
+        """
+        # If passed ExecutionRequest, get its bot attribute
+        if hasattr(task_data_or_bots, "bot"):
+            bots = task_data_or_bots.bot
+        else:
+            bots = task_data_or_bots
+
+        if isinstance(bots, dict):
+            # Single bot object
+            return bots
+        elif bots:
+            # List of bots - use first bot
+            return bots[0]
+        return None
+
+    def _get_bot_prompt(self, task_data_or_bots: Any) -> str:
+        """
+        Extract bot_prompt from the first bot.
+
+        Args:
+            task_data_or_bots: Either an ExecutionRequest or the bots attribute
+
+        Returns:
+            The bot_prompt string, or empty string if not found
+        """
+        bot = self._get_first_bot(task_data_or_bots)
+        if bot is None:
+            return ""
+
+        if isinstance(bot, dict):
+            return bot.get("bot_prompt", "")
+        else:
+            return getattr(bot, "bot_prompt", "")
+
+    def _extract_env_from_task(self, task_data: ExecutionRequest) -> Any:
+        """
+        Extract env mapping from task_data via bot -> agent_config -> env.
+
+        Args:
+            task_data: The task execution request
+
+        Returns:
+            The env dict/object, or empty dict if not found
+        """
+        bot = self._get_first_bot(task_data)
+        if bot is None:
+            return {}
+
+        if isinstance(bot, dict):
+            agent_config = bot.get("agent_config", {})
+        else:
+            agent_config = getattr(bot, "agent_config", {}) or {}
+
+        # agent_config structure: {"env": {"DIFY_API_KEY": "xxx", "DIFY_BASE_URL": "xxx"}}
+        if isinstance(agent_config, dict):
+            return agent_config.get("env", {})
+        else:
+            return getattr(agent_config, "env", {}) or {}
+
+    def _parse_dify_params(self, dify_params: Any) -> Dict[str, Any]:
+        """
+        Parse DIFY_PARAMS value into a safe dict.
+
+        Handles dict/Mapping (pass through), str (JSON parse), bytes (decode + JSON parse).
+
+        Args:
+            dify_params: The params value (dict, Mapping, str, bytes, or other)
+
+        Returns:
+            Parsed params dict, or empty dict if parsing fails
+        """
+        if isinstance(dify_params, (dict, Mapping)):
+            # Pass through dict/Mapping objects directly
+            return dict(dify_params)
+
+        try:
+            if isinstance(dify_params, str):
+                # Parse JSON string and validate result is a mapping
+                parsed = json.loads(dify_params)
+                if isinstance(parsed, (dict, Mapping)):
+                    return parsed
+                else:
+                    logger.warning(
+                        f"DIFY_PARAMS parsed to non-mapping type {type(parsed).__name__}, "
+                        f"using empty params"
+                    )
+                    return {}
+            elif isinstance(dify_params, bytes):
+                # Decode bytes and parse JSON, validate result is a mapping
+                parsed = json.loads(dify_params.decode("utf-8"))
+                if isinstance(parsed, (dict, Mapping)):
+                    return parsed
+                else:
+                    logger.warning(
+                        f"DIFY_PARAMS parsed to non-mapping type {type(parsed).__name__}, "
+                        f"using empty params"
+                    )
+                    return {}
+            else:
+                # Log warning for unsupported types
+                logger.warning(
+                    f"DIFY_PARAMS has unsupported type {type(dify_params).__name__}, "
+                    f"using empty params"
+                )
+                return {}
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.warning(f"Failed to parse DIFY_PARAMS: {e}, using empty params")
+            return {}
+
     def _extract_dify_config(self, task_data: ExecutionRequest) -> Dict[str, Any]:
         """
         Extract Dify configuration from task_data
@@ -137,94 +245,39 @@ class DifyAgent(Agent):
         """
         config = {"api_key": "", "base_url": "", "app_id": "", "params": {}}
 
-        # Try to extract from bot -> agent_config -> env
-        # Note: task_data uses "bot" key, not "team_members"
-        bots = task_data.bot
-        bot = None
-        if isinstance(bots, dict):
-            # Single bot object
-            bot = bots
-        elif bots and len(bots) > 0:
-            # List of bots - use first bot
-            bot = bots[0]
+        # Extract env from bot -> agent_config -> env
+        env = self._extract_env_from_task(task_data)
+        if not env:
+            return config
 
-        if bot:
-            if isinstance(bot, dict):
-                agent_config = bot.get("agent_config", {})
-            else:
-                agent_config = getattr(bot, "agent_config", {}) or {}
+        # Extract and decrypt API key
+        if isinstance(env, dict):
+            api_key = env.get("DIFY_API_KEY", "")
+        else:
+            api_key = getattr(env, "DIFY_API_KEY", "")
+        if api_key and is_data_encrypted(api_key):
+            api_key = decrypt_sensitive_data(api_key) or ""
 
-            # agent_config structure: {"env": {"DIFY_API_KEY": "xxx", "DIFY_BASE_URL": "xxx"}}
-            if isinstance(agent_config, dict):
-                env = agent_config.get("env", {})
-            else:
-                env = getattr(agent_config, "env", {}) or {}
+        config["api_key"] = api_key
 
-            # Extract and decrypt API key
-            if isinstance(env, dict):
-                api_key = env.get("DIFY_API_KEY", "")
-            else:
-                api_key = getattr(env, "DIFY_API_KEY", "")
-            if api_key and is_data_encrypted(api_key):
-                api_key = decrypt_sensitive_data(api_key) or ""
+        # Extract base_url and app_id
+        if isinstance(env, dict):
+            config["base_url"] = env.get(
+                "DIFY_BASE_URL", "https://api.dify.ai"
+            )  # Default base URL
+            config["app_id"] = env.get("DIFY_APP_ID", "")
+        else:
+            config["base_url"] = getattr(env, "DIFY_BASE_URL", "https://api.dify.ai")
+            config["app_id"] = getattr(env, "DIFY_APP_ID", "")
 
-            config["api_key"] = api_key
-            if isinstance(env, dict):
-                config["base_url"] = env.get(
-                    "DIFY_BASE_URL", "https://api.dify.ai"
-                )  # Default base URL
-                config["app_id"] = env.get("DIFY_APP_ID", "")
-            else:
-                config["base_url"] = getattr(
-                    env, "DIFY_BASE_URL", "https://api.dify.ai"
-                )
-                config["app_id"] = getattr(env, "DIFY_APP_ID", "")
-
-            # Extract params if exists
-            dify_params = (
-                env.get("DIFY_PARAMS")
-                if isinstance(env, dict)
-                else getattr(env, "DIFY_PARAMS", None)
-            )
-            if dify_params:
-                try:
-                    if isinstance(dify_params, (dict, Mapping)):
-                        # Pass through dict/Mapping objects directly
-                        config["params"] = dict(dify_params)
-                    elif isinstance(dify_params, str):
-                        # Parse JSON string and validate result is a mapping
-                        parsed = json.loads(dify_params)
-                        if isinstance(parsed, (dict, Mapping)):
-                            config["params"] = parsed
-                        else:
-                            logger.warning(
-                                f"DIFY_PARAMS parsed to non-mapping type {type(parsed).__name__}, "
-                                f"using empty params"
-                            )
-                            config["params"] = {}
-                    elif isinstance(dify_params, bytes):
-                        # Decode bytes and parse JSON, validate result is a mapping
-                        parsed = json.loads(dify_params.decode("utf-8"))
-                        if isinstance(parsed, (dict, Mapping)):
-                            config["params"] = parsed
-                        else:
-                            logger.warning(
-                                f"DIFY_PARAMS parsed to non-mapping type {type(parsed).__name__}, "
-                                f"using empty params"
-                            )
-                            config["params"] = {}
-                    else:
-                        # Log warning for unsupported types
-                        logger.warning(
-                            f"DIFY_PARAMS has unsupported type {type(dify_params).__name__}, "
-                            f"using empty params"
-                        )
-                        config["params"] = {}
-                except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                    logger.warning(
-                        f"Failed to parse DIFY_PARAMS: {e}, using empty params"
-                    )
-                    config["params"] = {}
+        # Extract params if exists
+        dify_params = (
+            env.get("DIFY_PARAMS")
+            if isinstance(env, dict)
+            else getattr(env, "DIFY_PARAMS", None)
+        )
+        if dify_params:
+            config["params"] = self._parse_dify_params(dify_params)
 
         return config
 

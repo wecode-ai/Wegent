@@ -18,6 +18,93 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 logger = setup_logger("agno_config_utils")
 
 
+def parse_source_spec(source_spec: str) -> tuple[str, str]:
+    """
+    Parse source specification into source name and path.
+
+    Args:
+        source_spec: Source specification in format "source_name.path" or just "path"
+
+    Returns:
+        Tuple of (source_name, path)
+    """
+    if "." in source_spec:
+        # Format: "source_name.path"
+        parts = source_spec.split(".", 1)
+        return parts[0], parts[1]
+    else:
+        # Format: just "path", use default source
+        return "agent_config", source_spec
+
+
+def object_to_mapping(obj: Any) -> Dict[str, Any] | None:
+    """
+    Try to convert object to dict using model_dump, dict, or to_dict methods.
+
+    Args:
+        obj: Object to convert
+
+    Returns:
+        Dict if conversion successful, None otherwise
+    """
+    if callable(getattr(obj, "model_dump", None)):
+        result = obj.model_dump()
+        if isinstance(result, dict):
+            return result
+    if callable(getattr(obj, "dict", None)):
+        result = obj.dict()
+        if isinstance(result, dict):
+            return result
+    if callable(getattr(obj, "to_dict", None)):
+        result = obj.to_dict()
+        if isinstance(result, dict):
+            return result
+    return None
+
+
+def resolve_path_step(current: Any, key: str) -> Any:
+    """
+    Resolve one step of the path navigation.
+
+    Handles dict lookup, list index, attribute access, or object_to_mapping fallback.
+
+    Args:
+        current: Current object being navigated
+        key: The key to resolve
+
+    Returns:
+        The resolved value, or raises exception if not found
+
+    Raises:
+        KeyError: If key not found in dict after trying object conversion
+        AttributeError: If attribute access fails
+        IndexError: If list index out of range
+    """
+    # Dict lookup
+    if isinstance(current, dict) and key in current:
+        return current[key]
+
+    # List index lookup
+    if isinstance(current, list) and key.isdigit() and int(key) < len(current):
+        return current[int(key)]
+
+    # Object attribute access (only for non-container objects)
+    if not isinstance(current, (dict, list)) and hasattr(current, key):
+        attr_value = getattr(current, key)
+        if callable(attr_value):
+            # Don't access callable methods (e.g., dict.items, list.append)
+            raise KeyError(f"Attribute {key} is callable")
+        return attr_value
+
+    # Try to convert object to dict and lookup
+    dict_from_object = object_to_mapping(current)
+    if dict_from_object is not None and key in dict_from_object:
+        return dict_from_object[key]
+
+    # Not found
+    raise KeyError(f"Key {key} not found")
+
+
 def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) -> str:
     """
     Resolve value from specified data source using flexible notation
@@ -31,15 +118,7 @@ def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) ->
     """
     try:
         # Parse source specification
-        if "." in source_spec:
-            # Format: "source_name.path"
-            parts = source_spec.split(".", 1)
-            source_name = parts[0]
-            path = parts[1]
-        else:
-            # Format: just "path", use default source
-            source_name = "agent_config"
-            path = source_spec
+        source_name, path = parse_source_spec(source_spec)
 
         # Get the specified data source
         if source_name not in data_sources:
@@ -52,33 +131,7 @@ def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) ->
         current = data
 
         for key in keys:
-            if isinstance(current, dict) and key in current:
-                current = current[key]
-            elif (
-                isinstance(current, list) and key.isdigit() and int(key) < len(current)
-            ):
-                current = current[int(key)]
-            elif hasattr(current, key):
-                # Object attribute access (for ExecutionRequest and nested objects)
-                current = getattr(current, key)
-            else:
-                # Try to convert object to dict using .dict(), .model_dump(), or .to_dict()
-                dict_from_object = None
-                if callable(getattr(current, "model_dump", None)):
-                    dict_from_object = current.model_dump()
-                elif callable(getattr(current, "dict", None)):
-                    dict_from_object = current.dict()
-                elif callable(getattr(current, "to_dict", None)):
-                    dict_from_object = current.to_dict()
-
-                if (
-                    dict_from_object is not None
-                    and isinstance(dict_from_object, dict)
-                    and key in dict_from_object
-                ):
-                    current = dict_from_object[key]
-                else:
-                    return ""
+            current = resolve_path_step(current, key)
 
         return str(current) if current is not None else ""
     except (AttributeError, TypeError, KeyError, ValueError, IndexError):
