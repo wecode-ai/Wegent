@@ -17,9 +17,9 @@ from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.config import config
-from executor.tasks.task_state_manager import TaskStateManager
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, TransportFactory
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 
 logger = setup_logger("agent_service")
@@ -55,9 +55,9 @@ class AgentService:
         """Generate a unique session ID for an agent based on task and subtask IDs."""
         return f"agent_session_{task_id}"
 
-    def create_agent(self, task_data: Dict[str, Any]) -> Optional[Agent]:
-        task_id = task_data.get("task_id", -1)
-        subtask_id = task_data.get("subtask_id", -1)
+    def create_agent(self, task_data: ExecutionRequest) -> Optional[Agent]:
+        task_id = task_data.task_id
+        subtask_id = task_data.subtask_id
 
         logger.info(f"task_id: [{task_id}] Creating agent")
 
@@ -69,7 +69,7 @@ class AgentService:
 
         try:
             # Determine agent type based on task type
-            task_type = task_data.get("type", "")
+            task_type = task_data.type
 
             if task_type == "validation":
                 # For validation tasks, use ImageValidatorAgent
@@ -79,15 +79,13 @@ class AgentService:
                 )
             else:
                 # For regular tasks, get shell_type from bot config
-                bot_config = task_data.get("bot")
+                bot_config = task_data.bot
                 if isinstance(bot_config, list):
                     shell_type = (
                         bot_config[0].get("shell_type", "").strip().lower()
                         if bot_config
                         else ""
                     )
-                elif isinstance(bot_config, dict):
-                    shell_type = bot_config.get("shell_type", "").strip().lower()
                 else:
                     shell_type = ""
 
@@ -153,16 +151,16 @@ class AgentService:
             return TaskStatus.FAILED, str(e)
 
     def execute_task(
-        self, task_data: Dict[str, Any]
+        self, task_data: ExecutionRequest
     ) -> Tuple[TaskStatus, Optional[str]]:
-        task_id = task_data.get("task_id", -1)
-        subtask_id = task_data.get("subtask_id", -1)
+        task_id = task_data.task_id
+        subtask_id = task_data.subtask_id
         try:
             agent = self.get_agent(f"{task_id}")
 
             # If agent exists, update prompt
-            if agent and hasattr(agent, "update_prompt") and "prompt" in task_data:
-                new_prompt = task_data.get("prompt", "")
+            if agent and hasattr(agent, "update_prompt") and task_data.prompt:
+                new_prompt = task_data.prompt
                 logger.info(
                     f"[{_format_task_log(task_id, subtask_id)}] Updating prompt for existing agent"
                 )

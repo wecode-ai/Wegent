@@ -9,9 +9,10 @@
 import json
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("agno_config_utils")
@@ -204,13 +205,13 @@ class ConfigManager:
 
         return default_headers
 
-    def extract_agno_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_agno_options(self, task_data: ExecutionRequest) -> Dict[str, Any]:
         """
         Extract Agno options from task data
         Collects all non-None configuration parameters from task_data
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data ExecutionRequest
 
         Returns:
             Dict containing valid Agno options
@@ -231,7 +232,7 @@ class ConfigManager:
 
         # Collect all non-None configuration parameters
         options = {}
-        bot_config = task_data.get("bot", {})
+        bot_config = task_data.bot
 
         # Extract all non-None parameters from bot_config
         if bot_config:

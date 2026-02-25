@@ -9,15 +9,12 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
-
-# Type alias: data sources accepted by replace_mcp_server_variables()
-TaskData = Union["ExecutionRequest", Dict[str, Any]]
 
 logger = setup_logger("mcp_utils")
 
@@ -98,43 +95,34 @@ def extract_mcp_servers_config(config: Dict[str, Any]) -> Optional[Any]:
     return None
 
 
-def _get_nested_value(data: Any, path: str) -> Optional[Any]:
+def _get_nested_value(obj: Optional["ExecutionRequest"], path: str) -> Optional[Any]:
     """
-    Get a value from a nested structure using dot-separated path.
-    Supports dict key access, list index access, and object attribute access.
+    Get a value from an ExecutionRequest object using dot-separated path.
+    Supports object attribute access and list index access.
 
     Args:
-        data: The data to search in (dict, dataclass, or any object with attributes)
+        obj: The ExecutionRequest object to search in
         path: Dot-separated path string, e.g., "user.name", "git_repo", or "bot.0.name"
 
     Returns:
         The value at the path, or None if the path doesn't exist
 
     Examples:
-        >>> data = {"user": {"name": "John", "id": 123}}
-        >>> _get_nested_value(data, "user.name")
+        >>> from shared.models.execution import ExecutionRequest
+        >>> obj = ExecutionRequest(user={"name": "John", "id": 123})
+        >>> _get_nested_value(obj, "user.name")
         'John'
-        >>> _get_nested_value(data, "user.email")
+        >>> _get_nested_value(obj, "user.email")
         None
-        >>> data = {"bot": [{"name": "bot1"}, {"name": "bot2"}]}
-        >>> _get_nested_value(data, "bot.0.name")
-        'bot1'
-        >>> _get_nested_value(data, "bot.1.name")
-        'bot2'
     """
-    if not data or not path:
+    if not obj or not path:
         return None
 
     keys = path.split(".")
-    current = data
+    current: Any = obj
 
     for key in keys:
-        if isinstance(current, dict):
-            if key in current:
-                current = current[key]
-            else:
-                return None
-        elif isinstance(current, list):
+        if isinstance(current, list):
             # Try to parse key as integer index
             try:
                 index = int(key)
@@ -146,28 +134,37 @@ def _get_nested_value(data: Any, path: str) -> Optional[Any]:
                 # Key is not a valid integer
                 return None
         elif hasattr(current, key):
-            # Support dataclass and other objects with attributes
+            # Object attribute access (for ExecutionRequest and nested objects)
             current = getattr(current, key)
+        elif isinstance(current, dict):
+            # Dict key access (for nested dicts like user, bot items)
+            if key in current:
+                current = current[key]
+            else:
+                return None
         else:
             return None
 
     return current
 
 
-def _replace_placeholders_in_string(text: str, task_data: TaskData) -> str:
+def _replace_placeholders_in_string(
+    text: str, task_data: Optional["ExecutionRequest"]
+) -> str:
     """
     Replace all ${{path}} placeholders in a string with values from task_data.
 
     Args:
         text: The string containing placeholders
-        task_data: Data source for replacement values (dict or ExecutionRequest).
+        task_data: Data source for replacement values (ExecutionRequest object).
 
     Returns:
         The string with placeholders replaced. If a path doesn't exist in task_data,
         the original placeholder is preserved.
 
     Examples:
-        >>> task_data = {"user": {"name": "John"}, "git_repo": "owner/repo"}
+        >>> from shared.models.execution import ExecutionRequest
+        >>> task_data = ExecutionRequest(user={"name": "John"}, git_repo="owner/repo")
         >>> _replace_placeholders_in_string("Hello ${{user.name}}", task_data)
         'Hello John'
         >>> _replace_placeholders_in_string("${{user.email}}", task_data)
@@ -190,14 +187,14 @@ def _replace_placeholders_in_string(text: str, task_data: TaskData) -> str:
 
 
 def _replace_variables_recursive(
-    obj: Union[Dict[str, Any], List[Any], str, Any], task_data: TaskData
-) -> Union[Dict[str, Any], List[Any], str, Any]:
+    obj: Any, task_data: Optional["ExecutionRequest"]
+) -> Any:
     """
     Recursively process an object and replace placeholders in all string values.
 
     Args:
         obj: The object to process (dict, list, string, or other)
-        task_data: Data source for replacement values (dict or ExecutionRequest).
+        task_data: Data source for replacement values (ExecutionRequest object).
 
     Returns:
         The processed object with all string placeholders replaced
@@ -217,7 +214,7 @@ def _replace_variables_recursive(
 
 
 def replace_mcp_server_variables(
-    mcp_servers: Optional[Any], task_data: Optional[TaskData]
+    mcp_servers: Optional[Any], task_data: Optional["ExecutionRequest"]
 ) -> Optional[Any]:
     """
     Replace ${{path}} placeholders in MCP servers configuration with values from task_data.
@@ -227,16 +224,16 @@ def replace_mcp_server_variables(
 
     Args:
         mcp_servers: The MCP servers configuration dictionary
-        task_data: Data source for replacement values. Can be a dict or any object
-                   with attributes (e.g., ExecutionRequest dataclass).
-                   Supports nested access like "user.name" -> task_data["user"]["name"]
-                   or task_data.user["name"].
+        task_data: Data source for replacement values. Must be an ExecutionRequest object.
+                   Supports nested access like "user.name" -> task_data.user["name"]
+                   or "bot.0.name" -> task_data.bot[0]["name"].
 
     Returns:
         A new dictionary with all placeholders replaced. If a path doesn't exist
         in task_data, the original placeholder is preserved.
 
     Examples:
+        >>> from shared.models.execution import ExecutionRequest
         >>> mcp_servers = {
         ...     "server1": {
         ...         "url": "https://api.example.com/${{user.git_login}}",
@@ -246,13 +243,13 @@ def replace_mcp_server_variables(
         ...         }
         ...     }
         ... }
-        >>> task_data = {
-        ...     "user": {
+        >>> task_data = ExecutionRequest(
+        ...     user={
         ...         "name": "zhangsan",
         ...         "git_login": "zhangsan",
         ...         "git_token": "token123"
         ...     }
-        ... }
+        ... )
         >>> result = replace_mcp_server_variables(mcp_servers, task_data)
         >>> result["server1"]["url"]
         'https://api.example.com/zhangsan'

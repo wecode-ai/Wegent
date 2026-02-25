@@ -13,7 +13,6 @@ import os
 import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import urlparse
 
 try:
     from git import GitCommandError, InvalidGitRepositoryError, Repo
@@ -23,6 +22,7 @@ except ImportError:
     GIT_AVAILABLE = False
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.models.task import ExecutionResult
 from shared.status import TaskStatus
 
@@ -41,7 +41,7 @@ class ProgressStateManager:
     def __init__(
         self,
         thinking_manager,
-        task_data: Dict[str, Any],
+        task_data: ExecutionRequest,
         report_progress_callback: Callable,
         project_path: Optional[str] = None,
     ):
@@ -50,7 +50,7 @@ class ProgressStateManager:
 
         Args:
             thinking_manager: ThinkingStepManager instance
-            task_data: Task data
+            task_data: Task data object
             report_progress_callback: Progress reporting callback function
             project_path: Project path (used for getting git diff)
         """
@@ -275,38 +275,36 @@ class ProgressStateManager:
         current_time = datetime.now().isoformat()
 
         # Extract task information from task_data
-        user_info = self.task_data.get("user", {})
-        bot_info = (
-            self.task_data.get("bot", [{}])[0] if self.task_data.get("bot") else {}
-        )
+        user_info = self.task_data.user if self.task_data.user else {}
+        bot_info = self.task_data.bot[0] if self.task_data.bot else {}
 
         # Determine summary value: prioritize result_value, otherwise use subtask_title or prompt
         summary = ""
         if result_value:
             summary = result_value
-        elif self.task_data.get("subtask_title"):
-            summary = self.task_data.get("subtask_title")
-        elif self.task_data.get("prompt"):
-            summary = self.task_data.get("prompt")
+        elif self.task_data.subtask_title:
+            summary = self.task_data.subtask_title
+        elif self.task_data.prompt:
+            summary = self.task_data.prompt
 
-        git_domain = self.task_data.get("git_domain", "")
+        git_domain = self.task_data.git_domain or ""
         git_type = "gitlab"  # Default to gitlab
         if git_domain and "github.com" in git_domain.lower():
             git_type = "github"
 
         workbench = {
-            "taskTitle": self.task_data.get("task_title", ""),
-            "taskNumber": str(self.task_data.get("task_id", "")),
+            "taskTitle": self.task_data.task_title or "",
+            "taskNumber": str(self.task_data.task_id or ""),
             "status": status,
             "completedTime": current_time if status == "completed" else "",
-            "repository": self.task_data.get("git_repo", ""),
-            "branch": self.task_data.get("branch_name", ""),
+            "repository": self.task_data.git_repo or "",
+            "branch": self.task_data.branch_name or "",
             "sessions": 1,  # Default to 1 session per task execution
             "premiumRequests": 0,  # Will be updated from actual usage if available
             "lastUpdated": current_time,
             "summary": summary,
             "changes": [],  # Will be populated with actual changes if available
-            "originalPrompt": self.task_data.get("prompt", ""),
+            "originalPrompt": self.task_data.prompt or "",
             "file_changes": [],  # Will be populated with git diff information
             "git_info": {
                 "initial_commit_id": "",  # Commit ID at task start
@@ -338,7 +336,7 @@ class ProgressStateManager:
             self.initial_commit_id = initial_commit.hexsha
 
             # Get source branch (branch at task start)
-            source_branch = self.task_data.get("branch_name", "")
+            source_branch = self.task_data.branch_name or ""
 
             # Save to workbench
             if self.workbench_data:

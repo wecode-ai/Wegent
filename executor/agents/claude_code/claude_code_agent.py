@@ -9,7 +9,6 @@
 import asyncio
 import os
 import time
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -17,7 +16,6 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from executor.agents.agno.thinking_step_manager import ThinkingStepManager
 from executor.agents.base import Agent
 from executor.agents.claude_code.attachment_handler import (
-    AttachmentProcessResult,
     download_attachments,
     get_attachment_thinking_step_details,
 )
@@ -27,7 +25,6 @@ from executor.agents.claude_code.config_manager import (
     create_claude_model_config,
     extract_claude_options,
     get_claude_config_dir,
-    resolve_env_value,
 )
 from executor.agents.claude_code.git_operations import (
     add_to_git_exclude,
@@ -44,7 +41,6 @@ from executor.agents.claude_code.response_processor import (
 )
 from executor.agents.claude_code.session_manager import (
     SessionManager,
-    build_internal_session_key,
     resolve_session_id,
 )
 from executor.agents.claude_code.skill_deployer import (
@@ -54,15 +50,14 @@ from executor.agents.claude_code.skill_deployer import (
     setup_coordinate_mode,
 )
 from executor.config import config
-from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
-from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("claude_code_agent")
 
@@ -114,23 +109,23 @@ class ClaudeCodeAgent(Agent):
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: ExecutionRequest,
         emitter: ResponsesAPIEmitter,
     ):
         """
         Initialize the Claude Code Agent
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data object
             emitter: Emitter instance for sending events. Required parameter.
         """
         super().__init__(task_data, emitter)
         self.client = None
-        self.new_session = task_data.get("new_session", False)
+        self.new_session = task_data.new_session
 
         # Extract bot_id from task_data for session key
         bot_id = None
-        bots = task_data.get("bot", [])
+        bots = task_data.bot
         if bots and len(bots) > 0:
             bot_id = bots[0].get("id")
 
@@ -143,7 +138,7 @@ class ClaudeCodeAgent(Agent):
             self.task_id, bot_id, self.new_session, self.task_state_manager
         )
 
-        self.prompt = task_data.get("prompt", "")
+        self.prompt = task_data.prompt or ""
         self.project_path = None
 
         # Load hooks on first initialization
@@ -332,10 +327,11 @@ class ClaudeCodeAgent(Agent):
             )
 
             # Check if bot config is available
-            if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
-                bot_config = self.task_data["bot"][0]
-                user_name = self.task_data.get("user", {}).get("name", "unknown")
-                git_url = self.task_data.get("git_url", "")
+            bots = self.task_data.bot
+            if bots and len(bots) > 0:
+                bot_config = bots[0]
+                user_name = self.task_data.user.get("name", "unknown") if self.task_data.user else "unknown"
+                git_url = self.task_data.git_url or ""
                 # Get config from bot using config_manager
                 agent_config = create_claude_model_config(
                     bot_config, user_name=user_name, git_url=git_url
@@ -397,7 +393,7 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Pre-execution status
         """
         try:
-            git_url = self.task_data.get("git_url")
+            git_url = self.task_data.git_url
             # Download code if git_url is provided
             if git_url and git_url != "":
                 self.download_code()
@@ -474,7 +470,7 @@ class ClaudeCodeAgent(Agent):
 
             # Check if this is a subscription task - subscription tasks need to wait for completion
             # so the container can exit properly after task finishes
-            is_subscription = self.task_data.get("is_subscription", False)
+            is_subscription = self.task_data.is_subscription
 
             # Check if currently running in coroutine
             try:
@@ -657,7 +653,7 @@ class ClaudeCodeAgent(Agent):
 
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
-            user_selected_skills = self.task_data.get("user_selected_skills", [])
+            user_selected_skills = self.task_data.user_selected_skills
             if user_selected_skills:
                 skill_emphasis = self._build_skill_emphasis_prompt(user_selected_skills)
                 prompt = skill_emphasis + "\n\n" + prompt
@@ -669,7 +665,7 @@ class ClaudeCodeAgent(Agent):
                 prompt = (
                     prompt + "\nCurrent working directory: " + self.options.get("cwd")
                 )
-                git_url = self.task_data.get("git_url")
+                git_url = self.task_data.git_url
                 if git_url:
                     prompt = prompt + "\n project url:" + git_url
 

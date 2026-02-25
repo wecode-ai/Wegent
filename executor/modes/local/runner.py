@@ -31,6 +31,7 @@ from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.websocket_client import WebSocketClient
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 
 logger = setup_logger("local_runner")
@@ -203,9 +204,9 @@ class LocalRunner:
 
         logger.info("WebSocket event handlers registered")
 
-    async def enqueue_task(self, task_data: Dict[str, Any]) -> None:
+    async def enqueue_task(self, task_data: ExecutionRequest) -> None:
         """Add a task to the execution queue."""
-        task_id = task_data.get("task_id", -1)
+        task_id = task_data.task_id
         logger.info(f"Enqueuing task: task_id={task_id}")
         await self.task_queue.put(task_data)
 
@@ -395,10 +396,10 @@ class LocalRunner:
             .build()
         )
 
-    async def _execute_task(self, task_data: Dict[str, Any]) -> None:
+    async def _execute_task(self, task_data: ExecutionRequest) -> None:
         """Execute a single task."""
-        task_id = task_data.get("task_id", -1)
-        subtask_id = task_data.get("subtask_id", -1)
+        task_id = task_data.task_id
+        subtask_id = task_data.subtask_id
         logger.info(f"Executing task: task_id={task_id}, subtask_id={subtask_id}")
 
         from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
@@ -474,11 +475,11 @@ class LocalRunner:
             await ws_emitter.error(error_msg, "execution_error")
 
     async def _report_task_failure(
-        self, task_data: Dict[str, Any], error_message: str
+        self, task_data: ExecutionRequest, error_message: str
     ) -> None:
         """Report task failure via WebSocket emitter."""
-        task_id = task_data.get("task_id", -1)
-        subtask_id = task_data.get("subtask_id", -1)
+        task_id = task_data.task_id
+        subtask_id = task_data.subtask_id
 
         # Create emitter for error reporting
         ws_emitter = self._create_emitter(task_id, subtask_id)

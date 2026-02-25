@@ -18,6 +18,7 @@ from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
+from shared.models.execution import ExecutionRequest
 from shared.models.task import ExecutionResult
 from shared.status import TaskStatus
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
@@ -50,20 +51,20 @@ class DifyAgent(Agent):
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: ExecutionRequest,
         emitter: ResponsesAPIEmitter,
     ):
         """
         Initialize the Dify Agent
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task execution request
             emitter: Emitter instance for sending events. Required parameter.
         """
         super().__init__(task_data, emitter)
 
-        self.prompt = task_data.get("prompt", "")
-        self.bot_prompt = task_data.get("bot_prompt", "")
+        self.prompt = task_data.prompt or ""
+        self.bot_prompt = getattr(task_data, 'bot_prompt', "")
 
         # Extract Dify configuration from Model environment variables
         self.dify_config = self._extract_dify_config(task_data)
@@ -110,13 +111,12 @@ class DifyAgent(Agent):
             f"DifyAgent initialized for task {self.task_id}, "
             f"app_mode={self.app_mode}, conversation_id={self.conversation_id}"
         )
-
-    def _extract_dify_config(self, task_data: Dict[str, Any]) -> Dict[str, str]:
+    def _extract_dify_config(self, task_data: ExecutionRequest) -> Dict[str, str]:
         """
         Extract Dify configuration from task_data
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task execution request
 
         Returns:
             Dict containing Dify configuration (api_key, base_url, app_id, params)
@@ -125,7 +125,7 @@ class DifyAgent(Agent):
 
         # Try to extract from bot -> agent_config -> env
         # Note: task_data uses "bot" key, not "team_members"
-        bots = task_data.get("bot", [])
+        bots = task_data.bot
         if bots and len(bots) > 0:
             bot = bots[0]
             agent_config = bot.get("agent_config", {})

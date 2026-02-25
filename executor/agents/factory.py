@@ -6,7 +6,7 @@
 
 # -*- coding: utf-8 -*-
 
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.base import Agent
@@ -15,6 +15,7 @@ from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.image_validator.image_validator_agent import ImageValidatorAgent
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
+from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("agent_factory")
 
@@ -40,7 +41,7 @@ class AgentFactory:
     def get_agent(
         cls,
         agent_type: str,
-        task_data: Dict[str, Any],
+        task_data: ExecutionRequest,
         emitter: ResponsesAPIEmitter,
     ) -> Optional[Agent]:
         """
@@ -48,7 +49,7 @@ class AgentFactory:
 
         Args:
             agent_type: The type of agent to create
-            task_data: The task data to pass to the agent
+            task_data: The task data ExecutionRequest to pass to the agent
             emitter: Emitter instance for sending events
 
         Returns:

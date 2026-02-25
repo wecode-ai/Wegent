@@ -14,13 +14,14 @@ import re
 from typing import Any, Dict, List, Optional
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("claude_code_skill_deployer")
 
 
 def download_and_deploy_skills(
     bot_config: Dict[str, Any],
-    task_data: Dict[str, Any],
+    task_data: ExecutionRequest,
     mode_strategy: Any,
     config_dir: Optional[str] = None,
 ) -> None:
@@ -34,7 +35,7 @@ def download_and_deploy_skills(
 
     Args:
         bot_config: Bot configuration containing skills list
-        task_data: Task data dictionary containing auth_token and team_namespace
+        task_data: Task data object containing auth_token and team_namespace
         mode_strategy: Execution mode strategy for getting deployment options
         config_dir: Optional config directory for Local mode
     """
@@ -53,13 +54,13 @@ def download_and_deploy_skills(
         skills_dir = mode_strategy.get_skills_directory(config_dir=config_dir)
 
         # Get auth token
-        auth_token = task_data.get("auth_token")
+        auth_token = task_data.auth_token
         if not auth_token:
             logger.warning("No auth token available, cannot download skills")
             return
 
         # Get team namespace for skill lookup
-        team_namespace = task_data.get("team_namespace", "default")
+        team_namespace = task_data.team_namespace or "default"
 
         # Create downloader and deploy skills
         downloader = SkillDownloader(
@@ -163,7 +164,7 @@ def setup_claudecode_dir(project_path: str, custom_rules: Dict[str, str]) -> Non
 
 
 def setup_coordinate_mode(
-    task_data: Dict[str, Any],
+    task_data: ExecutionRequest,
     project_path: Optional[str],
     options: Dict[str, Any],
 ) -> None:
@@ -181,16 +182,16 @@ def setup_coordinate_mode(
     3. Default workspace: /workspace/{task_id}
 
     Args:
-        task_data: Task data dictionary
+        task_data: Task data object
         project_path: Optional project path
         options: Options dictionary (may be modified to set cwd)
     """
     from executor.agents.claude_code.git_operations import add_to_git_exclude
     from executor.config import config
 
-    bots = task_data.get("bot", [])
-    mode = task_data.get("mode")
-    task_id = task_data.get("task_id")
+    bots = task_data.bot
+    mode = task_data.mode
+    task_id = task_data.task_id
 
     # Only setup for coordinate mode with multiple bots
     if mode != "coordinate" or len(bots) <= 1:

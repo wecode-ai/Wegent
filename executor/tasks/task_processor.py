@@ -9,8 +9,7 @@
 import os
 from typing import Any, Dict, Optional, Tuple, Union
 
-from executor.agents import Agent, AgentFactory
-from executor.config import config
+from executor.agents import Agent
 from executor.services.agent_service import AgentService
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
@@ -223,20 +222,16 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
         TaskStatus: Processing status
     """
     # Normalize to ExecutionRequest for type safety
-    exec_request = _normalize_request(request)
-
-    # Convert to dict for AgentService (which still uses dict internally)
-    task_data = exec_request.to_dict()
+    task_data = _normalize_request(request)
 
     # Create emitter for the task lifecycle
-    emitter = _create_emitter(exec_request)
+    emitter = _create_emitter(task_data)
 
     # Check if this is a subscription task
-    is_subscription = exec_request.is_subscription
+    is_subscription = task_data.is_subscription
 
     # Extract validation_id for validation tasks
-    # Note: validation_params is not in ExecutionRequest, check task_data for backward compatibility
-    validation_params = task_data.get("validation_params", {})
+    validation_params = task_data.validation_params or {}
     validation_id = (
         validation_params.get("validation_id") if validation_params else None
     )
@@ -294,7 +289,7 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
             done_result = {"validation_id": validation_id, "stage": "completed"}
             # Try to retrieve detailed validation results from the agent
             try:
-                agent = agent_service.get_agent(f"{exec_request.task_id}")
+                agent = agent_service.get_agent(f"{task_data.task_id}")
                 if agent and hasattr(agent, "validation_result"):
                     done_result["value"] = json.dumps(agent.validation_result)
             except Exception as e:

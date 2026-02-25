@@ -14,6 +14,7 @@ so we use dict-style access (conn["key"]) not attribute access.
 """
 
 from chat_shell.tools.mcp.client import build_connections
+from shared.models.execution import ExecutionRequest
 
 
 class TestBuildConnectionsVariableSubstitution:
@@ -28,11 +29,11 @@ class TestBuildConnectionsVariableSubstitution:
                 "headers": {"X-User": "${{user.name}}"},
             }
         }
-        task_data = {
-            "user": {"id": 42, "name": "zhangsan"},
-            "task_id": 100,
-            "team_id": 10,
-        }
+        task_data = ExecutionRequest(
+            user={"id": 42, "name": "zhangsan"},
+            task_id=100,
+            team_id=10,
+        )
 
         connections = build_connections(config, task_data)
 
@@ -49,9 +50,9 @@ class TestBuildConnectionsVariableSubstitution:
                 "headers": {"Authorization": "Bearer ${{user.git_token}}"},
             }
         }
-        task_data = {
-            "user": {"git_token": "ghp_test_token_123"},
-        }
+        task_data = ExecutionRequest(
+            user={"git_token": "ghp_test_token_123"},
+        )
 
         connections = build_connections(config, task_data)
 
@@ -66,7 +67,7 @@ class TestBuildConnectionsVariableSubstitution:
                 "url": "https://${{git_domain}}/mcp/sse",
             }
         }
-        task_data = {"git_domain": "gitlab.example.com"}
+        task_data = ExecutionRequest(git_domain="gitlab.example.com")
 
         connections = build_connections(config, task_data)
 
@@ -89,21 +90,6 @@ class TestBuildConnectionsVariableSubstitution:
         # Placeholder should remain unresolved
         assert conn["headers"] == {"X-User": "${{user.name}}"}
 
-    def test_empty_task_data_preserves_placeholders(self) -> None:
-        """When task_data is empty dict, placeholders should remain."""
-        config = {
-            "server": {
-                "type": "sse",
-                "url": "http://example.com/sse",
-                "headers": {"X-User": "${{user.name}}"},
-            }
-        }
-
-        connections = build_connections(config, task_data={})
-
-        conn = connections["server"]
-        assert conn["headers"] == {"X-User": "${{user.name}}"}
-
     def test_stdio_env_placeholder_replaced(self) -> None:
         """${{user.git_token}} in stdio env should be replaced."""
         config = {
@@ -114,9 +100,9 @@ class TestBuildConnectionsVariableSubstitution:
                 "env": {"GIT_TOKEN": "${{user.git_token}}"},
             }
         }
-        task_data = {
-            "user": {"git_token": "glpat-xxx"},
-        }
+        task_data = ExecutionRequest(
+            user={"git_token": "glpat-xxx"},
+        )
 
         connections = build_connections(config, task_data)
 
@@ -136,12 +122,12 @@ class TestBuildConnectionsVariableSubstitution:
                 },
             }
         }
-        task_data = {
-            "user": {"name": "testuser"},
-            "git_domain": "github.com",
-            "task_id": 999,
-            "team_id": 50,
-        }
+        task_data = ExecutionRequest(
+            user={"name": "testuser"},
+            git_domain="github.com",
+            task_id=999,
+            team_id=50,
+        )
 
         connections = build_connections(config, task_data)
 

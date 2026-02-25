@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from shared.models.execution import ExecutionRequest
 from shared.utils.mcp_utils import replace_mcp_server_variables
 
 
@@ -14,10 +15,10 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
             "timeout": 300,
         }
     }
-    task_data = {
-        "backend_url": "http://localhost:8000",
-        "task_token": "token-123",
-    }
+    task_data = ExecutionRequest(
+        backend_url="http://localhost:8000",
+        auth_token="token-123",
+    )
 
     replaced = replace_mcp_server_variables(mcp_servers, task_data)
 
@@ -31,7 +32,7 @@ def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
 
 def test_replace_mcp_server_variables_preserves_unknown_placeholders():
     mcp_servers = {"s": {"url": "http://${{unknown}}/x"}}
-    task_data = {"backend_url": "http://localhost:8000"}
+    task_data = ExecutionRequest(backend_url="http://localhost:8000")
 
     replaced = replace_mcp_server_variables(mcp_servers, task_data)
 
@@ -40,8 +41,7 @@ def test_replace_mcp_server_variables_preserves_unknown_placeholders():
 
 def test_replace_user_name_placeholder_with_execution_request_task_data() -> None:
     """Integration test: Simulate CHAT_MCP_SERVERS with ${{user.name}} placeholder
-    being resolved using a task_data dict. This is the exact scenario that was
-    broken before the fix."""
+    being resolved using an ExecutionRequest object."""
     mcp_servers = {
         "my-server": {
             "type": "sse",
@@ -52,12 +52,12 @@ def test_replace_user_name_placeholder_with_execution_request_task_data() -> Non
             },
         }
     }
-    # task_data structure as built by TaskRequestBuilder.build()
-    task_data = {
-        "task_id": 100,
-        "subtask_id": 200,
-        "team_id": 10,
-        "user": {
+    # ExecutionRequest structure
+    task_data = ExecutionRequest(
+        task_id=100,
+        subtask_id=200,
+        team_id=10,
+        user={
             "id": 42,
             "name": "zhangsan",
             "git_domain": "github.com",
@@ -65,12 +65,12 @@ def test_replace_user_name_placeholder_with_execution_request_task_data() -> Non
             "git_login": "zhangsan",
             "git_email": "zhangsan@example.com",
         },
-        "bot": [{"id": 5, "name": "test-bot", "shell_type": "chat"}],
-        "git_repo": "org/repo",
-        "git_url": "https://github.com/org/repo.git",
-        "git_domain": "github.com",
-        "branch_name": "main",
-    }
+        bot=[{"id": 5, "name": "test-bot", "shell_type": "chat"}],
+        git_repo="org/repo",
+        git_url="https://github.com/org/repo.git",
+        git_domain="github.com",
+        branch_name="main",
+    )
 
     replaced = replace_mcp_server_variables(mcp_servers, task_data)
 
@@ -100,20 +100,20 @@ def test_replace_multiple_placeholders_in_mcp_config() -> None:
             },
         }
     }
-    task_data = {
-        "task_id": 1,
-        "subtask_id": 2,
-        "team_id": 3,
-        "user": {
+    task_data = ExecutionRequest(
+        task_id=1,
+        subtask_id=2,
+        team_id=3,
+        user={
             "id": 10,
             "name": "dev",
             "git_token": "ghp_abc123",  # noqa: S105
         },
-        "git_repo": "myorg/myrepo",
-        "git_domain": "github.com",
-        "branch_name": "feature/test",
-        "bot": [],
-    }
+        git_repo="myorg/myrepo",
+        git_domain="github.com",
+        branch_name="feature/test",
+        bot=[],
+    )
 
     replaced = replace_mcp_server_variables(mcp_servers, task_data)
 

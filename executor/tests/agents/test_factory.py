@@ -10,6 +10,7 @@ from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.factory import AgentFactory
+from shared.models.execution import ExecutionRequest
 
 
 def create_mock_emitter():
@@ -59,14 +60,14 @@ class TestAgentFactory:
     @pytest.fixture
     def task_data(self):
         """Sample task data for testing"""
-        return {
-            "task_id": 123,
-            "subtask_id": 456,
-            "task_title": "Test Task",
-            "subtask_title": "Test Subtask",
-            "user": {"user_name": "testuser"},
-            "bot": [{"api_key": "test_api_key", "model": "claude-3-5-sonnet-20241022"}],
-        }
+        return ExecutionRequest(
+            task_id=123,
+            subtask_id=456,
+            task_title="Test Task",
+            subtask_title="Test Subtask",
+            user={"user_name": "testuser"},
+            bot=[{"api_key": "test_api_key", "model": "claude-3-5-sonnet-20241022"}],
+        )
 
     def test_get_claudecode_agent(self, task_data, mock_emitter):
         """Test creating ClaudeCode agent"""
@@ -74,7 +75,7 @@ class TestAgentFactory:
 
         assert agent is not None
         assert isinstance(agent, ClaudeCodeAgent)
-        assert agent.task_id == task_data["task_id"]
+        assert agent.task_id == task_data.task_id
 
     def test_get_claudecode_agent_case_insensitive(self, task_data, mock_emitter):
         """Test creating ClaudeCode agent with different case"""
@@ -89,7 +90,7 @@ class TestAgentFactory:
 
         assert agent is not None
         assert isinstance(agent, AgnoAgent)
-        assert agent.task_id == task_data["task_id"]
+        assert agent.task_id == task_data.task_id
 
     def test_get_agno_agent_case_insensitive(self, task_data, mock_emitter):
         """Test creating Agno agent with different case"""
@@ -104,7 +105,7 @@ class TestAgentFactory:
 
         assert agent is not None
         assert isinstance(agent, DifyAgent)
-        assert agent.task_id == task_data["task_id"]
+        assert agent.task_id == task_data.task_id
 
     def test_get_dify_agent_case_insensitive(self, task_data, mock_emitter):
         """Test creating Dify agent with different case"""
