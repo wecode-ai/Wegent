@@ -64,7 +64,12 @@ class DifyAgent(Agent):
         super().__init__(task_data, emitter)
 
         self.prompt = task_data.prompt or ""
-        self.bot_prompt = getattr(task_data, 'bot_prompt', "")
+        # Extract bot_prompt from task_data.bot (first bot's bot_prompt)
+        bots = task_data.bot
+        if bots and len(bots) > 0:
+            self.bot_prompt = bots[0].get("bot_prompt", "")
+        else:
+            self.bot_prompt = ""
 
         # Extract Dify configuration from Model environment variables
         self.dify_config = self._extract_dify_config(task_data)
