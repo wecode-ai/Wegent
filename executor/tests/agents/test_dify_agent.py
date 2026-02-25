@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,10 @@ import pytest
 from executor.agents.dify.dify_agent import DifyAgent
 from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
+
+# Test constants
+TASK_ID = 123
+SUBTASK_ID = 456
 
 
 def create_mock_emitter():
@@ -68,16 +73,16 @@ class TestDifyAgent:
             }
 
     @pytest.fixture
-    def mock_emitter(self):
+    def mock_emitter(self) -> MagicMock:
         """Create a mock emitter for testing"""
         return create_mock_emitter()
 
     @pytest.fixture
-    def task_data(self):
+    def task_data(self) -> ExecutionRequest:
         """Sample task data for testing"""
         return ExecutionRequest(
-            task_id=123,
-            subtask_id=456,
+            task_id=TASK_ID,
+            subtask_id=SUBTASK_ID,
             prompt="Hello Dify",
             bot=[
                 {
@@ -93,12 +98,12 @@ class TestDifyAgent:
             user={"user_name": "testuser"},
         )
 
-    def test_init(self, task_data, mock_emitter) -> None:
+    def test_init(self, task_data: ExecutionRequest, mock_emitter: MagicMock) -> None:
         """Test DifyAgent initialization"""
         agent = DifyAgent(task_data, mock_emitter)
 
         assert agent is not None
-        assert agent.task_id == 123
+        assert agent.task_id == TASK_ID
         assert agent.prompt == "Hello Dify"
         # Without bot_prompt, dify_app_id and params come from config (empty)
         assert agent.dify_app_id == "app-default-123"  # From DIFY_APP_ID in config
@@ -106,14 +111,18 @@ class TestDifyAgent:
         assert agent.dify_config["api_key"] == "app-test-api-key"
         assert agent.dify_config["base_url"] == "https://api.dify.ai"
 
-    def test_init_without_bot_prompt(self, task_data, mock_emitter) -> None:
+    def test_init_without_bot_prompt(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test DifyAgent initialization without bot_prompt"""
         agent = DifyAgent(task_data, mock_emitter)
 
         assert agent.dify_app_id == "app-default-123"  # Should use default from config
         assert agent.params == {}
 
-    def test_parse_bot_prompt_valid(self, task_data, mock_emitter) -> None:
+    def test_parse_bot_prompt_valid(
+        self, task_data: ExecutionRequest, mock_emitter: MagicMock
+    ) -> None:
         """Test parsing valid bot_prompt"""
         agent = DifyAgent(task_data, mock_emitter)
 

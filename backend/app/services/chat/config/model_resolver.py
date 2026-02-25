@@ -241,7 +241,7 @@ def _process_model_config_placeholders(
         user_id: Current user's ID
         user_name: Current user's username
         agent_config: Optional agent config from bot (for chat mode)
-        task_data: Optional task data (for chat mode)
+        task_data: Optional[ExecutionRequest] containing task-specific data (for chat mode)
 
     Returns:
         Model config with placeholders replaced in api_key and default_headers

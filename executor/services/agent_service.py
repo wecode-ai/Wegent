@@ -24,6 +24,9 @@ from shared.status import TaskStatus
 
 logger = setup_logger("agent_service")
 
+# Constant for missing subtask ID
+MISSING_SUBTASK_ID = -1
+
 
 def _format_task_log(task_id, subtask_id):
     return f"task_id: {task_id}.{subtask_id}"
@@ -183,14 +186,18 @@ class AgentService:
             agent_name = agent.get_name()
             if agent_name == "ClaudeCodeAgent":
                 await ClaudeCodeAgent.close_client(str(task_id))
-                logger.info(f"[{_format_task_log(task_id, -1)}] Closed Claude client")
+                logger.info(
+                    f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Claude client"
+                )
             elif agent_name == "Agno":
                 await AgnoAgent.close_client(str(task_id))
-                logger.info(f"[{_format_task_log(task_id, -1)}] Closed Agno client")
+                logger.info(
+                    f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Agno client"
+                )
             return TaskStatus.SUCCESS, None
         except Exception as e:
             logger.exception(
-                f"[{_format_task_log(task_id, -1)}] Error closing agent: {e}"
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Error closing agent: {e}"
             )
             return TaskStatus.FAILED, str(e)
 
@@ -201,7 +208,7 @@ class AgentService:
         if not session:
             return (
                 TaskStatus.FAILED,
-                f"[{_format_task_log(task_id, -1)}] No session found",
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] No session found",
             )
 
         try:
@@ -211,7 +218,7 @@ class AgentService:
             del self._agent_sessions[task_id]
             return (
                 TaskStatus.SUCCESS,
-                f"[{_format_task_log(task_id, -1)}] Session deleted",
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Session deleted",
             )
         except Exception as e:
             logger.exception(f"[{task_id}] Error deleting session: {e}")
@@ -222,8 +229,14 @@ class AgentService:
             return asyncio.run(self.delete_session_async(task_id))
         except RuntimeError as e:
             if "already running" in str(e):
-                loop = asyncio.get_event_loop()
-                return loop.run_until_complete(self.delete_session_async(task_id))
+                logger.error(
+                    f"[{task_id}] delete_session() cannot run inside an active event loop; "
+                    f"use delete_session_async()"
+                )
+                return (
+                    TaskStatus.FAILED,
+                    "delete_session() cannot run inside an active event loop; use delete_session_async()",
+                )
             logger.exception(f"[{task_id}] Runtime error deleting session: {e}")
             return TaskStatus.FAILED, str(e)
         except Exception as e:
@@ -245,7 +258,7 @@ class AgentService:
         if not session:
             return (
                 TaskStatus.FAILED,
-                f"[{_format_task_log(task_id, -1)}] No session found",
+                f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] No session found",
             )
 
         try:
@@ -256,24 +269,24 @@ class AgentService:
                 success = agent.cancel_run()
                 if success:
                     logger.info(
-                        f"[{_format_task_log(task_id, -1)}] Successfully cancelled {agent_name} task"
+                        f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Successfully cancelled {agent_name} task"
                     )
                     return (
                         TaskStatus.SUCCESS,
-                        f"[{_format_task_log(task_id, -1)}] Task cancelled",
+                        f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Task cancelled",
                     )
                 else:
                     logger.warning(
-                        f"[{_format_task_log(task_id, -1)}] Failed to cancel {agent_name} task"
+                        f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Failed to cancel {agent_name} task"
                     )
                     return (
                         TaskStatus.FAILED,
-                        f"[{_format_task_log(task_id, -1)}] Cancel failed",
+                        f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Cancel failed",
                     )
             else:
                 return (
                     TaskStatus.FAILED,
-                    f"[{_format_task_log(task_id, -1)}] {agent_name} agent does not support cancellation",
+                    f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] {agent_name} agent does not support cancellation",
                 )
 
         except Exception as e:
@@ -292,7 +305,7 @@ class AgentService:
             session = self._agent_sessions.get(task_id)
             if not session:
                 logger.warning(
-                    f"[{_format_task_log(task_id, -1)}] No session found for sending cancel callback"
+                    f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] No session found for sending cancel callback"
                 )
                 return
 
@@ -300,7 +313,7 @@ class AgentService:
             task_data = getattr(agent, "task_data", None)
 
             # Get task information from ExecutionRequest
-            subtask_id = -1
+            subtask_id = MISSING_SUBTASK_ID
             if task_data is not None:
                 subtask_id = task_data.subtask_id
             logger.info(

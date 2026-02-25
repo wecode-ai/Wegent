@@ -18,9 +18,7 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 logger = setup_logger("agno_config_utils")
 
 
-def resolve_value_from_source(
-    data_sources: Dict[str, Any], source_spec: str
-) -> str:
+def resolve_value_from_source(data_sources: Dict[str, Any], source_spec: str) -> str:
     """
     Resolve value from specified data source using flexible notation
 
@@ -83,7 +81,7 @@ def resolve_value_from_source(
                     return ""
 
         return str(current) if current is not None else ""
-    except Exception:
+    except (AttributeError, TypeError, KeyError, ValueError):
         return ""
 
 
@@ -103,7 +101,7 @@ def replace_placeholders_with_sources(
     # Find all placeholders in format ${source_spec}
     pattern = r"\$\{([^}]+)\}"
 
-    logger.info(f"data_sources:{data_sources}, template:{template}")
+    logger.info(f"data_sources keys:{list(data_sources.keys())}, template:{template}")
 
     def replace_match(match):
         source_spec = match.group(1)
@@ -253,30 +251,29 @@ class ConfigManager:
         options = {}
         bot_config = task_data.bot
 
-        # Extract all non-None parameters from bot_config
-        if bot_config:
+        # Handle both single bot object and bot array
+        if bot_config and isinstance(bot_config, dict):
+            # Handle single bot object
+            logger.info("Found single bot configuration")
             for key in valid_options:
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
+        elif bot_config and isinstance(bot_config, list):
+            # Handle bot array - use the first bot configuration
+            team_members = []
+            for tmp_bot in bot_config:
+                logger.info(
+                    f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}"
+                )
+                team_members.append(tmp_bot)
 
-        # Handle both single bot object and bot array
-        if bot_config:
-            if isinstance(bot_config, list):
-                # Handle bot array - use the first bot configuration
-                team_members = []
-                for tmp_bot in bot_config:
-                    logger.info(
-                        f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}"
-                    )
-                    team_members.append(tmp_bot)
-
-                options["team_members"] = team_members
-            else:
-                # Handle single bot object (original logic)
-                logger.info("Found single bot configuration")
+            options["team_members"] = team_members
+            # Also extract options from first bot if it's a dict
+            if bot_config and isinstance(bot_config[0], dict):
+                first_bot = bot_config[0]
                 for key in valid_options:
-                    if key in bot_config and bot_config[key] is not None:
-                        options[key] = bot_config[key]
+                    if key in first_bot and first_bot[key] is not None:
+                        options[key] = first_bot[key]
 
         logger.info(f"Extracted Agno options: {mask_sensitive_data(options)}")
         return options

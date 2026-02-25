@@ -106,7 +106,14 @@ def get_task_info() -> Optional[ExecutionRequest]:
     data = get_env_json("TASK_INFO")
     if data is None:
         return None
-    return ExecutionRequest.from_dict(data)
+    if not isinstance(data, dict):
+        logger.warning(f"TASK_INFO is not a dict, got {type(data).__name__}")
+        return None
+    try:
+        return ExecutionRequest.from_dict(data)
+    except Exception as e:
+        logger.warning(f"Failed to parse TASK_INFO as ExecutionRequest: {e}")
+        return None
 
 
 def get_auth_token() -> Optional[str]:

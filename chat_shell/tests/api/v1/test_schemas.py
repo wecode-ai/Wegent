@@ -11,7 +11,7 @@ from shared.models.execution import ExecutionRequest
 class TestMetadata:
     """Tests for Metadata schema."""
 
-    def test_metadata_with_execution_request(self):
+    def test_metadata_with_execution_request(self) -> None:
         """Test that Metadata accepts ExecutionRequest for task_data."""
         execution_request = ExecutionRequest(
             task_id=123,
@@ -29,7 +29,7 @@ class TestMetadata:
         assert metadata.task_data.subtask_id == 456
         assert metadata.task_data.user_name == "test_user"
 
-    def test_metadata_with_none_task_data(self):
+    def test_metadata_with_none_task_data(self) -> None:
         """Test that Metadata accepts None for task_data."""
         metadata = Metadata(
             task_id=123,
