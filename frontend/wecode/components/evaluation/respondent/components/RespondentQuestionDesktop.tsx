@@ -180,12 +180,9 @@ export function RespondentQuestionDesktop({
         title: t('answers.submit_success'),
       })
 
-      // Navigate to next question or back to topic
-      if (currentQuestionIndex < totalQuestions - 1) {
-        handleNext()
-      } else {
-        router.push(`/evaluation/respondent/topics/${topic.id}`)
-      }
+      // Reset form for potential re-submission
+      setAnswerText('')
+      setAttachments([])
     } catch {
       toast({
         title: t('errors.save_failed'),
@@ -303,40 +300,42 @@ export function RespondentQuestionDesktop({
           <div className="max-w-2xl mx-auto p-8">
             {/* Instructions - Collapsible */}
             {instructions && (
-              <Collapsible
-                open={showInstructions}
-                onOpenChange={setShowInstructions}
-                className="mb-6"
-              >
-                <CollapsibleTrigger asChild>
-                  <button className="w-full flex items-center justify-between p-4 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition-colors text-left">
-                    <div className="flex items-center gap-2 text-amber-900">
-                      <FileText className="h-4 w-4" />
-                      <span className="text-sm font-medium">{t('answers.instructions.title')}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-amber-700">
-                        {showInstructions ? '点击收起' : '点击展开'}
-                      </span>
-                      {showInstructions ? (
-                        <ChevronUp className="h-4 w-4 text-amber-700" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 text-amber-700" />
-                      )}
-                    </div>
-                  </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="mt-2 p-4 rounded-lg border border-amber-100 bg-amber-50/30">
-                    <div className="prose prose-sm max-w-none text-amber-800">
-                      <EnhancedMarkdown
-                        source={instructions}
-                        theme={theme === 'dark' ? 'dark' : 'light'}
-                      />
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
+              <Card className="mb-6 border-amber-200 bg-amber-50/50">
+                <Collapsible open={showInstructions} onOpenChange={setShowInstructions}>
+                  <CollapsibleTrigger asChild>
+                    <button className="w-full flex items-center justify-between p-4 text-left hover:bg-amber-50/80 transition-colors rounded-t-lg">
+                      <div className="flex items-center gap-2 text-amber-900">
+                        <FileText className="h-4 w-4" />
+                        <span className="text-sm font-medium">
+                          {t('answers.instructions.title')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-amber-700">
+                          {showInstructions ? '点击收起' : '点击展开'}
+                        </span>
+                        {showInstructions ? (
+                          <ChevronUp className="h-4 w-4 text-amber-700" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-amber-700" />
+                        )}
+                      </div>
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <CardContent className="pt-0">
+                      <div className="p-4 rounded-lg bg-white/50">
+                        <div className="prose prose-sm max-w-none text-amber-800">
+                          <EnhancedMarkdown
+                            source={instructions}
+                            theme={theme === 'dark' ? 'dark' : 'light'}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </CollapsibleContent>
+                </Collapsible>
+              </Card>
             )}
 
             {/* Question Content - No separate title */}
