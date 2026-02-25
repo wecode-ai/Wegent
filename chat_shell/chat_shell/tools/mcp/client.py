@@ -245,7 +245,7 @@ class MCPClient:
         self.task_data = task_data
         self.connections = build_connections(config, task_data) if config else {}
         self._client: MultiServerMCPClient | None = None
-        self._tools: list[BaseTool] = []
+        self._tools: dict[str, list[BaseTool]] = {}
 
     async def __aenter__(self) -> "MCPClient":
         """Async context manager entry - connect to servers."""
@@ -284,9 +284,9 @@ class MCPClient:
         # Load tools from each server individually to handle failures gracefully
         # This avoids the issue where one failing server causes all tools to fail
         add_span_event("loading_tools_started")
-        raw_tools: list[BaseTool] = []
         failed_servers: list[str] = []
         successful_servers: list[str] = []
+        total_tools = 0
 
         async def load_server_tools(
             server_name: str,
@@ -330,12 +330,15 @@ class MCPClient:
                 )
             else:
                 successful_servers.append(server_name)
-                raw_tools.extend(tools)
+                # Wrap tools with protection and store by server name
+                protected_tools = [wrap_tool_with_protection(tool) for tool in tools]
+                self._tools[server_name] = protected_tools
+                total_tools += len(protected_tools)
 
         add_span_event(
             "loading_tools_completed",
             {
-                "raw_tools_count": len(raw_tools),
+                "total_tools_count": total_tools,
                 "successful_servers": successful_servers,
                 "failed_servers": failed_servers,
             },
@@ -349,32 +352,28 @@ class MCPClient:
                 ", ".join(failed_servers),
             )
 
-        # Wrap all tools with protection mechanisms
-        add_span_event("wrapping_tools_started")
-        self._tools = [wrap_tool_with_protection(tool) for tool in raw_tools]
-        add_span_event(
-            "wrapping_tools_completed", {"protected_tools_count": len(self._tools)}
-        )
-
-        for tool in self._tools:
-            logger.debug(
-                "[MCP] Registered tool (protected): name='%s', description='%s', type='%s'",
-                getattr(tool, "name", "UNKNOWN"),
-                getattr(tool, "description", "NO_DESCRIPTION"),
-                type(tool).__name__,
-            )
+        # Log all loaded tools
+        for server_name, tools in self._tools.items():
+            for tool in tools:
+                logger.debug(
+                    "[MCP] Registered tool (protected): server='%s', name='%s', description='%s', type='%s'",
+                    server_name,
+                    getattr(tool, "name", "UNKNOWN"),
+                    getattr(tool, "description", "NO_DESCRIPTION"),
+                    type(tool).__name__,
+                )
 
         logger.debug(
             "Connected to MCP servers: %s, loaded %d protected tools",
             ", ".join(self.list_servers()),
-            len(self._tools),
+            total_tools,
         )
 
     async def disconnect(self) -> None:
         """Disconnect from all MCP servers."""
         if self._client:
             self._client = None
-            self._tools = []
+            self._tools = {}
             logger.debug("Disconnected from MCP servers")
 
     def get_tools(self, server_names: list[str] | None = None) -> list[BaseTool]:
@@ -382,6 +381,7 @@ class MCPClient:
 
         Args:
             server_names: Optional list of server names to filter tools.
+                         If None, returns all tools from all servers.
 
         Returns:
             List of LangChain BaseTool instances
@@ -390,23 +390,40 @@ class MCPClient:
             return []
 
         if server_names is None:
-            return list(self._tools)
+            # Return all tools from all servers
+            all_tools = []
+            for tools in self._tools.values():
+                all_tools.extend(tools)
+            return all_tools
 
+        # Filter tools by server names
         filtered_tools = []
-        for tool in self._tools:
-            for server_name in server_names:
-                if tool.name.startswith(f"{server_name}_") or server_name in getattr(
-                    tool, "server_name", ""
-                ):
-                    filtered_tools.append(tool)
-                    break
+        for server_name in server_names:
+            if server_name in self._tools:
+                filtered_tools.extend(self._tools[server_name])
         return filtered_tools
 
     def list_servers(self) -> list[str]:
         """List configured server names."""
         return list(self.connections.keys())
 
+    def get_tools_by_server(self) -> dict[str, list[BaseTool]]:
+        """Get tools organized by server name.
+
+        Returns:
+            Dict mapping server_name to list of tools
+        """
+        return dict(self._tools)
+
+    def get_tools_count_by_server(self) -> dict[str, int]:
+        """Get tool counts per server.
+
+        Returns:
+            Dict mapping server_name to tool count
+        """
+        return {server_name: len(tools) for server_name, tools in self._tools.items()}
+
     @property
     def is_connected(self) -> bool:
-        """Check if client has loaded tools."""
+        """Check if client has loaded tools from any server."""
         return len(self._tools) > 0
