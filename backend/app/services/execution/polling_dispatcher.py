@@ -38,6 +38,8 @@ POLL_INTERVAL_SECONDS = 5
 MAX_POLL_COUNT = 720  # 1 hour at 5s intervals
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 DEFAULT_DEEP_RESEARCH_AGENT = "deep-research-pro-preview-12-2025"
+THOUGHT_STREAM_TIMEOUT = 30.0  # seconds, timeout per read for thinking progress
+REPORT_STREAM_TIMEOUT = 300.0  # seconds, timeout per read for final report
 
 
 async def dispatch_polling(
@@ -251,7 +253,7 @@ async def _fetch_thought_summaries(
     thought_summaries: list = []
     try:
         async for event_type, event_data_str in gemini_client.stream_interaction_result(
-            interaction_id
+            interaction_id, stream_timeout=THOUGHT_STREAM_TIMEOUT
         ):
             try:
                 data = json.loads(event_data_str)
@@ -318,7 +320,7 @@ async def _stream_final_report(
     all_annotations: list[dict] = []
     try:
         async for event_type, event_data_str in gemini_client.stream_interaction_result(
-            interaction_id
+            interaction_id, stream_timeout=REPORT_STREAM_TIMEOUT
         ):
             try:
                 data = json.loads(event_data_str)

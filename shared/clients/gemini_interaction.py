@@ -195,11 +195,14 @@ class GeminiInteractionClient:
     async def stream_interaction_result(
         self,
         interaction_id: str,
+        stream_timeout: float | None = None,
     ) -> AsyncIterator[tuple[str, str]]:
         """Stream the result of a completed interaction.
 
         Args:
             interaction_id: The interaction ID to stream
+            stream_timeout: Optional timeout in seconds for the stream.
+                If None, no timeout is applied (waits indefinitely).
 
         Yields:
             Tuples of (event_type, event_data) from the SSE stream
@@ -216,7 +219,8 @@ class GeminiInteractionClient:
             params,
         )
 
-        async with httpx.AsyncClient(timeout=None) as client:
+        timeout = httpx.Timeout(stream_timeout) if stream_timeout else None
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 async with client.stream(
                     "GET",
