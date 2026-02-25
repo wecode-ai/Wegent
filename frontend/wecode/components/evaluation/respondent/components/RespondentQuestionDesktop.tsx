@@ -16,7 +16,6 @@ import {
   History,
   Download,
   File,
-  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -84,6 +83,9 @@ export function RespondentQuestionDesktop({
   // Last submitted answer
   const [lastSubmittedAnswer, setLastSubmittedAnswer] = useState<Answer | null>(null)
   const [showLastSubmitted, setShowLastSubmitted] = useState(false)
+
+  // Instructions collapsible
+  const [showInstructions, setShowInstructions] = useState(true)
 
   // Load draft and last submitted answer on mount
   useEffect(() => {
@@ -208,12 +210,6 @@ export function RespondentQuestionDesktop({
     setShowConfirmDialog(true)
   }
 
-  const handleRemoveAttachment = (index: number) => {
-    const newAttachments = [...attachments]
-    newAttachments.splice(index, 1)
-    setAttachments(newAttachments)
-  }
-
   const progress = Math.round(((currentQuestionIndex + 1) / totalQuestions) * 100)
 
   const instructions =
@@ -307,7 +303,11 @@ export function RespondentQuestionDesktop({
           <div className="max-w-2xl mx-auto p-8">
             {/* Instructions - Collapsible */}
             {instructions && (
-              <Collapsible open={true} className="mb-6">
+              <Collapsible
+                open={showInstructions}
+                onOpenChange={setShowInstructions}
+                className="mb-6"
+              >
                 <CollapsibleTrigger asChild>
                   <button className="w-full flex items-center justify-between p-4 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition-colors text-left">
                     <div className="flex items-center gap-2 text-amber-900">
@@ -315,8 +315,14 @@ export function RespondentQuestionDesktop({
                       <span className="text-sm font-medium">{t('answers.instructions.title')}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-amber-700">点击收起</span>
-                      <ChevronUp className="h-4 w-4 text-amber-700" />
+                      <span className="text-xs text-amber-700">
+                        {showInstructions ? '点击收起' : '点击展开'}
+                      </span>
+                      {showInstructions ? (
+                        <ChevronUp className="h-4 w-4 text-amber-700" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-amber-700" />
+                      )}
                     </div>
                   </button>
                 </CollapsibleTrigger>
@@ -474,48 +480,16 @@ export function RespondentQuestionDesktop({
                       </div>
                     </div>
                   ) : (
+                    // Has files - EvaluationFileUpload component handles file list display
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-medium text-text-secondary">
-                          {t('answers.uploaded_files')} ({attachments.length})
-                        </h3>
-                        <EvaluationFileUpload
-                          topicId={topic.id}
-                          questionId={questionId}
-                          fileType="answer_attachment"
-                          attachments={attachments}
-                          onChange={setAttachments}
-                          maxFiles={MAX_BATCH_FILES}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        {attachments.map((attachment, index) => (
-                          <div
-                            key={attachment.key || index}
-                            className="flex items-center gap-3 p-3 rounded-lg border border-border bg-white group"
-                          >
-                            <File className="h-5 w-5 text-primary flex-shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-text-primary truncate">
-                                {attachment.filename}
-                              </p>
-                              {attachment.file_size && (
-                                <p className="text-xs text-text-muted">
-                                  {formatFileSize(attachment.file_size)}
-                                </p>
-                              )}
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={() => handleRemoveAttachment(index)}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
+                      <EvaluationFileUpload
+                        topicId={topic.id}
+                        questionId={questionId}
+                        fileType="answer_attachment"
+                        attachments={attachments}
+                        onChange={setAttachments}
+                        maxFiles={MAX_BATCH_FILES}
+                      />
                     </div>
                   )}
                 </div>
