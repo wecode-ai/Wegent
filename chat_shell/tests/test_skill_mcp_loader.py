@@ -23,9 +23,9 @@ class TestLoadSkillMcpTools:
 
     @pytest.mark.asyncio
     async def test_empty_mcp_configs_returns_empty(self):
-        """Test that empty MCP configs returns empty lists."""
-        tools, clients = await _load_skill_mcp_tools({}, task_id=1)
-        assert tools == []
+        """Test that empty MCP configs returns empty dict and list."""
+        tools_with_server, clients = await _load_skill_mcp_tools({}, task_id=1)
+        assert tools_with_server == {}
         assert clients == []
 
     @pytest.mark.asyncio
@@ -39,25 +39,32 @@ class TestLoadSkillMcpTools:
             }
         }
 
+        mock_tool = MagicMock(name="test_tool")
         mock_client = MagicMock()
         mock_client.is_connected = True
-        mock_client.get_tools.return_value = [MagicMock(name="test_tool")]
+        mock_client.get_tools_with_server.return_value = {
+            "test_skill_server1": [mock_tool]
+        }
 
         with patch(
             "chat_shell.tools.mcp.MCPClient", return_value=mock_client
         ) as mock_mcp_class:
             mock_client.connect = AsyncMock()
-            tools, clients = await _load_skill_mcp_tools(mcp_configs, task_id=1)
+            tools_with_server, clients = await _load_skill_mcp_tools(
+                mcp_configs, task_id=1
+            )
 
             mock_mcp_class.assert_called_once_with(mcp_configs, task_data=None)
             mock_client.connect.assert_called_once()
-            assert len(tools) == 1
+            assert len(tools_with_server) == 1
+            assert "test_skill_server1" in tools_with_server
+            assert len(tools_with_server["test_skill_server1"]) == 1
             assert len(clients) == 1
             assert clients[0] == mock_client
 
     @pytest.mark.asyncio
     async def test_mcp_connection_failure_returns_empty(self):
-        """Test that connection failure returns empty lists gracefully."""
+        """Test that connection failure returns empty dict and list gracefully."""
         mcp_configs = {
             "test_skill_server1": {
                 "type": "stdio",
@@ -71,16 +78,18 @@ class TestLoadSkillMcpTools:
         mock_client.disconnect = AsyncMock()
 
         with patch("chat_shell.tools.mcp.MCPClient", return_value=mock_client):
-            tools, clients = await _load_skill_mcp_tools(mcp_configs, task_id=1)
+            tools_with_server, clients = await _load_skill_mcp_tools(
+                mcp_configs, task_id=1
+            )
 
-            assert tools == []
+            assert tools_with_server == {}
             assert clients == []
             # Verify disconnect was called for cleanup
             mock_client.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_mcp_connection_timeout_returns_empty(self):
-        """Test that connection timeout returns empty lists gracefully."""
+        """Test that connection timeout returns empty dict and list gracefully."""
         import asyncio
 
         mcp_configs = {
@@ -95,9 +104,11 @@ class TestLoadSkillMcpTools:
         mock_client.disconnect = AsyncMock()
 
         with patch("chat_shell.tools.mcp.MCPClient", return_value=mock_client):
-            tools, clients = await _load_skill_mcp_tools(mcp_configs, task_id=1)
+            tools_with_server, clients = await _load_skill_mcp_tools(
+                mcp_configs, task_id=1
+            )
 
-            assert tools == []
+            assert tools_with_server == {}
             assert clients == []
             # Verify disconnect was called for cleanup
             mock_client.disconnect.assert_called_once()
@@ -117,9 +128,11 @@ class TestLoadSkillMcpTools:
         mock_client.disconnect = AsyncMock()
 
         with patch("chat_shell.tools.mcp.MCPClient", return_value=mock_client):
-            tools, clients = await _load_skill_mcp_tools(mcp_configs, task_id=1)
+            tools_with_server, clients = await _load_skill_mcp_tools(
+                mcp_configs, task_id=1
+            )
 
-            assert tools == []
+            assert tools_with_server == {}
             assert clients == []
             # Verify disconnect was called for cleanup
             mock_client.disconnect.assert_called_once()
@@ -145,9 +158,12 @@ class TestPrepareSkillToolsWithMcp:
             }
         ]
 
+        mock_tool = MagicMock(name="mcp_tool")
         mock_client = MagicMock()
         mock_client.is_connected = True
-        mock_client.get_tools.return_value = [MagicMock(name="mcp_tool")]
+        mock_client.get_tools_with_server.return_value = {
+            "test_skill_server1": [mock_tool]
+        }
 
         with patch(
             "chat_shell.tools.mcp.MCPClient", return_value=mock_client
@@ -239,7 +255,9 @@ class TestPrepareSkillToolsWithMcp:
         mock_mcp_tool.name = "test_skill_server1_list_kbs"
         mock_mcp_tool.server_name = "test_skill_server1"
 
-        mock_client.get_tools.return_value = [mock_mcp_tool]
+        mock_client.get_tools_with_server.return_value = {
+            "test_skill_server1": [mock_mcp_tool]
+        }
 
         with patch(
             "chat_shell.tools.mcp.MCPClient", return_value=mock_client
@@ -317,12 +335,14 @@ class TestPrepareSkillToolsWithMcp:
             },
         ]
 
+        tool_a = MagicMock(name="tool_a")
+        tool_b = MagicMock(name="tool_b")
         mock_client = MagicMock()
         mock_client.is_connected = True
-        mock_client.get_tools.return_value = [
-            MagicMock(name="tool_a"),
-            MagicMock(name="tool_b"),
-        ]
+        mock_client.get_tools_with_server.return_value = {
+            "skill_a_server_a": [tool_a],
+            "skill_b_server_b": [tool_b],
+        }
 
         with patch(
             "chat_shell.tools.mcp.MCPClient", return_value=mock_client
@@ -369,9 +389,10 @@ class TestPrepareSkillToolsWithMcp:
             },
         ]
 
+        tool_a = MagicMock(name="tool_a")
         mock_client = MagicMock()
         mock_client.is_connected = True
-        mock_client.get_tools.return_value = [MagicMock(name="tool_a")]
+        mock_client.get_tools_with_server.return_value = {"skill_a_server_a": [tool_a]}
 
         with patch(
             "chat_shell.tools.mcp.MCPClient", return_value=mock_client

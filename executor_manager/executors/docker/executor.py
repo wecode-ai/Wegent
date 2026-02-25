@@ -12,7 +12,6 @@ Docker executor for running tasks in Docker containers.
 Uses unified ExecutionRequest from shared.models.execution.
 """
 
-import json
 import os
 import subprocess
 import time
@@ -238,34 +237,28 @@ class DockerExecutor(Executor):
     ) -> None:
         """Execute task in existing container"""
         executor_name = status["executor_name"]
-        port_info, error_msg = self._get_container_port(executor_name)
+        ready_info = self.wait_instance_ready(executor_name)
+        dispatch_result = self.dispatch_task_to_instance(
+            task, executor_name, ready_info
+        )
 
-        if port_info is None:
-            raise ValueError(
-                error_msg or f"Container {executor_name} has no ports mapped"
-            )
+        # Existing container path keeps the historical callback progress behavior.
+        status["progress"] = DEFAULT_PROGRESS_COMPLETE
+        status["error_msg"] = dispatch_result.get("error_msg", "")
 
-        # Send HTTP request to container
-        response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
+        # Task sent successfully to existing container, register for heartbeat monitoring
+        # This handles re-execution cases where Redis keys were cleaned up after first completion
+        task_id = get_metadata_field(task, "task_id")
+        subtask_id = get_metadata_field(task, "subtask_id")
+        task_type = get_metadata_field(task, "type", "online")
 
-        # Process response - check HTTP status code for success
-        if response.status_code == 200:
-            status["progress"] = DEFAULT_PROGRESS_COMPLETE
-            status["error_msg"] = response.json().get("error_msg", "")
-
-            # Task sent successfully to existing container, register for heartbeat monitoring
-            # This handles re-execution cases where Redis keys were cleaned up after first completion
-            task_id = get_metadata_field(task, "task_id")
-            subtask_id = get_metadata_field(task, "subtask_id")
-            task_type = get_metadata_field(task, "type", "online")
-
-            self.register_task_for_heartbeat(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                executor_name=executor_name,
-                task_type=task_type,
-                context=f"existing container: {executor_name}",
-            )
+        self.register_task_for_heartbeat(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            executor_name=executor_name,
+            task_type=task_type,
+            context=f"existing container: {executor_name}",
+        )
 
     def _get_container_port(
         self, executor_name: str
@@ -300,19 +293,51 @@ class DockerExecutor(Executor):
         return ports[0].get("host_port"), None
 
     def _send_task_to_container(
-        self, task: Dict[str, Any], host: str, port: int
+        self,
+        task: Dict[str, Any],
+        host: str,
+        port: int,
+        timeout: Optional[float] = None,
     ) -> requests.Response:
         """Send task to container API endpoint with trace context and request_id propagation"""
         endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
         logger.info(f"Sending task to {endpoint}")
 
-        return self.requests.post(endpoint, json=task)
+        request_kwargs = {}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+
+        return self.requests.post(endpoint, json=task, **request_kwargs)
 
     def _create_new_container(
         self, task: Dict[str, Any], task_info: Dict[str, Any], status: Dict[str, Any]
     ) -> None:
         """Create new Docker container"""
+        is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         executor_name = status["executor_name"]
+        self.create_instance(task, task_info, executor_name)
+
+        # For non-sandbox tasks, dispatch the first HTTP request after startup.
+        # Sandbox containers are intentionally started idle and wait for /execute requests.
+        if not is_sandbox_task:
+            try:
+                ready_info = self.wait_instance_ready(executor_name)
+                self.dispatch_task_to_instance(task, executor_name, ready_info)
+            except Exception:
+                # Avoid leaking an idle container when initial dispatch fails.
+                try:
+                    delete_container(executor_name)
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"Failed to cleanup container {executor_name} after "
+                        f"initial dispatch failure: {cleanup_error}"
+                    )
+                raise
+
+    def create_instance(
+        self, task: Dict[str, Any], task_info: Dict[str, Any], executor_name: str
+    ) -> None:
+        """Create a new Docker container instance."""
         task_id = task_info["task_id"]
         is_validation_task = get_metadata_field(task, "type") == "validation"
 
@@ -390,6 +415,180 @@ class DockerExecutor(Executor):
                     valid=False,
                 )
             raise
+
+    def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
+        """Wait for a Docker container instance to become ready."""
+        port = self._wait_for_container_ready(executor_name)
+        return {"port": port}
+
+    def dispatch_task_to_instance(
+        self,
+        task: Dict[str, Any],
+        executor_name: str,
+        ready_info: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Dispatch task to a ready Docker container instance."""
+        port = ready_info.get("port")
+        if port is None:
+            raise RuntimeError(
+                f"Ready info for {executor_name} does not contain mapped port"
+            )
+        return self._dispatch_initial_task_to_new_container(task, executor_name, port)
+
+    def _wait_for_container_ready(self, executor_name: str) -> int:
+        """Wait for container readiness and return mapped host port.
+
+        Readiness criteria:
+        1. Container exists and status is running
+        2. Container has at least one mapped port
+        3. HTTP probe endpoint responds successfully
+
+        Returns:
+            Ready container host port
+
+        Raises:
+            RuntimeError: If container is not ready within timeout window
+        """
+        max_retries = max(
+            int(
+                os.getenv(
+                    "EXECUTOR_READY_MAX_RETRIES",
+                    os.getenv("SANDBOX_READY_MAX_RETRIES", "180"),
+                )
+            ),
+            1,
+        )
+        retry_interval = max(
+            float(
+                os.getenv(
+                    "EXECUTOR_READY_INTERVAL",
+                    os.getenv("SANDBOX_READY_INTERVAL", "1"),
+                )
+            ),
+            0,
+        )
+        success_threshold = max(
+            int(os.getenv("EXECUTOR_READY_SUCCESS_THRESHOLD", "1")),
+            1,
+        )
+
+        success_count = 0
+        last_error = "container not ready"
+
+        for attempt in range(1, max_retries + 1):
+            status = self.get_container_status(executor_name)
+            if not status.get("exists", False):
+                success_count = 0
+                last_error = status.get("error_msg") or "container does not exist"
+            elif status.get("status") != "running":
+                success_count = 0
+                last_error = f"container status is '{status.get('status', 'unknown')}'"
+            else:
+                port, port_error = self._get_container_port(executor_name)
+                if port is None:
+                    success_count = 0
+                    last_error = port_error or "container port not available"
+                elif self._is_container_http_ready(port):
+                    success_count += 1
+                    if success_count >= success_threshold:
+                        logger.info(
+                            f"Container ready: {executor_name}, port={port}, "
+                            f"attempt={attempt}/{max_retries}"
+                        )
+                        return port
+                else:
+                    success_count = 0
+                    last_error = "http health probe failed"
+
+            logger.debug(
+                f"Waiting container ready {attempt}/{max_retries} for {executor_name}: "
+                f"{last_error}"
+            )
+            if attempt < max_retries and retry_interval > 0:
+                time.sleep(retry_interval)
+
+        raise RuntimeError(
+            f"Container {executor_name} failed to become ready: {last_error}"
+        )
+
+    def _is_container_http_ready(self, port: int) -> bool:
+        """Check container HTTP readiness via /ready then fallback /."""
+        timeout = float(os.getenv("EXECUTOR_READY_HTTP_TIMEOUT", "2"))
+        endpoints = ["/ready", "/"]
+        for path in endpoints:
+            url = f"http://{DEFAULT_DOCKER_HOST}:{port}{path}"
+            try:
+                response = self.requests.get(url, timeout=timeout)
+                if response.status_code < 500:
+                    return True
+            except requests.RequestException:
+                continue
+        return False
+
+    def _dispatch_initial_task_to_new_container(
+        self, task: Dict[str, Any], executor_name: str, port: int
+    ) -> Dict[str, Any]:
+        """Dispatch first task request to a ready container.
+
+        Args:
+            task: Task payload in OpenAI Responses API format
+            executor_name: Container name
+            port: Ready container host port
+
+        Raises:
+            RuntimeError: If request dispatch fails after retries
+        """
+        max_retries = max(
+            int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "3")),
+            1,
+        )
+        retry_interval = max(
+            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
+            0,
+        )
+        request_timeout = max(
+            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
+            0.1,
+        )
+        last_error = "unknown error"
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self._send_task_to_container(
+                    task,
+                    DEFAULT_DOCKER_HOST,
+                    port,
+                    timeout=request_timeout,
+                )
+                if response.status_code == 200:
+                    error_msg = ""
+                    try:
+                        error_msg = response.json().get("error_msg", "")
+                    except Exception:
+                        error_msg = ""
+                    logger.info(
+                        f"Initial task dispatched successfully to {executor_name} "
+                        f"(attempt {attempt}/{max_retries})"
+                    )
+                    return {"status": "success", "error_msg": error_msg}
+
+                response_text = getattr(response, "text", "") or ""
+                last_error = (
+                    f"status={response.status_code}, response={response_text[:500]}"
+                )
+            except requests.RequestException as e:
+                last_error = str(e)
+
+            logger.warning(
+                f"Initial task dispatch attempt {attempt}/{max_retries} failed for "
+                f"{executor_name}: {last_error}"
+            )
+            if attempt < max_retries and retry_interval > 0:
+                time.sleep(retry_interval)
+
+        raise RuntimeError(
+            f"Failed to dispatch initial task to container {executor_name}: {last_error}"
+        )
 
     def _check_container_health(
         self, task: Dict[str, Any], executor_name: str, is_validation_task: bool
@@ -606,9 +805,6 @@ class DockerExecutor(Executor):
         subtask_id = task_info["subtask_id"]
         user_name = task_info["user_name"]
 
-        # Convert task to JSON string
-        task_str = json.dumps(task)
-
         # Basic command
         cmd = [
             "docker",
@@ -641,12 +837,10 @@ class DockerExecutor(Executor):
             logger.info("Disabled seccomp for compatibility with older kernel")
 
         # Environment variables
-        # For sandbox type, do NOT set TASK_INFO to prevent auto-execution
-        # Sandbox containers should wait for execute requests via API
+        # Do NOT set TASK_INFO to avoid startup auto-execution.
+        # executor_manager dispatches task requests explicitly after container startup.
         is_sandbox = get_metadata_field(task, "type") == "sandbox"
-        if not is_sandbox:
-            cmd.extend(["-e", f"TASK_INFO={task_str}"])
-        else:
+        if is_sandbox:
             # For sandbox mode, pass auth_token and task_id via environment variables
             # so the container can call Backend API to fetch and download skills
             auth_token = get_metadata_field(task, "auth_token")
