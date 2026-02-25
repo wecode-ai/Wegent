@@ -89,6 +89,50 @@ class Executor(abc.ABC):
         """
         pass
 
+    @abc.abstractmethod
+    def create_instance(
+        self, task: Dict[str, Any], task_info: Dict[str, Any], executor_name: str
+    ) -> None:
+        """Create a new runtime instance (container/pod).
+
+        Args:
+            task: Task payload dictionary
+            task_info: Extracted task metadata
+            executor_name: Runtime instance name
+        """
+        pass
+
+    @abc.abstractmethod
+    def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
+        """Wait until runtime instance is ready to accept task requests.
+
+        Args:
+            executor_name: Runtime instance name
+
+        Returns:
+            Ready metadata used for dispatch (e.g., host port, base URL)
+        """
+        pass
+
+    @abc.abstractmethod
+    def dispatch_task_to_instance(
+        self,
+        task: Dict[str, Any],
+        executor_name: str,
+        ready_info: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Dispatch task payload to a ready runtime instance.
+
+        Args:
+            task: Task payload dictionary
+            executor_name: Runtime instance name
+            ready_info: Metadata returned by wait_instance_ready()
+
+        Returns:
+            Dispatch result metadata
+        """
+        pass
+
     def get_executor_task_id(self, executor_name: str) -> Optional[str]:
         """
         Get task_id from executor (container/pod) label.

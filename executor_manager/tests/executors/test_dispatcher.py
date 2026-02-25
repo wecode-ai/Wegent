@@ -38,6 +38,15 @@ class MockExecutor(Executor):
             "error_msg": None,
         }
 
+    def create_instance(self, task, task_info, executor_name):
+        return None
+
+    def wait_instance_ready(self, executor_name):
+        return {"base_url": "http://localhost:10001"}
+
+    def dispatch_task_to_instance(self, task, executor_name, ready_info):
+        return {"status": "success"}
+
 
 class TestExecutorDispatcher:
     """Test cases for ExecutorDispatcher"""
