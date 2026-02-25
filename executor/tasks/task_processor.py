@@ -26,12 +26,12 @@ from shared.telemetry.decorators import (
 logger = setup_logger("task_processor")
 
 
-def read_task_data() -> Dict[str, Any]:
+def read_task_data() -> ExecutionRequest:
     """
     Read task data from environment variable or file.
 
     Returns:
-        dict: Task data
+        ExecutionRequest: Task data as ExecutionRequest object
 
     Raises:
         SystemExit: If TASK_INFO is not found
@@ -42,7 +42,7 @@ def read_task_data() -> Dict[str, Any]:
     if task_data is None:
         logger.error("TASK_INFO not found")
         os._exit(1)
-    return task_data
+    return ExecutionRequest.from_dict(task_data)
 
 
 def execute_task(agent: Agent) -> Tuple[TaskStatus, Optional[str]]:
@@ -324,8 +324,8 @@ def run_task() -> TaskStatus:
     Returns:
         TaskStatus: Processing status
     """
-    task_data = read_task_data()
-    return process(task_data)
+    execution_request = read_task_data()
+    return process(execution_request)
 
 
 async def run_task_async() -> TaskStatus:
@@ -338,5 +338,5 @@ async def run_task_async() -> TaskStatus:
     Returns:
         TaskStatus: Processing status
     """
-    task_data = read_task_data()
-    return await process_async(task_data)
+    execution_request = read_task_data()
+    return await process_async(execution_request)
