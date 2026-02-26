@@ -57,7 +57,9 @@ class Agent:
         self.subtask_id = task_data.subtask_id
         self.task_title = task_data.task_title or ""
         self.subtask_title = task_data.subtask_title or ""
-        self.task_type = task_data.type  # Task type (e.g., "validation" for validation tasks)
+        self.task_type = (
+            task_data.type
+        )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
 
@@ -222,13 +224,13 @@ class Agent:
             )
             git_token = decrypt_git_token(git_token)
 
-        username = user_config.get("user_name") if user_config else None
+        username = user_config.get("git_login") if user_config else None
         branch_name = self.task_data.branch_name
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(
             f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}"
         )
-        logger.info("username: {username} git token: {git_token}")
+
         logger.info(user_config)
 
         project_path = os.path.join(
