@@ -22,6 +22,7 @@ class CommunicationMode(str, Enum):
     SSE = "sse"  # Active request with long connection
     WEBSOCKET = "websocket"  # Passive request with long connection
     HTTP_CALLBACK = "http_callback"  # HTTP + Callback
+    POLLING = "polling"  # Create job + poll status + stream results
 
 
 @dataclass
@@ -114,6 +115,13 @@ class ExecutionRouter:
             ExecutionTarget with routing information
         """
         user_id = request.user.get("id") if request.user else None
+
+        # Priority 0: Protocol-based routing (e.g., gemini-deep-research)
+        protocol = request.model_config.get("protocol") if request.model_config else None
+        if protocol == "gemini-deep-research" and not device_id:
+            return ExecutionTarget(
+                mode=CommunicationMode.POLLING,
+            )
 
         # Priority 1: device_id specified, use WebSocket mode
         if device_id:
