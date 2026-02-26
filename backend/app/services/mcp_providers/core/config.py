@@ -148,8 +148,5 @@ MCPROUTER_CONFIG = MCPProviderConfig(
 )
 
 # All built-in providers
-BUILTIN_PROVIDERS = [
-    BAILIAN_CONFIG,
-    MODELSCOPE_CONFIG,
-    MCPROUTER_CONFIG,
-]
+# Note: Providers are now auto-discovered from providers/ directory
+BUILTIN_PROVIDERS = []
