@@ -164,13 +164,20 @@ class AgentService:
         try:
             agent = self.get_agent(task_id)
 
-            # If agent exists, update prompt
+            # If agent exists, update prompt and emitter subtask_id
             if agent and hasattr(agent, "update_prompt") and task_data.prompt:
                 new_prompt = task_data.prompt
                 logger.info(
                     f"[{_format_task_log(task_id, subtask_id)}] Updating prompt for existing agent"
                 )
                 agent.update_prompt(new_prompt)
+                # Update emitter if subtask_id changed (e.g., append chat creates new subtask)
+                if subtask_id and subtask_id != agent.subtask_id:
+                    logger.info(
+                        f"[{_format_task_log(task_id, subtask_id)}] Updating emitter subtask_id: "
+                        f"{agent.subtask_id} -> {subtask_id}"
+                    )
+                    agent.update_emitter(subtask_id)
             # If agent doesn't exist, create new agent
             elif not agent:
                 agent = self.create_agent(task_data)
