@@ -265,6 +265,9 @@ async def _fetch_thought_summaries(
 
             if gemini_event == "content.delta" and index == 0:
                 delta = data.get("delta", {})
+                if delta.get("type") == "text":
+                    # No thinking format: index=0 is the report, not thoughts
+                    return thought_summaries
                 if delta.get("type") == "thought_summary":
                     text = delta.get("content", {}).get("text", "")
                     if text:
@@ -330,14 +333,17 @@ async def _stream_final_report(
             gemini_event = data.get("event_type", event_type)
             index = data.get("index")
 
-            if gemini_event == "content.delta" and index == 1:
+            if gemini_event == "content.delta":
                 delta = data.get("delta", {})
-                text = delta.get("text", "")
-                if text:
-                    full_content += text
-                annotations = delta.get("annotations", [])
-                if annotations:
-                    all_annotations.extend(annotations)
+                # With thinking: report at index=1
+                # Without thinking: report at index=0, delta.type="text"
+                if index == 1 or (index == 0 and delta.get("type") == "text"):
+                    text = delta.get("text", "")
+                    if text:
+                        full_content += text
+                    annotations = delta.get("annotations", [])
+                    if annotations:
+                        all_annotations.extend(annotations)
 
     except Exception as e:
         logger.error(f"[PollingDispatcher] Final report error: {e}")
