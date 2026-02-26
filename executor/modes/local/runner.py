@@ -417,8 +417,11 @@ class LocalRunner:
             ws_emitter
         )
 
-        # Report task started via emitter (response.in_progress)
-        await ws_emitter.in_progress()
+        # Report task started via emitter (response.created)
+        # This is crucial for follow-up messages in coding scenarios (ClaudeCode/Agno)
+        # where the executor stays running and handles multiple messages.
+        # The start() method sends response.created which triggers the frontend to create a new message.
+        await ws_emitter.start()
 
         # Initialize agent
         init_status = self.current_agent.initialize()
