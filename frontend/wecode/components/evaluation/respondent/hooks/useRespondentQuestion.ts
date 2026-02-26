@@ -34,7 +34,7 @@ export interface UseRespondentQuestionReturn {
   showInstructions: boolean
   progress: number
   instructions: string | undefined
-  lastSaved: Date | null
+  lastSaved: string | null
   isEmpty: boolean
   setAnswerText: (text: string) => void
   setAttachments: (attachments: EvalAttachment[]) => void

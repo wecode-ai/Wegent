@@ -24,7 +24,7 @@ interface AnswerPanelProps {
   onToggleLastSubmitted: () => void
   isSubmitting: boolean
   isEmpty: boolean
-  lastSaved: Date | null
+  lastSaved: string | null
   onSubmitClick: () => void
   topicId: number
   questionId: number
