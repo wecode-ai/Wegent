@@ -5,7 +5,7 @@
 """
 MCP Provider Registry
 
-Central registry for MCP providers with configuration-driven approach.
+Central registry for MCP providers with plugin architecture support.
 """
 
 from typing import Dict, List, Optional
@@ -17,15 +17,17 @@ from app.services.mcp_providers.core.http_client import (
     MCPProviderHTTPClient,
 )
 from app.services.mcp_providers.core.mapper import DataMapper
+from app.services.mcp_providers.providers.base import MCPProviderPlugin
 from shared.logger import setup_logger
 
 logger = setup_logger("mcp_providers.registry")
 
 
 class MCPProviderRegistry:
-    """Registry for MCP providers - supports auto-discovery and explicit registration"""
+    """Registry for MCP providers - supports plugins and auto-discovery"""
 
     _providers: Dict[str, MCPProviderConfig] = {}
+    _plugins: Dict[str, MCPProviderPlugin] = {}
     _initialized: bool = False
     _custom_providers: list[tuple[MCPProviderConfig, bool]] = []  # (config, override)
 
@@ -48,9 +50,35 @@ class MCPProviderRegistry:
         logger.info("Registered MCP provider: %s (%s)", config.name, config.key)
 
     @classmethod
+    def register_plugin(cls, plugin: MCPProviderPlugin, override: bool = False) -> None:
+        """Register a provider plugin
+
+        Args:
+            plugin: Provider plugin instance
+            override: If True, override existing provider with same key
+        """
+        config = plugin.get_config()
+
+        if config.key in cls._providers and not override:
+            logger.warning(
+                "Provider plugin '%s' already registered, skipping. Use override=True to replace.",
+                config.key,
+            )
+            return
+
+        cls._providers[config.key] = config
+        cls._plugins[config.key] = plugin
+        logger.info("Registered MCP provider plugin: %s (%s)", config.name, config.key)
+
+    @classmethod
     def get(cls, key: str) -> Optional[MCPProviderConfig]:
         """Get provider configuration by key"""
         return cls._providers.get(key)
+
+    @classmethod
+    def get_plugin(cls, key: str) -> Optional[MCPProviderPlugin]:
+        """Get provider plugin by key"""
+        return cls._plugins.get(key)
 
     @classmethod
     def list_all(cls) -> List[MCPProviderConfig]:
@@ -63,10 +91,18 @@ class MCPProviderRegistry:
         return list(cls._providers.keys())
 
     @classmethod
+    def is_plugin(cls, key: str) -> bool:
+        """Check if provider is a plugin (has custom mapping)"""
+        return key in cls._plugins
+
+    @classmethod
     async def sync_servers(
         cls, provider_key: str, token: str
     ) -> tuple[List[MCPServer], Optional[str]]:
         """Sync servers from a provider
+
+        For plugin providers, uses the plugin's custom map_servers method.
+        For config-based providers, uses the default DataMapper.
 
         Returns:
             tuple: (servers, error_message)
@@ -76,15 +112,27 @@ class MCPProviderRegistry:
             return [], f"Provider not found: {provider_key}"
 
         try:
-            client = MCPProviderHTTPClient(config)
-            mapper = DataMapper()
-
-            try:
-                raw_servers = await client.fetch_all_servers(token)
-                servers = mapper.map_servers(raw_servers, config, token)
-                return servers, None
-            finally:
-                await client.close()
+            # Check if this is a plugin provider
+            plugin = cls.get_plugin(provider_key)
+            if plugin:
+                # Use plugin's custom mapping logic
+                client = MCPProviderHTTPClient(config)
+                try:
+                    raw_servers = await client.fetch_all_servers(token)
+                    servers = plugin.map_servers(raw_servers, token)
+                    return servers, None
+                finally:
+                    await client.close()
+            else:
+                # Use default mapping logic
+                client = MCPProviderHTTPClient(config)
+                mapper = DataMapper()
+                try:
+                    raw_servers = await client.fetch_all_servers(token)
+                    servers = mapper.map_servers(raw_servers, config, token)
+                    return servers, None
+                finally:
+                    await client.close()
 
         except HTTPClientError as e:
             logger.error("HTTP error syncing %s: %s", provider_key, e)
@@ -120,7 +168,7 @@ class MCPProviderRegistry:
         for provider_config in BUILTIN_PROVIDERS:
             cls.register(provider_config)
 
-        # 2. Auto-discover providers from providers/ directory
+        # 2. Auto-discover config-based providers from providers/ directory
         try:
             from app.services.mcp_providers.providers import PROVIDER_CONFIGS
 
@@ -129,17 +177,35 @@ class MCPProviderRegistry:
                     cls.register(provider_config)
                 else:
                     logger.debug(
-                        "Auto-discovered provider '%s' already registered, skipping",
+                        "Auto-discovered config provider '%s' already registered, skipping",
                         provider_config.key,
                     )
         except ImportError as e:
-            logger.warning("Could not auto-discover providers: %s", e)
+            logger.warning("Could not auto-discover config providers: %s", e)
 
-        # 3. Register custom providers (for internal/external extensions)
+        # 3. Auto-discover plugin-based providers from providers/ directory
+        try:
+            from app.services.mcp_providers.providers import PROVIDER_PLUGINS
+
+            for plugin in PROVIDER_PLUGINS:
+                config = plugin.get_config()
+                if config.key not in cls._providers:
+                    cls.register_plugin(plugin)
+                else:
+                    logger.debug(
+                        "Auto-discovered plugin provider '%s' already registered, skipping",
+                        config.key,
+                    )
+        except ImportError as e:
+            logger.warning("Could not auto-discover plugin providers: %s", e)
+
+        # 4. Register custom providers (for internal/external extensions)
         for config, override in cls._custom_providers:
             cls.register(config, override=override)
 
         cls._initialized = True
         logger.info(
-            "Initialized MCP provider registry with %d providers", len(cls._providers)
+            "Initialized MCP provider registry with %d providers (%d plugins)",
+            len(cls._providers),
+            len(cls._plugins),
         )

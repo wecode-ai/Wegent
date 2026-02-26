@@ -26,18 +26,22 @@ from app.services.mcp_providers.providers import PROVIDER_CONFIGS, _discover_pro
 class TestAutoDiscovery:
     """Test auto-discovery of providers from providers/ directory"""
 
-    def test_discover_providers_returns_list(self):
-        """Test that _discover_providers returns a list"""
-        providers = _discover_providers()
-        assert isinstance(providers, list)
+    def test_discover_providers_returns_tuple(self):
+        """Test that _discover_providers returns a tuple of (configs, plugins)"""
+        result = _discover_providers()
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        configs, plugins = result
+        assert isinstance(configs, list)
+        assert isinstance(plugins, list)
 
-    def test_discovered_providers_are_valid_configs(self):
-        """Test that discovered items are MCPProviderConfig instances"""
-        providers = _discover_providers()
-        for provider in providers:
-            assert isinstance(provider, MCPProviderConfig)
-            assert provider.key is not None
-            assert provider.name is not None
+    def test_discovered_configs_are_valid(self):
+        """Test that discovered configs are MCPProviderConfig instances"""
+        configs, plugins = _discover_providers()
+        for config in configs:
+            assert isinstance(config, MCPProviderConfig)
+            assert config.key is not None
+            assert config.name is not None
 
     def test_provider_configs_exported(self):
         """Test that PROVIDER_CONFIGS is populated on module load"""
