@@ -40,7 +40,7 @@ function NewTopicContent() {
     if (!name.trim()) {
       toast({
         title: t('errors.save_failed'),
-        description: t('topics.name') + ' is required',
+        description: t('topics.name_placeholder'),
         variant: 'destructive',
       })
       return
