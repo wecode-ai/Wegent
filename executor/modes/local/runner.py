@@ -417,7 +417,10 @@ class LocalRunner:
             ws_emitter
         )
 
-        # Report task started via emitter (response.in_progress)
+        # Report task in progress via emitter (response.in_progress)
+        # Note: The START event is already sent by the backend via emit_start()
+        # before dispatching to the executor. We use in_progress() here to indicate
+        # that the executor has started processing.
         await ws_emitter.in_progress()
 
         # Initialize agent
