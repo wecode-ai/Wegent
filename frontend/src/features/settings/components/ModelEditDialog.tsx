@@ -239,6 +239,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [baseUrl, setBaseUrl] = useState('')
   const [customHeaders, setCustomHeaders] = useState('')
   const [customHeadersError, setCustomHeadersError] = useState('')
+  const [modelIdNameError, setModelIdNameError] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -372,6 +373,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setMaxOutputTokens(undefined)
       }
       setCustomHeadersError('')
+      setModelIdNameError('')
       setShowApiKey(false)
     }
   }, [open, effectiveInitialData])
@@ -630,6 +632,20 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }
 
+  const validateModelIdName = (value: string): boolean => {
+    if (!value.trim()) {
+      setModelIdNameError('')
+      return false
+    }
+    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
+    if (!nameRegex.test(value)) {
+      setModelIdNameError(t('common:models.errors.id_invalid'))
+      return false
+    }
+    setModelIdNameError('')
+    return true
+  }
+
   const validateCustomHeaders = (value: string): Record<string, string> | null => {
     if (!value.trim()) {
       setCustomHeadersError('')
@@ -660,6 +676,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     validateCustomHeaders(value)
   }
 
+  const handleModelIdNameChange = (value: string) => {
+    setModelIdName(value)
+    validateModelIdName(value)
+  }
+
   const handleSave = async () => {
     if (isGroupScope && !isEditing && !groupName) {
       toast({
@@ -678,8 +699,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       return
     }
 
-    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
-    if (!nameRegex.test(modelIdName)) {
+    if (!validateModelIdName(modelIdName)) {
       toast({
         variant: 'destructive',
         title: t('common:models.errors.id_invalid'),
@@ -916,11 +936,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               <Input
                 id="modelIdName"
                 value={modelIdName}
-                onChange={e => setModelIdName(e.target.value)}
+                onChange={e => handleModelIdNameChange(e.target.value)}
                 placeholder="my-gpt-model"
                 disabled={isEditing}
-                className="bg-base"
+                className={`bg-base ${modelIdNameError ? 'border-error' : ''}`}
               />
+              {modelIdNameError && <p className="text-xs text-error">{modelIdNameError}</p>}
               <p className="text-xs text-text-muted">
                 {isEditing ? t('common:models.id_readonly_hint') : t('common:models.id_hint')}
               </p>
