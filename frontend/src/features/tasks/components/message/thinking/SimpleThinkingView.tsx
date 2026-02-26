@@ -19,7 +19,6 @@ interface ToolEntry {
   toolName: string
   query: string
   status: 'running' | 'completed' | 'failed'
-  resultCount?: number
   startIndex: number
   endIndex?: number
   // Display name from backend (e.g., "正在渲染图表", "正在搜索网页")
@@ -84,14 +83,8 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
           details.type === 'tool_result' &&
           (details.status === 'completed' || details.status === 'failed')
         ) {
-          const toolName: string =
-            (typeof details.tool_name === 'string' ? details.tool_name : '') ||
-            (typeof details.name === 'string' ? details.name : '') ||
-            'unknown'
           const runId = (step as { run_id?: string }).run_id || ''
           const startIdx = toolStartMap.get(runId)
-
-          let resultCount: number | undefined
 
           // Get completed title from backend (e.g., "渲染图表完成" or "任务失败: xxx")
           const completedTitle = typeof step.title === 'string' ? step.title : undefined
@@ -101,7 +94,6 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
 
           if (startIdx !== undefined && entries[startIdx]) {
             entries[startIdx].status = details.status as 'completed' | 'failed'
-            entries[startIdx].resultCount = resultCount
             entries[startIdx].endIndex = index
             entries[startIdx].completedTitle = completedTitle
             entries[startIdx].errorMessage = errorMessage
