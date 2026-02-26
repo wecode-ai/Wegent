@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ChevronRight, Clock, Info, File, X, Upload } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Clock, Info, History, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
@@ -15,9 +15,13 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useQuestionDraft } from '../hooks/useQuestionDraft'
 import { useAnswerTimer } from '../hooks/useAnswerTimer'
 import { MAX_BATCH_FILES } from '@/hooks/useBatchAttachment'
-import { respondentGetQuestion, respondentSubmitAnswer } from '@wecode/api/evaluation-respondent'
+import {
+  respondentGetQuestion,
+  respondentSubmitAnswer,
+  respondentListAnswerHistory,
+} from '@wecode/api/evaluation-respondent'
 import { ContentType } from '@wecode/types/evaluation'
-import type { Question, Topic, EvalAttachment } from '@wecode/types/evaluation'
+import type { Question, Topic, EvalAttachment, Answer } from '@wecode/types/evaluation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +32,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { ChevronDown, ChevronUp } from 'lucide-react'
+import { formatFileSize } from '@/apis/attachments'
+import { File } from 'lucide-react'
 
 interface RespondentQuestionMobileProps {
   topic: Topic
@@ -61,12 +69,36 @@ export function RespondentQuestionMobile({
   const [attachments, setAttachments] = useState<EvalAttachment[]>([])
   const [showTextInput, setShowTextInput] = useState(false)
 
+  // Last submitted answer
+  const [lastSubmittedAnswer, setLastSubmittedAnswer] = useState<Answer | null>(null)
+  const [showLastSubmitted, setShowLastSubmitted] = useState(false)
+
   useEffect(() => {
     if (draft) {
       setAnswerText(draft.text)
       setAttachments(draft.attachments)
     }
   }, [draft])
+
+  // Load last submitted answer
+  const loadLastSubmittedAnswer = useCallback(async () => {
+    try {
+      const response = await respondentListAnswerHistory({
+        question_id: questionId,
+        latest_only: true,
+        limit: 1,
+      })
+      if (response.items.length > 0) {
+        setLastSubmittedAnswer(response.items[0])
+      }
+    } catch {
+      // Silently fail - last submitted answer is not critical
+    }
+  }, [questionId])
+
+  useEffect(() => {
+    loadLastSubmittedAnswer()
+  }, [loadLastSubmittedAnswer])
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -121,21 +153,20 @@ export function RespondentQuestionMobile({
         contentData.attachments = attachments
       }
 
-      await respondentSubmitAnswer(questionId, {
+      const newAnswer = await respondentSubmitAnswer(questionId, {
         content_type: ContentType.MIXED,
         content_data: contentData,
       })
 
       clearDraft()
+      setLastSubmittedAnswer(newAnswer)
       toast({
         title: t('answers.submit_success'),
       })
 
-      if (currentQuestionIndex < totalQuestions - 1) {
-        handleNext()
-      } else {
-        router.push(`/evaluation/respondent/topics/${topic.id}`)
-      }
+      // Reset form for potential re-submission
+      setAnswerText('')
+      setAttachments([])
     } catch {
       toast({
         title: t('errors.save_failed'),
@@ -160,17 +191,15 @@ export function RespondentQuestionMobile({
     setShowConfirmDialog(true)
   }
 
-  const handleRemoveAttachment = (index: number) => {
-    const newAttachments = [...attachments]
-    newAttachments.splice(index, 1)
-    setAttachments(newAttachments)
-  }
-
   const instructions =
     (question?.content_data?.instructions as string)?.trim() ||
     (topic.extra_data?.instructions as string)?.trim()
 
   const progress = Math.round(((currentQuestionIndex + 1) / totalQuestions) * 100)
+
+  const lastSubmittedAttachments = lastSubmittedAnswer?.content_data?.attachments as
+    | Array<{ key: string; filename: string; file_size?: number }>
+    | undefined
 
   if (loading || !question) {
     return (
@@ -189,11 +218,15 @@ export function RespondentQuestionMobile({
       <div className="flex h-14 items-center justify-between border-b border-border bg-surface px-4">
         <span className="text-sm font-medium text-text-primary">{topic.name}</span>
         <div className="flex items-center gap-3">
-          <div className="h-2 w-20 overflow-hidden rounded-full bg-border">
-            <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-text-muted">{t('ui.progress')}</span>
+            <div className="h-2 w-16 overflow-hidden rounded-full bg-border">
+              <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+            </div>
           </div>
           <div className="flex items-center gap-1 text-sm text-text-secondary">
             <Clock className="h-4 w-4" />
+            <span className="text-xs text-text-muted">{t('ui.time_spent')}</span>
             <span className="tabular-nums">{formattedTime}</span>
           </div>
         </div>
@@ -236,30 +269,41 @@ export function RespondentQuestionMobile({
           </Badge>
         </div>
 
-        {/* Instructions */}
+        {/* Instructions - Collapsible */}
         {instructions && (
           <Card className="m-4 border-amber-200 bg-amber-50/50">
-            <CardContent className="p-3">
-              <button
-                onClick={() => setShowInstructions(!showInstructions)}
-                className="flex w-full items-center justify-between"
-              >
-                <div className="flex items-center gap-2">
-                  <Info className="h-4 w-4 text-amber-600" />
-                  <span className="text-sm font-medium text-amber-900">
-                    {t('answers.instructions.title')}
-                  </span>
-                </div>
-              </button>
-              {showInstructions && (
-                <div className="mt-2 rounded border border-amber-200/50 bg-white p-3">
-                  <EnhancedMarkdown
-                    source={instructions}
-                    theme={theme === 'dark' ? 'dark' : 'light'}
-                  />
-                </div>
-              )}
-            </CardContent>
+            <Collapsible open={showInstructions} onOpenChange={setShowInstructions}>
+              <CollapsibleTrigger asChild>
+                <button className="flex w-full items-center justify-between p-3 text-left">
+                  <div className="flex items-center gap-2">
+                    <Info className="h-4 w-4 text-amber-600" />
+                    <span className="text-sm font-medium text-amber-900">
+                      {t('answers.instructions.title')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-sm text-amber-700">
+                      {showInstructions ? t('actions.collapse') : t('actions.expand')}
+                    </span>
+                    {showInstructions ? (
+                      <ChevronUp className="h-4 w-4 text-amber-700" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-amber-700" />
+                    )}
+                  </div>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0 pb-3 px-3">
+                  <div className="rounded-lg bg-white/50 p-3">
+                    <EnhancedMarkdown
+                      source={instructions}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Collapsible>
           </Card>
         )}
 
@@ -277,14 +321,91 @@ export function RespondentQuestionMobile({
 
         {/* Answer Section */}
         <div className="border-t border-border bg-surface p-4">
-          <h2 className="mb-3 text-base font-medium">{t('answers.submit')}</h2>
+          {/* Last Submitted Answer */}
+          {lastSubmittedAnswer && (
+            <Card className="mb-4 border-blue-200 bg-blue-50/50">
+              <Collapsible open={showLastSubmitted} onOpenChange={setShowLastSubmitted}>
+                <CollapsibleTrigger asChild>
+                  <button className="flex w-full items-center justify-between p-3 text-left">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2 text-blue-900">
+                      <History className="h-4 w-4" />
+                      {t('ui.last_submitted')}
+                      <span className="text-xs font-normal text-blue-600">
+                        (
+                        {new Date(lastSubmittedAnswer.submitted_at).toLocaleString('zh-CN', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        )
+                      </span>
+                    </CardTitle>
+                    <div className="flex items-center gap-1">
+                      <span className="text-sm text-blue-600">
+                        {showLastSubmitted ? t('actions.collapse') : t('actions.expand')}
+                      </span>
+                      {showLastSubmitted ? (
+                        <ChevronUp className="h-4 w-4 text-blue-600" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-blue-600" />
+                      )}
+                    </div>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="pt-0 pb-3 px-3 space-y-3">
+                    {typeof lastSubmittedAnswer.content_data?.text === 'string' && (
+                      <div className="rounded-lg bg-white border border-blue-100 p-3">
+                        <p className="text-sm text-text-secondary mb-1">{t('ui.text_answer')}：</p>
+                        <p className="text-sm text-text-primary whitespace-pre-wrap">
+                          {lastSubmittedAnswer.content_data.text}
+                        </p>
+                      </div>
+                    )}
+                    {lastSubmittedAttachments && lastSubmittedAttachments.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-sm text-text-secondary">
+                          {t('ui.attachments')} ({lastSubmittedAttachments.length})：
+                        </p>
+                        <div className="space-y-2">
+                          {lastSubmittedAttachments.map((attachment, index) => (
+                            <a
+                              key={attachment.key || index}
+                              href={`/api/evaluation/respondent/files/${attachment.key}?filename=${encodeURIComponent(attachment.filename)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 rounded-lg border border-blue-100 bg-white p-2"
+                            >
+                              <File className="h-4 w-4 text-blue-600" />
+                              <span className="min-w-0 flex-1 truncate text-sm">
+                                {attachment.filename}
+                              </span>
+                              {attachment.file_size && (
+                                <span className="text-xs text-text-muted">
+                                  {formatFileSize(attachment.file_size)}
+                                </span>
+                              )}
+                              <Download className="h-4 w-4 text-blue-600" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </CollapsibleContent>
+              </Collapsible>
+            </Card>
+          )}
+
+          <h2 className="mb-3 text-base font-medium">
+            {lastSubmittedAnswer ? t('ui.resubmit') : t('ui.submit_answer')}
+          </h2>
 
           {/* Upload Area */}
           <Card className="mb-4 border-dashed">
             <CardContent className="p-4">
               <div className="flex flex-col items-center gap-2 text-center">
-                <Upload className="h-8 w-8 text-primary" />
-                <p className="text-sm font-medium">{t('answers.upload_drag_hint')}</p>
                 <EvaluationFileUpload
                   topicId={topic.id}
                   questionId={questionId}
@@ -297,39 +418,15 @@ export function RespondentQuestionMobile({
             </CardContent>
           </Card>
 
-          {/* Uploaded Files */}
-          {attachments.length > 0 && (
-            <div className="mb-4 space-y-2">
-              <h3 className="text-sm font-medium text-text-secondary">
-                {t('answers.uploaded_files')} ({attachments.length})
-              </h3>
-              {attachments.map((attachment, index) => (
-                <div
-                  key={attachment.key || index}
-                  className="flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2"
-                >
-                  <File className="h-4 w-4 flex-shrink-0 text-primary" />
-                  <span className="min-w-0 flex-1 truncate text-sm">{attachment.filename}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 flex-shrink-0"
-                    onClick={() => handleRemoveAttachment(index)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* Text Input Toggle */}
           <button
             onClick={() => setShowTextInput(!showTextInput)}
             className="mb-2 flex w-full items-center justify-between rounded-lg border border-border px-3 py-2"
           >
             <span className="text-sm text-text-secondary">{t('answers.text_supplement')}</span>
-            <span className="text-xs text-text-muted">({t('common:optional')})</span>
+            <span className="text-sm text-text-muted">
+              {showTextInput ? t('actions.collapse') : t('actions.expand')}
+            </span>
           </button>
 
           {showTextInput && (
@@ -348,7 +445,7 @@ export function RespondentQuestionMobile({
             disabled={submitting || (answerText.trim().length === 0 && attachments.length === 0)}
             className="h-11 w-full"
           >
-            {submitting ? '...' : t('answers.submit')}
+            {submitting ? t('actions.submitting') : t('answers.submit')}
           </Button>
         </div>
       </div>

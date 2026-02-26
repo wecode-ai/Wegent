@@ -311,7 +311,7 @@ export function RespondentQuestionDesktop({
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-amber-700">
+                        <span className="text-sm text-amber-700">
                           {showInstructions ? t('actions.collapse') : t('actions.expand')}
                         </span>
                         {showInstructions ? (
@@ -382,7 +382,7 @@ export function RespondentQuestionDesktop({
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-blue-600">
+                        <span className="text-sm text-blue-600">
                           {showLastSubmitted ? t('actions.collapse') : t('actions.expand')}
                         </span>
                         {showLastSubmitted ? (
