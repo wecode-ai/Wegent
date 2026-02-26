@@ -2,61 +2,152 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""
+MCP Provider Service
+
+This module provides MCP provider management functionality.
+The core implementation uses configuration-driven approach in the 'core' subpackage.
+
+Usage:
+    # Auto-discovery of built-in providers (default)
+    from app.services.mcp_providers import MCPProviderRegistry
+    MCPProviderRegistry.initialize()
+
+    # For internal projects: register custom providers
+    from app.services.mcp_providers import register_mcp_provider
+    from app.schemas.mcp_provider_config import MCPProviderConfig
+
+    register_mcp_provider(MCPProviderConfig(
+        key="my_provider",
+        name="My Provider",
+        ...
+    ))
+    # Then initialize
+    MCPProviderRegistry.initialize()
+"""
+
+from typing import List, Optional
+
+from app.schemas.mcp_provider_config import MCPProviderConfig
+
+# Re-export for backward compatibility
+# Import from core module which initializes registry on load
+from app.services.mcp_providers.core import MCPProviderRegistry
+
+
+def register_mcp_provider(config: MCPProviderConfig, override: bool = False) -> None:
+    """Register a custom MCP provider.
+
+    This function is designed for internal/external projects to add their own
+    MCP providers without modifying the open-source codebase.
+
+    Providers registered this way are loaded after built-in providers during
+    initialize(), allowing internal projects to extend or override providers.
+
+    Args:
+        config: The provider configuration to register
+        override: If True, override existing provider with same key.
+                 Use this to replace built-in providers with custom implementations.
+
+    Example:
+        # In your internal project's startup code (before calling initialize()):
+        from app.services.mcp_providers import register_mcp_provider
+        from app.schemas.mcp_provider_config import MCPProviderConfig, ...
+
+        # Add a new internal provider
+        register_mcp_provider(MCPProviderConfig(
+            key="internal_provider",
+            name="Internal Provider",
+            api=ProviderAPIConfig(...),
+            ...
+        ))
+
+        # Override a built-in provider with internal version
+        register_mcp_provider(MCPProviderConfig(
+            key="bailian",  # Same key as built-in
+            name="阿里云百炼(内网)",
+            api=ProviderAPIConfig(
+                base_url="https://internal.example.com",  # Internal URL
+                ...
+            ),
+            ...
+        ), override=True)
+
+        # Then initialize
+        MCPProviderRegistry.initialize()
+    """
+    MCPProviderRegistry.register_custom(config, override)
+
+
+def get_mcp_provider(key: str) -> Optional[MCPProviderConfig]:
+    """Get provider configuration by key.
+
+    Args:
+        key: Provider key (e.g., "bailian", "modelscope")
+
+    Returns:
+        Provider configuration or None if not found
+    """
+    return MCPProviderRegistry.get(key)
+
+
+def list_mcp_providers() -> List[MCPProviderConfig]:
+    """List all registered providers.
+
+    Returns:
+        List of all provider configurations
+    """
+    return MCPProviderRegistry.list_all()
+
+
+# Initialize registry with built-in providers
+MCPProviderRegistry.initialize()
+
+# Backward compatibility: provide PROVIDERS list from registry
+# This creates MCPProviderDefinition objects from config for any legacy code
 from dataclasses import dataclass
-from typing import Awaitable, Callable, List
+from typing import Awaitable, Callable
 
 from app.schemas.mcp_providers import MCPServer
-from app.services.mcp_providers.bailian import sync_bailian_servers
-from app.services.mcp_providers.mcprouter import sync_mcprouter_servers
-from app.services.mcp_providers.modelscope import sync_modelscope_servers
 
 
 @dataclass
 class MCPProviderDefinition:
-    """MCP Provider definition"""
+    """MCP Provider definition (backward compatibility)"""
 
-    key: str  # Unique identifier
-    name: str  # Display name
-    name_en: str  # English display name
-    description: str  # Description
-    discover_url: str  # URL to provider's MCP marketplace
-    api_key_url: str  # URL to get API key
-    token_field_name: str  # Field name in preferences
-    sync_servers: Callable[[str], Awaitable[List[MCPServer]]]  # Sync function
+    key: str
+    name: str
+    name_en: str
+    description: str
+    discover_url: str
+    api_key_url: str
+    token_field_name: str
+    sync_servers: Callable[[str], Awaitable[List[MCPServer]]]
 
 
-# Provider instances
-BAILIAN_PROVIDER = MCPProviderDefinition(
-    key="bailian",
-    name="阿里云百炼",
-    name_en="Aliyun Bailian",
-    description="阿里云大模型服务平台百炼 MCP 市场",
-    discover_url="https://bailian.console.aliyun.com/?tab=mcp#/mcp-market",
-    api_key_url="https://bailian.console.aliyun.com/?tab=app#/api-key",
-    token_field_name="bailian",
-    sync_servers=sync_bailian_servers,
-)
+def _create_sync_wrapper(config: MCPProviderConfig):
+    """Create a sync function wrapper for a provider config"""
 
-MODELSCOPE_PROVIDER = MCPProviderDefinition(
-    key="modelscope",
-    name="ModelScope",
-    name_en="ModelScope",
-    description="ModelScope MCP 服务市场",
-    discover_url="https://www.modelscope.cn/mcp",
-    api_key_url="https://www.modelscope.cn/my/myaccesstoken",
-    token_field_name="modelscope",
-    sync_servers=sync_modelscope_servers,
-)
+    async def sync_fn(token: str) -> List[MCPServer]:
+        servers, error = await MCPProviderRegistry.sync_servers(config.key, token)
+        if error:
+            raise ValueError(error)
+        return servers
 
-MCPROUTER_PROVIDER = MCPProviderDefinition(
-    key="mcp_router",
-    name="MCP Router",
-    name_en="MCP Router",
-    description="MCP Router 服务市场",
-    discover_url="https://mcprouter.co",
-    api_key_url="https://mcprouter.co/settings/api-keys",
-    token_field_name="mcp_router",
-    sync_servers=sync_mcprouter_servers,
-)
+    return sync_fn
 
-PROVIDERS = [BAILIAN_PROVIDER, MODELSCOPE_PROVIDER, MCPROUTER_PROVIDER]
+
+# Create PROVIDERS list from registry for backward compatibility
+PROVIDERS = [
+    MCPProviderDefinition(
+        key=config.key,
+        name=config.name,
+        name_en=config.name_en,
+        description=config.description,
+        discover_url=config.discover_url,
+        api_key_url=config.api_key_url,
+        token_field_name=config.token_field,
+        sync_servers=_create_sync_wrapper(config),
+    )
+    for config in MCPProviderRegistry.list_all()
+]

@@ -61,9 +61,13 @@ htmlcov/
 *.sqlite3
 
 # Celery Beat schedule files
-celerybeat-schedule
-celerybeat-schedule.db
+# PersistentScheduler (default, uses shelve/dumbdbm)
+celerybeat-schedule.dat
 celerybeat-schedule.dir
+celerybeat-schedule.bak
+celerybeat-schedule
+# SQLAlchemyScheduler (uses SQLite-WAL)
+celerybeat-schedule.db
 celerybeat-schedule.pag
 celerybeat-schedule-shm
 celerybeat-schedule-wal

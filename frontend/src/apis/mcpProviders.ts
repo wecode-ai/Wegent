@@ -13,6 +13,7 @@ export interface MCPProvider {
   api_key_url: string
   token_field_name: string
   has_token: boolean
+  requires_token: boolean
 }
 
 export interface MCPServer {

@@ -377,9 +377,8 @@ export default function ImagePreview({
         {/* Image thumbnail - only render when ready */}
         {!shouldWaitForBlob && (
           <span
-            className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${
-              isLoading ? 'opacity-0' : 'opacity-100'
-            }`}
+            className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${isLoading ? 'opacity-0' : 'opacity-100'
+              }`}
             onClick={handleImageClick}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
