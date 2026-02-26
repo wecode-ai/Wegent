@@ -113,6 +113,9 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 
   const displaySrc = blobUrl || src
 
+  // For attachment URLs, wait for blobUrl before rendering image
+  const shouldWaitForBlob = isAttachmentUrl(src) && !blobUrl
+
   const handleZoomIn = useCallback(() => {
     setScale(prev => Math.min(prev + 0.25, 3))
   }, [])
@@ -246,18 +249,25 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 
       {/* Image container */}
       <div className="max-w-[90vw] max-h-[90vh] overflow-auto">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={displaySrc}
-          alt={alt}
-          className="transition-transform duration-200 ease-out"
-          style={{
-            transform: `scale(${scale}) rotate(${rotation}deg)`,
-            maxWidth: scale === 1 ? '90vw' : 'none',
-            maxHeight: scale === 1 ? '90vh' : 'none',
-          }}
-          draggable={false}
-        />
+        {/* Show loading state while waiting for blob */}
+        {shouldWaitForBlob ? (
+          <div className="flex items-center justify-center bg-muted animate-pulse rounded-lg" style={{ minWidth: 300, minHeight: 200 }}>
+            <span className="text-text-secondary text-sm">Loading image...</span>
+          </div>
+        ) : (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={displaySrc}
+            alt={alt}
+            className="transition-transform duration-200 ease-out"
+            style={{
+              transform: `scale(${scale}) rotate(${rotation}deg)`,
+              maxWidth: scale === 1 ? '90vw' : 'none',
+              maxHeight: scale === 1 ? '90vh' : 'none',
+            }}
+            draggable={false}
+          />
+        )}
       </div>
 
       {/* Filename at bottom */}
@@ -312,6 +322,10 @@ export default function ImagePreview({
 
   const displaySrc = blobUrl || src
 
+  // For attachment URLs, wait for blobUrl before rendering image
+  // Otherwise, img tag will try to load without auth and fail
+  const shouldWaitForBlob = isAttachmentUrl(src) && !blobUrl
+
   const handleImageClick = useCallback(() => {
     if (!hasError) {
       setShowLightbox(true)
@@ -352,32 +366,34 @@ export default function ImagePreview({
     <>
       {/* Use span instead of div to avoid hydration error when rendered inside <p> tags */}
       <span className="relative inline-block my-2">
-        {/* Loading skeleton */}
-        {isLoading && (
+        {/* Loading skeleton - show while fetching blob or initial loading */}
+        {(isLoading || shouldWaitForBlob) && (
           <span
             className="absolute inset-0 bg-muted animate-pulse rounded-lg block"
             style={{ maxWidth, maxHeight, minWidth: 100, minHeight: 60 }}
           />
         )}
 
-        {/* Image thumbnail */}
-        <span
-          className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${
-            isLoading ? 'opacity-0' : 'opacity-100'
-          }`}
-          onClick={handleImageClick}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={displaySrc}
-            alt={alt || 'Image preview'}
-            className="object-contain bg-muted"
-            style={{ maxWidth, maxHeight }}
-            onLoad={handleImageLoad}
-            onError={handleImageError}
-            loading="lazy"
-          />
-        </span>
+        {/* Image thumbnail - only render when ready */}
+        {!shouldWaitForBlob && (
+          <span
+            className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${
+              isLoading ? 'opacity-0' : 'opacity-100'
+            }`}
+            onClick={handleImageClick}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={displaySrc}
+              alt={alt || 'Image preview'}
+              className="object-contain bg-muted"
+              style={{ maxWidth, maxHeight }}
+              onLoad={handleImageLoad}
+              onError={handleImageError}
+              loading="lazy"
+            />
+          </span>
+        )}
       </span>
       {/* Lightbox modal - rendered via Portal to avoid HTML nesting issues */}
       {showLightbox &&
