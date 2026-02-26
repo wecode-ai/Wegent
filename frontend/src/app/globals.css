@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* Custom scrollbar styles */
+@import '@/styles/scrollbar.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
