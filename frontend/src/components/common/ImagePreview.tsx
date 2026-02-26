@@ -8,6 +8,8 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Download, X, ZoomIn, ZoomOut, RotateCw, ExternalLink, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useShareToken } from '@/contexts/ShareTokenContext'
+import { getToken } from '@/apis/user'
 
 interface ImagePreviewProps {
   /** The image URL to display */
@@ -23,11 +25,93 @@ interface ImagePreviewProps {
 }
 
 /**
+ * Check if a URL is an attachment download URL
+ * @param url - URL to check
+ * @returns true if it's an attachment URL
+ */
+function isAttachmentUrl(url: string): boolean {
+  return /^\/api\/attachments\/\d+\/download/.test(url)
+}
+
+/**
+ * Fetch image with authentication and convert to Blob URL
+ * For attachment URLs, adds Authorization header or share_token
+ * @param url - Image URL
+ * @param shareToken - Optional share token for public access
+ * @returns Blob URL or original URL if fetch fails
+ */
+async function fetchAuthenticatedImage(url: string, shareToken?: string): Promise<string> {
+  // Only handle attachment URLs
+  if (!isAttachmentUrl(url)) {
+    return url
+  }
+
+  try {
+    const token = getToken()
+    let fetchUrl = url
+
+    // Build headers
+    const headers: HeadersInit = {}
+
+    if (shareToken) {
+      // Use share token in URL query parameter
+      fetchUrl = `${url}?share_token=${encodeURIComponent(shareToken)}`
+    } else if (token) {
+      // Use Authorization header
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    const response = await fetch(fetchUrl, {
+      method: 'GET',
+      headers,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.status}`)
+    }
+
+    const blob = await response.blob()
+    return URL.createObjectURL(blob)
+  } catch (error) {
+    console.error('Failed to fetch authenticated image:', error)
+    return url // Fallback to original URL
+  }
+}
+
+/**
  * Full screen image preview modal component (Lightbox)
  */
 function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const { shareToken } = useShareToken()
   const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  // Fetch authenticated image on mount
+  useEffect(() => {
+    let mounted = true
+    let currentBlobUrl: string | null = null
+
+    const loadImage = async () => {
+      const url = await fetchAuthenticatedImage(src, shareToken)
+      if (mounted) {
+        currentBlobUrl = url
+        setBlobUrl(url)
+      }
+    }
+
+    loadImage()
+
+    return () => {
+      mounted = false
+      // Clean up blob URL
+      if (currentBlobUrl && currentBlobUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(currentBlobUrl)
+      }
+    }
+  }, [src, shareToken])
+
+  const displaySrc = blobUrl || src
 
   const handleZoomIn = useCallback(() => {
     setScale(prev => Math.min(prev + 0.25, 3))
@@ -52,16 +136,16 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 
   const handleDownload = useCallback(() => {
     const link = document.createElement('a')
-    link.href = src
+    link.href = displaySrc
     link.download = alt || 'image'
     link.target = '_blank'
     link.rel = 'noopener noreferrer'
     link.click()
-  }, [src, alt])
+  }, [displaySrc, alt])
 
   const handleOpenInNewTab = useCallback(() => {
-    window.open(src, '_blank', 'noopener,noreferrer')
-  }, [src])
+    window.open(displaySrc, '_blank', 'noopener,noreferrer')
+  }, [displaySrc])
 
   // Handle keyboard events
   useEffect(() => {
@@ -164,7 +248,7 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
       <div className="max-w-[90vw] max-h-[90vh] overflow-auto">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={src}
+          src={displaySrc}
           alt={alt}
           className="transition-transform duration-200 ease-out"
           style={{
@@ -196,9 +280,37 @@ export default function ImagePreview({
   maxHeight = 400,
   showLinkOnError = true,
 }: ImagePreviewProps) {
+  const { shareToken } = useShareToken()
   const [showLightbox, setShowLightbox] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  // Fetch authenticated image on mount
+  useEffect(() => {
+    let mounted = true
+    let currentBlobUrl: string | null = null
+
+    const loadImage = async () => {
+      const url = await fetchAuthenticatedImage(src, shareToken)
+      if (mounted) {
+        currentBlobUrl = url
+        setBlobUrl(url)
+      }
+    }
+
+    loadImage()
+
+    return () => {
+      mounted = false
+      // Clean up blob URL
+      if (currentBlobUrl && currentBlobUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(currentBlobUrl)
+      }
+    }
+  }, [src, shareToken])
+
+  const displaySrc = blobUrl || src
 
   const handleImageClick = useCallback(() => {
     if (!hasError) {
@@ -224,7 +336,7 @@ export default function ImagePreview({
   if (hasError && showLinkOnError) {
     return (
       <a
-        href={src}
+        href={displaySrc}
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm"
@@ -257,7 +369,7 @@ export default function ImagePreview({
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={src}
+            src={displaySrc}
             alt={alt || 'Image preview'}
             className="object-contain bg-muted"
             style={{ maxWidth, maxHeight }}
