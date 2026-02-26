@@ -55,6 +55,7 @@ async def get_provider_servers(
     success, message, servers, error_details = await MCPProviderService.sync_servers(
         provider_key=provider_key,
         preferences=parsed_prefs,
+        user_name=current_user.user_name,
     )
     logger.info(
         "Syncing MCP servers finished: provider_key=%s user_id=%s success=%s servers=%s error_details=%s",

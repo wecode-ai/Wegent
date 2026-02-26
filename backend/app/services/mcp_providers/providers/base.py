@@ -65,7 +65,9 @@ class MCPProviderPlugin(ABC):
         """
         pass
 
-    async def fetch_servers(self, token: str) -> Tuple[List[MCPServer], Optional[str]]:
+    async def fetch_servers(
+        self, token: str, user_name: Optional[str] = None
+    ) -> Tuple[List[MCPServer], Optional[str]]:
         """Fetch and map servers from the provider API
 
         Override this method to implement custom data fetching logic
@@ -75,6 +77,7 @@ class MCPProviderPlugin(ABC):
 
         Args:
             token: Authentication token for the provider (user's API key)
+            user_name: Current user's username (for providers that need owner identity)
 
         Returns:
             Tuple of (servers, error_message). If successful, error_message is None.

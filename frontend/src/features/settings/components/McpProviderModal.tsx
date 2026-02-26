@@ -58,9 +58,10 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
   useEffect(() => {
     if (selectedProvider) {
       setApiKey('')
-      setShowSettings(!selectedProvider.has_token)
-      // Auto sync servers if provider already has token
-      if (selectedProvider.has_token) {
+      // Only show settings for providers that require token and don't have one
+      setShowSettings(selectedProvider.requires_token && !selectedProvider.has_token)
+      // Auto sync servers if provider doesn't require token or already has token
+      if (!selectedProvider.requires_token || selectedProvider.has_token) {
         syncServers()
       } else {
         setServers([])
@@ -230,7 +231,9 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
                       variant="ghost"
                       size="sm"
                       onClick={() => syncServers()}
-                      disabled={syncing || !selectedProvider.has_token}
+                      disabled={
+                        syncing || (selectedProvider.requires_token && !selectedProvider.has_token)
+                      }
                       className="h-8 text-xs gap-1.5 cursor-pointer hover:bg-muted"
                     >
                       {syncing ? (
@@ -343,7 +346,7 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
                           <p className="text-sm text-muted-foreground mb-2">
                             {t('mcpProviders.no_servers_hint')}
                           </p>
-                          {!selectedProvider.has_token && (
+                          {selectedProvider.requires_token && !selectedProvider.has_token && (
                             <Button
                               variant="outline"
                               size="sm"

@@ -97,12 +97,17 @@ class MCPProviderRegistry:
 
     @classmethod
     async def sync_servers(
-        cls, provider_key: str, token: str
+        cls, provider_key: str, token: str, user_name: Optional[str] = None
     ) -> tuple[List[MCPServer], Optional[str]]:
         """Sync servers from a provider
 
         For plugin providers, uses the plugin's custom fetch_servers method (full control).
         For config-based providers, uses the default HTTP client and DataMapper.
+
+        Args:
+            provider_key: The provider identifier
+            token: The provider token (API key)
+            user_name: Current user's username (for providers that need owner identity)
 
         Returns:
             tuple: (servers, error_message)
@@ -116,7 +121,7 @@ class MCPProviderRegistry:
             plugin = cls.get_plugin(provider_key)
             if plugin:
                 # Use plugin's custom fetch_servers for full control
-                return await plugin.fetch_servers(token)
+                return await plugin.fetch_servers(token, user_name)
             else:
                 # Use default mapping logic
                 client = MCPProviderHTTPClient(config)

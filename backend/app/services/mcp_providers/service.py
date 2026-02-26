@@ -76,7 +76,9 @@ class MCPProviderService:
 
     @staticmethod
     async def sync_servers(
-        provider_key: str, preferences: Optional[UserPreferences]
+        provider_key: str,
+        preferences: Optional[UserPreferences],
+        user_name: Optional[str] = None,
     ) -> tuple[bool, str, List[MCPServer], Optional[str]]:
         """Sync MCP servers from a provider"""
         # Get provider config
@@ -87,17 +89,18 @@ class MCPProviderService:
         # Check if provider requires token from user
         requires_token = getattr(provider_config, "requires_token", True)
 
-        if not preferences or not preferences.mcp_provider_keys:
-            return False, "API key not configured", [], None
-
-        raw_value = getattr(
-            preferences.mcp_provider_keys, provider_config.token_field, None
-        )
-        if not raw_value:
-            return False, "API key not configured", [], None
-
         if requires_token:
-            # Token providers: decrypt the value
+            # Token providers require API key configuration
+            if not preferences or not preferences.mcp_provider_keys:
+                return False, "API key not configured", [], None
+
+            raw_value = getattr(
+                preferences.mcp_provider_keys, provider_config.token_field, None
+            )
+            if not raw_value:
+                return False, "API key not configured", [], None
+
+            # Decrypt the token
             try:
                 token = decrypt_mcp_provider_key(raw_value)
             except ValueError:
@@ -108,8 +111,8 @@ class MCPProviderService:
                     "invalid_api_key_format",
                 )
         else:
-            # Non-token providers: use raw value (e.g., owner name)
-            token = raw_value
+            # Non-token providers: use empty token, will use user_name instead
+            token = ""
 
         MCPProviderService.logger.info(
             "Syncing MCP servers: provider_key=%s requires_token=%s",
@@ -119,7 +122,9 @@ class MCPProviderService:
 
         # Call provider's sync function via registry
         try:
-            servers, error = await MCPProviderRegistry.sync_servers(provider_key, token)
+            servers, error = await MCPProviderRegistry.sync_servers(
+                provider_key, token, user_name
+            )
             if error:
                 # Handle specific error codes from registry
                 if error == "unauthorized":
