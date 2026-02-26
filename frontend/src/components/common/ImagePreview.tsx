@@ -8,6 +8,8 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Download, X, ZoomIn, ZoomOut, RotateCw, ExternalLink, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useShareToken } from '@/contexts/ShareTokenContext'
+import { getToken } from '@/apis/user'
 
 interface ImagePreviewProps {
   /** The image URL to display */
@@ -23,11 +25,96 @@ interface ImagePreviewProps {
 }
 
 /**
+ * Check if a URL is an attachment download URL
+ * @param url - URL to check
+ * @returns true if it's an attachment URL
+ */
+function isAttachmentUrl(url: string): boolean {
+  return /^\/api\/attachments\/\d+\/download/.test(url)
+}
+
+/**
+ * Fetch image with authentication and convert to Blob URL
+ * For attachment URLs, adds Authorization header or share_token
+ * @param url - Image URL
+ * @param shareToken - Optional share token for public access
+ * @returns Blob URL or original URL if fetch fails
+ */
+async function fetchAuthenticatedImage(url: string, shareToken?: string): Promise<string> {
+  // Only handle attachment URLs
+  if (!isAttachmentUrl(url)) {
+    return url
+  }
+
+  try {
+    const token = getToken()
+    let fetchUrl = url
+
+    // Build headers
+    const headers: HeadersInit = {}
+
+    if (shareToken) {
+      // Use share token in URL query parameter
+      fetchUrl = `${url}?share_token=${encodeURIComponent(shareToken)}`
+    } else if (token) {
+      // Use Authorization header
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    const response = await fetch(fetchUrl, {
+      method: 'GET',
+      headers,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.status}`)
+    }
+
+    const blob = await response.blob()
+    return URL.createObjectURL(blob)
+  } catch (error) {
+    console.error('Failed to fetch authenticated image:', error)
+    return url // Fallback to original URL
+  }
+}
+
+/**
  * Full screen image preview modal component (Lightbox)
  */
 function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const { shareToken } = useShareToken()
   const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  // Fetch authenticated image on mount
+  useEffect(() => {
+    let mounted = true
+    let currentBlobUrl: string | null = null
+
+    const loadImage = async () => {
+      const url = await fetchAuthenticatedImage(src, shareToken)
+      if (mounted) {
+        currentBlobUrl = url
+        setBlobUrl(url)
+      }
+    }
+
+    loadImage()
+
+    return () => {
+      mounted = false
+      // Clean up blob URL
+      if (currentBlobUrl && currentBlobUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(currentBlobUrl)
+      }
+    }
+  }, [src, shareToken])
+
+  const displaySrc = blobUrl || src
+
+  // For attachment URLs, wait for blobUrl before rendering image
+  const shouldWaitForBlob = isAttachmentUrl(src) && !blobUrl
 
   const handleZoomIn = useCallback(() => {
     setScale(prev => Math.min(prev + 0.25, 3))
@@ -52,16 +139,16 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 
   const handleDownload = useCallback(() => {
     const link = document.createElement('a')
-    link.href = src
+    link.href = displaySrc
     link.download = alt || 'image'
     link.target = '_blank'
     link.rel = 'noopener noreferrer'
     link.click()
-  }, [src, alt])
+  }, [displaySrc, alt])
 
   const handleOpenInNewTab = useCallback(() => {
-    window.open(src, '_blank', 'noopener,noreferrer')
-  }, [src])
+    window.open(displaySrc, '_blank', 'noopener,noreferrer')
+  }, [displaySrc])
 
   // Handle keyboard events
   useEffect(() => {
@@ -162,18 +249,25 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 
       {/* Image container */}
       <div className="max-w-[90vw] max-h-[90vh] overflow-auto">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt={alt}
-          className="transition-transform duration-200 ease-out"
-          style={{
-            transform: `scale(${scale}) rotate(${rotation}deg)`,
-            maxWidth: scale === 1 ? '90vw' : 'none',
-            maxHeight: scale === 1 ? '90vh' : 'none',
-          }}
-          draggable={false}
-        />
+        {/* Show loading state while waiting for blob */}
+        {shouldWaitForBlob ? (
+          <div className="flex items-center justify-center bg-muted animate-pulse rounded-lg" style={{ minWidth: 300, minHeight: 200 }}>
+            <span className="text-text-secondary text-sm">Loading image...</span>
+          </div>
+        ) : (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={displaySrc}
+            alt={alt}
+            className="transition-transform duration-200 ease-out"
+            style={{
+              transform: `scale(${scale}) rotate(${rotation}deg)`,
+              maxWidth: scale === 1 ? '90vw' : 'none',
+              maxHeight: scale === 1 ? '90vh' : 'none',
+            }}
+            draggable={false}
+          />
+        )}
       </div>
 
       {/* Filename at bottom */}
@@ -196,9 +290,41 @@ export default function ImagePreview({
   maxHeight = 400,
   showLinkOnError = true,
 }: ImagePreviewProps) {
+  const { shareToken } = useShareToken()
   const [showLightbox, setShowLightbox] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  // Fetch authenticated image on mount
+  useEffect(() => {
+    let mounted = true
+    let currentBlobUrl: string | null = null
+
+    const loadImage = async () => {
+      const url = await fetchAuthenticatedImage(src, shareToken)
+      if (mounted) {
+        currentBlobUrl = url
+        setBlobUrl(url)
+      }
+    }
+
+    loadImage()
+
+    return () => {
+      mounted = false
+      // Clean up blob URL
+      if (currentBlobUrl && currentBlobUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(currentBlobUrl)
+      }
+    }
+  }, [src, shareToken])
+
+  const displaySrc = blobUrl || src
+
+  // For attachment URLs, wait for blobUrl before rendering image
+  // Otherwise, img tag will try to load without auth and fail
+  const shouldWaitForBlob = isAttachmentUrl(src) && !blobUrl
 
   const handleImageClick = useCallback(() => {
     if (!hasError) {
@@ -224,7 +350,7 @@ export default function ImagePreview({
   if (hasError && showLinkOnError) {
     return (
       <a
-        href={src}
+        href={displaySrc}
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm"
@@ -240,32 +366,33 @@ export default function ImagePreview({
     <>
       {/* Use span instead of div to avoid hydration error when rendered inside <p> tags */}
       <span className="relative inline-block my-2">
-        {/* Loading skeleton */}
-        {isLoading && (
+        {/* Loading skeleton - show while fetching blob or initial loading */}
+        {(isLoading || shouldWaitForBlob) && (
           <span
             className="absolute inset-0 bg-muted animate-pulse rounded-lg block"
             style={{ maxWidth, maxHeight, minWidth: 100, minHeight: 60 }}
           />
         )}
 
-        {/* Image thumbnail */}
-        <span
-          className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${
-            isLoading ? 'opacity-0' : 'opacity-100'
-          }`}
-          onClick={handleImageClick}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={src}
-            alt={alt || 'Image preview'}
-            className="object-contain bg-muted"
-            style={{ maxWidth, maxHeight }}
-            onLoad={handleImageLoad}
-            onError={handleImageError}
-            loading="lazy"
-          />
-        </span>
+        {/* Image thumbnail - only render when ready */}
+        {!shouldWaitForBlob && (
+          <span
+            className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${isLoading ? 'opacity-0' : 'opacity-100'
+              }`}
+            onClick={handleImageClick}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={displaySrc}
+              alt={alt || 'Image preview'}
+              className="object-contain bg-muted"
+              style={{ maxWidth, maxHeight }}
+              onLoad={handleImageLoad}
+              onError={handleImageError}
+              loading="lazy"
+            />
+          </span>
+        )}
       </span>
       {/* Lightbox modal - rendered via Portal to avoid HTML nesting issues */}
       {showLightbox &&

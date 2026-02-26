@@ -76,7 +76,7 @@ function RespondentTopicsContent() {
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <div className="flex flex-1 items-center gap-2">
           <Input
-            placeholder={`${t('topics.browse')}...`}
+            placeholder={t('topics.search_placeholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -151,17 +151,17 @@ function RespondentTopicsContent() {
       {total > 20 && (
         <div className="mt-6 flex justify-center gap-2">
           <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-            Previous
+            {t('common.previous')}
           </Button>
           <span className="flex items-center px-4 text-sm text-text-secondary">
-            Page {page} of {Math.ceil(total / 20)}
+            {t('common.page')} {page} / {Math.ceil(total / 20)}
           </span>
           <Button
             variant="outline"
             disabled={page >= Math.ceil(total / 20)}
             onClick={() => setPage(page + 1)}
           >
-            Next
+            {t('common.next')}
           </Button>
         </div>
       )}

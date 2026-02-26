@@ -66,7 +66,7 @@ graph TB
 
 ## ✨ Core Features
 
-### 💬 Cha Agent
+### 💬 Chat Agent
 <img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 A fully open-source chat agent with powerful capabilities:
 

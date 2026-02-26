@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -25,12 +25,15 @@ import { EvaluationPageLayout } from '@wecode/components/evaluation/common/Evalu
 import { getAuthorTopic, updateAuthorTopic } from '@wecode/api/evaluation-author'
 import { TopicVisibility, type Topic } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { useTheme } from '@/features/theme/ThemeProvider'
 
 function EditTopicContent() {
   const router = useRouter()
   const params = useParams()
   const { toast } = useToast()
   const { t } = useTranslation('evaluation')
+  const { theme } = useTheme()
   const topicId = parseInt(params.id as string)
 
   const [topic, setTopic] = useState<Topic | null>(null)
@@ -41,6 +44,8 @@ function EditTopicContent() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<string>(TopicVisibility.PRIVATE)
+  const [instructions, setInstructions] = useState('')
+  const [showInstructionsPreview, setShowInstructionsPreview] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -50,6 +55,7 @@ function EditTopicContent() {
       setName(topicData.name)
       setDescription(topicData.description || '')
       setVisibility(topicData.visibility)
+      setInstructions(topicData.extra_data?.instructions as string || '')
     } catch (_error) {
       toast({
         title: t('errors.load_failed'),
@@ -86,6 +92,7 @@ function EditTopicContent() {
         name: name.trim(),
         description: description.trim() || undefined,
         visibility,
+        instructions: instructions.trim() || undefined,
       })
 
       toast({
@@ -178,6 +185,54 @@ function EditTopicContent() {
                       'topics.private_description',
                       'Only invited users can view and answer questions'
                     )}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="instructions">{t('topics.instructions')}</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowInstructionsPreview(!showInstructionsPreview)}
+                >
+                  {showInstructionsPreview ? (
+                    <>
+                      <EyeOff className="mr-1 h-4 w-4" />
+                      {t('actions.edit')}
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="mr-1 h-4 w-4" />
+                      {t('questions.preview', 'Preview')}
+                    </>
+                  )}
+                </Button>
+              </div>
+              {showInstructionsPreview ? (
+                <div className="min-h-[150px] rounded-lg border border-border bg-surface p-4">
+                  {instructions.trim() ? (
+                    <EnhancedMarkdown
+                      source={instructions}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  ) : (
+                    <p className="text-text-muted">{t('topics.no_instructions')}</p>
+                  )}
+                </div>
+              ) : (
+                <Textarea
+                  id="instructions"
+                  value={instructions}
+                  onChange={e => setInstructions(e.target.value)}
+                  placeholder={t('topics.instructions_placeholder')}
+                  rows={8}
+                  className="font-mono text-sm"
+                />
+              )}
+              <p className="text-xs text-text-muted">
+                {t('topics.instructions_hint')}
               </p>
             </div>
 

@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,14 +29,15 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import {
   getAuthorQuestion,
   updateAuthorQuestion,
   deleteAuthorQuestion,
   publishAuthorQuestion,
 } from '@wecode/api/evaluation-author'
-import { ContentType, QuestionStatus, type Question } from '@wecode/types/evaluation'
+import { ContentType, QuestionStatus, type Question, type EvalAttachment } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function QuestionDetailContent() {
@@ -53,13 +55,18 @@ function QuestionDetailContent() {
   const [publishing, setPublishing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
+  const [activeTab, setActiveTab] = useState('content')
 
-  // Form state - Markdown only
+  // Form state - support both text and attachments
   const [title, setTitle] = useState('')
   const [contentText, setContentText] = useState('')
+  const [contentAttachments, setContentAttachments] = useState<EvalAttachment[]>([])
   const [showContentPreview, setShowContentPreview] = useState(false)
   const [criteriaText, setCriteriaText] = useState('')
+  const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
   const [showCriteriaPreview, setShowCriteriaPreview] = useState(false)
+  const [instructionsText, setInstructionsText] = useState('')
+  const [showInstructionsPreview, setShowInstructionsPreview] = useState(false)
 
   const loadQuestion = useCallback(async () => {
     setLoading(true)
@@ -69,7 +76,10 @@ function QuestionDetailContent() {
       // Populate form fields
       setTitle(questionData.title)
       setContentText((questionData.content_data?.text as string) || '')
+      setContentAttachments((questionData.content_data?.attachments as EvalAttachment[]) || [])
       setCriteriaText((questionData.criteria_data?.text as string) || '')
+      setCriteriaAttachments((questionData.criteria_data?.attachments as EvalAttachment[]) || [])
+      setInstructionsText((questionData.content_data?.instructions as string) || '')
     } catch (_error) {
       toast({
         title: t('errors.load_failed'),
@@ -93,27 +103,32 @@ function QuestionDetailContent() {
       // Reset form to original values
       setTitle(question.title)
       setContentText((question.content_data?.text as string) || '')
+      setContentAttachments((question.content_data?.attachments as EvalAttachment[]) || [])
       setCriteriaText((question.criteria_data?.text as string) || '')
+      setCriteriaAttachments((question.criteria_data?.attachments as EvalAttachment[]) || [])
+      setInstructionsText((question.content_data?.instructions as string) || '')
     }
     setIsEditing(false)
     setShowContentPreview(false)
     setShowCriteriaPreview(false)
+    setShowInstructionsPreview(false)
   }
 
   const handleSave = async () => {
     if (!title.trim()) {
       toast({
         title: t('errors.save_failed'),
-        description: t('questions.question_title') + ' is required',
+        description: t('questions.title_placeholder'),
         variant: 'destructive',
       })
       return
     }
 
-    if (!contentText.trim()) {
+    const hasContent = contentText.trim().length > 0 || contentAttachments.length > 0
+    if (!hasContent) {
       toast({
         title: t('errors.save_failed'),
-        description: t('questions.content') + ' is required',
+        description: t('questions.content_placeholder'),
         variant: 'destructive',
       })
       return
@@ -121,22 +136,32 @@ function QuestionDetailContent() {
 
     setSaving(true)
     try {
-      // Content is always text/Markdown only
-      const contentData: Record<string, unknown> = {
-        text: contentText.trim(),
+      // Build content_data - use MIXED type if has both text and attachments
+      const contentData: Record<string, unknown> = {}
+      if (contentText.trim()) {
+        contentData.text = contentText.trim()
+      }
+      if (contentAttachments.length > 0) {
+        contentData.attachments = contentAttachments
+      }
+      if (instructionsText.trim()) {
+        contentData.instructions = instructionsText.trim()
       }
 
-      // Criteria is also text/Markdown only
+      // Build criteria_data - use MIXED type if has both text and attachments
       const criteriaData: Record<string, unknown> = {}
       if (criteriaText.trim()) {
         criteriaData.text = criteriaText.trim()
       }
+      if (criteriaAttachments.length > 0) {
+        criteriaData.attachments = criteriaAttachments
+      }
 
       await updateAuthorQuestion(questionId, {
         title: title.trim(),
-        content_type: ContentType.TEXT,
+        content_type: ContentType.MIXED,
         content_data: contentData,
-        criteria_type: ContentType.TEXT,
+        criteria_type: ContentType.MIXED,
         criteria_data: Object.keys(criteriaData).length > 0 ? criteriaData : undefined,
       })
 
@@ -205,6 +230,40 @@ function QuestionDetailContent() {
       return t('common.draft')
     }
     return t('topics.published')
+  }
+
+  // Render attachment list for display mode
+  const renderAttachmentList = (attachments: EvalAttachment[] | undefined, label: string) => {
+    if (!attachments || attachments.length === 0) return null
+    return (
+      <div className="mt-4 space-y-2">
+        <Label>{label}</Label>
+        <div className="space-y-2">
+          {attachments.map((attachment, index) => (
+            <div
+              key={attachment.key || index}
+              className="flex items-center gap-3 rounded-lg border border-border bg-surface p-2"
+            >
+              <div className="flex items-center gap-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded bg-primary/10">
+                  <span className="text-xs font-medium text-primary">
+                    {attachment.filename.split('.').pop()?.toUpperCase().slice(0, 3) || 'FILE'}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{attachment.filename}</p>
+                  {attachment.file_size && (
+                    <p className="text-xs text-text-muted">
+                      {(attachment.file_size / 1024).toFixed(1)} KB
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   if (loading) {
@@ -319,103 +378,196 @@ function QuestionDetailContent() {
                   placeholder={t('questions.title_placeholder')}
                   maxLength={500}
                 />
-              </div>
-
-              {/* Question Content - Markdown with Preview */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="contentText">{t('questions.content')} * (Markdown)</Label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowContentPreview(!showContentPreview)}
-                  >
-                    {showContentPreview ? (
-                      <>
-                        <EyeOff className="mr-1 h-4 w-4" />
-                        {t('actions.edit')}
-                      </>
-                    ) : (
-                      <>
-                        <Eye className="mr-1 h-4 w-4" />
-                        {t('questions.preview', 'Preview')}
-                      </>
-                    )}
-                  </Button>
-                </div>
-                {showContentPreview ? (
-                  <div className="min-h-[200px] rounded-lg border border-border bg-surface p-4">
-                    {contentText.trim() ? (
-                      <EnhancedMarkdown
-                        source={contentText}
-                        theme={theme === 'dark' ? 'dark' : 'light'}
-                      />
-                    ) : (
-                      <p className="text-text-muted">{t('questions.no_content')}</p>
-                    )}
-                  </div>
-                ) : (
-                  <Textarea
-                    id="contentText"
-                    value={contentText}
-                    onChange={e => setContentText(e.target.value)}
-                    placeholder={t('questions.content_placeholder')}
-                    rows={10}
-                    className="font-mono text-sm"
-                  />
-                )}
-                <p className="text-xs text-text-muted">
-                  {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
+                <p className="text-xs text-text-muted text-right">
+                  {title.length}/500
                 </p>
               </div>
 
-              {/* Grading Criteria - Markdown with Preview */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="criteriaText">{t('questions.criteria')} (Markdown)</Label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowCriteriaPreview(!showCriteriaPreview)}
-                  >
-                    {showCriteriaPreview ? (
-                      <>
-                        <EyeOff className="mr-1 h-4 w-4" />
-                        {t('actions.edit')}
-                      </>
+              {/* Tabs for editing */}
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="content">{t('questions.content')}</TabsTrigger>
+                  <TabsTrigger value="criteria">{t('questions.criteria')}</TabsTrigger>
+                  <TabsTrigger value="instructions">{t('questions.instructions')}</TabsTrigger>
+                </TabsList>
+
+                {/* Content Tab */}
+                <TabsContent value="content" className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="contentText">{t('questions.content')} (Markdown)</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowContentPreview(!showContentPreview)}
+                      >
+                        {showContentPreview ? (
+                          <>
+                            <EyeOff className="mr-1 h-4 w-4" />
+                            {t('actions.edit')}
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="mr-1 h-4 w-4" />
+                            {t('questions.preview', 'Preview')}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    {showContentPreview ? (
+                      <div className="min-h-[200px] rounded-lg border border-border bg-surface p-4">
+                        {contentText.trim() ? (
+                          <EnhancedMarkdown
+                            source={contentText}
+                            theme={theme === 'dark' ? 'dark' : 'light'}
+                          />
+                        ) : (
+                          <p className="text-text-muted">{t('questions.no_content')}</p>
+                        )}
+                      </div>
                     ) : (
-                      <>
-                        <Eye className="mr-1 h-4 w-4" />
-                        {t('questions.preview', 'Preview')}
-                      </>
-                    )}
-                  </Button>
-                </div>
-                {showCriteriaPreview ? (
-                  <div className="min-h-[150px] rounded-lg border border-primary/20 bg-primary/5 p-4">
-                    {criteriaText.trim() ? (
-                      <EnhancedMarkdown
-                        source={criteriaText}
-                        theme={theme === 'dark' ? 'dark' : 'light'}
+                      <Textarea
+                        id="contentText"
+                        value={contentText}
+                        onChange={e => setContentText(e.target.value)}
+                        placeholder={t('questions.content_placeholder')}
+                        rows={10}
+                        className="font-mono text-sm"
                       />
-                    ) : (
-                      <p className="text-text-muted">{t('questions.no_criteria')}</p>
                     )}
+                    <p className="text-xs text-text-muted">
+                      {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
+                    </p>
                   </div>
-                ) : (
-                  <Textarea
-                    id="criteriaText"
-                    value={criteriaText}
-                    onChange={e => setCriteriaText(e.target.value)}
-                    placeholder={t('questions.criteria_placeholder')}
-                    rows={6}
-                    className="font-mono text-sm"
-                  />
-                )}
-                <p className="text-xs text-text-muted">{t('grading.description')}</p>
-              </div>
+
+                  {/* Content Attachments */}
+                  <div className="space-y-2">
+                    <Label>{t('questions.content_attachments')}</Label>
+                    <EvaluationFileUpload
+                      topicId={topicId}
+                      questionId={questionId}
+                      fileType="question_content"
+                      attachments={contentAttachments}
+                      onChange={setContentAttachments}
+                      maxFiles={10}
+                    />
+                  </div>
+                </TabsContent>
+
+                {/* Criteria Tab */}
+                <TabsContent value="criteria" className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="criteriaText">{t('questions.criteria')} (Markdown)</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowCriteriaPreview(!showCriteriaPreview)}
+                      >
+                        {showCriteriaPreview ? (
+                          <>
+                            <EyeOff className="mr-1 h-4 w-4" />
+                            {t('actions.edit')}
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="mr-1 h-4 w-4" />
+                            {t('questions.preview', 'Preview')}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    {showCriteriaPreview ? (
+                      <div className="min-h-[150px] rounded-lg border border-primary/20 bg-primary/5 p-4">
+                        {criteriaText.trim() ? (
+                          <EnhancedMarkdown
+                            source={criteriaText}
+                            theme={theme === 'dark' ? 'dark' : 'light'}
+                          />
+                        ) : (
+                          <p className="text-text-muted">{t('questions.no_criteria')}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <Textarea
+                        id="criteriaText"
+                        value={criteriaText}
+                        onChange={e => setCriteriaText(e.target.value)}
+                        placeholder={t('questions.criteria_placeholder')}
+                        rows={6}
+                        className="font-mono text-sm"
+                      />
+                    )}
+                    <p className="text-xs text-text-muted">{t('questions.criteria_placeholder')}</p>
+                  </div>
+
+                  {/* Criteria Attachments */}
+                  <div className="space-y-2">
+                    <Label>{t('questions.criteria_attachments')}</Label>
+                    <EvaluationFileUpload
+                      topicId={topicId}
+                      questionId={questionId}
+                      fileType="question_criteria"
+                      attachments={criteriaAttachments}
+                      onChange={setCriteriaAttachments}
+                      maxFiles={10}
+                    />
+                  </div>
+                </TabsContent>
+
+                {/* Instructions Tab */}
+                <TabsContent value="instructions" className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="instructionsText">{t('questions.instructions')} (Markdown)</Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowInstructionsPreview(!showInstructionsPreview)}
+                      >
+                        {showInstructionsPreview ? (
+                          <>
+                            <EyeOff className="mr-1 h-4 w-4" />
+                            {t('actions.edit')}
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="mr-1 h-4 w-4" />
+                            {t('questions.preview', 'Preview')}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    {showInstructionsPreview ? (
+                      <div className="min-h-[150px] rounded-lg border border-border bg-surface p-4">
+                        {instructionsText.trim() ? (
+                          <EnhancedMarkdown
+                            source={instructionsText}
+                            theme={theme === 'dark' ? 'dark' : 'light'}
+                          />
+                        ) : (
+                          <p className="text-text-muted">{t('topics.no_instructions')}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <Textarea
+                        id="instructionsText"
+                        value={instructionsText}
+                        onChange={e => setInstructionsText(e.target.value)}
+                        placeholder={t('questions.instructions_placeholder')}
+                        rows={8}
+                        className="font-mono text-sm"
+                      />
+                    )}
+                    <p className="text-xs text-text-muted">
+                      {t('questions.instructions_hint')}
+                    </p>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </div>
           ) : (
             <div className="space-y-6">
@@ -432,6 +584,7 @@ function QuestionDetailContent() {
                 ) : (
                   <p className="text-text-muted">{t('questions.no_content')}</p>
                 )}
+                {renderAttachmentList(question.content_data?.attachments as EvalAttachment[] | undefined, t('questions.content_attachments'))}
               </div>
 
               {/* Display mode - Criteria (Markdown rendered) */}
@@ -446,6 +599,22 @@ function QuestionDetailContent() {
                   </div>
                 ) : (
                   <p className="text-text-muted">{t('questions.no_criteria')}</p>
+                )}
+                {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[] | undefined, t('questions.criteria_attachments'))}
+              </div>
+
+              {/* Display mode - Instructions */}
+              <div className="space-y-2">
+                <Label className="text-text-secondary">{t('questions.instructions')}</Label>
+                {typeof question.content_data?.instructions === 'string' && question.content_data.instructions ? (
+                  <div className="rounded-lg border border-border bg-surface p-4">
+                    <EnhancedMarkdown
+                      source={question.content_data.instructions as string}
+                      theme={theme === 'dark' ? 'dark' : 'light'}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-xs text-text-muted">{t('questions.instructions_hint')}</p>
                 )}
               </div>
 

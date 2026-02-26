@@ -593,17 +593,17 @@ function TopicGradingContent() {
           {total > 20 && (
             <div className="mt-6 flex justify-center gap-2">
               <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                {t('common:previous', 'Previous')}
+                {t('common.previous')}
               </Button>
               <span className="flex items-center px-4 text-sm text-text-secondary">
-                {t('common:page', 'Page')} {page} / {Math.ceil(total / 20)}
+                {t('common.page')} {page} / {Math.ceil(total / 20)}
               </span>
               <Button
                 variant="outline"
                 disabled={page >= Math.ceil(total / 20)}
                 onClick={() => setPage(page + 1)}
               >
-                {t('common:next', 'Next')}
+                {t('common.next')}
               </Button>
             </div>
           )}

@@ -39,6 +39,11 @@ class TopicCreate(TopicBase):
     grading_team_id: Optional[int] = Field(
         None, description="Team ID for AI grading (optional)"
     )
+    instructions: Optional[str] = Field(
+        None,
+        max_length=10000,
+        description="Exam instructions in Markdown format",
+    )
 
 
 class TopicUpdate(BaseModel):
@@ -48,6 +53,11 @@ class TopicUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=2000)
     visibility: Optional[str] = Field(None)
     grading_team_id: Optional[int] = Field(None)
+    instructions: Optional[str] = Field(
+        None,
+        max_length=10000,
+        description="Exam instructions in Markdown format",
+    )
 
 
 class TopicInDB(TopicBase):
