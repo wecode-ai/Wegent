@@ -9,6 +9,7 @@ import { EditorView, keymap, ViewUpdate, drawSelection } from '@codemirror/view'
 import { EditorState, Extension } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
+import { json } from '@codemirror/lang-json'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { vim, Vim, getCM } from '@replit/codemirror-vim'
 import { cn } from '@/lib/utils'
@@ -56,6 +57,8 @@ interface CodeMirrorEditorProps {
   placeholder?: string
   /** Callback when Vim mode changes */
   onVimModeChange?: (mode: VimMode) => void
+  /** Language mode for syntax highlighting */
+  language?: 'markdown' | 'json'
 }
 
 /**
@@ -200,6 +203,7 @@ export function CodeMirrorEditor({
   className,
   placeholder,
   onVimModeChange,
+  language = 'markdown',
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<EditorView | null>(null)
@@ -282,8 +286,8 @@ export function CodeMirrorEditor({
       // Basic editing
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
-      // Markdown support
-      markdown(),
+      // Language support
+      language === 'json' ? json() : markdown(),
       // Change listener
       EditorView.updateListener.of(handleChange),
       // Theme
