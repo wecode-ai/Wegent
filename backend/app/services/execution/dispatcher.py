@@ -209,8 +209,24 @@ class ResponsesAPIEventParser:
             # Other item types (message) are lifecycle events, skip
             return None
 
+        elif event_type == ResponsesAPIStreamEvents.RESPONSE_CREATED.value:
+            # response.created -> START
+            # This is crucial for follow-up messages in coding scenarios (ClaudeCode/Agno)
+            # where the executor stays running and handles multiple messages.
+            # Without this, the frontend won't create a new message for subsequent responses.
+            response_data = data.get("response", {})
+            return ExecutionEvent(
+                type=EventType.START,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                data={
+                    "shell_type": data.get("shell_type"),
+                    "model": response_data.get("model"),
+                },
+            )
+
         elif event_type in (
-            ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
             ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
