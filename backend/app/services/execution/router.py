@@ -22,6 +22,7 @@ class CommunicationMode(str, Enum):
     SSE = "sse"  # Active request with long connection
     WEBSOCKET = "websocket"  # Passive request with long connection
     HTTP_CALLBACK = "http_callback"  # HTTP + Callback
+    INPROCESS = "inprocess"  # In-process execution (standalone mode)
 
 
 @dataclass
@@ -71,10 +72,31 @@ class ExecutionRouter:
         },
     }
 
+    # Shell types that support in-process execution in standalone mode
+    # ClaudeCode/Agno: executed via executor module
+    INPROCESS_EXECUTOR_SHELL_TYPES = {"ClaudeCode", "Agno"}
+    # Chat: executed via chat_shell module (when CHAT_SHELL_MODE=package)
+    INPROCESS_CHAT_SHELL_TYPES = {"Chat"}
+
     def __init__(self):
         """Initialize the execution router."""
+        import logging
+
+        logger = logging.getLogger(__name__)
         # Initialize URLs from settings
         self._init_service_urls()
+        # Check if standalone mode is enabled
+        self.standalone_mode = getattr(settings, "STANDALONE_MODE", False)
+        self.standalone_executor_enabled = getattr(
+            settings, "STANDALONE_EXECUTOR_ENABLED", True
+        )
+        # Check if chat_shell is in package mode (in-process)
+        self.chat_shell_mode = getattr(settings, "CHAT_SHELL_MODE", "http")
+        logger.info(
+            f"[ExecutionRouter] Initialized: standalone_mode={self.standalone_mode}, "
+            f"standalone_executor_enabled={self.standalone_executor_enabled}, "
+            f"chat_shell_mode={self.chat_shell_mode}"
+        )
 
     def _init_service_urls(self) -> None:
         """Initialize service URLs from settings."""
@@ -103,8 +125,10 @@ class ExecutionRouter:
 
         Routing priority:
         1. If device_id is specified, use WebSocket mode
-        2. Otherwise, look up configuration by shell_type
-        3. Default to HTTP+Callback mode
+        2. In standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
+        3. If CHAT_SHELL_MODE=package, use INPROCESS for Chat shell type
+        4. Otherwise, look up configuration by shell_type
+        5. Default to HTTP+Callback mode
 
         Args:
             request: Execution request
@@ -113,6 +137,9 @@ class ExecutionRouter:
         Returns:
             ExecutionTarget with routing information
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
         user_id = request.user.get("id") if request.user else None
 
         # Priority 1: device_id specified, use WebSocket mode
@@ -124,8 +151,34 @@ class ExecutionRouter:
                 room=f"device:{user_id}:{device_id}",
             )
 
-        # Priority 2: Look up configuration by shell_type
         shell_type = self._get_shell_type(request)
+        logger.info(
+            f"[ExecutionRouter.route] shell_type={shell_type}, "
+            f"standalone_mode={self.standalone_mode}, "
+            f"standalone_executor_enabled={self.standalone_executor_enabled}, "
+            f"chat_shell_mode={self.chat_shell_mode}"
+        )
+
+        # Priority 2: Standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
+        if (
+            self.standalone_mode
+            and self.standalone_executor_enabled
+            and shell_type in self.INPROCESS_EXECUTOR_SHELL_TYPES
+        ):
+            logger.info(f"[ExecutionRouter.route] Routing to INPROCESS mode (executor)")
+            return ExecutionTarget(mode=CommunicationMode.INPROCESS)
+
+        # Priority 3: Chat shell in package mode, use INPROCESS for Chat type
+        if (
+            self.chat_shell_mode == "package"
+            and shell_type in self.INPROCESS_CHAT_SHELL_TYPES
+        ):
+            logger.info(
+                f"[ExecutionRouter.route] Routing to INPROCESS mode (chat_shell package)"
+            )
+            return ExecutionTarget(mode=CommunicationMode.INPROCESS)
+
+        # Priority 4: Look up configuration by shell_type
         service_config = self.EXECUTION_SERVICES.get(shell_type)
 
         if service_config:
@@ -143,7 +196,7 @@ class ExecutionRouter:
                     url=service_config["url"],
                 )
 
-        # Priority 3: Default configuration
+        # Priority 5: Default configuration
         default_url = (
             getattr(settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001")
             + "/executor-manager"

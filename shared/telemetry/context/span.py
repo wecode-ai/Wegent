@@ -10,17 +10,20 @@ setting attributes, adding events, and managing span status.
 
 Also provides ContextVars for automatic propagation of business context
 (task_id, subtask_id, user_id, user_name) to all spans within a request.
+
+NOTE: OpenTelemetry imports are lazy-loaded to reduce memory usage
+when telemetry is disabled (e.g., in standalone mode).
 """
 
 import logging
 from contextvars import ContextVar
-from typing import Any, Dict, Optional
-
-from opentelemetry import trace
-from opentelemetry.trace import Span, Status, StatusCode
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from shared.telemetry.context.attributes import SpanAttributes
-from shared.telemetry.core import is_telemetry_enabled
+
+# Type hints only - not imported at runtime
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span
 
 # ============================================================================
 # Context Variables for automatic propagation to all spans
@@ -160,13 +163,30 @@ def get_business_context() -> Dict[str, Any]:
 logger = logging.getLogger(__name__)
 
 
-def get_current_span() -> Optional[Span]:
+def _is_telemetry_enabled() -> bool:
+    """
+    Check if telemetry is enabled.
+
+    This is a local helper to avoid circular imports.
+    """
+    from shared.telemetry.core import is_telemetry_enabled
+
+    return is_telemetry_enabled()
+
+
+def get_current_span() -> Optional["Span"]:
     """
     Get the current active span.
 
     Returns:
         Optional[Span]: The current span or None if no span is active
     """
+    if not _is_telemetry_enabled():
+        return None
+
+    # Lazy import
+    from opentelemetry import trace
+
     span = trace.get_current_span()
     if span and span.is_recording():
         return span
@@ -180,7 +200,7 @@ def set_span_attributes(attributes: Dict[str, Any]) -> None:
     Args:
         attributes: Dictionary of attribute key-value pairs
     """
-    if not is_telemetry_enabled():
+    if not _is_telemetry_enabled():
         return
 
     span = get_current_span()
@@ -207,7 +227,7 @@ def add_span_event(name: str, attributes: Optional[Dict[str, Any]] = None) -> No
         name: Name of the event
         attributes: Optional dictionary of event attributes
     """
-    if not is_telemetry_enabled():
+    if not _is_telemetry_enabled():
         return
 
     span = get_current_span()
@@ -240,7 +260,7 @@ def set_span_error(
         description: Optional error description
         record_exception: Whether to record the full exception details (default: True)
     """
-    if not is_telemetry_enabled():
+    if not _is_telemetry_enabled():
         return
 
     span = get_current_span()
@@ -248,6 +268,9 @@ def set_span_error(
         return
 
     try:
+        # Lazy import
+        from opentelemetry.trace import Status, StatusCode
+
         if record_exception:
             span.record_exception(error)
 
@@ -311,7 +334,7 @@ def set_span_ok(description: Optional[str] = None) -> None:
     Args:
         description: Optional success description
     """
-    if not is_telemetry_enabled():
+    if not _is_telemetry_enabled():
         return
 
     span = get_current_span()
@@ -319,6 +342,9 @@ def set_span_ok(description: Optional[str] = None) -> None:
         return
 
     try:
+        # Lazy import
+        from opentelemetry.trace import Status, StatusCode
+
         span.set_status(Status(status_code=StatusCode.OK, description=description))
     except Exception as e:
         logger.debug(f"Failed to set span OK status: {e}")
@@ -327,7 +353,7 @@ def set_span_ok(description: Optional[str] = None) -> None:
 def create_child_span(
     name: str,
     attributes: Optional[Dict[str, Any]] = None,
-) -> Optional[Span]:
+) -> Optional["Span"]:
     """
     Create a child span under the current trace context.
 
@@ -340,10 +366,13 @@ def create_child_span(
     Returns:
         Optional[Span]: The created span, or None if telemetry is disabled
     """
-    if not is_telemetry_enabled():
+    if not _is_telemetry_enabled():
         return None
 
     try:
+        # Lazy import
+        from opentelemetry import trace
+
         tracer = trace.get_tracer(__name__)
         span = tracer.start_span(name)
 
@@ -616,6 +645,7 @@ def attach_otel_context(otel_context: Any) -> Optional[object]:
         return None
 
     try:
+        # Lazy import
         from opentelemetry import context
 
         token = context.attach(otel_context)
@@ -652,6 +682,7 @@ def detach_otel_context(token: Optional[object]) -> None:
         return
 
     try:
+        # Lazy import
         from opentelemetry import context
 
         context.detach(token)

@@ -14,25 +14,49 @@ from app.core.config import settings
 # Database connection URL (using sync driver)
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
-# Create sync database engine with timezone configuration
-# Increase pool size to handle concurrent requests in E2E tests and production
-# Default SQLAlchemy: pool_size=5, max_overflow=10 (total 15 connections)
-# New settings: pool_size=10, max_overflow=20 (total 30 connections)
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_timeout=30,
-    pool_recycle=3600,  # Recycle connections after 1 hour to avoid stale connections
-    connect_args={"charset": "utf8mb4", "init_command": "SET time_zone = '+08:00'"},
-)
+
+def _create_engine():
+    """
+    Create database engine based on DATABASE_URL prefix.
+
+    Automatically selects appropriate configuration for SQLite or MySQL.
+    """
+    if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+        # SQLite configuration
+        # - check_same_thread=False: Required for SQLite to work with multiple threads
+        # - SQLite doesn't support connection pooling parameters like pool_size
+        return create_engine(
+            SQLALCHEMY_DATABASE_URL,
+            connect_args={"check_same_thread": False},
+            pool_pre_ping=True,
+        )
+    else:
+        # MySQL configuration
+        # Increase pool size to handle concurrent requests in E2E tests and production
+        # Default SQLAlchemy: pool_size=5, max_overflow=10 (total 15 connections)
+        # New settings: pool_size=10, max_overflow=20 (total 30 connections)
+        return create_engine(
+            SQLALCHEMY_DATABASE_URL,
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=20,
+            pool_timeout=30,
+            pool_recycle=3600,  # Recycle connections after 1 hour to avoid stale connections
+            connect_args={
+                "charset": "utf8mb4",
+                "init_command": "SET time_zone = '+08:00'",
+            },
+        )
+
+
+engine = _create_engine()
 
 # Sync session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Declare base class
-Base = declarative_base()
+# Import Base from shared package for consistency
+# All models should use the same Base for proper relationship resolution
+from app.db.base import Base
 
 # Wiki tables now use the main database (Base)
 # Alias for backward compatibility

@@ -39,7 +39,6 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.export.docx_generator import generate_task_docx
 from app.services.shared_task import shared_task_service
 
 router = APIRouter()
@@ -463,6 +462,9 @@ async def export_task_docx(
             ) from e
 
     try:
+        # Lazy import docx_generator to avoid loading python-docx at startup
+        from app.services.export.docx_generator import generate_task_docx
+
         # Generate DOCX document with optional message filter
         docx_buffer = generate_task_docx(task, db, message_ids=filter_message_ids)
 
