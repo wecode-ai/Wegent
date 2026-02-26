@@ -154,6 +154,8 @@ graph TB
 
 ## 🚀 快速开始
 
+### 方式一：快速安装（推荐）
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
@@ -161,6 +163,73 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 然后在浏览器中访问 http://localhost:3000
 
 > 可选：启用 RAG 功能 `docker compose --profile rag up -d`
+
+### 方式二：源码安装
+
+如果你已经克隆了源码，可以直接运行安装脚本，它会自动检测源码环境并从本地构建镜像：
+
+```bash
+git clone https://github.com/wecode-ai/Wegent.git
+cd Wegent
+./install.sh
+```
+
+或者在源码目录中手动指定使用本地构建：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+```
+
+**常用命令（源码模式）：**
+```bash
+# 查看日志
+docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f
+
+# 停止服务
+docker compose -f docker-compose.yml -f docker-compose.build.yml down
+
+# 启动服务
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+
+# 重新构建镜像
+docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache
+```
+
+### 方式三：本地开发模式
+
+如果你是开发者，想要快速调试和热重载，可以使用本地开发模式：
+
+```bash
+git clone https://github.com/wecode-ai/Wegent.git
+cd Wegent
+./start.sh
+```
+
+**本地开发模式特点：**
+- 直接运行服务，不使用 Docker
+- 代码修改后自动热重载
+- 适合日常开发调试
+
+**常用命令（本地开发模式）：**
+```bash
+# 启动服务
+./start.sh
+
+# 停止服务
+./start.sh --stop
+
+# 重启服务
+./start.sh --restart
+
+# 查看状态
+./start.sh --status
+
+# 初始化配置
+./start.sh --init
+
+# 查看帮助
+./start.sh --help
+```
 
 ---
 

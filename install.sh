@@ -67,8 +67,37 @@ echo -e "${YELLOW}Installing Wegent to ${INSTALL_DIR}...${NC}"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-echo -e "${YELLOW}Downloading docker-compose.yml...${NC}"
-curl -fsSL "$COMPOSE_URL" -o docker-compose.yml
+# Detect if this is a source clone scenario
+# Check for both regular git clone (.git directory) and git submodule (.git file)
+IS_SOURCE_BUILD=0
+if [ -e ".git" ]; then
+    IS_SOURCE_BUILD=1
+    echo -e "${GREEN}Detected Wegent source code (git clone).${NC}"
+    echo -e "${YELLOW}Will build images from source code.${NC}"
+fi
+
+# Download docker-compose.yml (only if not in source mode)
+if [ "$IS_SOURCE_BUILD" = "1" ]; then
+    if [ -f "docker-compose.yml" ]; then
+        echo -e "${GREEN}Found existing docker-compose.yml, skipping download.${NC}"
+    else
+        echo -e "${RED}Error: docker-compose.yml not found in source directory.${NC}"
+        echo "Please ensure you have the latest source code from the repository."
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}Downloading docker-compose.yml...${NC}"
+    curl -fsSL "$COMPOSE_URL" -o docker-compose.yml
+fi
+
+# Check docker-compose.build.yml exists for source build
+if [ "$IS_SOURCE_BUILD" = "1" ]; then
+    if [ ! -f "docker-compose.build.yml" ]; then
+        echo -e "${RED}Error: docker-compose.build.yml not found in source directory.${NC}"
+        echo "Please ensure you have the latest source code from the repository."
+        exit 1
+    fi
+fi
 
 # Detect server IP for WebSocket configuration
 # Cross-platform compatible (macOS and Linux)
@@ -171,6 +200,11 @@ else
     echo ""
 fi
 
+# Set compose command with build file if source build
+if [ "$IS_SOURCE_BUILD" = "1" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.yml -f docker-compose.build.yml"
+fi
+
 echo -e "${YELLOW}Starting Wegent services...${NC}"
 $COMPOSE_CMD up -d
 
@@ -183,8 +217,18 @@ echo -e "  Open ${BLUE}http://localhost:3000${NC} in your browser"
 echo ""
 echo -e "  Installation directory: ${YELLOW}${INSTALL_DIR}${NC}"
 echo ""
-echo -e "  Useful commands:"
-echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD logs -f${NC}    # View logs"
-echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD down${NC}       # Stop services"
-echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD up -d${NC}      # Start services"
+if [ "$IS_SOURCE_BUILD" = "1" ]; then
+    echo -e "  ${BLUE}Source build mode${NC} - images built from local source code"
+    echo ""
+    echo -e "  Useful commands:"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f${NC}    # View logs"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && docker compose -f docker-compose.yml -f docker-compose.build.yml down${NC}       # Stop services"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && docker compose -f docker-compose.yml -f docker-compose.build.yml up -d${NC}      # Start services"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache${NC}  # Rebuild images"
+else
+    echo -e "  Useful commands:"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD logs -f${NC}    # View logs"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD down${NC}       # Stop services"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD up -d${NC}      # Start services"
+fi
 echo ""
