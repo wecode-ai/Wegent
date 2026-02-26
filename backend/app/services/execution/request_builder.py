@@ -581,7 +581,6 @@ class TaskRequestBuilder:
         Returns:
             Tuple of (skills, preload_skills, user_selected_skills)
         """
-        from app.schemas.kind import Skill as SkillCRD
 
         bot_crd = Bot.model_validate(bot.json)
         logger.info(

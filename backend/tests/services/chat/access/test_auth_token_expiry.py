@@ -4,11 +4,8 @@
 
 """Tests for JWT token expiry functions."""
 
-import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
-import pytest
 from jose import jwt
 
 from app.core.config import settings

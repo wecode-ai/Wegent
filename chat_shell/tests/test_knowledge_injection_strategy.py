@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chat_shell.tools.builtin.knowledge_base import (
-    KnowledgeBaseInput,
     KnowledgeBaseTool,
 )
 from chat_shell.tools.knowledge_content_cleaner import KnowledgeContentCleaner

@@ -6,8 +6,7 @@
 Tests for GiteaProvider pagination and X-Total-Count header handling
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 

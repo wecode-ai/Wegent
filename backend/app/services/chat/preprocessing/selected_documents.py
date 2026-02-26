@@ -22,7 +22,7 @@ from langchain_core.tools import BaseTool
 from sqlalchemy.orm import Session
 
 from app.models.knowledge import KnowledgeDocument
-from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.models.subtask_context import ContextType, SubtaskContext
 
 logger = logging.getLogger(__name__)
 

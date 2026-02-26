@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ValidationException
 from app.models.user import User
-from app.services.user import UserService, user_service
+from app.services.user import UserService
 
 
 @pytest.mark.unit

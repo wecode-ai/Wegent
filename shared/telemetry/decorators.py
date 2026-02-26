@@ -11,7 +11,7 @@ Provides decorators to add tracing to functions without modifying business logic
 import functools
 import logging
 import os
-from typing import Any, Callable, Dict, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,6 @@ def capture_trace_context() -> Optional[Dict[str, str]]:
         return None
 
     try:
-        from opentelemetry import trace
         from opentelemetry.trace.propagation.tracecontext import (
             TraceContextTextMapPropagator,
         )

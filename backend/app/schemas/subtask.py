@@ -67,8 +67,6 @@ class SubtaskBase(BaseModel):
 class SubtaskCreate(SubtaskBase):
     """Subtask creation model"""
 
-    pass
-
 
 class SubtaskAttachment(BaseModel):
     """

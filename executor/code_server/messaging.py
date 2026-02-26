@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from asyncio import Queue
-from typing import AsyncGenerator, Dict, Optional, Union
+from typing import AsyncGenerator, Dict, Optional
 
 from websockets.client import WebSocketClientProtocol, connect
 from websockets.exceptions import ConnectionClosedError, WebSocketException

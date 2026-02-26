@@ -11,7 +11,6 @@ This module tests the security mechanism that only allows public skills
 import io
 import sys
 import zipfile
-from unittest.mock import MagicMock, patch
 
 import pytest
 

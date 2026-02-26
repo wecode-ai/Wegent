@@ -21,7 +21,7 @@ from app.schemas.model import (
     ModelUpdate,
 )
 from app.services.adapters import public_model_service
-from app.services.model_aggregation_service import ModelType, model_aggregation_service
+from app.services.model_aggregation_service import model_aggregation_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

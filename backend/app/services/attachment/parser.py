@@ -38,7 +38,6 @@ from app.services.attachment.smart_truncation import (
     SmartTruncationConfig,
     SmartTruncationInfo,
     SmartTruncationManager,
-    TruncationType,
 )
 
 logger = logging.getLogger(__name__)

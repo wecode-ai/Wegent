@@ -24,7 +24,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from executor_manager.common.config import ROUTE_PREFIX, get_config
+from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.services.sandbox import get_sandbox_manager
 from shared.logger import setup_logger
 

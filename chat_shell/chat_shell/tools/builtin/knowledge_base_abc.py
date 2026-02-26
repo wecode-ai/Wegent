@@ -67,7 +67,6 @@ class KnowledgeBaseToolABC(ABC):
                 - RAG: {"extracted_text", "sources", "injection_mode", "query", "chunks_count"}
                 - kb_head: {"document_ids", "offset", "limit"}
         """
-        pass
 
     def _should_persist(self) -> bool:
         """Check if persistence should be attempted.

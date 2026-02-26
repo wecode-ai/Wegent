@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import relationship

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.schemas.kind import Bot, Model
+from app.schemas.kind import Bot
 from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_api_key
 

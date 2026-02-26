@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User

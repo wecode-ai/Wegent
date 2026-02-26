@@ -34,8 +34,6 @@ class TaskKindsService(
     - TaskOperationsMixin: CRUD operations (create, update, delete, cancel)
     """
 
-    pass
-
 
 # Create singleton instance
 task_kinds_service = TaskKindsService(Kind)

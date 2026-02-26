@@ -19,7 +19,7 @@ Design:
 import json
 import time
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
 # Import LiteLLM's OpenAI Responses API types for standardized events
 from litellm.types.llms.openai import (

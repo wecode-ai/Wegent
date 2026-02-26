@@ -16,7 +16,7 @@ import stat
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 from google.protobuf.timestamp_pb2 import Timestamp
 from watchdog.events import FileSystemEventHandler

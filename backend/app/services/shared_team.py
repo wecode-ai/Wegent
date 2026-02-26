@@ -9,9 +9,7 @@ Uses the unified ResourceMember model instead of the legacy SharedTeam table.
 """
 
 import base64
-import json
 import logging
-import os
 import urllib.parse
 from datetime import datetime
 from typing import List, Optional
@@ -30,9 +28,7 @@ from app.models.share_link import PermissionLevel, ResourceType
 from app.models.user import User
 from app.schemas.kind import Team
 from app.schemas.shared_team import (
-    JoinSharedTeamRequest,
     JoinSharedTeamResponse,
-    SharedTeamCreate,
     SharedTeamInDB,
     TeamShareInfo,
     TeamShareResponse,

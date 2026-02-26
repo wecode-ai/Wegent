@@ -5,7 +5,6 @@ Provides factory functions to create storage providers.
 """
 
 from enum import Enum
-from typing import Optional
 
 from chat_shell.storage.interfaces import StorageProvider
 

@@ -6,11 +6,10 @@
 Base service for all Kubernetes-style CRD operations
 """
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
@@ -274,13 +273,11 @@ class KindBaseService(ABC):
         self, db: Session, user_id: int, db_resource: Kind
     ) -> None:
         """Perform side effects before resource deletion"""
-        pass
 
     def _post_delete_side_effects(
         self, db: Session, user_id: int, db_resource: Kind
     ) -> None:
         """Perform side effects after resource deletion"""
-        pass
 
     def _should_delete_resource(
         self, db: Session, user_id: int, db_resource: Kind
@@ -302,19 +299,16 @@ class KindBaseService(ABC):
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
         """Validate resource references"""
-        pass
 
     def _perform_side_effects(
         self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]
     ) -> None:
         """Perform side effects after resource creation"""
-        pass
 
     def _update_side_effects(
         self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]
     ) -> None:
         """Perform side effects after resource update"""
-        pass
 
     def _format_resource(self, resource: Kind) -> Dict[str, Any]:
         """Format resource for API response directly from stored JSON"""

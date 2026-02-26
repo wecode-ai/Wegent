@@ -6,7 +6,7 @@ import asyncio
 import json
 import threading
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session

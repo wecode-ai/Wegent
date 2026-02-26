@@ -14,8 +14,6 @@ Note: Subscription scheduling has been migrated to Celery. See:
 import asyncio
 import logging
 import threading
-import time
-from datetime import datetime
 
 from app.core.cache import cache_manager
 from app.core.config import settings

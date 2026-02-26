@@ -8,7 +8,6 @@ Knowledge base and document models for document knowledge management.
 Provides storage for user and team knowledge bases with document management.
 """
 
-from datetime import datetime
 from enum import Enum as PyEnum
 
 from sqlalchemy import (
@@ -20,13 +19,10 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import (
-    ForeignKey,
     Index,
     Integer,
     String,
-    Text,
 )
-from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base

@@ -13,12 +13,10 @@ logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.shared_team import (
     JoinSharedTeamRequest,
     JoinSharedTeamResponse,
-    TeamShareRequest,
     TeamShareResponse,
 )
 from app.schemas.team import (

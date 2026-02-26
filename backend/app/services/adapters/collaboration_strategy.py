@@ -47,7 +47,6 @@ class CollaborationStrategy(ABC):
                 - task_status: The status to set for the task
                 - progress: Optional progress value (0-100), None to keep current
         """
-        pass
 
 
 class DefaultCollaborationStrategy(CollaborationStrategy):

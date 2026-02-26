@@ -10,10 +10,9 @@
 Resource Manager - Manages task-related resources and ensures proper cleanup on cancellation
 """
 
-import asyncio
 import threading
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 from shared.logger import setup_logger
 

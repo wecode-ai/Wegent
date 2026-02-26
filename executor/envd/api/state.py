@@ -17,8 +17,6 @@ logger = setup_logger("envd_api_state")
 class AccessTokenAlreadySetError(Exception):
     """Raised when trying to set access token that is already set"""
 
-    pass
-
 
 class EnvdStateManager:
     """Manages envd state including env vars, tokens, and configuration"""

@@ -6,7 +6,7 @@
 
 # -*- coding: utf-8 -*-
 
-from typing import Any, Dict, List, Union
+from typing import List
 
 from shared.logger import setup_logger
 from shared.status import TaskStatus

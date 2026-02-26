@@ -2,10 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import atexit
 import logging
 import warnings
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 

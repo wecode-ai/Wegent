@@ -14,7 +14,7 @@ import logging
 import urllib.parse
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -97,22 +97,18 @@ class UnifiedShareService(ABC):
         Returns:
             Resource object if found and accessible, None otherwise
         """
-        pass
 
     @abstractmethod
     def _get_resource_name(self, resource: object) -> str:
         """Get display name for the resource."""
-        pass
 
     @abstractmethod
     def _get_resource_owner_id(self, resource: object) -> int:
         """Get owner user ID for the resource."""
-        pass
 
     @abstractmethod
     def _get_share_url_base(self) -> str:
         """Get base URL for share links."""
-        pass
 
     @abstractmethod
     def _on_member_approved(
@@ -132,7 +128,6 @@ class UnifiedShareService(ABC):
         Returns:
             Copied resource ID (for Task type) or None
         """
-        pass
 
     # =========================================================================
     # AES Encryption/Decryption

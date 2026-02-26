@@ -21,7 +21,6 @@ from app.schemas.wiki import (
     WikiGenerationInDB,
     WikiGenerationListResponse,
     WikiProjectDetail,
-    WikiProjectInDB,
     WikiProjectListResponse,
 )
 from app.services.user import user_service
@@ -70,7 +69,6 @@ def _verify_internal_token(
             return
     except Exception as e:
         logger.debug(f"JWT token verification failed: {e}")
-        pass
 
     # If neither method works, reject the request
     raise HTTPException(

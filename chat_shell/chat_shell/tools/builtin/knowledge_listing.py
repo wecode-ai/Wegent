@@ -13,7 +13,7 @@ knowledge_base_search tool to prevent excessive knowledge base access.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool

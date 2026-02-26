@@ -153,7 +153,6 @@ class SyncResponseEmitter(ResultEmitter):
 
     async def close(self) -> None:
         """Close the emitter and release resources."""
-        pass
 
 
 class CompositeEmitter(ResultEmitter):

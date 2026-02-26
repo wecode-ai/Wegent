@@ -10,7 +10,6 @@ Database migration script to encrypt existing plain text git tokens
 import logging
 import os
 import sys
-from typing import List
 
 # Add parent directory to path to import app modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

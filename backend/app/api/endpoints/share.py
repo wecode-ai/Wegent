@@ -10,7 +10,7 @@ Supports Team, Task, and KnowledgeBase resource types.
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -25,19 +25,15 @@ from app.schemas.share import (
     MemberListResponse,
     MyKBPermissionResponse,
     PendingRequestListResponse,
-    PermissionLevel,
     PublicKnowledgeBaseResponse,
     ResourceMemberCreate,
     ResourceMemberResponse,
     ResourceMemberUpdate,
-    ResourceType,
     ReviewRequestBody,
     ReviewRequestResponse,
     ShareInfoResponse,
-    ShareLinkConfig,
     ShareLinkCreate,
     ShareLinkResponse,
-    ShareLinkUpdate,
 )
 from app.services.share import (
     knowledge_share_service,

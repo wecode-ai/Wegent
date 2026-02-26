@@ -10,7 +10,7 @@ import hashlib
 import io
 import re
 import zipfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import yaml
 from fastapi import HTTPException

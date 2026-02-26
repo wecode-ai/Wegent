@@ -5,14 +5,11 @@
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from executor_manager.executors.docker.utils import (
     build_callback_url,
     check_container_ownership,
     count_running_containers,
     delete_container,
-    find_available_port,
     get_container_ports,
     get_docker_used_ports,
     get_running_task_details,

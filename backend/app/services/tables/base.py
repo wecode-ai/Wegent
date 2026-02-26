@@ -22,7 +22,6 @@ class BaseTableProvider(ABC):
         Returns:
             TableContext object, or None if URL is invalid
         """
-        pass
 
     @abstractmethod
     async def list_records(
@@ -46,7 +45,6 @@ class BaseTableProvider(ABC):
         Returns:
             TableQueryResponse object containing schema and records
         """
-        pass
 
     @abstractmethod
     async def validate_access(
@@ -66,7 +64,6 @@ class BaseTableProvider(ABC):
         Returns:
             True if user has access, False otherwise
         """
-        pass
 
 
 class TableProviderRegistry:

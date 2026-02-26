@@ -4,9 +4,6 @@
 
 """Unit tests for TelegramKeyboardBuilder."""
 
-from unittest.mock import MagicMock
-
-import pytest
 
 from app.services.channels.telegram.keyboard import (
     CallbackAction,

@@ -32,7 +32,6 @@ from app.schemas.subscription import (
     SubscriptionWorkspaceRef,
 )
 from app.services.subscription.execution import (
-    BackgroundExecutionManager,
     background_execution_manager,
 )
 from app.services.subscription.helpers import (

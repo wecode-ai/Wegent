@@ -6,7 +6,6 @@
 
 # -*- coding: utf-8 -*-
 
-import re
 from typing import Any, Callable, Dict, List, Optional
 
 from shared.logger import setup_logger

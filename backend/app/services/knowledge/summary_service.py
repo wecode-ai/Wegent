@@ -15,12 +15,11 @@ Responsible for:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import DocumentSourceType, KnowledgeDocument
 from app.schemas.summary import DocumentSummary, KnowledgeBaseSummary

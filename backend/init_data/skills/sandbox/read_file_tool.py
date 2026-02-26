@@ -8,7 +8,6 @@ This module provides the SandboxReadFileTool class that reads
 file contents from the sandbox environment.
 """
 
-import asyncio
 import base64
 import json
 import logging

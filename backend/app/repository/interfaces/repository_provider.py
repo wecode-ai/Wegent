@@ -7,7 +7,7 @@ Repository provider interface, defining methods related to code repositories
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.models.user import User
 from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted

@@ -39,7 +39,6 @@ from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
-from app.models.task import TaskResource
 from app.schemas.device import (
     DeviceHeartbeatPayload,
     DeviceOfflineEvent,
@@ -194,7 +193,6 @@ def _update_device_heartbeat(user_id: int, device_id: str) -> None:
     No MySQL update needed.
     """
     # Heartbeat is managed via Redis in the async handler
-    pass
 
 
 def _update_device_status(user_id: int, device_id: str, status: str) -> None:
@@ -205,7 +203,6 @@ def _update_device_status(user_id: int, device_id: str, status: str) -> None:
     No MySQL update needed.
     """
     # Status is managed via Redis in the async handler
-    pass
 
 
 class DeviceNamespace(socketio.AsyncNamespace):

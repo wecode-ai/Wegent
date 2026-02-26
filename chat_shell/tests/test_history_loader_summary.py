@@ -12,11 +12,8 @@ the chat context when summaries are available.
 import logging
 from unittest.mock import Mock, patch
 
-import pytest
-
 from chat_shell.history.loader import (
     _get_summary_text,
-    get_knowledge_base_meta_for_task,
     get_knowledge_base_meta_prompt,
 )
 

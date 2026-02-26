@@ -4,7 +4,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.core import security
 from app.models.user import User

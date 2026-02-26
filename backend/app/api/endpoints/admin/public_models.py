@@ -4,7 +4,6 @@
 
 """Admin public model management endpoints."""
 
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session

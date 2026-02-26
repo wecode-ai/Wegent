@@ -8,7 +8,6 @@ Document indexing orchestration.
 
 import logging
 import tempfile
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from llama_index.core import Document, SimpleDirectoryReader
 
 from app.schemas.rag import SplitterConfig
-from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
+from app.services.rag.splitter import SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
 from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.storage.chunk_metadata import ChunkMetadata

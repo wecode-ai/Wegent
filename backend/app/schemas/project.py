@@ -23,8 +23,6 @@ class ProjectTaskBase(BaseModel):
 class ProjectTaskCreate(ProjectTaskBase):
     """Request model for adding a task to a project."""
 
-    pass
-
 
 class ProjectTaskResponse(BaseModel):
     """Response model for a task within a project."""
@@ -55,8 +53,6 @@ class ProjectBase(BaseModel):
 
 class ProjectCreate(ProjectBase):
     """Request model for creating a project."""
-
-    pass
 
 
 class ProjectUpdate(BaseModel):

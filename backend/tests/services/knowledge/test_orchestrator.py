@@ -4,7 +4,7 @@
 
 """Tests for KnowledgeOrchestrator service layer."""
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.schemas.namespace import GroupRole
 
@@ -19,8 +19,6 @@ class GroupMemberBase(BaseModel):
 
 class GroupMemberCreate(GroupMemberBase):
     """Group member creation model"""
-
-    pass
 
 
 class GroupMemberUpdate(BaseModel):

@@ -8,7 +8,6 @@ Tests for ModelAggregationService.
 Focuses on testing model compatibility filtering for custom shells.
 """
 
-import pytest
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -372,7 +371,6 @@ class TestModelAggregationService:
         self, test_db: Session, test_user: User
     ):
         """Test that shell lookup follows correct precedence: public > personal > group."""
-        from unittest.mock import patch
 
         # Create shells with same name in different scopes
         # 1. Public shell

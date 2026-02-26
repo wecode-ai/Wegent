@@ -25,7 +25,6 @@ from app.schemas.task import TaskCreate
 from app.schemas.wiki import (
     WikiContentWriteRequest,
     WikiGenerationCreate,
-    WikiProjectCreate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.adapters.team_kinds import team_kinds_service

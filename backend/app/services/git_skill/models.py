@@ -10,7 +10,7 @@ import results, and authentication data.
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from app.services.git_skill.providers.base import GitRepoProvider

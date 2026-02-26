@@ -8,8 +8,6 @@ Unit tests for shared prompts module.
 Tests that KB prompt constants are properly exported and accessible.
 """
 
-import pytest
-
 
 class TestKBPromptConstants:
     """Test KB prompt constant exports."""

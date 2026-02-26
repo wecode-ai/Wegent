@@ -6,7 +6,7 @@ This adapter is used by Backend when calling chat_shell.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 
 @dataclass

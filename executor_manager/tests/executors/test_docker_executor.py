@@ -4,7 +4,7 @@
 
 import os
 import subprocess
-from unittest.mock import MagicMock, Mock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests

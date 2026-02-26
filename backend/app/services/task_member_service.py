@@ -10,7 +10,7 @@ Uses the unified ResourceMember model instead of the legacy TaskMember table.
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session

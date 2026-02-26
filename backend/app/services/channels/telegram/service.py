@@ -37,7 +37,7 @@ from telegram.ext import (
 from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.services.channels.base import BaseChannelProvider
-from app.services.channels.commands import CommandType, parse_command
+from app.services.channels.commands import CommandType
 from app.services.channels.telegram.handler import TelegramChannelHandler
 
 logger = logging.getLogger(__name__)

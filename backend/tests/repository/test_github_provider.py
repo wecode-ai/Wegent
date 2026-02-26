@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import requests

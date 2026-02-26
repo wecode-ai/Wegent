@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import logging
 import secrets
 import time
@@ -23,11 +22,9 @@ from app.schemas.user import (
     CLILoginInitRequest,
     CLILoginInitResponse,
     CLIPollResponse,
-    LoginResponse,
     UserAuthTypeResponse,
 )
 from app.services.k_batch import (
-    apply_default_resources_async,
     apply_default_resources_sync,
 )
 from app.services.oidc import oidc_service

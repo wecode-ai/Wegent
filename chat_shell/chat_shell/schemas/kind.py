@@ -8,11 +8,10 @@ Kubernetes-style API schemas for cloud-native agent management.
 This is a subset of the full kind.py schemas, containing only what's needed
 for the Chat Shell service.
 """
-from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
 
 # API Format Enum for OpenAI-compatible models

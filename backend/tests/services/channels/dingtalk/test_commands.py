@@ -4,7 +4,6 @@
 
 """Tests for DingTalk command parser."""
 
-import pytest
 
 from app.services.channels.commands import (
     HELP_MESSAGE,

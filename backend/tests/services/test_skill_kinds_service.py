@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.adapters.skill_kinds import SkillKindsService, skill_kinds_service
+from app.services.adapters.skill_kinds import SkillKindsService
 
 
 @pytest.mark.integration

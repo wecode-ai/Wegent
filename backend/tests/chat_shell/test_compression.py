@@ -4,7 +4,6 @@
 
 """Tests for message compression functionality."""
 
-import pytest
 
 from chat_shell.compression.compressor import MessageCompressor
 from chat_shell.compression.config import (

@@ -65,7 +65,6 @@ class SearchServiceBase(ABC):
         Raises:
             Exception: If the search fails
         """
-        pass
 
     def format_results_for_llm(self, results: list[dict[str, Any]]) -> str:
         """

@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import copy
-import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -14,12 +13,11 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
+from app.schemas.bot import BotCreate, BotUpdate
 from app.schemas.kind import Bot, Ghost, Model, Shell, Team
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
-    get_shell_type,
     get_shells_by_names_batch,
 )
 from app.services.base import BaseService

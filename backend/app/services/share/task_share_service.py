@@ -10,7 +10,6 @@ Tasks have special copy behavior when shared.
 """
 
 import logging
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -90,7 +89,7 @@ class TaskShareService(UnifiedShareService):
         """
         try:
             # Import here to avoid circular imports
-            from app.services.shared_task import shared_task_service
+            pass
 
             # Get task details
             task_share_info = self._get_task_share_info(db, resource)

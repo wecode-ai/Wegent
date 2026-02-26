@@ -11,12 +11,10 @@ import io
 import logging
 import re
 from datetime import datetime
-from typing import BinaryIO, List, Optional
+from typing import List, Optional
 
 import emoji
-from bs4 import BeautifulSoup
 from docx import Document
-from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn

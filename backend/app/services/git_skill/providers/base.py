@@ -32,27 +32,22 @@ class GitRepoProvider(ABC):
     @abstractmethod
     def name(self) -> str:
         """Provider name for display."""
-        pass
 
     @abstractmethod
     def get_api_url(self, owner: str, repo: str) -> str:
         """Get the API URL for repository info."""
-        pass
 
     @abstractmethod
     def get_api_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
         """Get API headers for authentication."""
-        pass
 
     @abstractmethod
     def get_zip_download_url(self, owner: str, repo: str, branch: str) -> str:
         """Get the URL to download the repository as a ZIP file."""
-        pass
 
     @abstractmethod
     def get_zip_auth(self, auth: RepoAuthInfo) -> Optional[Tuple[str, str]]:
         """Get authentication tuple for ZIP download (username, password)."""
-        pass
 
     def get_zip_headers(self, auth: RepoAuthInfo) -> Dict[str, str]:
         """Get headers for ZIP download authentication (optional, default empty)."""

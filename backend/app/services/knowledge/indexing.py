@@ -24,7 +24,7 @@ Key concepts:
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy.orm import Session
 

@@ -12,9 +12,8 @@ QA history including user questions, assistant answers, and retrieval results.
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
-from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind

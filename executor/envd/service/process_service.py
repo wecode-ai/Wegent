@@ -11,9 +11,7 @@ Cross-platform support:
 
 import asyncio
 import os
-import signal as sig
 import subprocess
-import sys
 from typing import Dict, Optional
 
 import psutil

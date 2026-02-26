@@ -11,7 +11,6 @@ This module tests the RenderMermaidTool class, including:
 - Edge cases
 """
 
-import asyncio
 import json
 import sys
 from pathlib import Path
@@ -44,8 +43,6 @@ with patch.dict(
 
     class MockBaseModel:
         """Mock BaseModel for testing."""
-
-        pass
 
     # Patch the imports
     sys.modules["langchain_core.callbacks"].CallbackManagerForToolRun = MagicMock

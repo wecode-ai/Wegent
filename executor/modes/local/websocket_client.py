@@ -31,7 +31,6 @@ Example:
 
 import asyncio
 import hashlib
-import os
 import platform
 import re
 import socket

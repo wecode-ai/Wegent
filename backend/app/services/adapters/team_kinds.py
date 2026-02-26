@@ -9,7 +9,6 @@ Uses the unified ResourceMember model for team sharing.
 """
 
 import copy
-import json
 import logging
 import time
 from datetime import datetime
@@ -27,7 +26,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
-from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
+from app.schemas.team import BotInfo, TeamCreate, TeamUpdate
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader

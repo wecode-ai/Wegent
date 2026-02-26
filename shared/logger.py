@@ -17,7 +17,6 @@ import multiprocessing
 import os
 import sys
 from logging.handlers import QueueHandler, QueueListener
-from typing import Optional
 
 
 class RequestIdFilter(logging.Filter):

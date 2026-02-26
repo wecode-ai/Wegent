@@ -14,7 +14,6 @@ def config():
     This command group provides tools for viewing and modifying
     the Chat Shell configuration stored in ~/.chat_shell/config.yaml.
     """
-    pass
 
 
 @config.command("show")

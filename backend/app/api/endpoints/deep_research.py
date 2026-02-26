@@ -17,7 +17,6 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db

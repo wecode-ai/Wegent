@@ -18,7 +18,6 @@ Usage:
 """
 
 import logging
-from dataclasses import asdict
 from typing import Any, Optional
 
 from .execution import ExecutionRequest

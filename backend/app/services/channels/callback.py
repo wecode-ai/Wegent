@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, TypeVar
 
@@ -147,7 +147,6 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             ResultEmitter instance or None if creation failed
         """
-        pass
 
     @abstractmethod
     def _parse_callback_info(self, data: Dict[str, Any]) -> T:
@@ -162,7 +161,6 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             Channel-specific CallbackInfo instance
         """
-        pass
 
     @abstractmethod
     def _extract_thinking_display(self, thinking: Any) -> str:
@@ -177,7 +175,6 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             Formatted thinking text for display
         """
-        pass
 
     async def _get_or_create_emitter(
         self, task_id: int, subtask_id: int

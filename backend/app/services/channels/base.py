@@ -101,12 +101,10 @@ class BaseChannelProvider(ABC):
         Returns:
             True if started successfully, False otherwise
         """
-        pass
 
     @abstractmethod
     async def stop(self) -> None:
         """Stop the channel connection."""
-        pass
 
     async def restart(self) -> bool:
         """

@@ -47,8 +47,6 @@ def _should_encrypt() -> bool:
 class NotFoundException(Exception):
     """Exception raised when a context is not found."""
 
-    pass
-
 
 class ContextService:
     """

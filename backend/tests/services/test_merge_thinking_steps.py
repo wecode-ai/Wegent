@@ -4,7 +4,6 @@
 
 """Tests for merge_thinking_steps function."""
 
-import pytest
 
 from app.services.adapters.executor_kinds import merge_thinking_steps
 

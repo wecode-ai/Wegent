@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -158,7 +157,6 @@ class TestTokenOperations:
         # Create a token with very short expiration and wait for it to expire
         # Since create_access_token doesn't support negative values properly,
         # we'll create a token manually with past expiration
-        import time
         from datetime import datetime, timedelta
 
         from jose import jwt

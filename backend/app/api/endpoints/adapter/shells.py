@@ -486,7 +486,6 @@ def update_shell(
     # Get user shell (try all accessible namespaces)
     from app.services.group_permission import (
         check_group_permission,
-        get_effective_role_in_group,
         get_user_groups,
     )
 

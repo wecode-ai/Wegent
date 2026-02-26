@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from executor.services.agent_service import AgentService
 from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
-from executor.tasks import process, process_async, run_task, run_task_async
+from executor.tasks import process_async, run_task_async
 
 # Import the shared logger
 from shared.logger import setup_logger

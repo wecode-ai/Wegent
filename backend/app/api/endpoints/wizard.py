@@ -9,14 +9,12 @@ This module provides APIs for the step-by-step agent creation wizard,
 including AI-powered follow-up questions and prompt generation.
 """
 
-import asyncio
 import json
 import logging
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -24,7 +22,6 @@ from app.core import security
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Bot, Ghost, Shell, Team
 from app.schemas.wizard import (
     CoreQuestion,
     CoreQuestionsResponse,

@@ -9,7 +9,7 @@ Knowledge base and document service using kinds table.
 from dataclasses import dataclass
 from typing import Optional
 
-from sqlalchemy import and_, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 

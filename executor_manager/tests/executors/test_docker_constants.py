@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 
 from executor_manager.executors.docker.constants import (
     CONTAINER_OWNER,

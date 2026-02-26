@@ -5,7 +5,6 @@ Provides in-memory storage for CLI and testing scenarios.
 Data is lost when the process exits.
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 

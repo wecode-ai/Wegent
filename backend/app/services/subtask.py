@@ -3,11 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, load_only, subqueryload, undefer
+from sqlalchemy.orm import Session, subqueryload, undefer
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
@@ -530,7 +529,6 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             HTTPException: If validation fails
         """
         from app.models.task import TaskResource as Task
-        from app.services.task_member_service import task_member_service
 
         # Get the subtask
         subtask = (

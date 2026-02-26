@@ -7,9 +7,7 @@
 import importlib
 import json
 import sys
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from app.mcp_server.auth import TaskTokenInfo
 

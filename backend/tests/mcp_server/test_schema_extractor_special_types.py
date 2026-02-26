@@ -6,9 +6,7 @@
 
 import inspect
 from typing import Optional
-from unittest.mock import MagicMock
 
-import pytest
 from fastapi import BackgroundTasks, Depends, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -16,7 +14,6 @@ from sqlalchemy.orm import Session
 from app.mcp_server.schema_extractor import (
     _is_dependency,
     _is_fastapi_special_type,
-    _is_pydantic_body,
     extract_tool_parameters,
 )
 

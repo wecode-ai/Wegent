@@ -15,7 +15,7 @@ from app.core.exceptions import NotFoundException
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
-from app.schemas.kind import Bot, Model, Retriever, Task, Team
+from app.schemas.kind import Bot, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
@@ -93,7 +93,6 @@ class ModelKindService(KindBaseService):
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
         """No references to validate for Model"""
-        pass
 
     def _extract_resource_data(self, resource: Dict[str, Any]) -> Dict[str, Any]:
         """Extract and encrypt API key in Model resource data"""
@@ -150,7 +149,6 @@ class ShellKindService(KindBaseService):
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
         """No references to validate for Shell"""
-        pass
 
 
 class BotKindService(KindBaseService):
@@ -307,7 +305,6 @@ class KnowledgeBaseKindService(KindBaseService):
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
         """No references to validate for KnowledgeBase"""
-        pass
 
 
 class TeamKindService(KindBaseService):
@@ -355,7 +352,6 @@ class WorkspaceKindService(TaskResourceBaseService):
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
         """No references to validate for Workspace"""
-        pass
 
 
 class TaskKindService(TaskResourceBaseService):

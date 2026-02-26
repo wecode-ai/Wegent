@@ -13,7 +13,7 @@ This module provides ResultEmitter implementations for DingTalk:
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Optional
 
 # Re-export SyncResponseEmitter from generic module for backward compatibility
 from app.services.channels.emitter import SyncResponseEmitter
@@ -314,4 +314,3 @@ class StreamingResponseEmitter(ResultEmitter):
 
     async def close(self) -> None:
         """Close the emitter and release resources."""
-        pass

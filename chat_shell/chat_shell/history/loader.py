@@ -293,8 +293,7 @@ def _load_history_from_db_sync(
     # Import backend's models and database session
     # This works in package mode since we're running within the backend process
     from app.db.session import SessionLocal
-    from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    from app.models.subtask import Subtask, SubtaskStatus
     from app.models.user import User
 
     history: list[dict[str, Any]] = []

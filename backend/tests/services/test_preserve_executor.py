@@ -18,9 +18,8 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
-from app.schemas.kind import Task
 from app.services.adapters.executor_job import JobService
 from app.services.adapters.task_kinds import TaskKindsService
 

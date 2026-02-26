@@ -33,7 +33,6 @@ from executor_manager.services.sandbox.health_checker import (
     get_container_health_checker,
 )
 from executor_manager.services.sandbox.repository import get_sandbox_repository
-from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:

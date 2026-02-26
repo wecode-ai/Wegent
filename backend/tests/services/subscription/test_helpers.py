@@ -7,8 +7,6 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import pytest
-
 from app.schemas.subscription import SubscriptionTriggerType
 from app.services.subscription.helpers import calculate_next_execution_time
 

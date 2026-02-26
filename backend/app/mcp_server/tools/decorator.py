@@ -30,11 +30,10 @@ Usage:
 """
 
 import inspect
-import json
 import logging
 import re
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 

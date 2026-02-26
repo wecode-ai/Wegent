@@ -12,7 +12,6 @@ Uses APScheduler for task scheduling.
 """
 
 import os
-import time
 from typing import TYPE_CHECKING, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

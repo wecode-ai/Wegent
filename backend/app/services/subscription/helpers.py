@@ -15,7 +15,7 @@ This module contains utility functions for:
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy.orm import Session

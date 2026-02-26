@@ -22,7 +22,6 @@ from app.models.kind import Kind
 from app.models.subscription_follow import (
     FollowType,
     InvitationStatus,
-    NotificationLevel,
     SubscriptionFollow,
 )
 from app.models.user import User

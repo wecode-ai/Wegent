@@ -45,22 +45,18 @@ class IGroupReader(ABC):
     @abstractmethod
     def get_by_name(self, db: Session, name: str) -> Optional[Namespace]:
         """Get group by name."""
-        pass
 
     @abstractmethod
     def get_visibility(self, db: Session, name: str) -> Optional[str]:
         """Get group visibility (public/internal/private)."""
-        pass
 
     @abstractmethod
     def is_public(self, db: Session, name: str) -> bool:
         """Check if group is public."""
-        pass
 
     @abstractmethod
     def on_change(self, name: str) -> None:
         """Handle change event."""
-        pass
 
 
 # =============================================================================

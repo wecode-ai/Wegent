@@ -40,7 +40,7 @@ from app.services.channels.telegram.user_resolver import TelegramUserResolver
 from app.services.execution.emitters import ResultEmitter
 
 if TYPE_CHECKING:
-    from telegram import Bot, Message, Update
+    from telegram import Bot, Update
 
 logger = logging.getLogger(__name__)
 

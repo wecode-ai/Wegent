@@ -11,7 +11,7 @@ This module provides ResultEmitter implementations for Telegram:
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Optional
 
 from app.services.execution.emitters import ResultEmitter
 from shared.models import ExecutionEvent
@@ -466,4 +466,3 @@ class StreamingResponseEmitter(ResultEmitter):
 
     async def close(self) -> None:
         """Close the emitter and release resources."""
-        pass

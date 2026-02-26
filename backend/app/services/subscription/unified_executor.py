@@ -89,12 +89,10 @@ async def execute_subscription_unified(
         user: User object
         execution_data: Subscription execution data
     """
-    from app.core.config import settings
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import (
         CommunicationMode,
         ExecutionRouter,
-        execution_dispatcher,
     )
 
     logger.info(

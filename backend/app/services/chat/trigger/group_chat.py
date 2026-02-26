@@ -10,7 +10,6 @@ This module provides utilities for group chat functionality including:
 """
 
 import logging
-from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 

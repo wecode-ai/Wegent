@@ -490,7 +490,6 @@ class KnowledgeShareService(UnifiedShareService):
         Raises:
             ValueError: If token is invalid or KB not found
         """
-        import urllib.parse
 
         # Decode token
         token_info = self._decode_share_token(share_token)

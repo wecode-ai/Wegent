@@ -21,7 +21,7 @@ This tracker stores minimal metadata needed to:
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import redis
 

@@ -676,7 +676,6 @@ class AgnoAgent(Agent):
         Returns:
             TaskStatus: Failed status
         """
-        import os
 
         error_message = str(error)
         logger.exception(f"Error in {execution_type}: {error_message}")

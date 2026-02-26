@@ -21,7 +21,7 @@ from app.models.kind import Kind
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Bot, Task, Team
+from app.schemas.kind import Task, Team
 
 logger = logging.getLogger(__name__)
 

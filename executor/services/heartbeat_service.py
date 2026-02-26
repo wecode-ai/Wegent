@@ -11,7 +11,6 @@ This module provides a background service that:
 - Supports both sandbox (long-lived) and task (regular) heartbeat types
 """
 
-import os
 import threading
 import time
 from typing import Optional

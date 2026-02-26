@@ -39,7 +39,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             DeviceType enum value
         """
-        pass
 
     @abstractmethod
     async def register(
@@ -71,7 +70,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             Dict containing device info including 'id' and 'is_default'
         """
-        pass
 
     @abstractmethod
     async def unregister(
@@ -93,7 +91,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             True if successful
         """
-        pass
 
     @abstractmethod
     async def get_status(
@@ -112,7 +109,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             Device status dict or None if not found
         """
-        pass
 
     @abstractmethod
     async def list_devices(
@@ -131,7 +127,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             List of device info dicts
         """
-        pass
 
     @abstractmethod
     async def refresh_heartbeat(
@@ -152,7 +147,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             True if successful
         """
-        pass
 
     @abstractmethod
     async def is_online(
@@ -169,7 +163,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             True if device is online
         """
-        pass
 
     @abstractmethod
     async def get_slot_usage(
@@ -188,7 +181,6 @@ class BaseDeviceProvider(ABC):
         Returns:
             Dict with 'used', 'max', and 'running_tasks' keys
         """
-        pass
 
     async def delete(
         self,

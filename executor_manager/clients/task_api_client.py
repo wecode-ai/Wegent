@@ -10,8 +10,6 @@
 API client module, handles communication with the API
 """
 
-import requests
-
 from executor_manager.config.config import (
     API_TIMEOUT,
     TASK_API_DOMAIN,

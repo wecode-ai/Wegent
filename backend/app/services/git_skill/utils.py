@@ -13,7 +13,6 @@ import io
 import logging
 import os
 import re
-import tempfile
 import zipfile
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse

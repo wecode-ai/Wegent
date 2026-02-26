@@ -22,7 +22,6 @@ from app.schemas.admin import (
     PublicBotUpdate,
 )
 from app.schemas.kind import Ghost, Model
-from app.services.adapters.shell_utils import get_shell_info_by_name
 
 logger = logging.getLogger(__name__)
 

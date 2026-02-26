@@ -185,7 +185,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             MessageContext with parsed message information
         """
-        pass
 
     @abstractmethod
     async def resolve_user(
@@ -203,7 +202,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Wegent User or None if not found
         """
-        pass
 
     @abstractmethod
     async def send_text_reply(self, message_context: MessageContext, text: str) -> bool:
@@ -219,7 +217,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             True if sent successfully, False otherwise
         """
-        pass
 
     @abstractmethod
     def create_callback_info(self, message_context: MessageContext) -> TCallbackInfo:
@@ -234,7 +231,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Channel-specific CallbackInfo instance
         """
-        pass
 
     @abstractmethod
     def get_callback_service(self) -> Optional[BaseChannelCallbackService]:
@@ -246,7 +242,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Channel callback service or None
         """
-        pass
 
     @abstractmethod
     async def create_streaming_emitter(
@@ -263,7 +258,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         Returns:
             Streaming emitter or None if not supported
         """
-        pass
 
     # ==================== Common Methods ====================
 

@@ -14,7 +14,6 @@ Event handlers:
 """
 
 import logging
-from typing import List
 
 from app.core.events import ChatCompletedEvent, MemoryCreatedEvent, get_event_bus
 from app.db.session import SessionLocal
