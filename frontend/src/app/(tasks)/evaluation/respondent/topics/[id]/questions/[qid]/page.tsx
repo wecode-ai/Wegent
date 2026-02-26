@@ -6,36 +6,17 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import dynamic from 'next/dynamic'
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { respondentGetTopic, respondentListQuestions } from '@wecode/api/evaluation-respondent'
+import { RespondentQuestion } from '@wecode/components/evaluation/respondent/components'
 import type { Topic } from '@wecode/types/evaluation'
-
-// Dynamic imports for code splitting
-const RespondentQuestionDesktop = dynamic(
-  () =>
-    import('@wecode/components/evaluation/respondent/components').then(mod => ({
-      default: mod.RespondentQuestionDesktop,
-    })),
-  { ssr: false }
-)
-
-const RespondentQuestionMobile = dynamic(
-  () =>
-    import('@wecode/components/evaluation/respondent/components').then(mod => ({
-      default: mod.RespondentQuestionMobile,
-    })),
-  { ssr: false }
-)
 
 export default function RespondentQuestionPage() {
   const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
   const { t } = useTranslation('evaluation')
-  const isMobile = useIsMobile()
 
   const topicId = parseInt(params.id as string)
   const questionId = parseInt(params.qid as string)
@@ -89,10 +70,9 @@ export default function RespondentQuestionPage() {
     )
   }
 
-  const Component = isMobile ? RespondentQuestionMobile : RespondentQuestionDesktop
-
+  // Use unified component - responsive layout handled internally
   return (
-    <Component
+    <RespondentQuestion
       topic={topic}
       questionId={questionId}
       currentQuestionIndex={currentQuestionIndex}
