@@ -76,6 +76,7 @@ class MCPProviderConfig(BaseModel):
     api_key_url: str  # URL to get API key
     token_field: str  # Field name in preferences
     requires_token: bool = True  # Whether user needs to configure API key
+    priority: int = 100  # Display priority (lower = first)
 
     api: ProviderAPIConfig
     mapping: ResponseMappingConfig

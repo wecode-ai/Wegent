@@ -82,8 +82,10 @@ class MCPProviderRegistry:
 
     @classmethod
     def list_all(cls) -> List[MCPProviderConfig]:
-        """List all registered providers"""
-        return list(cls._providers.values())
+        """List all registered providers, sorted by priority"""
+        providers = list(cls._providers.values())
+        # Sort by priority (lower = first), then by name
+        return sorted(providers, key=lambda p: (getattr(p, "priority", 100), p.name))
 
     @classmethod
     def list_keys(cls) -> List[str]:

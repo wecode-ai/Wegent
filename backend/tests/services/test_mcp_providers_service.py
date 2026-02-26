@@ -52,7 +52,7 @@ def test_provider_config():
 async def test_sync_servers_sets_error_details_for_unauthorized(
     monkeypatch, test_provider_config
 ):
-    async def mock_sync(key, token):
+    async def mock_sync(key, token, user_name=None):
         return [], "unauthorized"
 
     monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
@@ -75,7 +75,7 @@ async def test_sync_servers_sets_error_details_for_unauthorized(
 async def test_sync_servers_sets_error_details_for_server_error(
     monkeypatch, test_provider_config
 ):
-    async def mock_sync(key, token):
+    async def mock_sync(key, token, user_name=None):
         return [], "server_error"
 
     monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
@@ -97,7 +97,7 @@ async def test_sync_servers_sets_error_details_for_server_error(
 async def test_sync_servers_handles_empty_exception_message(
     monkeypatch, test_provider_config
 ):
-    async def mock_sync(key, token):
+    async def mock_sync(key, token, user_name=None):
         return [], "RuntimeError"
 
     monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
@@ -117,7 +117,7 @@ async def test_sync_servers_handles_empty_exception_message(
 
 @pytest.mark.anyio
 async def test_sync_servers_handles_connect_error(monkeypatch, test_provider_config):
-    async def mock_sync(key, token):
+    async def mock_sync(key, token, user_name=None):
         raise httpx.ConnectError("boom")
 
     monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
@@ -138,7 +138,7 @@ async def test_sync_servers_handles_connect_error(monkeypatch, test_provider_con
 
 @pytest.mark.anyio
 async def test_sync_servers_rejects_plaintext_token(monkeypatch, test_provider_config):
-    async def mock_sync(key, token):
+    async def mock_sync(key, token, user_name=None):
         return [], None
 
     monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
