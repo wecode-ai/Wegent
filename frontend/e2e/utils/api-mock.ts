@@ -9,7 +9,6 @@ export interface CapturedChatRequest {
   task_id?: number
   attachment_id?: number
   model_id?: string
-  enable_web_search?: boolean
 }
 
 /**

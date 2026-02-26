@@ -34,7 +34,7 @@ class ChatContextResult:
 
     Attributes:
         history: Chat history messages
-        extra_tools: All tools including builtin tools (LoadSkillTool, WebSearchTool, etc.)
+        extra_tools: All tools including builtin tools (LoadSkillTool, etc.)
         system_prompt: System prompt (may be updated by KB tools)
         mcp_clients: MCP clients for cleanup
     """
@@ -649,7 +649,7 @@ class ChatContext:
     ) -> list:
         """Build the complete list of extra tools from all sources.
 
-        This includes builtin tools (LoadSkillTool, WebSearchTool, DataTableTool),
+        This includes builtin tools (LoadSkillTool, DataTableTool),
         KB tools, skill tools, and MCP tools.
 
         Args:
@@ -674,23 +674,6 @@ class ChatContext:
                 len(self._request.skill_names or []),
             )
 
-        # Add WebSearchTool if enabled
-        if self._request.enable_web_search:
-            from chat_shell.tools.builtin import WebSearchTool
-
-            default_max_results = getattr(settings, "WEB_SEARCH_DEFAULT_MAX_RESULTS", 5)
-            search_engine = self._request.search_engine
-            extra_tools.append(
-                WebSearchTool(
-                    engine_name=search_engine,
-                    default_max_results=default_max_results,
-                )
-            )
-            logger.debug(
-                "[CHAT_CONTEXT] Added WebSearchTool: engine=%s, max_results=%d",
-                search_engine,
-                default_max_results,
-            )
         # Add DataTableTool if table_contexts provided
         logger.debug(
             "[CHAT_CONTEXT] Checking table_contexts: has_table_contexts=%s, count=%d",

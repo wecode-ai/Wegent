@@ -80,7 +80,6 @@ class SpanAttributes:
 
     # Chat attributes
     CHAT_TYPE = "chat.type"
-    CHAT_WEB_SEARCH = "chat.web_search"
     CHAT_DEEP_THINKING = "chat.deep_thinking"
     CHAT_CLARIFICATION = "chat.clarification"
 

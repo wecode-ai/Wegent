@@ -14,7 +14,6 @@ export const TOOL_ICONS: Record<string, string> = {
   Glob: '📁',
   Task: '🤖',
   WebFetch: '🌐',
-  WebSearch: '🔎',
 }
 
 /**

@@ -170,7 +170,6 @@ interface MessagesAreaProps {
   // Correction mode props
   enableCorrectionMode?: boolean
   correctionModelId?: string | null
-  enableCorrectionWebSearch?: boolean
   // Whether there are messages to display (from parent ChatArea)
   // This ensures MessagesArea shows content when ChatArea's hasMessages is true
   hasMessages?: boolean
@@ -202,7 +201,6 @@ export default function MessagesArea({
   onRetry,
   enableCorrectionMode = false,
   correctionModelId = null,
-  enableCorrectionWebSearch = false,
   hasMessages: hasMessagesFromParent,
   pendingTaskId,
   isPendingConfirmation,
@@ -295,7 +293,6 @@ export default function MessagesArea({
           original_answer: originalAnswer,
           correction_model_id: correctionModelId,
           force_retry: true, // Force re-evaluation even if correction exists
-          enable_web_search: enableCorrectionWebSearch,
         })
 
         setCorrectionResults(prev => new Map(prev).set(subtaskId, result))
@@ -314,7 +311,7 @@ export default function MessagesArea({
         })
       }
     },
-    [selectedTaskDetail?.id, correctionModelId, enableCorrectionWebSearch, toast]
+    [selectedTaskDetail?.id, correctionModelId, toast]
   )
 
   // Load persisted correction data from subtask.result when task detail changes
@@ -385,7 +382,6 @@ export default function MessagesArea({
           original_question: userMsg.content,
           original_answer: msg.content || '',
           correction_model_id: correctionModelId,
-          enable_web_search: enableCorrectionWebSearch,
         })
         .then(result => {
           setCorrectionResults(prev => new Map(prev).set(subtaskId, result))
@@ -409,7 +405,6 @@ export default function MessagesArea({
   }, [
     enableCorrectionMode,
     correctionModelId,
-    enableCorrectionWebSearch,
     messages,
     selectedTaskDetail?.id,
     toast,

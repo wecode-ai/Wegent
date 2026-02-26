@@ -204,7 +204,6 @@ class ChatService(ChatInterface):
             agent = create_chat_agent(
                 workspace_root=settings.WORKSPACE_ROOT,
                 enable_skills=settings.ENABLE_SKILLS,
-                enable_web_search=False,
                 enable_checkpointing=settings.ENABLE_CHECKPOINTING,
             )
 

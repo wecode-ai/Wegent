@@ -1526,8 +1526,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         @dataclass
         class ChatPayload:
             is_group_chat: bool = False
-            enable_web_search: bool = False
-            search_engine: Optional[str] = None
             force_override_bot_model: Optional[str] = None
             enable_clarification: bool = False
             preload_skills: Optional[list] = None

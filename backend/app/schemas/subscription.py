@@ -510,8 +510,6 @@ class SubscriptionTriggerPayload(BaseModel):
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
     is_group_chat: bool = False
-    enable_web_search: bool = False
-    search_engine: Optional[str] = None
     preload_skills: Optional[List[str]] = None
 
 

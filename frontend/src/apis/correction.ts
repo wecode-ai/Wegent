@@ -31,7 +31,6 @@ export interface CorrectionRequest {
   original_answer: string
   correction_model_id: string
   force_retry?: boolean // Force re-evaluation even if correction exists
-  enable_web_search?: boolean // Enable web search tool for fact verification
 }
 
 /**
@@ -70,7 +69,6 @@ export interface CorrectionModeState {
   enabled: boolean
   correctionModelId: string | null
   correctionModelName: string | null
-  enableWebSearch?: boolean // Enable web search for fact verification
 }
 
 // LocalStorage key prefix for correction mode state (per-task)
@@ -162,7 +160,6 @@ export const correctionApis = {
         enabled: false,
         correctionModelId: null,
         correctionModelName: null,
-        enableWebSearch: false,
       }
     }
     try {
@@ -175,7 +172,6 @@ export const correctionApis = {
           enabled: parsed.enabled ?? false,
           correctionModelId: parsed.correctionModelId ?? null,
           correctionModelName: parsed.correctionModelName ?? null,
-          enableWebSearch: parsed.enableWebSearch ?? false,
         }
       }
     } catch (e) {
@@ -185,7 +181,6 @@ export const correctionApis = {
       enabled: false,
       correctionModelId: null,
       correctionModelName: null,
-      enableWebSearch: false,
     }
   },
 

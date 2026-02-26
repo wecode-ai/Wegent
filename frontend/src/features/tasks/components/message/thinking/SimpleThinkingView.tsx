@@ -60,9 +60,7 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
           const runId = (step as { run_id?: string }).run_id || `${index}`
 
           let query: string = ''
-          if (toolName === 'web_search' && details.input) {
-            query = (details.input as { query?: string }).query || ''
-          } else if (toolName === 'wegentFetch' && details.input) {
+          if (toolName === 'wegentFetch' && details.input) {
             query = (details.input as { url?: string }).url || ''
           } else {
             const titleStr = typeof step.title === 'string' ? step.title : ''
@@ -94,22 +92,6 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
           const startIdx = toolStartMap.get(runId)
 
           let resultCount: number | undefined
-          if (toolName === 'web_search') {
-            try {
-              const output = details.output || details.content
-              let outputData: { count?: number }
-
-              if (typeof output === 'string') {
-                outputData = JSON.parse(output)
-              } else {
-                outputData = output as { count?: number }
-              }
-
-              resultCount = outputData.count
-            } catch {
-              // Ignore parse errors
-            }
-          }
 
           // Get completed title from backend (e.g., "渲染图表完成" or "任务失败: xxx")
           const completedTitle = typeof step.title === 'string' ? step.title : undefined

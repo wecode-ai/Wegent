@@ -30,7 +30,6 @@ export function normalizeToolName(toolName: string, _title?: string): string {
     'TodoWrite',
     'Task',
     'WebFetch',
-    'WebSearch',
     'Upload',
   ]
   if (englishTools.includes(toolName)) {
@@ -60,12 +59,9 @@ export function normalizeToolName(toolName: string, _title?: string): string {
   if (toolName.includes('bash') || toolName.includes('exec') || toolName.includes('command')) {
     return 'Bash'
   }
-  // Keep knowledge_base_search and web_search as-is
+  // Keep knowledge_base_search as-is
   if (toolName.includes('knowledge') || toolName.includes('kb')) {
     return 'knowledge_base_search'
-  }
-  if (toolName.includes('web') && toolName.includes('search')) {
-    return 'WebSearch'
   }
 
   // Return original if no mapping found

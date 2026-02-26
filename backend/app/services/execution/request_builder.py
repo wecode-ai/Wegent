@@ -66,7 +66,6 @@ class TaskRequestBuilder:
         *,
         # Feature toggles
         enable_tools: bool = True,
-        enable_web_search: bool = False,
         enable_clarification: bool = False,
         enable_deep_thinking: bool = True,
         # Skill configuration
@@ -100,7 +99,6 @@ class TaskRequestBuilder:
             team: The team (agent) configuration
             message: The user message/prompt
             enable_tools: Whether to enable tool usage
-            enable_web_search: Whether to enable web search
             enable_clarification: Whether to enable clarification mode
             enable_deep_thinking: Whether to enable deep thinking mode
             skill_names: List of skill names to load (deprecated, use preload_skills)
@@ -222,7 +220,6 @@ class TaskRequestBuilder:
             system_prompt=system_prompt,
             prompt=message,
             enable_tools=enable_tools,
-            enable_web_search=enable_web_search,
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
             skill_names=[s["name"] for s in resolved_skills],

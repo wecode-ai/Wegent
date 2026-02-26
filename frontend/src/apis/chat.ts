@@ -170,60 +170,10 @@ export async function getStreamingContent(subtaskId: number): Promise<StreamingC
 }
 
 /**
- * Search engine information
- */
-export interface SearchEngine {
-  name: string
-  display_name: string
-}
-
-/**
- * Response from get search engines API
- */
-export interface SearchEnginesResponse {
-  enabled: boolean
-  engines: SearchEngine[]
-}
-
-/**
- * Get available search engines from backend configuration.
- *
- * @returns Search engines configuration
- */
-export async function getSearchEngines(): Promise<SearchEnginesResponse> {
-  const token = getToken()
-
-  const response = await fetch(`${getApiUrl()}/chat/search-engines`, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
-    },
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    let errorMsg = errorText
-    try {
-      const json = JSON.parse(errorText)
-      if (json && typeof json.detail === 'string') {
-        errorMsg = json.detail
-      }
-    } catch {
-      // Not JSON
-    }
-    throw new Error(errorMsg)
-  }
-
-  return response.json()
-}
-
-/**
  * Chat API exports
  */
 export const chatApis = {
   checkDirectChat,
   cancelChat,
   getStreamingContent,
-  getSearchEngines,
 }

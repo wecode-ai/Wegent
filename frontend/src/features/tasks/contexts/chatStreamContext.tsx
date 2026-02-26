@@ -78,10 +78,6 @@ export interface ChatMessageRequest {
   attachment_id?: number
   /** Attachment IDs for multiple file uploads (optional) */
   attachment_ids?: number[]
-  /** Enable web search for this message */
-  enable_web_search?: boolean
-  /** Search engine to use (when web search is enabled) */
-  search_engine?: string
   /** Enable clarification mode for this message */
   enable_clarification?: boolean
   /** Enable deep thinking mode for this message */
@@ -688,8 +684,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         title: request.title,
         attachment_id: request.attachment_id,
         attachment_ids: request.attachment_ids,
-        enable_web_search: request.enable_web_search,
-        search_engine: request.search_engine,
         enable_clarification: request.enable_clarification,
         enable_deep_thinking: request.enable_deep_thinking,
         force_override_bot_model: request.model_id,

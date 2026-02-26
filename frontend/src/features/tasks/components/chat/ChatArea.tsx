@@ -686,7 +686,6 @@ function ChatAreaContent({
               onRetry={streamHandlers.handleRetry}
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
-              enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
               hasMessages={hasMessages}
               pendingTaskId={streamHandlers.pendingTaskId}
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}

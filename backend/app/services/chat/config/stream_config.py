@@ -28,9 +28,6 @@ class WebSocketStreamConfig:
         message_id: Assistant's message_id for frontend ordering
         user_message_id: User's message_id for history exclusion (prevents duplicate messages)
 
-        enable_web_search: Enable web search tool
-        search_engine: Specific search engine to use
-
         bot_name: Bot name for MCP server loading
         bot_namespace: Bot namespace
         shell_type: Shell type (Chat, ClaudeCode, Agno) for frontend display
@@ -53,8 +50,6 @@ class WebSocketStreamConfig:
 
     # Feature flags
     enable_tools: bool = True  # Enable tools (MCP, web search, skills, etc.)
-    enable_web_search: bool = False
-    search_engine: str | None = None
 
     # Prompt enhancement options
     enable_clarification: bool = False

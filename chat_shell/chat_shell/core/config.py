@@ -96,11 +96,6 @@ class Settings(BaseSettings):
     CHAT_MCP_ENABLED: bool = False
     CHAT_MCP_SERVERS: str = "{}"
 
-    # Web search configuration
-    WEB_SEARCH_ENABLED: bool = False
-    WEB_SEARCH_ENGINES: str = "{}"
-    WEB_SEARCH_DEFAULT_MAX_RESULTS: int = 50
-
     # Workspace configuration
     WORKSPACE_ROOT: str = "/workspace"
     ENABLE_SKILLS: bool = True
@@ -127,7 +122,7 @@ class Settings(BaseSettings):
     # Tool Display Configuration
     # Comma-separated list of keywords to match tool names (uses substring matching)
     # Empty string or "*" means all tools will display details
-    # Example: "read,write,search" will match "read_file", "write_file", "web_search", etc.
+    # Example: "read,write,search" will match "read_file", "write_file", "search_docs", etc.
     TOOL_DISPLAY_WHITELIST: str = "read,write,upload,exec"
 
     # Truncation Recovery Configuration

@@ -53,9 +53,6 @@ class StreamChatRequest(BaseModel):
     model_id: Optional[str] = None  # Optional model override
     force_override_bot_model: bool = False
     attachment_id: Optional[int] = None  # Optional attachment ID for file upload
-    # Web search toggle
-    enable_web_search: bool = False  # Enable web search for this message
-    search_engine: Optional[str] = None  # Search engine to use
     # Clarification mode toggle
     enable_clarification: bool = False  # Enable clarification mode for this message
     # Git info (optional, for record keeping)
@@ -132,34 +129,6 @@ async def check_direct_chat(
     }
 
 
-@router.get("/search-engines")
-async def get_search_engines(
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get available search engines from configuration.
-
-    Returns:
-        {
-            "enabled": bool,
-            "engines": [{"name": str, "display_name": str}]
-        }
-    """
-    from app.core.config import settings
-    from app.services.search.factory import get_available_engines
-
-    if not settings.WEB_SEARCH_ENABLED:
-        return {"enabled": False, "engines": []}
-
-    # Get available engines from factory
-    engines = get_available_engines()
-
-    return {
-        "enabled": True,
-        "engines": engines,
-    }
-
-
 # AI Correction Feature
 class CorrectionRequest(BaseModel):
     """Request body for AI correction."""
@@ -170,8 +139,6 @@ class CorrectionRequest(BaseModel):
     original_answer: str
     correction_model_id: str
     force_retry: bool = False  # Force re-evaluation even if correction exists
-    enable_web_search: bool = False  # Enable web search tool for fact verification
-    search_engine: Optional[str] = None  # Search engine name to use
 
 
 @router.post("/correct")
@@ -291,21 +258,6 @@ async def correct_response(
     # Build chat history from previous subtasks using service module
     history = build_chat_history(db, request.task_id, subtask.message_id)
 
-    # Get search tool if enabled (use LangChain-compatible WebSearchTool for LangGraph)
-    tools = None
-    if request.enable_web_search:
-        from chat_shell.tools import WebSearchTool
-
-        # Use a reasonable default for correction (API limit is 50)
-        search_tool = WebSearchTool(
-            engine_name=request.search_engine,
-            default_max_results=10,  # Correction only needs a few results for fact-checking
-        )
-        tools = [search_tool]
-        logger.info(
-            f"Enabled web search tool for correction (engine: {request.search_engine or 'default'})"
-        )
-
     # Emit correction:start event
     await extended_emitter.emit_correction_start(
         task_id=request.task_id,
@@ -344,7 +296,6 @@ async def correct_response(
             model_config=model_config,
             correction_model_id=request.correction_model_id,
             history=history if history else None,
-            tools=tools,
             on_progress=on_progress,
             on_chunk=on_chunk,
         )

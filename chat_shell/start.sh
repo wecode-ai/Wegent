@@ -294,21 +294,10 @@ export CHAT_SHELL_STORAGE_TYPE="remote"
 export CHAT_SHELL_REMOTE_STORAGE_URL="$BACKEND_URL/api/internal"
 export CHAT_SHELL_REMOTE_STORAGE_TOKEN="$BACKEND_TOKEN"
 
-# Pass web search configuration if set
-if [ -n "$WEB_SEARCH_ENABLED" ]; then
-    export CHAT_SHELL_WEB_SEARCH_ENABLED="$WEB_SEARCH_ENABLED"
-fi
-if [ -n "$WEB_SEARCH_ENGINES" ]; then
-    export CHAT_SHELL_WEB_SEARCH_ENGINES="$WEB_SEARCH_ENGINES"
-fi
-
 echo -e "${GREEN}Environment:${NC}"
 echo -e "  CHAT_SHELL_MODE=$CHAT_SHELL_MODE"
 echo -e "  CHAT_SHELL_STORAGE_TYPE=$CHAT_SHELL_STORAGE_TYPE"
 echo -e "  CHAT_SHELL_REMOTE_STORAGE_URL=$CHAT_SHELL_REMOTE_STORAGE_URL"
-if [ -n "$WEB_SEARCH_ENABLED" ]; then
-    echo -e "  CHAT_SHELL_WEB_SEARCH_ENABLED=$CHAT_SHELL_WEB_SEARCH_ENABLED"
-fi
 echo ""
 
 echo -e "${GREEN}Server will start on http://$HOST:$PORT${NC}"

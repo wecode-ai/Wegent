@@ -34,7 +34,6 @@ from .compression import MessageCompressor
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .tools import ToolRegistry
-from .tools.builtin import WebSearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +87,6 @@ class ChatAgent:
         self,
         workspace_root: str = "/workspace",
         enable_skills: bool = False,
-        enable_web_search: bool = False,
         enable_checkpointing: bool = False,
     ):
         """Initialize Chat Agent.
@@ -96,13 +94,11 @@ class ChatAgent:
         Args:
             workspace_root: Root directory for file operations
             enable_skills: Enable built-in file skills
-            enable_web_search: Enable web search tool (global default)
             enable_checkpointing: Enable state checkpointing
         """
         self.workspace_root = workspace_root
         self.tool_registry = ToolRegistry()
         self.enable_checkpointing = enable_checkpointing
-        self._enable_web_search_default = enable_web_search
 
         # Register built-in skills
         # if enable_skills:
@@ -110,14 +106,6 @@ class ChatAgent:
 
         # self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
         # self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
-
-        # Register web search if enabled globally
-        web_search_enabled = getattr(settings, "WEB_SEARCH_ENABLED", False)
-        if enable_web_search and web_search_enabled:
-            default_max_results = getattr(settings, "WEB_SEARCH_DEFAULT_MAX_RESULTS", 5)
-            self.tool_registry.register(
-                WebSearchTool(default_max_results=default_max_results)
-            )
 
     @trace_sync(
         span_name="chat_agent.create_agent_builder",
@@ -309,12 +297,7 @@ class ChatAgent:
                 )
 
             # Build tool-specific friendly titles
-            if tool_name == "web_search":
-                if count > 0:
-                    title = f"Found {count} search results"
-                else:
-                    title = "No search results found"
-            elif tool_name == "knowledge_base_search":
+            if tool_name == "knowledge_base_search":
                 if count > 0:
                     title = f"Retrieved {count} items from knowledge base"
                 else:
@@ -431,7 +414,6 @@ class ChatAgent:
 def create_chat_agent(
     workspace_root: str | None = None,
     enable_skills: bool = True,
-    enable_web_search: bool = False,
     enable_checkpointing: bool = False,
 ) -> ChatAgent:
     """Create a ChatAgent instance with configuration from settings.
@@ -442,7 +424,6 @@ def create_chat_agent(
     Args:
         workspace_root: Override workspace root (defaults to settings)
         enable_skills: Enable built-in file skills
-        enable_web_search: Enable web search tool
         enable_checkpointing: Enable state checkpointing
 
     Returns:
@@ -454,6 +435,5 @@ def create_chat_agent(
     return ChatAgent(
         workspace_root=workspace_root,
         enable_skills=enable_skills,
-        enable_web_search=enable_web_search,
         enable_checkpointing=enable_checkpointing,
     )

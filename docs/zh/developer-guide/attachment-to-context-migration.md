@@ -232,7 +232,6 @@ ATTACHMENT_S3_USE_SSL=true
 - ✅ `knowledge_base` - 知识库引用
 
 未来计划：
-- 🔄 `web_search` - 网页搜索结果
 - 🔄 `code_snippet` - 代码片段
 - 🔄 `api_response` - API 响应数据
 
