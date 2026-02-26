@@ -98,7 +98,9 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   // Form state
   const [retrieverName, setRetrieverName] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [storageType, setStorageType] = useState<'elasticsearch' | 'qdrant' | 'milvus'>('elasticsearch')
+  const [storageType, setStorageType] = useState<'elasticsearch' | 'qdrant' | 'milvus'>(
+    'elasticsearch'
+  )
   const [url, setUrl] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')

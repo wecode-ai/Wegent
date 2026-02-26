@@ -12,6 +12,7 @@ from app.api.endpoints import (
     groups,
     health,
     knowledge,
+    mcp_providers,
     oidc,
     openapi_responses,
     pet,
@@ -148,6 +149,9 @@ api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 # RAG router is conditionally registered based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:
     api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
+api_router.include_router(
+    mcp_providers.router, prefix="/mcp-providers", tags=["mcp-providers"]
+)
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(

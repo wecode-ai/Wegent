@@ -238,8 +238,14 @@ class ChatContext:
         from chat_shell.history import get_chat_history
 
         # Use user_message_id to exclude current user message (and all messages after it)
-        # Fall back to message_id if user_message_id is not provided
-        exclude_message_id = self._request.user_message_id or self._request.message_id
+        # If user_message_id is not provided, infer it from message_id:
+        # message_id is assistant_subtask.message_id, user message is message_id - 1
+        if self._request.user_message_id:
+            exclude_message_id = self._request.user_message_id
+        elif self._request.message_id and self._request.message_id > 1:
+            exclude_message_id = self._request.message_id - 1
+        else:
+            exclude_message_id = None
 
         # Get history_limit from request (used by subscription tasks)
         history_limit = getattr(self._request, "history_limit", None)
@@ -400,7 +406,7 @@ class ChatContext:
             user_selected_skills=self._request.user_selected_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
-            task_data=self._request.task_data,
+            task_data=self._request,
         )
         add_span_event(
             "skill_tools_prepared",
@@ -438,7 +444,7 @@ class ChatContext:
             if auth:
                 server_config[server_name]["headers"] = auth
 
-            client = MCPClient(server_config, task_data=self._request.task_data)
+            client = MCPClient(server_config, task_data=self._request)
             await client.connect()
             if client.is_connected:
                 tools = client.get_tools()
@@ -499,7 +505,7 @@ class ChatContext:
         from chat_shell.tools.mcp import MCPClient
 
         try:
-            client = MCPClient(server_config, task_data=self._request.task_data)
+            client = MCPClient(server_config, task_data=self._request)
             await client.connect()
             if client.is_connected:
                 tools = client.get_tools()

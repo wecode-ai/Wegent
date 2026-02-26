@@ -8,13 +8,12 @@
 
 import os
 from collections import OrderedDict
-from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 from executor.config import config
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
-from shared.models.execution import EventType, ExecutionEvent
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 from shared.utils import git_util
 from shared.utils.callback_client import CallbackClient
@@ -40,26 +39,26 @@ class Agent:
 
     def __init__(
         self,
-        task_data: Dict[str, Any],
+        task_data: ExecutionRequest,
         emitter: ResponsesAPIEmitter,
     ):
         """
         Initialize the base agent
 
         Args:
-            task_data: The task data dictionary
+            task_data: The task data ExecutionRequest
             emitter: Emitter instance for sending events. Required parameter.
                      - Local mode: Use WebSocketTransport emitter
                      - Docker mode: Use CallbackTransport emitter
         """
         self.task_data = task_data
         self.callback_client = CallbackClient(callback_url=config.CALLBACK_URL)
-        self.task_id = task_data.get("task_id", -1)
-        self.subtask_id = task_data.get("subtask_id", -1)
-        self.task_title = task_data.get("task_title", "")
-        self.subtask_title = task_data.get("subtask_title", "")
-        self.task_type = task_data.get(
-            "type"
+        self.task_id = task_data.task_id
+        self.subtask_id = task_data.subtask_id
+        self.task_title = task_data.task_title or ""
+        self.subtask_title = task_data.subtask_title or ""
+        self.task_type = (
+            task_data.type
         )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
@@ -75,6 +74,39 @@ class Agent:
             ResponsesAPIEmitter: The emitter instance
         """
         return self.emitter
+
+    def update_emitter(self, new_subtask_id: int) -> None:
+        """
+        Update the agent's emitter to use a new subtask_id.
+
+        Called when an existing agent is reused for a new subtask (e.g., append chat).
+        Rebuilds the emitter with the new subtask_id so that all subsequent
+        callback events carry the correct subtask_id.
+
+        Args:
+            new_subtask_id: The new subtask ID to use for emitter events
+        """
+        old_subtask_id = self.subtask_id
+        self.subtask_id = new_subtask_id
+        self.task_data.subtask_id = new_subtask_id
+        self.emitter = (
+            EmitterBuilder()
+            .with_task(self.task_id, new_subtask_id)
+            .with_transport(
+                TransportFactory.create_callback_throttled(
+                    callback_url=config.CALLBACK_URL
+                )
+            )
+            .with_executor_info(
+                name=os.getenv("EXECUTOR_NAME"),
+                namespace=os.getenv("EXECUTOR_NAMESPACE"),
+            )
+            .build()
+        )
+        logger.info(
+            f"Agent[{self.get_name()}][{self.task_id}] updated emitter subtask_id: "
+            f"{old_subtask_id} -> {new_subtask_id}"
+        )
 
     def handle(
         self, pre_executed: Optional[TaskStatus] = None
@@ -211,12 +243,12 @@ class Agent:
         raise NotImplementedError("Subclasses must implement execute()")
 
     def download_code(self):
-        git_url = self.task_data.get("git_url", "")
+        git_url = self.task_data.git_url or ""
         if git_url == "":
             logger.info("git url is empty, skip download code")
             return
 
-        user_config = self.task_data.get("user")
+        user_config = self.task_data.user if self.task_data.user else {}
         git_token = user_config.get("git_token")
         # Handle encrypted tokens
         if git_token and is_token_encrypted(git_token):
@@ -225,13 +257,13 @@ class Agent:
             )
             git_token = decrypt_git_token(git_token)
 
-        username = user_config.get("user_name")
-        branch_name = self.task_data.get("branch_name")
+        username = user_config.get("git_login") if user_config else None
+        branch_name = self.task_data.branch_name
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(
             f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}"
         )
-        logger.info("username: {username} git token: {git_token}")
+
         logger.info(user_config)
 
         project_path = os.path.join(

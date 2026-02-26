@@ -11,11 +11,12 @@ and bot's Ghost CRD (via backend API).
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
 from chat_shell.core.config import settings
+from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ async def load_mcp_tools(
     task_id: int,
     bot_name: str = "",
     bot_namespace: str = "default",
-    task_data: dict[str, Any] | None = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> Any:
     """Load MCP tools for a task.
 
@@ -38,7 +39,7 @@ async def load_mcp_tools(
         task_id: Task ID for logging
         bot_name: Bot name for Ghost CRD lookup
         bot_namespace: Bot namespace
-        task_data: Task data containing MCP configuration
+        task_data: ExecutionRequest for variable substitution
 
     Returns:
         MCPClient instance or None if no MCP servers configured

@@ -9,6 +9,7 @@ from typing import Any, Optional, Union
 from pydantic import BaseModel, Field, model_validator
 
 # Import only what we actually use from shared module
+from shared.models.execution import ExecutionRequest
 from shared.models.responses_api import (
     ResponsesAPIStreamEvents,
     ResponsesAPIStreamingResponse,
@@ -271,7 +272,9 @@ class Metadata(BaseModel):
         None, description="Table contexts for DataTableTool"
     )
     # Task data for MCP tools
-    task_data: Optional[dict] = Field(None, description="Task data for MCP tools")
+    task_data: Optional[ExecutionRequest] = Field(
+        None, description="Task data for MCP tools"
+    )
     # Authentication
     auth_token: Optional[str] = Field(
         None,

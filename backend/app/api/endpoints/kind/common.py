@@ -199,7 +199,7 @@ def validate_and_prepare_resource(
             resource["metadata"]["name"] = name
 
         # Validate resource
-        validated_resource = schema_class.parse_obj(resource).dict()
+        validated_resource = schema_class.model_validate(resource).model_dump()
         return validated_resource
     except Exception as e:
         raise HTTPException(

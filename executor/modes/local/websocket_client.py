@@ -321,9 +321,9 @@ class WebSocketClient:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.settimeout(2)
                 # Google's public DNS server (8.8.8.8)
-                s.connect(('8.8.8.8', 80))
+                s.connect(("8.8.8.8", 80))
                 ip = s.getsockname()[0]
-                if ip and ip != '127.0.0.1':
+                if ip and ip != "127.0.0.1":
                     return ip
         except Exception:
             logger.debug("Failed to detect IP via UDP socket", exc_info=True)
@@ -331,7 +331,7 @@ class WebSocketClient:
         try:
             # Method 2: Get hostname resolution
             ip = socket.gethostbyname(socket.gethostname())
-            if ip and ip != '127.0.0.1':
+            if ip and ip != "127.0.0.1":
                 return ip
         except Exception:
             logger.debug("Failed to detect IP via hostname resolution", exc_info=True)
@@ -339,21 +339,18 @@ class WebSocketClient:
         try:
             # Method 3: Try to get IP from network interfaces (Linux only)
             result = subprocess.run(
-                ['hostname', '-I'],
-                capture_output=True,
-                text=True,
-                timeout=5
+                ["hostname", "-I"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
                 ips = result.stdout.strip().split()
                 for ip in ips:
-                    if ip and not ip.startswith('127.'):
+                    if ip and not ip.startswith("127."):
                         return ip
         except Exception:
             logger.debug("Failed to detect IP via hostname -I", exc_info=True)
 
         # Fallback to localhost
-        return '127.0.0.1'
+        return "127.0.0.1"
 
     def _setup_internal_handlers(self) -> None:
         """Setup internal event handlers for connection lifecycle."""
