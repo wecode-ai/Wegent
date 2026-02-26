@@ -34,7 +34,7 @@ NC='\033[0m' # No Color
 # When run by pre-commit, stdin may not be available, so we detect changes differently
 get_changed_files() {
     local files=""
-
+    
     # Try to read from stdin first (direct pre-push hook provides ref info)
     if ! [ -t 0 ]; then
         # stdin is available (piped), try to read pre-push hook format
@@ -54,16 +54,16 @@ get_changed_files() {
             fi
         done
     fi
-
+    
     # Fallback: Compare current branch with its upstream or origin/main
     local upstream=$(git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "origin/main")
     files=$(git diff --name-only "$upstream"...HEAD 2>/dev/null || true)
-
+    
     if [ -n "$files" ]; then
         echo "$files"
         return
     fi
-
+    
     # Last resort: compare with last commit
     git diff --name-only HEAD~1 HEAD 2>/dev/null || true
 }
@@ -92,6 +92,10 @@ DOC_REMINDERS=()
 FAILED_CHECKS=()
 FAILED_LOGS=()
 
+# mypy warning tracking (non-blocking)
+MYPY_WARNING_COUNT=0
+MYPY_WARNING_MODULES=""
+
 # -----------------------------------------------------------------------------
 # Check: Changed files summary
 # -----------------------------------------------------------------------------
@@ -105,14 +109,16 @@ BACKEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^backend/" 2>/dev/null || echo 
 FRONTEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^frontend/" 2>/dev/null || echo 0)
 EXECUTOR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor/" 2>/dev/null || echo 0)
 EXECUTOR_MGR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor_manager/" 2>/dev/null || echo 0)
+CHAT_SHELL_COUNT=$(echo "$CHANGED_FILES" | grep -c "^chat_shell/" 2>/dev/null || echo 0)
 SHARED_COUNT=$(echo "$CHANGED_FILES" | grep -c "^shared/" 2>/dev/null || echo 0)
-OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared)/" 2>/dev/null || echo 0)
+OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|chat_shell|shared)/" 2>/dev/null || echo 0)
 
 echo -e "   ${BLUE}Modules affected:${NC}"
 [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Backend: $BACKEND_COUNT file(s)"
 [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Frontend: $FRONTEND_COUNT file(s)"
 [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor: $EXECUTOR_COUNT file(s)"
 [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor Manager: $EXECUTOR_MGR_COUNT file(s)"
+[ "$CHAT_SHELL_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Chat Shell: $CHAT_SHELL_COUNT file(s)"
 [ "$SHARED_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Shared: $SHARED_COUNT file(s)"
 [ "$OTHER_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Other: $OTHER_COUNT file(s)"
 echo ""
@@ -281,13 +287,12 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         fi
         
         # Python syntax check
-        # Python syntax check
         echo -e "   Running Python syntax check..."
         SYNTAX_ERROR=0
         > "$TEMP_DIR/syntax.log"  # Clear/create the file
         for pyfile in $(echo "$CHANGED_FILES" | grep "^backend/.*\.py$"); do
             if [ -f "../$pyfile" ]; then
-                uv run python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
+                env -u VIRTUAL_ENV uv run python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
                 if [ $? -ne 0 ]; then
                     echo -e "   ${RED}   Syntax error in: $pyfile${NC}"
                     SYNTAX_ERROR=1
@@ -305,16 +310,16 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     else
         # Black format check (output to temp file)
         echo -e "   Running Black format check..."
-        uv run black --check app/ > "$TEMP_DIR/black.log" 2>&1
+        env -u VIRTUAL_ENV uv run black --check --diff . > "$TEMP_DIR/black.log" 2>&1
         BLACK_EXIT=$?
         if [ $BLACK_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Black: PASSED${NC}"
         else
-            echo -e "   ${RED}❌ Black: FAILED (run 'cd backend && black app/' to fix)${NC}"
+            echo -e "   ${RED}❌ Black: FAILED (run 'cd backend && uv run black .' to fix)${NC}"
             CHECK_FAILED=1
             FAILED_CHECKS+=("Backend Black")
             # Append fix hint to log file
-            echo -e "\nFix: cd backend && black app/" >> "$TEMP_DIR/black.log"
+            echo -e "\nFix: cd backend && uv run black ." >> "$TEMP_DIR/black.log"
             FAILED_LOGS+=("$TEMP_DIR/black.log")
         fi
         
@@ -324,18 +329,45 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             echo -e "   ${YELLOW}   Run 'pip install isort' to install dependencies${NC}"
             WARNINGS+=("Backend: isort not found, import sort checks skipped")
         else
-            uv run isort --check-only --diff app/ > "$TEMP_DIR/isort.log" 2>&1
+            env -u VIRTUAL_ENV uv run isort --check-only --diff . > "$TEMP_DIR/isort.log" 2>&1
             ISORT_EXIT=$?
             if [ $ISORT_EXIT -eq 0 ]; then
                 echo -e "   ${GREEN}✅ isort: PASSED${NC}"
             else
-                echo -e "   ${RED}❌ isort: FAILED (run 'cd backend && isort app/' to fix)${NC}"
+                echo -e "   ${RED}❌ isort: FAILED (run 'cd backend && uv run isort .' to fix)${NC}"
                 CHECK_FAILED=1
                 FAILED_CHECKS+=("Backend isort")
-                echo -e "\nFix: cd backend && isort app/" >> "$TEMP_DIR/isort.log"
+                echo -e "\nFix: cd backend && uv run isort ." >> "$TEMP_DIR/isort.log"
                 FAILED_LOGS+=("$TEMP_DIR/isort.log")
             fi
         fi
+        
+        # autoflake check - unused imports
+        echo -e "   Running autoflake unused imports check..."
+        env -u VIRTUAL_ENV uv run autoflake --quiet --check --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=".venv,venv,build,dist,alembic" . > "$TEMP_DIR/autoflake.log" 2>&1
+        AUTOFLAKE_EXIT=$?
+        if [ $AUTOFLAKE_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ autoflake: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ autoflake: FAILED (run 'cd backend && uv run autoflake --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist,alembic .' to fix)${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Backend autoflake")
+            echo -e "\nFix: cd backend && uv run autoflake --quiet --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist,alembic ." >> "$TEMP_DIR/autoflake.log"
+            FAILED_LOGS+=("$TEMP_DIR/autoflake.log")
+        fi
+        
+        # mypy type check (non-blocking warning)
+            echo -e "   Running mypy type check..."
+            env -u VIRTUAL_ENV uv run mypy . > "$TEMP_DIR/mypy.log" 2>&1
+            MYPY_EXIT=$?
+            if [ $MYPY_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ mypy: PASSED${NC}"
+            else
+                echo -e "   ${YELLOW}⚠️  mypy: WARNING (non-blocking)${NC}"
+                echo -e "       Run 'cd backend && uv run mypy .' to see details" >> "$TEMP_DIR/mypy.log"
+                MYPY_WARNING_COUNT=$((MYPY_WARNING_COUNT + 1))
+                MYPY_WARNING_MODULES="$MYPY_WARNING_MODULES backend"
+            fi
         
         # pytest
         if ! command -v pytest &> /dev/null; then
@@ -345,7 +377,7 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         else
             echo -e "   Running pytest..."
             if [ -d "tests" ]; then
-                uv run pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
+                env -u VIRTUAL_ENV uv run pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
                 PYTEST_EXIT=$?
                 if [ $PYTEST_EXIT -eq 0 ]; then
                     echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
@@ -360,13 +392,14 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
                 WARNINGS+=("Backend: tests directory not found")
             fi
         fi
+        
         # Python syntax check (output to temp file)
         echo -e "   Running Python syntax check..."
         SYNTAX_ERROR=0
         > "$TEMP_DIR/syntax.log"  # Clear/create the file
         for pyfile in $(echo "$CHANGED_FILES" | grep "^backend/.*\.py$"); do
             if [ -f "../$pyfile" ]; then
-                uv run python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
+                env -u VIRTUAL_ENV uv run python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
                 if [ $? -ne 0 ]; then
                     echo -e "   ${RED}   Syntax error in: $pyfile${NC}"
                     SYNTAX_ERROR=1
@@ -402,7 +435,7 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         
         if [ $SETTINGS_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Settings Configuration: PASSED${NC}"
-        elif [ $SETTINGS_EXIT -eq 1 ]; then
+            elif [ $SETTINGS_EXIT -eq 1 ]; then
             echo -e "   ${RED}❌ Settings Configuration: FAILED${NC}"
             CHECK_FAILED=1
             FAILED_CHECKS+=("Settings Configuration")
@@ -426,6 +459,61 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     
     cd executor
     
+    # Black format check
+    echo -e "   Running Black format check..."
+    env -u VIRTUAL_ENV uv run black --check --diff . > "$TEMP_DIR/executor_black.log" 2>&1
+    BLACK_EXIT=$?
+    if [ $BLACK_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ Black: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ Black: FAILED (run 'cd executor && uv run black .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor Black")
+        echo -e "\nFix: cd executor && uv run black ." >> "$TEMP_DIR/executor_black.log"
+        FAILED_LOGS+=("$TEMP_DIR/executor_black.log")
+    fi
+    
+    # isort check
+    echo -e "   Running isort check..."
+    env -u VIRTUAL_ENV uv run isort --check-only --diff . > "$TEMP_DIR/executor_isort.log" 2>&1
+    ISORT_EXIT=$?
+    if [ $ISORT_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ isort: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ isort: FAILED (run 'cd executor && uv run isort .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor isort")
+        echo -e "\nFix: cd executor && uv run isort ." >> "$TEMP_DIR/executor_isort.log"
+        FAILED_LOGS+=("$TEMP_DIR/executor_isort.log")
+    fi
+    
+    # autoflake check - unused imports
+    echo -e "   Running autoflake unused imports check..."
+    env -u VIRTUAL_ENV uv run autoflake --quiet --check --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=".venv,venv,build,dist" . > "$TEMP_DIR/executor_autoflake.log" 2>&1
+    AUTOFLAKE_EXIT=$?
+    if [ $AUTOFLAKE_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ autoflake: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ autoflake: FAILED (run 'cd executor && uv run autoflake --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor autoflake")
+        echo -e "\nFix: cd executor && uv run autoflake --quiet --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist ." >> "$TEMP_DIR/executor_autoflake.log"
+        FAILED_LOGS+=("$TEMP_DIR/executor_autoflake.log")
+    fi
+    
+    # mypy type check (non-blocking warning)
+    echo -e "   Running mypy type check..."
+    env -u VIRTUAL_ENV uv run mypy . > "$TEMP_DIR/executor_mypy.log" 2>&1
+    MYPY_EXIT=$?
+    if [ $MYPY_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ mypy: PASSED${NC}"
+    else
+        echo -e "   ${YELLOW}⚠️  mypy: WARNING (non-blocking)${NC}"
+        echo -e "       Run 'cd executor && uv run mypy .' to see details" >> "$TEMP_DIR/executor_mypy.log"
+        MYPY_WARNING_COUNT=$((MYPY_WARNING_COUNT + 1))
+        MYPY_WARNING_MODULES="$MYPY_WARNING_MODULES executor"
+    fi
+    
     if ! command -v pytest &> /dev/null; then
         echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
         echo -e "   ${YELLOW}   Run 'pip install pytest' to install dependencies${NC}"
@@ -434,7 +522,7 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
             # Limit parallel workers to 4 to reduce memory usage
-            uv run pytest tests/ --tb=short -q  > "$TEMP_DIR/executor_pytest.log" 2>&1
+            env -u VIRTUAL_ENV uv run pytest tests/ --tb=short -q  > "$TEMP_DIR/executor_pytest.log" 2>&1
             PYTEST_EXIT=$?
             if [ $PYTEST_EXIT -eq 0 ]; then
                 echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
@@ -461,6 +549,62 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Executor Manager Checks:${NC}"
     
     cd executor_manager
+    
+    # Black format check
+    echo -e "   Running Black format check..."
+    env -u VIRTUAL_ENV uv run black --check --diff . > "$TEMP_DIR/exec_mgr_black.log" 2>&1
+    BLACK_EXIT=$?
+    if [ $BLACK_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ Black: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ Black: FAILED (run 'cd executor_manager && uv run black .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor Manager Black")
+        echo -e "\nFix: cd executor_manager && uv run black ." >> "$TEMP_DIR/exec_mgr_black.log"
+        FAILED_LOGS+=("$TEMP_DIR/exec_mgr_black.log")
+    fi
+    
+    # isort check
+    echo -e "   Running isort check..."
+    env -u VIRTUAL_ENV uv run isort --check-only --diff . > "$TEMP_DIR/exec_mgr_isort.log" 2>&1
+    ISORT_EXIT=$?
+    if [ $ISORT_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ isort: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ isort: FAILED (run 'cd executor_manager && uv run isort .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor Manager isort")
+        echo -e "\nFix: cd executor_manager && uv run isort ." >> "$TEMP_DIR/exec_mgr_isort.log"
+        FAILED_LOGS+=("$TEMP_DIR/exec_mgr_isort.log")
+    fi
+    
+    # autoflake check - unused imports
+    echo -e "   Running autoflake unused imports check..."
+    env -u VIRTUAL_ENV uv run autoflake --quiet --check --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=".venv,venv,build,dist" . > "$TEMP_DIR/exec_mgr_autoflake.log" 2>&1
+    AUTOFLAKE_EXIT=$?
+    if [ $AUTOFLAKE_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ autoflake: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ autoflake: FAILED (run 'cd executor_manager && uv run autoflake --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor Manager autoflake")
+        echo -e "\nFix: cd executor_manager && uv run autoflake --quiet --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist ." >> "$TEMP_DIR/exec_mgr_autoflake.log"
+        FAILED_LOGS+=("$TEMP_DIR/exec_mgr_autoflake.log")
+    fi
+    
+    # mypy type check (non-blocking warning)
+    echo -e "   Running mypy type check..."
+    env -u VIRTUAL_ENV uv run mypy . > "$TEMP_DIR/exec_mgr_mypy.log" 2>&1
+    MYPY_EXIT=$?
+    if [ $MYPY_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ mypy: PASSED${NC}"
+    else
+        echo -e "   ${YELLOW}⚠️  mypy: WARNING (non-blocking)${NC}"
+        echo -e "       Run 'cd executor_manager && uv run mypy .' to see details" >> "$TEMP_DIR/exec_mgr_mypy.log"
+        MYPY_WARNING_COUNT=$((MYPY_WARNING_COUNT + 1))
+        MYPY_WARNING_MODULES="$MYPY_WARNING_MODULES executor_manager"
+    fi
+    
     if ! command -v pytest &> /dev/null; then
         echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
         echo -e "   ${YELLOW}   Run 'pip install pytest' to install dependencies${NC}"
@@ -469,12 +613,12 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
             # Limit parallel workers to 4 to reduce memory usage
-            uv run pytest tests/ --tb=short -q  > "$TEMP_DIR/exec_mgr_pytest.log" 2>&1
+            env -u VIRTUAL_ENV uv run pytest tests/ --tb=short -q  > "$TEMP_DIR/exec_mgr_pytest.log" 2>&1
             PYTEST_EXIT=$?
             # Check if tests passed (look for "passed" in output and no "failed")
             if grep -q "passed" "$TEMP_DIR/exec_mgr_pytest.log" && ! grep -q "[0-9]* failed" "$TEMP_DIR/exec_mgr_pytest.log"; then
                 echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-            elif [ $PYTEST_EXIT -eq 0 ]; then
+                elif [ $PYTEST_EXIT -eq 0 ]; then
                 echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
             else
                 echo -e "   ${RED}❌ Pytest: FAILED${NC}"
@@ -493,22 +637,205 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
 fi
 
 # -----------------------------------------------------------------------------
+# Chat Shell Checks (if chat_shell files changed)
+# -----------------------------------------------------------------------------
+if [ "$CHAT_SHELL_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Chat Shell Checks:${NC}"
+    
+    cd chat_shell
+    
+    # Black format check
+    echo -e "   Running Black format check..."
+    env -u VIRTUAL_ENV uv run black --check --diff . > "$TEMP_DIR/chat_shell_black.log" 2>&1
+    BLACK_EXIT=$?
+    if [ $BLACK_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ Black: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ Black: FAILED (run 'cd chat_shell && uv run black .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Chat Shell Black")
+        echo -e "\nFix: cd chat_shell && uv run black ." >> "$TEMP_DIR/chat_shell_black.log"
+        FAILED_LOGS+=("$TEMP_DIR/chat_shell_black.log")
+    fi
+    
+    # isort check
+    echo -e "   Running isort check..."
+    env -u VIRTUAL_ENV uv run isort --check-only --diff . > "$TEMP_DIR/chat_shell_isort.log" 2>&1
+    ISORT_EXIT=$?
+    if [ $ISORT_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ isort: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ isort: FAILED (run 'cd chat_shell && uv run isort .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Chat Shell isort")
+        echo -e "\nFix: cd chat_shell && uv run isort ." >> "$TEMP_DIR/chat_shell_isort.log"
+        FAILED_LOGS+=("$TEMP_DIR/chat_shell_isort.log")
+    fi
+    
+    # autoflake check - unused imports
+    echo -e "   Running autoflake unused imports check..."
+    env -u VIRTUAL_ENV uv run autoflake --quiet --check --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=".venv,venv,build,dist" . > "$TEMP_DIR/chat_shell_autoflake.log" 2>&1
+    AUTOFLAKE_EXIT=$?
+    if [ $AUTOFLAKE_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ autoflake: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ autoflake: FAILED (run 'cd chat_shell && uv run autoflake --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Chat Shell autoflake")
+        echo -e "\nFix: cd chat_shell && uv run autoflake --quiet --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist ." >> "$TEMP_DIR/chat_shell_autoflake.log"
+        FAILED_LOGS+=("$TEMP_DIR/chat_shell_autoflake.log")
+    fi
+    
+    # mypy type check (non-blocking warning)
+    echo -e "   Running mypy type check..."
+    env -u VIRTUAL_ENV uv run mypy . > "$TEMP_DIR/chat_shell_mypy.log" 2>&1
+    MYPY_EXIT=$?
+    if [ $MYPY_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ mypy: PASSED${NC}"
+    else
+        echo -e "   ${YELLOW}⚠️  mypy: WARNING (non-blocking)${NC}"
+        echo -e "       Run 'cd chat_shell && uv run mypy .' to see details" >> "$TEMP_DIR/chat_shell_mypy.log"
+        MYPY_WARNING_COUNT=$((MYPY_WARNING_COUNT + 1))
+        MYPY_WARNING_MODULES="$MYPY_WARNING_MODULES chat_shell"
+    fi
+    
+    if ! command -v pytest &> /dev/null; then
+        echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
+        echo -e "   ${YELLOW}   Run 'pip install pytest' to install dependencies${NC}"
+        WARNINGS+=("Chat Shell: pytest not found, tests skipped")
+    else
+        echo -e "   Running pytest..."
+        if [ -d "tests" ]; then
+            env -u VIRTUAL_ENV uv run pytest tests/ --tb=short -q > "$TEMP_DIR/chat_shell_pytest.log" 2>&1
+            PYTEST_EXIT=$?
+            if [ $PYTEST_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Chat Shell Pytest")
+                FAILED_LOGS+=("$TEMP_DIR/chat_shell_pytest.log")
+            fi
+        else
+            echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
+            WARNINGS+=("Chat Shell: tests directory not found")
+        fi
+    fi
+    
+    cd ..
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# Shared Module Checks (if shared files changed)
+# -----------------------------------------------------------------------------
+if [ "$SHARED_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Shared Module Checks:${NC}"
+    
+    cd shared
+    
+    # Black format check
+    echo -e "   Running Black format check..."
+    env -u VIRTUAL_ENV uv run black --check . > "$TEMP_DIR/shared_black.log" 2>&1
+    BLACK_EXIT=$?
+    if [ $BLACK_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ Black: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ Black: FAILED (run 'cd shared && uv run black .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Shared Black")
+        echo -e "\nFix: cd shared && uv run black ." >> "$TEMP_DIR/shared_black.log"
+        FAILED_LOGS+=("$TEMP_DIR/shared_black.log")
+    fi
+    
+    # isort check
+    echo -e "   Running isort check..."
+    env -u VIRTUAL_ENV uv run isort --check-only --diff . > "$TEMP_DIR/shared_isort.log" 2>&1
+    ISORT_EXIT=$?
+    if [ $ISORT_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ isort: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ isort: FAILED (run 'cd shared && uv run isort .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Shared isort")
+        echo -e "\nFix: cd shared && uv run isort ." >> "$TEMP_DIR/shared_isort.log"
+        FAILED_LOGS+=("$TEMP_DIR/shared_isort.log")
+    fi
+    
+    # autoflake check - unused imports
+    echo -e "   Running autoflake unused imports check..."
+    env -u VIRTUAL_ENV uv run autoflake --quiet --check --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=".venv,venv,build,dist" . > "$TEMP_DIR/shared_autoflake.log" 2>&1
+    AUTOFLAKE_EXIT=$?
+    if [ $AUTOFLAKE_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ autoflake: PASSED${NC}"
+    else
+        echo -e "   ${RED}❌ autoflake: FAILED (run 'cd shared && uv run autoflake --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist .' to fix)${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Shared autoflake")
+        echo -e "\nFix: cd shared && uv run autoflake --quiet --in-place --remove-all-unused-imports --recursive --ignore-init-module-imports --exclude=.venv,venv,build,dist ." >> "$TEMP_DIR/shared_autoflake.log"
+        FAILED_LOGS+=("$TEMP_DIR/shared_autoflake.log")
+    fi
+    
+    # mypy type check (non-blocking warning)
+    echo -e "   Running mypy type check..."
+    env -u VIRTUAL_ENV uv run mypy . > "$TEMP_DIR/shared_mypy.log" 2>&1
+    MYPY_EXIT=$?
+    if [ $MYPY_EXIT -eq 0 ]; then
+        echo -e "   ${GREEN}✅ mypy: PASSED${NC}"
+    else
+        echo -e "   ${YELLOW}⚠️  mypy: WARNING (non-blocking)${NC}"
+        echo -e "       Run 'cd shared && uv run mypy .' to see details" >> "$TEMP_DIR/shared_mypy.log"
+        MYPY_WARNING_COUNT=$((MYPY_WARNING_COUNT + 1))
+        MYPY_WARNING_MODULES="$MYPY_WARNING_MODULES shared"
+    fi
+    
+    if ! command -v pytest &> /dev/null; then
+        echo -e "   ${YELLOW}⚠️ SKIP: pytest not found${NC}"
+        echo -e "   ${YELLOW}   Run 'pip install pytest' to install dependencies${NC}"
+        WARNINGS+=("Shared: pytest not found, tests skipped")
+    else
+        echo -e "   Running pytest..."
+        if [ -d "tests" ]; then
+            env -u VIRTUAL_ENV uv run pytest tests/ --tb=short -q > "$TEMP_DIR/shared_pytest.log" 2>&1
+            PYTEST_EXIT=$?
+            # Check if tests passed (look for "passed" in output and no "failed")
+            if grep -q "passed" "$TEMP_DIR/shared_pytest.log" && ! grep -q "[0-9]* failed" "$TEMP_DIR/shared_pytest.log"; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            elif [ $PYTEST_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Shared Pytest")
+                FAILED_LOGS+=("$TEMP_DIR/shared_pytest.log")
+            fi
+        else
+            echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
+            WARNINGS+=("Shared: tests directory not found")
+        fi
+    fi
+    
+    cd ..
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
 # Alembic Multi-Head Checks (if backend files changed)
 # -----------------------------------------------------------------------------
 if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Alembic Multi-Head Check:${NC}"
-
+    
     # Get script directory and run alembic check
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     ALEMBIC_CHECK_SCRIPT="$SCRIPT_DIR/check-alembic-heads.sh"
-
+    
     if [ -x "$ALEMBIC_CHECK_SCRIPT" ]; then
         "$ALEMBIC_CHECK_SCRIPT" > "$TEMP_DIR/alembic.log" 2>&1
         ALEMBIC_EXIT=$?
-
+        
         if [ $ALEMBIC_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Alembic Multi-Head Check: PASSED${NC}"
-        elif [ $ALEMBIC_EXIT -eq 1 ]; then
+            elif [ $ALEMBIC_EXIT -eq 1 ]; then
             echo -e "   ${RED}❌ Alembic Multi-Head Check: FAILED${NC}"
             CHECK_FAILED=1
             FAILED_CHECKS+=("Alembic Multi-Head")
@@ -568,6 +895,13 @@ if [ ${#WARNINGS[@]} -gt 0 ]; then
         echo -e "      ${YELLOW}- $warning${NC}"
     done
     echo ""
+fi
+
+# mypy warnings summary
+if [ $MYPY_WARNING_COUNT -gt 0 ]; then
+    echo -e "${YELLOW}⚠️  mypy found type errors in:$MYPY_WARNING_MODULES${NC}"
+    echo -e "${YELLOW}   These are non-blocking warnings. Fix them when convenient.${NC}"
+    echo -e "${YELLOW}   Run mypy in each module to see details.${NC}\n"
 fi
 
 # -----------------------------------------------------------------------------
