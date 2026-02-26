@@ -5,6 +5,13 @@
 """
 Internal API endpoints
 """
+# Register Weibo MCP Provider before MCPProviderRegistry.initialize() is called
+# This must be done before importing any modules that trigger app.services.mcp_providers.service import
+from app.services.mcp_providers.core.registry import MCPProviderRegistry
+from wecode.service.mcp_providers.providers.weibo import WeiboMCPProvider
+
+MCPProviderRegistry.register_plugin(WeiboMCPProvider())
+
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.device_router_patch  # noqa: F401  patch app.services.device_router to replace API key placeholders for device task dispatch
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
