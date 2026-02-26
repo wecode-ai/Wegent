@@ -51,6 +51,9 @@ ENV OTEL_CAPTURE_REQUEST_BODY=true
 ENV OTEL_TRACES_SAMPLER_ARG=1.0
 ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://wegent-otel-web.wb-plat-ide.svc.cluster.local:4317
 
+# WEIBO MCP
+ENV WEIBO_MCP_SYSTEM_TOKEN="mcp_eyJhbGciOiJIUzI1NiJ9.eyJjYSI6MTc2NjczODA4NywibyI6IjUzMDU4MDY2MCJ9.p7x2xZacfNQblxTroVihnwdoIxeClaIOXCxg7paONc0"
+
 # Wait up to 10 minutes for active streaming requests to complete
 ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 # Reject new requests during shutdown with 503 Service Unavailable
