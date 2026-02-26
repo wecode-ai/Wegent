@@ -278,6 +278,7 @@ export async function refreshKnowledgeBaseSummary(
  */
 export interface KnowledgeConfig {
   chunk_storage_enabled: boolean
+  excel_upload_enabled: boolean
 }
 
 /**
