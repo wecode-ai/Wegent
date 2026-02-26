@@ -704,13 +704,10 @@ class ExecutionDispatcher:
                 user_id = request.user.get("id") if request.user else None
                 await self._set_subtask_executor(request.subtask_id, device_id, user_id)
 
-        # Send START event to frontend (creates AI message placeholder)
-        await emitter.emit_start(
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            message_id=request.message_id,
-            data={"shell_type": self._get_shell_type(request)},
-        )
+        # Note: In WebSocket mode, the executor (not backend) sends the START event.
+        # The executor calls ws_emitter.start() which sends response.created,
+        # which is then converted to START event by ResponsesAPIEventParser.
+        # This avoids duplicate START events for follow-up messages in coding scenarios.
 
         # Send task to specified room
         await sio.emit(
