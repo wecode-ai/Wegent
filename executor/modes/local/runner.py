@@ -31,6 +31,7 @@ from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.websocket_client import WebSocketClient
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 
 logger = setup_logger("local_runner")
@@ -69,7 +70,7 @@ class LocalRunner:
         self.task_queue: asyncio.Queue = asyncio.Queue()
 
         # Current task tracking
-        self.current_task: Optional[Dict[str, Any]] = None
+        self.current_task: Optional[ExecutionRequest] = None
         self.current_agent: Optional[Any] = None
 
         # Active sessions tracking (task_id -> session_info)
@@ -203,9 +204,9 @@ class LocalRunner:
 
         logger.info("WebSocket event handlers registered")
 
-    async def enqueue_task(self, task_data: Dict[str, Any]) -> None:
+    async def enqueue_task(self, task_data: ExecutionRequest) -> None:
         """Add a task to the execution queue."""
-        task_id = task_data.get("task_id", -1)
+        task_id = task_data.task_id
         logger.info(f"Enqueuing task: task_id={task_id}")
         await self.task_queue.put(task_data)
 
@@ -215,7 +216,7 @@ class LocalRunner:
         Note: Cancel callback will be sent by response_processor after SDK interrupt
         messages are fully processed, to avoid duplicate status updates to frontend.
         """
-        if self.current_task and self.current_task.get("task_id") == task_id:
+        if self.current_task and self.current_task.task_id == task_id:
             if self.current_agent and hasattr(self.current_agent, "cancel_run"):
                 self.current_agent.cancel_run()
                 logger.info(f"Cancelled task: task_id={task_id}")
@@ -244,7 +245,7 @@ class LocalRunner:
         logger.info(f"Closing session for task: task_id={task_id}")
 
         # If this is the current task, handle it
-        if self.current_task and self.current_task.get("task_id") == task_id:
+        if self.current_task and self.current_task.task_id == task_id:
             # Cancel the task if agent supports it
             if self.current_agent and hasattr(self.current_agent, "cancel_run"):
                 self.current_agent.cancel_run()
@@ -318,7 +319,7 @@ class LocalRunner:
                     self.current_task = task_data
                     await self._execute_task(task_data)
                 except Exception as e:
-                    task_id = task_data.get("task_id", -1)
+                    task_id = task_data.task_id if task_data else -1
                     logger.exception(
                         f"Task execution failed for task_id={task_id}: {e}"
                     )
@@ -395,10 +396,10 @@ class LocalRunner:
             .build()
         )
 
-    async def _execute_task(self, task_data: Dict[str, Any]) -> None:
+    async def _execute_task(self, task_data: ExecutionRequest) -> None:
         """Execute a single task."""
-        task_id = task_data.get("task_id", -1)
-        subtask_id = task_data.get("subtask_id", -1)
+        task_id = task_data.task_id
+        subtask_id = task_data.subtask_id
         logger.info(f"Executing task: task_id={task_id}, subtask_id={subtask_id}")
 
         from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
@@ -474,11 +475,11 @@ class LocalRunner:
             await ws_emitter.error(error_msg, "execution_error")
 
     async def _report_task_failure(
-        self, task_data: Dict[str, Any], error_message: str
+        self, task_data: ExecutionRequest, error_message: str
     ) -> None:
         """Report task failure via WebSocket emitter."""
-        task_id = task_data.get("task_id", -1)
-        subtask_id = task_data.get("subtask_id", -1)
+        task_id = task_data.task_id
+        subtask_id = task_data.subtask_id
 
         # Create emitter for error reporting
         ws_emitter = self._create_emitter(task_id, subtask_id)

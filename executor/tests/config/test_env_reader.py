@@ -18,6 +18,7 @@ from executor.config.env_reader import (
     get_env_json,
     get_task_info,
 )
+from shared.models.execution import ExecutionRequest
 
 
 class TestGetEnv:
@@ -107,15 +108,17 @@ class TestGetEnvJson:
 class TestGetTaskInfo:
     """Tests for get_task_info function."""
 
-    def test_returns_task_info_from_env(self):
-        """Should return task info from TASK_INFO env var."""
+    def test_returns_execution_request_from_env(self) -> None:
+        """Should return ExecutionRequest from TASK_INFO env var."""
         task_data = {"task_id": 123, "subtask_id": 456}
         with patch.dict(os.environ, {"TASK_INFO": json.dumps(task_data)}):
             result = get_task_info()
-            assert result == task_data
+            assert isinstance(result, ExecutionRequest)
+            assert result.task_id == 123
+            assert result.subtask_id == 456
 
-    def test_returns_task_info_from_file(self):
-        """Should return task info from file when env var not set."""
+    def test_returns_execution_request_from_file(self) -> None:
+        """Should return ExecutionRequest from file when env var not set."""
         with tempfile.TemporaryDirectory() as tmpdir:
             task_data = {"task_id": 789, "subtask_id": 101}
             file_path = os.path.join(tmpdir, "task_info")
@@ -124,11 +127,19 @@ class TestGetTaskInfo:
 
             with patch.dict(os.environ, {"WEGENT_CONFIG_DIR": tmpdir}, clear=True):
                 result = get_task_info()
-                assert result == task_data
+                assert isinstance(result, ExecutionRequest)
+                assert result.task_id == 789
+                assert result.subtask_id == 101
 
-    def test_returns_none_when_not_found(self):
+    def test_returns_none_when_not_found(self) -> None:
         """Should return None when task info not found."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"WEGENT_CONFIG_DIR": tmpdir}, clear=True):
                 result = get_task_info()
                 assert result is None
+
+    def test_returns_none_for_invalid_json(self) -> None:
+        """Should return None for invalid JSON."""
+        with patch.dict(os.environ, {"TASK_INFO": "invalid json"}):
+            result = get_task_info()
+            assert result is None

@@ -9,11 +9,14 @@ Provides schemas for the unified context system that supports
 attachments, knowledge bases, and other context types.
 """
 
+import logging
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+logger = logging.getLogger(__name__)
 
 
 class ContextType(str, Enum):
@@ -77,8 +80,7 @@ class SubtaskContextResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================
@@ -102,8 +104,7 @@ class SubtaskContextBrief(BaseModel):
     # Table fields (from type_data) - nested structure to match frontend expectation
     source_config: Optional[Dict[str, Any]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @classmethod
     def from_model(cls, context) -> "SubtaskContextBrief":
@@ -125,14 +126,6 @@ class SubtaskContextBrief(BaseModel):
             url = type_data.get("url")
             if url:
                 source_config = {"url": url}
-                # DEBUG: Log table context creation
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"[SubtaskContextBrief] Building table context: id={context.id}, "
-                    f"url={url}, source_config={source_config}"
-                )
         elif context_type_str == ContextType.SELECTED_DOCUMENTS.value:
             # For selected_documents, count the document_ids
             document_ids = type_data.get("document_ids", [])
@@ -171,8 +164,7 @@ class AttachmentResponse(BaseModel):
     truncation_info: Optional[TruncationInfo] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @classmethod
     def from_context(
@@ -251,7 +243,7 @@ class AttachmentPreviewResponse(AttachmentDetailResponse):
         """Create preview response from SubtaskContext model."""
         base = AttachmentDetailResponse.from_context(context, truncation_info)
         return cls(
-            **base.dict(),
+            **base.model_dump(),
             preview_type=preview_type,
             preview_text=preview_text,
             download_url=download_url,
