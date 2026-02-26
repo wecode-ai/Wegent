@@ -242,9 +242,13 @@ class StatusUpdatingEmitter(ResultEmitter):
         The actual task status (COMPLETED or PENDING_CONFIRMATION for pipeline mode)
         is determined by the collaboration strategy in db_handler.
 
+        Also publishes TaskCompletedEvent for unified handling by subscription
+        task completion handler and other event subscribers.
+
         Args:
             result: Optional result data from the event
         """
+        from app.core.events import TaskCompletedEvent, get_event_bus
         from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
@@ -294,6 +298,11 @@ class StatusUpdatingEmitter(ResultEmitter):
             await session_manager.cleanup_streaming_state(
                 self._subtask_id, task_id=self._task_id
             )
+
+            # Publish TaskCompletedEvent for unified handling
+            # This ensures subscription execution status is updated regardless of execution mode
+            await self._publish_task_completed_event("COMPLETED", final_result, None)
+
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
@@ -302,6 +311,9 @@ class StatusUpdatingEmitter(ResultEmitter):
 
     async def _update_status_failed(self, error_message: str) -> None:
         """Update subtask and task status to FAILED.
+
+        Also publishes TaskCompletedEvent for unified handling by subscription
+        task completion handler and other event subscribers.
 
         Args:
             error_message: Error message
@@ -329,6 +341,10 @@ class StatusUpdatingEmitter(ResultEmitter):
             await session_manager.cleanup_streaming_state(
                 self._subtask_id, task_id=self._task_id
             )
+
+            # Publish TaskCompletedEvent for unified handling
+            await self._publish_task_completed_event("FAILED", None, error_message)
+
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
@@ -336,7 +352,11 @@ class StatusUpdatingEmitter(ResultEmitter):
             )
 
     async def _update_status_cancelled(self) -> None:
-        """Update subtask and task status to CANCELLED."""
+        """Update subtask and task status to CANCELLED.
+
+        Also publishes TaskCompletedEvent for unified handling by subscription
+        task completion handler and other event subscribers.
+        """
         from app.services.chat.storage import session_manager
         from app.services.chat.storage.db import db_handler
 
@@ -382,8 +402,82 @@ class StatusUpdatingEmitter(ResultEmitter):
             await session_manager.cleanup_streaming_state(
                 self._subtask_id, task_id=self._task_id
             )
+
+            # Publish TaskCompletedEvent for unified handling
+            await self._publish_task_completed_event("CANCELLED", result, None)
+
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",
+                exc_info=True,
+            )
+
+    async def _publish_task_completed_event(
+        self,
+        status: str,
+        result: Optional[Dict[str, Any]],
+        error: Optional[str],
+    ) -> None:
+        """Publish TaskCompletedEvent for unified handling.
+
+        This ensures subscription execution status is updated regardless of
+        execution mode (SSE, WebSocket, HTTP+Callback, INPROCESS).
+
+        Args:
+            status: Task status (COMPLETED, FAILED, CANCELLED)
+            result: Optional result data
+            error: Optional error message
+        """
+        from app.core.events import TaskCompletedEvent, get_event_bus
+        from app.db.session import SessionLocal
+        from app.models.task import TaskResource
+
+        try:
+            # Get user_id from task
+            db = SessionLocal()
+            try:
+                task = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == self._task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
+                    )
+                    .first()
+                )
+                user_id = task.user_id if task else None
+            finally:
+                db.close()
+
+            if user_id is None:
+                logger.warning(
+                    f"[StatusUpdatingEmitter] Cannot publish TaskCompletedEvent: "
+                    f"task {self._task_id} not found or no user_id"
+                )
+                return
+
+            # Publish TaskCompletedEvent
+            event_bus = get_event_bus()
+            await event_bus.publish(
+                TaskCompletedEvent(
+                    task_id=self._task_id,
+                    subtask_id=self._subtask_id,
+                    user_id=user_id,
+                    status=status,
+                    result=result,
+                    error=error,
+                )
+            )
+
+            logger.info(
+                f"[StatusUpdatingEmitter] Published TaskCompletedEvent: "
+                f"task_id={self._task_id}, subtask_id={self._subtask_id}, "
+                f"status={status}"
+            )
+
+        except Exception as e:
+            # Don't fail the status update if event publishing fails
+            logger.error(
+                f"[StatusUpdatingEmitter] Failed to publish TaskCompletedEvent: {e}",
                 exc_info=True,
             )
