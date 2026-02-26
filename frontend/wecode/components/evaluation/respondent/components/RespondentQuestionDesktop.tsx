@@ -312,7 +312,7 @@ export function RespondentQuestionDesktop({
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-amber-700">
-                          {showInstructions ? '收起' : '展开'}
+                          {showInstructions ? t('actions.collapse') : t('actions.expand')}
                         </span>
                         {showInstructions ? (
                           <ChevronUp className="h-4 w-4 text-amber-700" />
@@ -383,7 +383,7 @@ export function RespondentQuestionDesktop({
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-blue-600">
-                          {showLastSubmitted ? '收起' : '展开'}
+                          {showLastSubmitted ? t('actions.collapse') : t('actions.expand')}
                         </span>
                         {showLastSubmitted ? (
                           <ChevronUp className="h-4 w-4 text-blue-600" />
@@ -506,7 +506,7 @@ export function RespondentQuestionDesktop({
                       size="sm"
                       onClick={() => setShowTextInput(!showTextInput)}
                     >
-                      {showTextInput ? '收起' : '展开'}
+                      {showTextInput ? t('actions.collapse') : t('actions.expand')}
                     </Button>
                   </div>
                   {showTextInput && (
@@ -541,7 +541,7 @@ export function RespondentQuestionDesktop({
                     className="h-11 px-8"
                   >
                     <Send className="h-4 w-4 mr-2" />
-                    {submitting ? '提交中...' : t('answers.submit')}
+                    {submitting ? t('actions.submitting') : t('answers.submit')}
                   </Button>
                 </div>
               </CardContent>

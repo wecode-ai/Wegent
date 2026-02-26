@@ -277,6 +277,8 @@
     "delete": "Delete",
     "refresh": "Refresh",
     "creating": "Creating...",
+    "downloading": "Downloading...",
+    "submitting": "Submitting...",
     "download": "Download",
     "previous": "Previous",
     "next": "Next",
