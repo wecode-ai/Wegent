@@ -37,6 +37,7 @@ class MCPProviderInfo(BaseModel):
     api_key_url: str
     token_field_name: str
     has_token: bool = False  # Whether user has configured token
+    requires_token: bool = True  # Whether this provider requires API key from user
 
 
 class MCPProviderListResponse(BaseModel):

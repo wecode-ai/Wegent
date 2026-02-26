@@ -101,8 +101,8 @@ class MCPProviderRegistry:
     ) -> tuple[List[MCPServer], Optional[str]]:
         """Sync servers from a provider
 
-        For plugin providers, uses the plugin's custom map_servers method.
-        For config-based providers, uses the default DataMapper.
+        For plugin providers, uses the plugin's custom fetch_servers method (full control).
+        For config-based providers, uses the default HTTP client and DataMapper.
 
         Returns:
             tuple: (servers, error_message)
@@ -115,14 +115,8 @@ class MCPProviderRegistry:
             # Check if this is a plugin provider
             plugin = cls.get_plugin(provider_key)
             if plugin:
-                # Use plugin's custom mapping logic
-                client = MCPProviderHTTPClient(config)
-                try:
-                    raw_servers = await client.fetch_all_servers(token)
-                    servers = plugin.map_servers(raw_servers, token)
-                    return servers, None
-                finally:
-                    await client.close()
+                # Use plugin's custom fetch_servers for full control
+                return await plugin.fetch_servers(token)
             else:
                 # Use default mapping logic
                 client = MCPProviderHTTPClient(config)

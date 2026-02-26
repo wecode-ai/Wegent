@@ -43,15 +43,21 @@ class MCPProviderService:
 
         result = []
         for provider_config in MCPProviderRegistry.list_all():
-            has_token = False
+            requires_token = getattr(provider_config, "requires_token", True)
+
             if provider_keys:
-                encrypted_token = getattr(
-                    provider_keys, provider_config.token_field, None
-                )
-                try:
-                    has_token = bool(decrypt_mcp_provider_key(encrypted_token))
-                except ValueError:
-                    has_token = False
+                raw_value = getattr(provider_keys, provider_config.token_field, None)
+                if requires_token:
+                    # Token providers: value is encrypted
+                    try:
+                        has_token = bool(decrypt_mcp_provider_key(raw_value))
+                    except ValueError:
+                        has_token = False
+                else:
+                    # Non-token providers: value is plain text (e.g., owner name)
+                    has_token = bool(raw_value)
+            else:
+                has_token = False
 
             result.append(
                 MCPProviderInfo(
@@ -63,6 +69,7 @@ class MCPProviderService:
                     api_key_url=provider_config.api_key_url,
                     token_field_name=provider_config.token_field,
                     has_token=has_token,
+                    requires_token=requires_token,
                 )
             )
         return result
@@ -77,31 +84,37 @@ class MCPProviderService:
         if not provider_config:
             return False, f"Unknown provider: {provider_key}", [], None
 
-        # Get token from preferences
+        # Check if provider requires token from user
+        requires_token = getattr(provider_config, "requires_token", True)
+
         if not preferences or not preferences.mcp_provider_keys:
             return False, "API key not configured", [], None
 
-        encrypted_token = getattr(
+        raw_value = getattr(
             preferences.mcp_provider_keys, provider_config.token_field, None
         )
-        if not encrypted_token:
+        if not raw_value:
             return False, "API key not configured", [], None
 
-        try:
-            token = decrypt_mcp_provider_key(encrypted_token)
-        except ValueError:
-            return (
-                False,
-                "API key format is invalid. Please save the API key again.",
-                [],
-                "invalid_api_key_format",
-            )
+        if requires_token:
+            # Token providers: decrypt the value
+            try:
+                token = decrypt_mcp_provider_key(raw_value)
+            except ValueError:
+                return (
+                    False,
+                    "API key format is invalid. Please save the API key again.",
+                    [],
+                    "invalid_api_key_format",
+                )
+        else:
+            # Non-token providers: use raw value (e.g., owner name)
+            token = raw_value
 
         MCPProviderService.logger.info(
-            "Syncing MCP servers: provider_key=%s token_present=%s token_length=%s",
+            "Syncing MCP servers: provider_key=%s requires_token=%s",
             provider_key,
-            True,
-            len(token),
+            requires_token,
         )
 
         # Call provider's sync function via registry

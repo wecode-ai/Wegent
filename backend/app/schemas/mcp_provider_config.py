@@ -75,6 +75,7 @@ class MCPProviderConfig(BaseModel):
     discover_url: str  # URL to provider's MCP marketplace
     api_key_url: str  # URL to get API key
     token_field: str  # Field name in preferences
+    requires_token: bool = True  # Whether user needs to configure API key
 
     api: ProviderAPIConfig
     mapping: ResponseMappingConfig
