@@ -13,7 +13,7 @@ import { ContentType } from '@wecode/types/evaluation'
 import type { Question, Topic, EvalAttachment, Answer } from '@wecode/types/evaluation'
 import { useQuestionDraft } from './useQuestionDraft'
 
-interface UseRespondentQuestionOptions {
+export interface UseRespondentQuestionOptions {
   topic: Topic
   questionId: number
   currentQuestionIndex: number
@@ -21,7 +21,7 @@ interface UseRespondentQuestionOptions {
   questionIds: number[]
 }
 
-interface UseRespondentQuestionReturn {
+export interface UseRespondentQuestionReturn {
   question: Question | null
   loading: boolean
   answerText: string
