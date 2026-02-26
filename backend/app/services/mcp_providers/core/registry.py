@@ -23,14 +23,27 @@ logger = setup_logger("mcp_providers.registry")
 
 
 class MCPProviderRegistry:
-    """Registry for MCP providers - supports configuration-driven providers"""
+    """Registry for MCP providers - supports auto-discovery and explicit registration"""
 
     _providers: Dict[str, MCPProviderConfig] = {}
     _initialized: bool = False
+    _custom_providers: list[tuple[MCPProviderConfig, bool]] = []  # (config, override)
 
     @classmethod
-    def register(cls, config: MCPProviderConfig) -> None:
-        """Register a provider configuration"""
+    def register(cls, config: MCPProviderConfig, override: bool = False) -> None:
+        """Register a provider configuration
+
+        Args:
+            config: Provider configuration
+            override: If True, override existing provider with same key
+        """
+        if config.key in cls._providers and not override:
+            logger.warning(
+                "Provider '%s' already registered, skipping. Use override=True to replace.",
+                config.key,
+            )
+            return
+
         cls._providers[config.key] = config
         logger.info("Registered MCP provider: %s (%s)", config.name, config.key)
 
@@ -81,16 +94,50 @@ class MCPProviderRegistry:
             return [], f"error:{str(e)}"
 
     @classmethod
+    def register_custom(cls, config: MCPProviderConfig, override: bool = False) -> None:
+        """Register a custom provider (for internal/external extensions)
+
+        These providers are tracked separately and registered after built-in ones.
+        This allows internal projects to add their own providers without modifying
+        open-source code.
+
+        Args:
+            config: Provider configuration
+            override: If True, override existing provider with same key
+        """
+        cls._custom_providers.append((config, override))
+        logger.debug("Queued custom provider: %s", config.key)
+
+    @classmethod
     def initialize(cls) -> None:
-        """Initialize registry with built-in providers"""
+        """Initialize registry with all providers (built-in + auto-discovered + custom)"""
         if cls._initialized:
             return
 
-        # Import and register built-in providers
+        # 1. Load legacy built-in providers (backward compatible)
         from app.services.mcp_providers.core.config import BUILTIN_PROVIDERS
 
         for provider_config in BUILTIN_PROVIDERS:
             cls.register(provider_config)
+
+        # 2. Auto-discover providers from providers/ directory
+        try:
+            from app.services.mcp_providers.providers import PROVIDER_CONFIGS
+
+            for provider_config in PROVIDER_CONFIGS:
+                if provider_config.key not in cls._providers:
+                    cls.register(provider_config)
+                else:
+                    logger.debug(
+                        "Auto-discovered provider '%s' already registered, skipping",
+                        provider_config.key,
+                    )
+        except ImportError as e:
+            logger.warning("Could not auto-discover providers: %s", e)
+
+        # 3. Register custom providers (for internal/external extensions)
+        for config, override in cls._custom_providers:
+            cls.register(config, override=override)
 
         cls._initialized = True
         logger.info(
