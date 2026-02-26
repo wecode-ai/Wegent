@@ -9,9 +9,12 @@ import httpx
 
 from app.schemas.mcp_providers import MCPProviderInfo, MCPServer
 from app.schemas.user import UserPreferences
-from app.services.mcp_providers import PROVIDERS
+from app.services.mcp_providers.core.registry import MCPProviderRegistry
 from app.services.mcp_providers.security import decrypt_mcp_provider_key
 from shared.logger import setup_logger
+
+# Initialize registry on module load
+MCPProviderRegistry.initialize()
 
 
 class MCPProviderService:
@@ -39,11 +42,11 @@ class MCPProviderService:
         provider_keys = preferences.mcp_provider_keys if preferences else None
 
         result = []
-        for provider in PROVIDERS:
+        for provider_config in MCPProviderRegistry.list_all():
             has_token = False
             if provider_keys:
                 encrypted_token = getattr(
-                    provider_keys, provider.token_field_name, None
+                    provider_keys, provider_config.token_field, None
                 )
                 try:
                     has_token = bool(decrypt_mcp_provider_key(encrypted_token))
@@ -52,13 +55,13 @@ class MCPProviderService:
 
             result.append(
                 MCPProviderInfo(
-                    key=provider.key,
-                    name=provider.name,
-                    name_en=provider.name_en,
-                    description=provider.description,
-                    discover_url=provider.discover_url,
-                    api_key_url=provider.api_key_url,
-                    token_field_name=provider.token_field_name,
+                    key=provider_config.key,
+                    name=provider_config.name,
+                    name_en=provider_config.name_en,
+                    description=provider_config.description,
+                    discover_url=provider_config.discover_url,
+                    api_key_url=provider_config.api_key_url,
+                    token_field_name=provider_config.token_field,
                     has_token=has_token,
                 )
             )
@@ -69,9 +72,9 @@ class MCPProviderService:
         provider_key: str, preferences: Optional[UserPreferences]
     ) -> tuple[bool, str, List[MCPServer], Optional[str]]:
         """Sync MCP servers from a provider"""
-        # Find provider
-        provider = next((p for p in PROVIDERS if p.key == provider_key), None)
-        if not provider:
+        # Get provider config
+        provider_config = MCPProviderRegistry.get(provider_key)
+        if not provider_config:
             return False, f"Unknown provider: {provider_key}", [], None
 
         # Get token from preferences
@@ -79,7 +82,7 @@ class MCPProviderService:
             return False, "API key not configured", [], None
 
         encrypted_token = getattr(
-            preferences.mcp_provider_keys, provider.token_field_name, None
+            preferences.mcp_provider_keys, provider_config.token_field, None
         )
         if not encrypted_token:
             return False, "API key not configured", [], None
@@ -101,9 +104,49 @@ class MCPProviderService:
             len(token),
         )
 
-        # Call provider's sync function
+        # Call provider's sync function via registry
         try:
-            servers = await provider.sync_servers(token)
+            servers, error = await MCPProviderRegistry.sync_servers(provider_key, token)
+            if error:
+                # Handle specific error codes from registry
+                if error == "unauthorized":
+                    return (
+                        False,
+                        "Authentication failed. Please check your API key.",
+                        [],
+                        "unauthorized",
+                    )
+                elif error == "server_error":
+                    return (
+                        False,
+                        "Provider server error. Please try again later.",
+                        [],
+                        "server_error",
+                    )
+                elif error == "proxy_error":
+                    return (
+                        False,
+                        "Proxy error while connecting to provider. Please check HTTP(S)_PROXY.",
+                        [],
+                        "proxy_error",
+                    )
+                elif error == "timeout":
+                    return (
+                        False,
+                        "Provider request timed out. Please try again later.",
+                        [],
+                        "timeout",
+                    )
+                elif error == "connect_error":
+                    return (
+                        False,
+                        "Network error while connecting to provider. Please check network/proxy settings.",
+                        [],
+                        "connect_error",
+                    )
+                else:
+                    return False, f"Failed to sync servers: {error}", [], error
+
             MCPProviderService.logger.info(
                 "Syncing MCP servers succeeded: provider_key=%s servers=%s",
                 provider_key,
@@ -155,29 +198,6 @@ class MCPProviderService:
                 str(e) or type(e).__name__,
             )
             return False, "Failed to sync servers", [], "http_error"
-        except ValueError as e:
-            error_code = str(e) or type(e).__name__
-            MCPProviderService.logger.warning(
-                "Syncing MCP servers failed with provider error: provider_key=%s error_code=%s",
-                provider_key,
-                error_code,
-            )
-            if error_code == "unauthorized":
-                return (
-                    False,
-                    "Authentication failed. Please check your API key.",
-                    [],
-                    "unauthorized",
-                )
-            elif error_code == "server_error":
-                return (
-                    False,
-                    "Provider server error. Please try again later.",
-                    [],
-                    "server_error",
-                )
-            else:
-                return False, "Failed to sync servers", [], error_code
         except Exception as e:
             error_details = str(e) or type(e).__name__
             MCPProviderService.logger.exception(

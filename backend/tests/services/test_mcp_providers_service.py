@@ -6,34 +6,64 @@ import httpx
 import pytest
 
 import app.services.mcp_providers.service as service_module
+from app.schemas.mcp_provider_config import (
+    MCPProviderConfig,
+    ProviderAPIConfig,
+    ResponseMappingConfig,
+    ServerMappingConfig,
+)
 from app.schemas.user import MCPProviderKeys, UserPreferences
-from app.services.mcp_providers import MCPProviderDefinition
+from app.services.mcp_providers.core.registry import MCPProviderRegistry
 from app.services.mcp_providers.service import MCPProviderService
 from shared.utils.crypto import encrypt_sensitive_data
 
 
-@pytest.mark.anyio
-async def test_sync_servers_sets_error_details_for_unauthorized(monkeypatch):
-    async def _sync(_token: str):
-        raise ValueError("unauthorized")
-
-    provider = MCPProviderDefinition(
-        key="mcp_router",
-        name="MCP Router",
-        name_en="MCP Router",
-        description="test",
+@pytest.fixture
+def test_provider_config():
+    """Create a test provider configuration"""
+    return MCPProviderConfig(
+        key="test_provider",
+        name="Test Provider",
+        name_en="Test Provider",
+        description="Test provider",
         discover_url="https://example.com",
-        api_key_url="https://example.com",
-        token_field_name="mcp_router",
-        sync_servers=_sync,
+        api_key_url="https://example.com/api-key",
+        token_field="test_provider",
+        api=ProviderAPIConfig(
+            base_url="https://example.com",
+            list_path="/api/servers",
+            method="GET",
+            auth_template="Bearer {token}",
+        ),
+        mapping=ResponseMappingConfig(
+            items_path="data",
+            total_path="total",
+        ),
+        server=ServerMappingConfig(
+            id_field="id",
+            name_field="name",
+            url_field="url",
+            id_prefix="@test/",
+        ),
     )
-    monkeypatch.setattr(service_module, "PROVIDERS", [provider])
+
+
+@pytest.mark.anyio
+async def test_sync_servers_sets_error_details_for_unauthorized(
+    monkeypatch, test_provider_config
+):
+    async def mock_sync(key, token):
+        return [], "unauthorized"
+
+    monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
+    # Register test provider
+    MCPProviderRegistry.register(test_provider_config)
 
     preferences = UserPreferences(
-        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+        mcp_provider_keys=MCPProviderKeys(test_provider=encrypt_sensitive_data("token"))
     )
     success, _message, _servers, error_details = await MCPProviderService.sync_servers(
-        provider_key="mcp_router",
+        provider_key="test_provider",
         preferences=preferences,
     )
 
@@ -42,27 +72,20 @@ async def test_sync_servers_sets_error_details_for_unauthorized(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_sync_servers_sets_error_details_for_server_error(monkeypatch):
-    async def _sync(_token: str):
-        raise ValueError("server_error")
+async def test_sync_servers_sets_error_details_for_server_error(
+    monkeypatch, test_provider_config
+):
+    async def mock_sync(key, token):
+        return [], "server_error"
 
-    provider = MCPProviderDefinition(
-        key="mcp_router",
-        name="MCP Router",
-        name_en="MCP Router",
-        description="test",
-        discover_url="https://example.com",
-        api_key_url="https://example.com",
-        token_field_name="mcp_router",
-        sync_servers=_sync,
-    )
-    monkeypatch.setattr(service_module, "PROVIDERS", [provider])
+    monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
+    MCPProviderRegistry.register(test_provider_config)
 
     preferences = UserPreferences(
-        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+        mcp_provider_keys=MCPProviderKeys(test_provider=encrypt_sensitive_data("token"))
     )
     success, _message, _servers, error_details = await MCPProviderService.sync_servers(
-        provider_key="mcp_router",
+        provider_key="test_provider",
         preferences=preferences,
     )
 
@@ -71,27 +94,20 @@ async def test_sync_servers_sets_error_details_for_server_error(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_sync_servers_handles_empty_exception_message(monkeypatch):
-    async def _sync(_token: str):
-        raise RuntimeError()
+async def test_sync_servers_handles_empty_exception_message(
+    monkeypatch, test_provider_config
+):
+    async def mock_sync(key, token):
+        return [], "RuntimeError"
 
-    provider = MCPProviderDefinition(
-        key="mcp_router",
-        name="MCP Router",
-        name_en="MCP Router",
-        description="test",
-        discover_url="https://example.com",
-        api_key_url="https://example.com",
-        token_field_name="mcp_router",
-        sync_servers=_sync,
-    )
-    monkeypatch.setattr(service_module, "PROVIDERS", [provider])
+    monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
+    MCPProviderRegistry.register(test_provider_config)
 
     preferences = UserPreferences(
-        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+        mcp_provider_keys=MCPProviderKeys(test_provider=encrypt_sensitive_data("token"))
     )
     success, _message, _servers, error_details = await MCPProviderService.sync_servers(
-        provider_key="mcp_router",
+        provider_key="test_provider",
         preferences=preferences,
     )
 
@@ -100,27 +116,18 @@ async def test_sync_servers_handles_empty_exception_message(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_sync_servers_handles_connect_error(monkeypatch):
-    async def _sync(_token: str):
+async def test_sync_servers_handles_connect_error(monkeypatch, test_provider_config):
+    async def mock_sync(key, token):
         raise httpx.ConnectError("boom")
 
-    provider = MCPProviderDefinition(
-        key="mcp_router",
-        name="MCP Router",
-        name_en="MCP Router",
-        description="test",
-        discover_url="https://example.com",
-        api_key_url="https://example.com",
-        token_field_name="mcp_router",
-        sync_servers=_sync,
-    )
-    monkeypatch.setattr(service_module, "PROVIDERS", [provider])
+    monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
+    MCPProviderRegistry.register(test_provider_config)
 
     preferences = UserPreferences(
-        mcp_provider_keys=MCPProviderKeys(mcp_router=encrypt_sensitive_data("token"))
+        mcp_provider_keys=MCPProviderKeys(test_provider=encrypt_sensitive_data("token"))
     )
     success, message, _servers, error_details = await MCPProviderService.sync_servers(
-        provider_key="mcp_router",
+        provider_key="test_provider",
         preferences=preferences,
     )
 
@@ -130,27 +137,18 @@ async def test_sync_servers_handles_connect_error(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_sync_servers_rejects_plaintext_token(monkeypatch):
-    async def _sync(_token: str):
-        return []
+async def test_sync_servers_rejects_plaintext_token(monkeypatch, test_provider_config):
+    async def mock_sync(key, token):
+        return [], None
 
-    provider = MCPProviderDefinition(
-        key="mcp_router",
-        name="MCP Router",
-        name_en="MCP Router",
-        description="test",
-        discover_url="https://example.com",
-        api_key_url="https://example.com",
-        token_field_name="mcp_router",
-        sync_servers=_sync,
-    )
-    monkeypatch.setattr(service_module, "PROVIDERS", [provider])
+    monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
+    MCPProviderRegistry.register(test_provider_config)
 
     preferences = UserPreferences(
-        mcp_provider_keys=MCPProviderKeys(mcp_router="plaintext")
+        mcp_provider_keys=MCPProviderKeys(test_provider="plaintext")
     )
     success, message, _servers, error_details = await MCPProviderService.sync_servers(
-        provider_key="mcp_router",
+        provider_key="test_provider",
         preferences=preferences,
     )
 

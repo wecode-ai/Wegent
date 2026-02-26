@@ -10,7 +10,18 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { Plus, Check, ExternalLink, Loader2, RefreshCw } from 'lucide-react'
+import {
+  Plus,
+  Check,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  Settings,
+  Key,
+  Server,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react'
 import { mcpProviderApis, MCPProvider, MCPServer } from '@/apis/mcpProviders'
 
 interface McpProviderModalProps {
@@ -34,6 +45,7 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [addedServers, setAddedServers] = useState<Set<string>>(new Set())
+  const [showSettings, setShowSettings] = useState(false)
 
   // Load providers on mount
   useEffect(() => {
@@ -42,15 +54,16 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
     }
   }, [open])
 
-  // Reset state when provider changes and auto-sync if has token
+  // Auto-sync servers when provider changes
   useEffect(() => {
     if (selectedProvider) {
       setApiKey('')
-      setServers([])
-      setAddedServers(new Set())
+      setShowSettings(!selectedProvider.has_token)
       // Auto sync servers if provider already has token
       if (selectedProvider.has_token) {
         syncServers()
+      } else {
+        setServers([])
       }
     }
   }, [selectedProvider])
@@ -58,21 +71,14 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
   const loadProviders = async () => {
     try {
       setLoading(true)
-      console.log('[McpProviderModal] Loading providers...')
       const response = await mcpProviderApis.getProviders()
-      console.log('[McpProviderModal] Response:', response)
-      console.log('[McpProviderModal] Response.providers:', response?.providers)
       if (response?.providers && Array.isArray(response.providers)) {
         setProviders(response.providers)
-        if (response.providers.length > 0) {
+        if (response.providers.length > 0 && !selectedProvider) {
           setSelectedProvider(response.providers[0])
         }
-      } else {
-        console.error('[McpProviderModal] Invalid response format:', response)
-        throw new Error('Invalid response format')
       }
-    } catch (error) {
-      console.error('[McpProviderModal] Error loading providers:', error)
+    } catch (_error) {
       toast({
         variant: 'destructive',
         title: t('mcpProviders.errors.load_providers_failed'),
@@ -97,6 +103,7 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
 
       // Refresh providers to update has_token status
       await loadProviders()
+      setShowSettings(false)
 
       // Auto sync servers after saving API key
       await syncServers()
@@ -162,31 +169,38 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
     }
   }
 
+  const hasServers = servers.length > 0
+  const isLoadingServers = syncing && servers.length === 0
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl h-[600px] p-0 overflow-hidden">
-        <DialogHeader className="px-6 py-4 border-b">
-          <DialogTitle>{t('mcpProviders.title')}</DialogTitle>
+      <DialogContent className="max-w-5xl h-[700px] p-0 overflow-hidden bg-background">
+        <DialogHeader className="px-5 py-4 border-b bg-muted/20 shrink-0">
+          <DialogTitle className="text-lg font-semibold flex items-center gap-2">
+            <Server className="w-5 h-5 text-primary" />
+            {t('mcpProviders.title')}
+          </DialogTitle>
         </DialogHeader>
 
-        <div className="flex h-[calc(600px-80px)]">
+        <div className="flex h-[calc(700px-72px)]">
           {/* Left sidebar - Provider list */}
-          <div className="w-48 border-r bg-muted/30">
+          <div className="w-40 border-r bg-muted/10 shrink-0">
             <ScrollArea className="h-full">
-              <div className="p-2">
+              <div className="p-2 space-y-1">
                 {providers.map(provider => (
                   <button
                     key={provider.key}
                     onClick={() => setSelectedProvider(provider)}
-                    className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-colors ${
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 cursor-pointer ${
                       selectedProvider?.key === provider.key
-                        ? 'bg-primary text-primary-foreground'
-                        : 'hover:bg-muted'
+                        ? 'bg-primary text-primary-foreground shadow-sm'
+                        : 'hover:bg-muted text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    <div className="font-medium">{provider.name}</div>
+                    <div className="font-medium truncate">{provider.name}</div>
                     {provider.has_token && (
-                      <div className="text-xs opacity-70 mt-0.5">
+                      <div className="text-xs opacity-75 mt-0.5 flex items-center gap-1">
+                        <Check className="w-3 h-3" />
                         {t('mcpProviders.configured')}
                       </div>
                     )}
@@ -197,142 +211,197 @@ const McpProviderModal: React.FC<McpProviderModalProps> = ({
           </div>
 
           {/* Right content */}
-          <div className="flex-1 flex flex-col">
+          <div className="flex-1 flex flex-col min-w-0">
             {selectedProvider ? (
               <>
-                {/* API Key section */}
-                <div className="p-4 border-b space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="api-key" className="text-sm font-medium">
-                      {t('mcpProviders.api_key')}
-                    </Label>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleOpenApiKeyUrl}
-                        className="h-7 text-xs gap-1"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        {t('mcpProviders.get_api_key')}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleOpenDiscoverUrl}
-                        className="h-7 text-xs gap-1"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        {t('mcpProviders.discover')}
-                      </Button>
-                    </div>
+                {/* Header with settings toggle */}
+                <div className="px-4 py-2.5 border-b bg-muted/5 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Server className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">{t('mcpProviders.mcp_servers')}</span>
+                    {hasServers && (
+                      <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                        {servers.length}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex gap-2">
-                    <Input
-                      id="api-key"
-                      type="password"
-                      value={apiKey}
-                      onChange={e => setApiKey(e.target.value)}
-                      placeholder={t('mcpProviders.api_key_placeholder')}
-                      className="flex-1"
-                    />
+                  <div className="flex items-center gap-2">
                     <Button
-                      onClick={handleSaveApiKey}
-                      disabled={!apiKey.trim() || saving}
-                      className="gap-1"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => syncServers()}
+                      disabled={syncing || !selectedProvider.has_token}
+                      className="h-8 text-xs gap-1.5 cursor-pointer hover:bg-muted"
                     >
-                      {saving ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                      {syncing ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      {t('mcpProviders.refresh')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowSettings(!showSettings)}
+                      className={`h-8 text-xs gap-1.5 cursor-pointer ${
+                        showSettings ? 'bg-muted' : 'hover:bg-muted'
+                      }`}
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      {showSettings ? (
+                        <>
+                          {t('mcpProviders.hide_settings')}
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </>
                       ) : (
                         <>
-                          <Check className="w-4 h-4" />
-                          {t('mcpProviders.save')}
+                          {t('mcpProviders.settings')}
+                          <ChevronDown className="w-3.5 h-3.5" />
                         </>
                       )}
                     </Button>
                   </div>
-                  {selectedProvider.has_token && (
-                    <div className="text-xs text-muted-foreground">
-                      {t('mcpProviders.has_token_hint')}
-                    </div>
-                  )}
                 </div>
 
-                {/* Servers list */}
-                <div className="flex-1 overflow-hidden">
-                  <div className="px-4 py-2 border-b bg-muted/30 flex items-center justify-between">
-                    <span className="text-sm font-medium">{t('mcpProviders.mcp_servers')}</span>
-                    <div className="flex items-center gap-2">
-                      {selectedProvider?.has_token && (
+                {/* Collapsible Settings Panel */}
+                {showSettings && (
+                  <div className="px-4 py-3 border-b bg-muted/5 shrink-0">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Key className="w-4 h-4 text-muted-foreground" />
+                        <Label className="text-sm font-medium">{t('mcpProviders.api_key')}</Label>
+                      </div>
+                      <div className="flex gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => syncServers()}
-                          disabled={syncing}
-                          className="h-7 text-xs gap-1"
+                          onClick={handleOpenApiKeyUrl}
+                          className="h-7 text-xs gap-1 cursor-pointer hover:bg-muted"
                         >
-                          {syncing ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <RefreshCw className="w-3 h-3" />
-                          )}
-                          {t('mcpProviders.refresh')}
+                          <ExternalLink className="w-3 h-3" />
+                          {t('mcpProviders.get_api_key')}
                         </Button>
-                      )}
-                      {syncing && (
-                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                      )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleOpenDiscoverUrl}
+                          className="h-7 text-xs gap-1 cursor-pointer hover:bg-muted"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          {t('mcpProviders.discover')}
+                        </Button>
+                      </div>
                     </div>
+                    <div className="flex gap-2">
+                      <Input
+                        id="api-key"
+                        type="password"
+                        value={apiKey}
+                        onChange={e => setApiKey(e.target.value)}
+                        placeholder={t('mcpProviders.api_key_placeholder')}
+                        className="flex-1 h-9"
+                      />
+                      <Button
+                        onClick={handleSaveApiKey}
+                        disabled={!apiKey.trim() || saving}
+                        size="sm"
+                        className="gap-1.5 h-9 cursor-pointer"
+                      >
+                        {saving ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Check className="w-4 h-4" />
+                            {t('mcpProviders.save')}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    {selectedProvider.has_token && (
+                      <div className="text-xs text-muted-foreground mt-2">
+                        {t('mcpProviders.has_token_hint')}
+                      </div>
+                    )}
                   </div>
-                  <ScrollArea className="h-[calc(100%-40px)]">
-                    <div className="p-2 space-y-2">
-                      {servers.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground text-sm">
-                          {syncing
-                            ? t('mcpProviders.loading_servers')
-                            : t('mcpProviders.no_servers_hint')}
+                )}
+
+                {/* Servers list - main content area */}
+                <div className="flex-1 overflow-hidden">
+                  <ScrollArea className="h-full">
+                    <div className="p-3">
+                      {isLoadingServers ? (
+                        <div className="flex flex-col items-center justify-center py-20">
+                          <Loader2 className="w-10 h-10 animate-spin mb-4 text-primary" />
+                          <p className="text-sm text-muted-foreground">
+                            {t('mcpProviders.loading_servers')}
+                          </p>
+                        </div>
+                      ) : !hasServers ? (
+                        <div className="flex flex-col items-center justify-center py-20">
+                          <Server className="w-14 h-14 mb-4 text-muted-foreground/30" />
+                          <p className="text-sm text-muted-foreground mb-2">
+                            {t('mcpProviders.no_servers_hint')}
+                          </p>
+                          {!selectedProvider.has_token && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setShowSettings(true)}
+                              className="gap-1.5 cursor-pointer"
+                            >
+                              <Key className="w-4 h-4" />
+                              {t('mcpProviders.configure_api_key')}
+                            </Button>
+                          )}
                         </div>
                       ) : (
-                        servers.map(server => {
-                          const isAdded = addedServers.has(server.id)
-                          return (
-                            <div
-                              key={server.id}
-                              className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
-                            >
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-sm truncate">{server.name}</div>
-                                {server.description && (
-                                  <div className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                                    {server.description}
-                                  </div>
-                                )}
-                                <div className="text-xs text-muted-foreground mt-1">
-                                  {server.base_url}
-                                </div>
-                              </div>
-                              <Button
-                                size="sm"
-                                variant={isAdded ? 'ghost' : 'outline'}
-                                onClick={() => handleAddServer(server)}
-                                disabled={isAdded}
-                                className="ml-2 gap-1"
+                        <div className="grid gap-2">
+                          {servers.map(server => {
+                            const isAdded = addedServers.has(server.id)
+                            return (
+                              <div
+                                key={server.id}
+                                className="flex items-center justify-between p-3 rounded-lg border bg-background hover:bg-muted/50 transition-colors cursor-pointer group"
                               >
-                                {isAdded ? (
-                                  <>
-                                    <Check className="w-3.5 h-3.5" />
-                                    {t('mcpProviders.added')}
-                                  </>
-                                ) : (
-                                  <>
-                                    <Plus className="w-3.5 h-3.5" />
-                                    {t('mcpProviders.add')}
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          )
-                        })
+                                <div className="flex-1 min-w-0 mr-3">
+                                  <div className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                                    {server.name}
+                                  </div>
+                                  {server.description && (
+                                    <div className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                                      {server.description}
+                                    </div>
+                                  )}
+                                  <div className="text-xs text-muted-foreground/70 mt-1 truncate font-mono">
+                                    {server.base_url}
+                                  </div>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  variant={isAdded ? 'secondary' : 'default'}
+                                  onClick={() => handleAddServer(server)}
+                                  disabled={isAdded}
+                                  className={`gap-1.5 h-8 ${
+                                    isAdded ? 'cursor-default' : 'cursor-pointer'
+                                  }`}
+                                >
+                                  {isAdded ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>{t('mcpProviders.added')}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus className="w-3.5 h-3.5" />
+                                      <span>{t('mcpProviders.add')}</span>
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            )
+                          })}
+                        </div>
                       )}
                     </div>
                   </ScrollArea>
