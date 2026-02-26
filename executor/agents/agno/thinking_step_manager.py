@@ -72,7 +72,7 @@ class ThinkingStepManager:
                     progress=self._current_progress,
                     status=TaskStatus.RUNNING.value,
                     message=f"Thinking: {title}",
-                    result=ExecutionResult(thinking=self.thinking_steps).dict(),
+                    result=ExecutionResult(thinking=self.thinking_steps).model_dump(),
                 )
 
     def _text_to_i18n_key(self, text: str) -> str:

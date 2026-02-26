@@ -9,12 +9,21 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, EmailStr, field_validator
 
 
+class MCPProviderKeys(BaseModel):
+    """MCP provider API keys"""
+
+    bailian: Optional[str] = None  # Aliyun Bailian API key
+    modelscope: Optional[str] = None  # ModelScope API key
+    mcp_router: Optional[str] = None  # MCP Router API key
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
     send_key: Literal["enter", "cmd_enter"] = "enter"
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
+    mcp_provider_keys: Optional[MCPProviderKeys] = None
 
 
 class Token(BaseModel):

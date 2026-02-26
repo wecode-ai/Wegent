@@ -12,6 +12,7 @@ from agno.agent import Agent as AgnoSdkAgent
 from agno.db.sqlite import SqliteDb
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 from .config_utils import ConfigManager
 from .mcp_manager import MCPManager
@@ -41,7 +42,7 @@ class MemberBuilder:
         self.mcp_manager = MCPManager(thinking_manager)
 
     async def create_member(
-        self, member_config: Dict[str, Any], task_data: Dict[str, Any]
+        self, member_config: Dict[str, Any], task_data: ExecutionRequest
     ) -> Optional[AgnoSdkAgent]:
         """
         Create a single team member with comprehensive configuration
@@ -67,7 +68,7 @@ class MemberBuilder:
 
             # Add system MCP server for subscription tasks (provides silent_exit tool)
             # System MCP config is injected by Backend via task_data
-            if task_data.get("is_subscription"):
+            if task_data.is_subscription:
                 system_mcp_tools = await self._setup_system_mcp_tools(task_data)
                 if system_mcp_tools:
                     all_tools.extend(system_mcp_tools)
@@ -94,7 +95,7 @@ class MemberBuilder:
             member_name = self._get_member_name(member_config)
             member_description = self._get_member_description(member_config)
             # Use model_config from task_data (contains decrypted api_key)
-            model_config = task_data.get("model_config", {})
+            model_config = task_data.model_config
             member_model = ModelFactory.create_model(model_config, default_headers)
 
             # Create the team member
@@ -120,7 +121,7 @@ class MemberBuilder:
             return None
 
     async def create_default_member(
-        self, options: Dict[str, Any], task_data: Dict[str, Any]
+        self, options: Dict[str, Any], task_data: ExecutionRequest
     ) -> Optional[AgnoSdkAgent]:
         """
         Create a default team member with basic configuration
@@ -146,7 +147,7 @@ class MemberBuilder:
 
             # Add system MCP server for subscription tasks (provides silent_exit tool)
             # System MCP config is injected by Backend via task_data
-            if task_data.get("is_subscription"):
+            if task_data.is_subscription:
                 system_mcp_tools = await self._setup_system_mcp_tools(task_data)
                 if system_mcp_tools:
                     all_tools.extend(system_mcp_tools)
@@ -171,7 +172,7 @@ class MemberBuilder:
 
             # Create the default member
             # Use model_config from task_data (contains decrypted api_key)
-            model_config = task_data.get("model_config", {})
+            model_config = task_data.model_config
             member = AgnoSdkAgent(
                 name="DefaultAgent",
                 model=ModelFactory.create_model(model_config, default_headers),
@@ -193,7 +194,7 @@ class MemberBuilder:
             return None
 
     async def create_members_from_config(
-        self, team_members_config: List[Dict[str, Any]], task_data: Dict[str, Any]
+        self, team_members_config: List[Dict[str, Any]], task_data: ExecutionRequest
     ) -> List[AgnoSdkAgent]:
         """
         Create multiple team members from configuration list
@@ -222,7 +223,7 @@ class MemberBuilder:
         return members
 
     async def create_member_with_role(
-        self, member_config: Dict[str, Any], task_data: Dict[str, Any], role: str
+        self, member_config: Dict[str, Any], task_data: ExecutionRequest, role: str
     ) -> Optional[AgnoSdkAgent]:
         """
         Create a team member with a specific role
@@ -277,7 +278,7 @@ class MemberBuilder:
         return member_config.get("system_prompt", "Team member")
 
     async def _setup_system_mcp_tools(
-        self, task_data: Dict[str, Any]
+        self, task_data: ExecutionRequest
     ) -> Optional[List[Any]]:
         """
         Setup system MCP tools from Backend-injected configuration.
@@ -295,7 +296,7 @@ class MemberBuilder:
         import traceback
 
         try:
-            system_mcp_config = task_data.get("system_mcp_config")
+            system_mcp_config = task_data.system_mcp_config
             if not system_mcp_config:
                 logger.debug("No system_mcp_config found in task_data")
                 return None

@@ -19,6 +19,7 @@ from typing import Any, Optional
 import httpx
 
 from chat_shell.core.config import settings
+from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ async def prepare_skill_tools(
     user_selected_skills: Optional[list[str]] = None,
     user_name: str = "",
     auth_token: str = "",
-    task_data: dict[str, Any] | None = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> tuple[list[Any], list[Any]]:
     """
     Prepare skill tools dynamically using SkillToolRegistry.
@@ -488,7 +489,7 @@ async def prepare_skill_tools(
 async def _load_skill_mcp_tools(
     mcp_configs: dict[str, dict[str, Any]],
     task_id: int,
-    task_data: dict[str, Any] | None = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> tuple[dict[str, list[Any]], list[Any]]:
     """
     Load MCP tools from skill-level MCP server configurations.
@@ -533,7 +534,9 @@ async def _load_skill_mcp_tools(
                 mcp_clients.append(client)
 
                 # Calculate total tools count for logging
-                total_tools = sum(len(tools) for tools in mcp_tools_with_server.values())
+                total_tools = sum(
+                    len(tools) for tools in mcp_tools_with_server.values()
+                )
                 logger.info(
                     "[skill_factory] Loaded %d MCP tools from %d skill servers for task %d",
                     total_tools,

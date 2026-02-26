@@ -120,25 +120,22 @@ const PublicRetrieverList: React.FC = () => {
   }, [fetchRetrievers])
 
   // Fetch retrieval methods for a storage type from API
-  const fetchRetrievalMethods = useCallback(
-    async (type: 'elasticsearch' | 'qdrant' | 'milvus') => {
-      setLoadingRetrievalMethods(true)
-      try {
-        const response = await retrieverApis.getStorageTypeRetrievalMethods(type)
-        const methods = response.retrieval_methods as RetrievalMethodType[]
-        setAvailableRetrievalMethods(methods)
-        return methods
-      } catch (error) {
-        console.error('Failed to fetch retrieval methods:', error)
-        const fallback = [...STORAGE_TYPE_CONFIG[type].fallbackRetrievalMethods]
-        setAvailableRetrievalMethods(fallback)
-        return fallback
-      } finally {
-        setLoadingRetrievalMethods(false)
-      }
-    },
-    []
-  )
+  const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant' | 'milvus') => {
+    setLoadingRetrievalMethods(true)
+    try {
+      const response = await retrieverApis.getStorageTypeRetrievalMethods(type)
+      const methods = response.retrieval_methods as RetrievalMethodType[]
+      setAvailableRetrievalMethods(methods)
+      return methods
+    } catch (error) {
+      console.error('Failed to fetch retrieval methods:', error)
+      const fallback = [...STORAGE_TYPE_CONFIG[type].fallbackRetrievalMethods]
+      setAvailableRetrievalMethods(fallback)
+      return fallback
+    } finally {
+      setLoadingRetrievalMethods(false)
+    }
+  }, [])
 
   // Handle retrieval method toggle
   const handleRetrievalMethodToggle = useCallback(
@@ -228,8 +225,7 @@ const PublicRetrieverList: React.FC = () => {
       name: retriever.name,
       displayName: retriever.displayName || '',
       namespace: retriever.namespace,
-      storageType:
-        (storageConfig.type as 'elasticsearch' | 'qdrant' | 'milvus') || 'elasticsearch',
+      storageType: (storageConfig.type as 'elasticsearch' | 'qdrant' | 'milvus') || 'elasticsearch',
       url: storageConfig.url || '',
       username: storageConfig.username || '',
       password: (storageConfig as { password?: string }).password || '',
