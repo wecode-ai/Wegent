@@ -18,7 +18,7 @@ export function useRetrievers(
       setLoading(true)
       // For organization scope, use 'personal' to get user's retrievers + public retrievers
       // For group scope, pass 'group' directly to get group's retrievers + public retrievers
-      const apiScope = scope === 'organization' ? 'personal' : scope
+      const apiScope = scope === 'organization' ? 'personal' : scope || 'all'
       const response = await retrieverApis.getUnifiedRetrievers(apiScope, groupName)
       const data = response.data || []
       // Sort by type priority based on scope, then by name
