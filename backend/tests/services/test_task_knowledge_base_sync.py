@@ -236,7 +236,7 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                _tools, _prompt = _prepare_kb_tools_from_contexts(
+                kb_result = _prepare_kb_tools_from_contexts(
                     kb_contexts=[kb_context],
                     user_id=1,
                     db=mock_db,
@@ -249,6 +249,7 @@ class TestKBPriorityLogic:
                 mock_kb_tool.assert_called_once()
                 call_args = mock_kb_tool.call_args
                 assert call_args[1]["knowledge_base_ids"] == [10]
+                assert len(kb_result.extra_tools) == 1
 
     def test_fallback_to_task_kb_when_no_subtask_kb(self, mock_db):
         """Test that task-level KB is used when subtask has no KB"""
@@ -265,7 +266,7 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                _tools, _prompt = _prepare_kb_tools_from_contexts(
+                kb_result = _prepare_kb_tools_from_contexts(
                     kb_contexts=[],  # No subtask KB
                     user_id=1,
                     db=mock_db,
@@ -278,6 +279,7 @@ class TestKBPriorityLogic:
                 mock_kb_tool.assert_called_once()
                 call_args = mock_kb_tool.call_args
                 assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
+                assert len(kb_result.extra_tools) == 1
 
     def test_no_kb_when_both_empty(self, mock_db):
         """Test that no KB tool is created when both levels have no KB"""
@@ -295,7 +297,7 @@ class TestKBPriorityLogic:
             ) as mock_history:
                 mock_history.return_value = ""
 
-                tools, prompt = _prepare_kb_tools_from_contexts(
+                kb_result = _prepare_kb_tools_from_contexts(
                     kb_contexts=[],  # No subtask KB
                     user_id=1,
                     db=mock_db,
@@ -305,8 +307,8 @@ class TestKBPriorityLogic:
                 )
 
                 # Should return empty tools
-                assert tools == []
-                assert prompt == "Base prompt"
+                assert kb_result.extra_tools == []
+                assert kb_result.enhanced_system_prompt == "Base prompt"
 
 
 @pytest.mark.unit
