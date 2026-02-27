@@ -26,6 +26,8 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { calculateOpenLinks } from '@/utils/openLinks'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
+import { useIsToolDetailOpen, ToolDetailProvider } from '@/features/tasks/components/message/thinking/contexts/ToolDetailContext'
+import { ToolDetailPanel } from '@/features/tasks/components/message/thinking/components/ToolDetailPanel'
 import { Workbench } from '@/features/tasks/components'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { paths } from '@/config/paths'
@@ -42,6 +44,14 @@ import { paths } from '@/config/paths'
  * @see CodePageMobile.tsx for mobile implementation
  */
 export function CodePageDesktop() {
+  return (
+    <ToolDetailProvider>
+      <CodePageDesktopContent />
+    </ToolDetailProvider>
+  )
+}
+
+function CodePageDesktopContent() {
   // Get search params to check for taskId
   const searchParams = useSearchParams()
   const taskId = searchParams.get('taskId')
@@ -93,6 +103,9 @@ export function CodePageDesktop() {
 
   // Workbench state - default to true when taskId exists
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(true)
+
+  // Check if tool detail panel is open
+  const isToolDetailOpen = useIsToolDetailOpen()
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
@@ -261,8 +274,8 @@ export function CodePageDesktop() {
             />
           </div>
 
-          {/* Workbench component - only show if there's a taskId */}
-          {hasTaskId && (
+          {/* Workbench component - only show if there's a taskId AND tool detail is not open */}
+          {hasTaskId && !isToolDetailOpen && (
             <Workbench
               isOpen={isWorkbenchOpen}
               onClose={() => setIsWorkbenchOpen(false)}
@@ -282,6 +295,9 @@ export function CodePageDesktop() {
               taskStatus={selectedTaskDetail?.status}
             />
           )}
+
+          {/* Tool Detail Panel - show when a tool is selected */}
+          {isToolDetailOpen && <ToolDetailPanel />}
         </div>
       </div>
       {/* Search Dialog - rendered at page level for global shortcut support */}

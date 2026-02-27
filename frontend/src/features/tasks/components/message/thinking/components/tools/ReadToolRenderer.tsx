@@ -4,10 +4,11 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolRendererProps } from '../../types'
 import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
+import { useIsInDetailPanel } from '../../contexts/ToolDetailContext'
 
 /**
  * Read tool renderer
@@ -15,7 +16,15 @@ import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
  */
 export function ReadToolRenderer({ tool }: ToolRendererProps) {
   const { t } = useTranslation('chat')
-  const [isContentExpanded, setIsContentExpanded] = useState(false)
+  const isInDetailPanel = useIsInDetailPanel()
+  const [isContentExpanded, setIsContentExpanded] = useState(isInDetailPanel)
+
+  // Auto-expand when in detail panel
+  useEffect(() => {
+    if (isInDetailPanel) {
+      setIsContentExpanded(true)
+    }
+  }, [isInDetailPanel])
 
   const input = tool.toolUse.details?.input as Record<string, unknown> | undefined
   let filePath = input?.file_path as string | undefined
@@ -81,7 +90,7 @@ export function ReadToolRenderer({ tool }: ToolRendererProps) {
             >
               {isError ? t('thinking.tool_error') || 'Error' : 'File Content'}
             </div>
-            {isContentCollapsible && (
+            {isContentCollapsible && !isInDetailPanel && (
               <button
                 onClick={() => setIsContentExpanded(!isContentExpanded)}
                 className="text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
@@ -98,10 +107,10 @@ export function ReadToolRenderer({ tool }: ToolRendererProps) {
                 ? 'text-yellow-700 bg-yellow-50 border border-yellow-200'
                 : 'text-text-tertiary bg-fill-tert'
             }`}
-            style={{ maxHeight: isContentExpanded ? 'none' : '400px' }}
+            style={{ maxHeight: isContentExpanded || isInDetailPanel ? 'none' : '400px' }}
           >
             {displayContent}
-            {isContentCollapsible && !isContentExpanded && (
+            {isContentCollapsible && !isContentExpanded && !isInDetailPanel && (
               <span className="text-blue-400">...</span>
             )}
           </pre>

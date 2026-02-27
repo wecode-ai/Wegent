@@ -66,10 +66,12 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
 
       {/* Tools List */}
       {isExpanded && (
-        <div className="p-3 space-y-2 bg-base">
-          {group.tools.map(tool => (
-            <ToolBlock key={tool.toolUseId} tool={tool} defaultExpanded={false} />
-          ))}
+        <div className="p-3 bg-base">
+          <div className="space-y-2">
+            {group.tools.map(tool => (
+              <ToolBlock key={tool.toolUseId} tool={tool} defaultExpanded={false} />
+            ))}
+          </div>
         </div>
       )}
     </div>

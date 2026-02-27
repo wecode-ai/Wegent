@@ -4,19 +4,11 @@
 
 'use client'
 
-import { memo, useState, useMemo } from 'react'
-import { ChevronDown, ChevronRight, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { memo, useMemo } from 'react'
+import { ChevronRight, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolBlockProps, ToolStatus, ToolRendererProps } from '../types'
-import { GenericToolRenderer } from './tools/GenericToolRenderer'
-import { BashToolRenderer } from './tools/BashToolRenderer'
-import { ReadToolRenderer } from './tools/ReadToolRenderer'
-import { EditToolRenderer } from './tools/EditToolRenderer'
-import { WriteToolRenderer } from './tools/WriteToolRenderer'
-import { GrepToolRenderer } from './tools/GrepToolRenderer'
-import { GlobToolRenderer } from './tools/GlobToolRenderer'
-import { TodoWriteToolRenderer } from './tools/TodoWriteToolRenderer'
-import { UploadToolRenderer } from './tools/UploadToolRenderer'
+import { useToolDetail } from '../contexts/ToolDetailContext'
 
 /**
  * Get a short preview of the tool input for display in the header
@@ -122,15 +114,15 @@ function truncateText(text: string, maxLength: number): string {
 /**
  * ToolBlock Component
  *
- * Displays a single tool execution as a collapsible block.
- * Routes to specialized renderers based on tool name.
+ * Displays a single tool execution as a clickable block.
+ * Click to display details in the shared detail panel below.
  */
 export const ToolBlock = memo(function ToolBlock({
   tool,
-  defaultExpanded = false,
+  defaultExpanded: _defaultExpanded = false,
 }: ToolBlockProps) {
   const { t } = useTranslation('chat')
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+  const { selectedTool, setSelectedTool } = useToolDetail()
 
   // Get status icon component
   const StatusIcon = getStatusIcon(tool.status)
@@ -141,9 +133,6 @@ export const ToolBlock = memo(function ToolBlock({
 
   // Get tool input preview for header display
   const inputPreview = useMemo(() => getToolInputPreview(tool), [tool])
-
-  // Get specialized renderer
-  const ToolRenderer = getToolRenderer(tool.toolName)
 
   // Check if this is an upload tool with downloadable attachment
   const isDownloadable = tool.toolName === 'Upload' && tool.status === 'done'
@@ -158,52 +147,39 @@ export const ToolBlock = memo(function ToolBlock({
   const hasContent = hasInput || hasOutput
   const isExpandable = hasContent
 
-  return (
-    <div className="border border-border rounded-lg bg-surface overflow-hidden mb-2">
-      {/* Header */}
-      <div
-        className={`flex items-center justify-between px-4 py-3 ${
-          isExpandable ? 'cursor-pointer hover:bg-fill-tert' : 'cursor-default'
-        } transition-colors`}
-        onClick={() => isExpandable && setIsExpanded(!isExpanded)}
-      >
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <StatusIcon className={`h-4 w-4 flex-shrink-0 ${statusColor}`} />
-          <span className="text-sm font-medium text-text-primary flex-shrink-0">
-            {toolDisplayName}
-          </span>
-          {/* Input preview - shown inline after tool name */}
-          {inputPreview && (
-            <code className="text-xs text-text-muted bg-fill-tert px-1.5 py-0.5 rounded font-mono truncate max-w-[300px]">
-              {inputPreview}
-            </code>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {isDownloadable && (
-            <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded">
-              {t('thinking.downloadable') || 'Downloadable'}
-            </span>
-          )}
-          {/* Expand/collapse icon - only show if there's content to expand */}
-          {isExpandable && (
-            <>
-              {isExpanded ? (
-                <ChevronDown className="h-4 w-4 text-text-muted" />
-              ) : (
-                <ChevronRight className="h-4 w-4 text-text-muted" />
-              )}
-            </>
-          )}
-        </div>
-      </div>
+  // Check if this tool is currently selected
+  const isSelected = selectedTool?.toolUseId === tool.toolUseId
 
-      {/* Content (Specialized Renderer) */}
-      {isExpanded && isExpandable && (
-        <div className="px-4 py-3 border-t border-border bg-base">
-          <ToolRenderer tool={tool} />
-        </div>
-      )}
+  // Handle click - select this tool for detail display
+  const handleClick = () => {
+    if (isExpandable) {
+      // Toggle selection: if already selected, deselect; otherwise select
+      setSelectedTool(isSelected ? null : tool)
+    }
+  }
+
+  return (
+    <div
+      className={`flex items-center gap-2 px-3 py-2 rounded-md mb-1 transition-colors ${
+        isSelected
+          ? 'bg-primary/10 border-2 border-primary'
+          : 'bg-fill-tert border-2 border-transparent hover:bg-fill-secondary'
+      } ${isExpandable ? 'cursor-pointer' : 'cursor-default'}`}
+      onClick={handleClick}
+    >
+      <StatusIcon className={`h-4 w-4 flex-shrink-0 ${statusColor}`} />
+      <span className="text-sm text-text-secondary flex-shrink-0">{toolDisplayName}</span>
+      {/* Input preview - shown inline after tool name */}
+      {inputPreview && <span className="text-sm text-text-secondary truncate">{inputPreview}</span>}
+      <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+        {isDownloadable && (
+          <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded">
+            {t('thinking.downloadable') || 'Downloadable'}
+          </span>
+        )}
+        {/* Show chevron if there's content to expand */}
+        {isExpandable && <ChevronRight className="h-3.5 w-3.5 text-text-muted" />}
+      </div>
     </div>
   )
 })
@@ -274,35 +250,6 @@ function getToolDisplayName(tool: ToolRendererProps['tool'], t: (key: string) =>
   }
 
   return toolName || 'Unknown Tool'
-}
-
-/**
- * Get specialized renderer for tool type
- * Returns component that renders tool input/output
- */
-function getToolRenderer(
-  toolName: string
-): React.ComponentType<{ tool: ToolRendererProps['tool'] }> {
-  switch (toolName) {
-    case 'Bash':
-      return BashToolRenderer
-    case 'Read':
-      return ReadToolRenderer
-    case 'Edit':
-      return EditToolRenderer
-    case 'Write':
-      return WriteToolRenderer
-    case 'Grep':
-      return GrepToolRenderer
-    case 'Glob':
-      return GlobToolRenderer
-    case 'TodoWrite':
-      return TodoWriteToolRenderer
-    case 'Upload':
-      return UploadToolRenderer
-    default:
-      return GenericToolRenderer
-  }
 }
 
 export default ToolBlock
