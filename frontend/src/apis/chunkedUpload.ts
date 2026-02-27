@@ -61,22 +61,6 @@ export interface UploadStatusResponse {
 }
 
 /**
- * Calculate hash checksum of data using Web Crypto API
- * Note: Prefixed with _ as it's reserved for future use (optional checksum verification)
- */
-async function _calculateChecksum(data: ArrayBuffer): Promise<string> {
-  // Use SubtleCrypto for hashing (MD5 is not available, use a simple approach)
-  // For MD5, we'll use a lightweight implementation
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  // Take first 16 bytes to simulate MD5 length (for checksum purposes)
-  return hashArray
-    .slice(0, 16)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-/**
  * Initialize a chunked upload session
  *
  * @param filename - Original filename

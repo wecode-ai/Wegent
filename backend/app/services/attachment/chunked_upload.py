@@ -302,20 +302,58 @@ class ChunkedUploadService:
         chunk_key = self._chunk_key(upload_id, chunk_index)
         redis_client.setex(chunk_key, UPLOAD_EXPIRATION, chunk_data)
 
-        # Update session
-        if chunk_index not in session.received_chunks:
-            session.received_chunks.append(chunk_index)
-            session.received_chunks.sort()
+        # Update session atomically using Redis WATCH/MULTI
+        # This prevents race conditions when multiple chunks are uploaded concurrently
+        chunk_checksum = hashlib.md5(chunk_data).hexdigest()  # noqa: S324
+        max_retries = 5
+        for retry in range(max_retries):
+            try:
+                # Watch the session key for changes
+                redis_client.watch(session_key)
 
-        session.chunk_checksums[chunk_index] = hashlib.md5(chunk_data).hexdigest()
-        session.last_updated = time.time()
+                # Re-read session data
+                session_data = redis_client.get(session_key)
+                if not session_data:
+                    redis_client.unwatch()
+                    raise ChunkedUploadError(
+                        f"Upload session expired during chunk upload: {upload_id}",
+                        error_code="session_not_found",
+                    )
 
-        # Save updated session
-        redis_client.setex(
-            session_key,
-            UPLOAD_EXPIRATION,
-            json.dumps(session.to_dict()),
-        )
+                session = ChunkedUploadSession.from_dict(json.loads(session_data))
+
+                # Update session
+                if chunk_index not in session.received_chunks:
+                    session.received_chunks.append(chunk_index)
+                    session.received_chunks.sort()
+
+                session.chunk_checksums[chunk_index] = chunk_checksum
+                session.last_updated = time.time()
+
+                # Execute atomic update
+                pipe = redis_client.pipeline()
+                pipe.setex(
+                    session_key,
+                    UPLOAD_EXPIRATION,
+                    json.dumps(session.to_dict()),
+                )
+                pipe.execute()
+                break  # Success
+            except Exception as e:
+                # Check if it's a WatchError (concurrent modification)
+                if "WATCH" in str(type(e).__name__) or "WatchError" in str(e):
+                    if retry < max_retries - 1:
+                        logger.debug(
+                            f"Retrying session update due to concurrent modification: "
+                            f"upload_id={upload_id}, chunk_index={chunk_index}, retry={retry + 1}"
+                        )
+                        continue
+                    else:
+                        logger.warning(
+                            f"Max retries reached for session update: "
+                            f"upload_id={upload_id}, chunk_index={chunk_index}"
+                        )
+                raise
 
         logger.debug(
             f"Uploaded chunk: upload_id={upload_id}, chunk_index={chunk_index}, "
