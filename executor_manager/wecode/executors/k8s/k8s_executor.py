@@ -1664,15 +1664,24 @@ class K8sExecutor(Executor):
             from executor_manager.clients.callback_client import get_callback_client
 
             cb_client = get_callback_client()
-            asyncio.run(
-                cb_client.send_error(
-                    task_id=int(task_id),
-                    subtask_id=int(subtask_id),
-                    error_message=error_message,
-                    executor_name=executor_name,
-                    error_code="dispatch_failed",
+            
+            # Create a new event loop to avoid conflicts with existing loops
+            # This prevents "RuntimeError: This event loop is already running"
+            # when called from async contexts (e.g., FastAPI routes, APScheduler)
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(
+                    cb_client.send_error(
+                        task_id=int(task_id),
+                        subtask_id=int(subtask_id),
+                        error_message=error_message,
+                        executor_name=executor_name,
+                        error_code="dispatch_failed",
+                    )
                 )
-            )
+            finally:
+                loop.close()
+            
             logger.info(
                 f"Sent dispatch failure callback for task {task_id}/{subtask_id}"
             )
