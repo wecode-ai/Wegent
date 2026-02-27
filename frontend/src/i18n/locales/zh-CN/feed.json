@@ -299,6 +299,21 @@
     "save_success": "通知设置已保存",
     "save_failed": "保存通知设置失败"
   },
+  "follow_dropdown": {
+    "select_level": "选择通知级别",
+    "level_silent": "静默",
+    "level_silent_desc": "执行但不在时间线显示",
+    "level_default": "默认",
+    "level_default_desc": "在动态时间线中显示",
+    "level_notify": "通知",
+    "level_notify_desc": "通过 Messager 渠道发送通知",
+    "notify_disabled_hint": "请先通过 Messager 渠道发送一条消息进行绑定",
+    "select_channels": "选择通知渠道",
+    "select_channels_hint": "选择至少一个已绑定的渠道",
+    "channel_not_bound": "未绑定",
+    "back": "返回",
+    "confirm_follow": "确认关注"
+  },
   "developer_notification_settings": {
     "title": "开发者通知设置",
     "description": "配置当「{{name}}」执行时如何通知您（作为订阅器创建者）",

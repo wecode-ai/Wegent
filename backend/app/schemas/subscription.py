@@ -780,6 +780,17 @@ class FollowSubscriptionRequest(BaseModel):
     )
 
 
+class AcceptInvitationRequest(BaseModel):
+    """Request to accept a subscription invitation with optional notification settings."""
+
+    notification_level: Optional[NotificationLevel] = Field(
+        None, description="Notification level (default: 'default')"
+    )
+    notification_channel_ids: Optional[List[int]] = Field(
+        None, description="Messager channel IDs for notify level"
+    )
+
+
 class UpdateFollowSettingsRequest(BaseModel):
     """Request to update follow notification settings."""
 
