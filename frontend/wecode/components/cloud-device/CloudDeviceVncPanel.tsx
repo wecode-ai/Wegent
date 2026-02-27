@@ -42,26 +42,26 @@ export function CloudDeviceVncPanel({
       <div
         className="transition-all duration-300 ease-in-out bg-surface overflow-hidden"
         style={{
-          width: isOpen ? '40%' : '0',
+          width: isOpen ? '70%' : '0',
         }}
       >
         {isOpen && (
           <div className="h-full flex flex-col border border-border rounded-lg overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted">
-              <div className="flex items-center gap-2">
-                <ComputerDesktopIcon className="h-5 w-5 text-primary" />
-                <span className="font-medium text-text-primary">
+            {/* Header - compact overlay */}
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/90 backdrop-blur-sm">
+              <div className="flex items-center gap-1.5">
+                <ComputerDesktopIcon className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium text-text-primary truncate">
                   {deviceName || t('cloudDevice.vncTitle')}
                 </span>
               </div>
               <button
                 onClick={onClose}
-                className="rounded-full p-1 text-text-muted hover:text-text-primary hover:bg-muted focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary"
+                className="rounded-full p-0.5 text-text-muted hover:text-text-primary hover:bg-muted focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary"
                 title={t('workbench.close_panel')}
               >
                 <span className="sr-only">{t('workbench.close_panel')}</span>
-                <XMarkIcon className="h-5 w-5" />
+                <XMarkIcon className="h-4 w-4" />
               </button>
             </div>
 

@@ -6,6 +6,8 @@
     "starting": "启动中...",
     "empty": "暂无云设备，点击上方按钮创建",
     "not_configured": "云设备服务未配置",
+    "create_confirm_title": "创建云设备",
+    "create_confirm_message": "创建云设备时，系统将自动为您生成一个 API Key 用于设备认证。该 Key 会内置到云设备中，无需手动配置。",
     "delete_confirm_title": "删除云设备",
     "delete_confirm_message": "确定要删除此云设备吗？删除后虚拟机将被销毁，无法恢复。",
     "limit_reached": "已达到云设备数量上限（最多 {{max}} 个）",

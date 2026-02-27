@@ -424,14 +424,16 @@ export default function DevicesPage() {
 
             {/* Cloud Devices Section - always visible regardless of local devices */}
             {!isLoading && (
-              <CloudDeviceSection
-                cloudDevices={cloudDevices}
-                onDeviceCreated={refreshDevices}
-                onDeleteDevice={handleDeleteDevice}
-                onSetDefault={handleSetDefault}
-                onStartTask={handleStartTask}
-                onCancelTask={handleCancelTask}
-              />
+              <div className="mt-8">
+                <CloudDeviceSection
+                  cloudDevices={cloudDevices}
+                  onDeviceCreated={refreshDevices}
+                  onDeleteDevice={handleDeleteDevice}
+                  onSetDefault={handleSetDefault}
+                  onStartTask={handleStartTask}
+                  onCancelTask={handleCancelTask}
+                />
+              </div>
             )}
           </div>
         </div>

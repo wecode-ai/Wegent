@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon, ComputerDesktopIcon } from '@heroicons/react/24/outline'
 import { teamService } from '@/features/tasks/service/teamService'
@@ -140,21 +140,27 @@ export function ChatPageDesktop() {
     saveLastTab('chat')
   }, [])
 
+  // Keep a ref to devices to avoid re-triggering VNC fetch on heartbeat updates
+  const devicesRef = useRef(devices)
+  devicesRef.current = devices
+
   // Fetch cloud device VNC URL when task is loaded
   useEffect(() => {
     const fetchCloudDeviceStatus = async () => {
-      // Reset VNC state when task changes
-      setVncUrl(null)
-      setIsVncPanelOpen(false)
-
       // Only fetch if we have a task with a device_id
       if (!selectedTaskDetail?.device_id) {
+        setVncUrl(null)
+        setIsVncPanelOpen(false)
         return
       }
 
       // Find the device and check if it's a cloud device
-      const device = devices.find(d => d.device_id === selectedTaskDetail.device_id)
-      if (!device || device.device_type !== 'cloud') return
+      const device = devicesRef.current.find(d => d.device_id === selectedTaskDetail.device_id)
+      if (!device || device.device_type !== 'cloud') {
+        setVncUrl(null)
+        setIsVncPanelOpen(false)
+        return
+      }
 
       setIsLoadingVnc(true)
       try {
@@ -172,7 +178,7 @@ export function ChatPageDesktop() {
     }
 
     fetchCloudDeviceStatus()
-  }, [selectedTaskDetail?.device_id, devices])
+  }, [selectedTaskDetail?.device_id])
 
   // Check if we should show the VNC toggle button
   const showVncToggle = useMemo(() => {
@@ -292,7 +298,9 @@ export function ChatPageDesktop() {
               isOpen={isVncPanelOpen}
               onClose={() => setIsVncPanelOpen(false)}
               onOpen={() => setIsVncPanelOpen(true)}
-              deviceName={selectedTaskDetail?.device_id || undefined}
+              deviceName={
+                devices.find(d => d.device_id === selectedTaskDetail?.device_id)?.name || undefined
+              }
             />
           )}
         </div>
