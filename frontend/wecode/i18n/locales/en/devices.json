@@ -45,6 +45,7 @@
   "plugin_browser_name": "Browser Plugin",
   "plugin_browser_description": "Enable Agent to control browsers for web automation",
   "vnc_title": "Desktop",
+  "vnc_open_desktop": "Open Desktop",
   "vnc_loading": "Loading desktop...",
   "vnc_error": "Failed to load desktop viewer",
   "vnc_close": "Close desktop panel"
