@@ -10,7 +10,6 @@ managed through Nevis Sandbox API.
 """
 
 import logging
-import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -42,9 +41,8 @@ def _get_backend_url(request: Request) -> str:
         Backend URL for executor to connect
     """
     # Try NEVIS_CALLBACK_URL first, then BACKEND_INTERNAL_URL
-    nevis_callback_url = os.environ.get("NEVIS_CALLBACK_URL", "")
-    if nevis_callback_url:
-        return nevis_callback_url
+    if nevis_settings.NEVIS_CALLBACK_URL:
+        return nevis_settings.NEVIS_CALLBACK_URL
     if settings.BACKEND_INTERNAL_URL:
         return settings.BACKEND_INTERNAL_URL
 

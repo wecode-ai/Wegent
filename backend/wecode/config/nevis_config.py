@@ -44,6 +44,10 @@ class NevisSettings(BaseSettings):
     # If empty, all users are allowed.
     NEVIS_CREATE_WHITELIST: str = ""
 
+    # Callback URL for cloud device executor to connect back to backend.
+    # If not set, falls back to BACKEND_INTERNAL_URL.
+    NEVIS_CALLBACK_URL: str = ""
+
     class Config:
         env_file = ".env"
         extra = "ignore"
