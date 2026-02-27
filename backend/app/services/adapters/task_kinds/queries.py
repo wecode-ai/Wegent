@@ -215,6 +215,8 @@ class TaskQueryMixin:
         from app.models.share_link import ResourceType
 
         # Get task IDs that are group chats (have members) using resource_members
+        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
+        # Share-copy records are created when users import shared tasks, not for group chat membership
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.resource_id
@@ -225,6 +227,7 @@ class TaskQueryMixin:
             AND k.is_active = true
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.user_id = :user_id)
+            AND tm.copied_resource_id = 0
         """
         )
         member_task_ids_result = db.execute(
@@ -303,6 +306,8 @@ class TaskQueryMixin:
         from app.models.share_link import ResourceType
 
         # Get all task IDs that are group chats (have members) using resource_members
+        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
+        # Share-copy records are created when users import shared tasks, not for group chat membership
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.resource_id
@@ -312,6 +317,7 @@ class TaskQueryMixin:
             AND k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
+            AND tm.copied_resource_id = 0
         """
         )
         member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
