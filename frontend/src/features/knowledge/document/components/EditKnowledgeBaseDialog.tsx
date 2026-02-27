@@ -76,8 +76,7 @@ export function EditKnowledgeBaseDialog({
     setRetrievalConfig(config)
   }, [])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     setError('')
     setSummaryModelError('')
 
@@ -154,12 +153,11 @@ export function EditKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.edit')}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4 py-4">
+        <div className="flex-1 overflow-y-auto space-y-4 py-4">
             <KnowledgeBaseForm
               name={name}
               description={description}
@@ -201,18 +199,16 @@ export function EditKnowledgeBaseDialog({
           </div>
           <DialogFooter>
             <Button
-              type="button"
               variant="outline"
               onClick={() => handleOpenChange(false)}
               disabled={loading}
             >
               {t('common:actions.cancel')}
             </Button>
-            <Button type="submit" variant="primary" disabled={loading}>
+            <Button onClick={handleSubmit} variant="primary" disabled={loading}>
               {loading ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
           </DialogFooter>
-        </form>
       </DialogContent>
     </Dialog>
   )
