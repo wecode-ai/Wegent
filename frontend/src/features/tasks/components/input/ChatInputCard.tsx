@@ -11,6 +11,7 @@ import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
+import DeviceSelectorTab from './DeviceSelectorTab'
 import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem } from '@/types/api'
@@ -195,6 +196,18 @@ export function ChatInputCard({
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
+        {/* Device Selector Tab - positioned at top left inside card, connected to border */}
+        {!shouldHideChatInput && (
+          <div className="absolute -top-[29px] left-4 z-10">
+            <DeviceSelectorTab
+              disabled={isLoading || isStreaming}
+              hasMessages={hasMessages}
+              taskDeviceId={selectedTaskDetail?.device_id}
+              className="rounded-t-lg"
+            />
+          </div>
+        )}
+
         {/* Drag Overlay */}
         {isDragging && (
           <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">

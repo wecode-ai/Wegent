@@ -25,6 +25,9 @@
   "system_linux": "Linux",
   "system_windows": "Windows",
   "cloud_executor": "云端 Executor",
+  "cloud_tab": "云端",
+  "device_tab": "设备",
+  "no_devices_available": "暂无可用设备",
   "select_device": "选择执行设备",
   "select_device_hint": "从顶部选择一个在线设备开始发送任务",
   "device_offline_hint": "设备已离线,请选择其他设备",
@@ -107,5 +110,6 @@
   "local_devices_section": "本地设备",
   "cloud_devices_section": "云端设备",
   "no_local_devices": "暂无本地设备连接。请使用上方指南添加设备。",
-  "cloud_devices_coming_soon": "云端设备支持即将推出。"
+  "cloud_devices_coming_soon": "云端设备支持即将推出。",
+  "clear_default": "清除默认"
 }
