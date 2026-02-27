@@ -682,7 +682,7 @@ class DifyAgent(Agent):
             logger.error(error_msg)
             raise Exception(error_msg)
 
-    def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> TaskStatus:
         """
         For external API agents, pre_execute is minimal.
         No need to download code or setup local environment since
@@ -696,6 +696,7 @@ class DifyAgent(Agent):
             "skipping code download and environment setup"
         )
         return TaskStatus.SUCCESS
+
 
     def execute(self) -> TaskStatus:
         """

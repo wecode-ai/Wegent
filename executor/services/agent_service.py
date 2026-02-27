@@ -142,21 +142,21 @@ class AgentService:
             )
             return None
 
-    def execute_agent_task(
+    async def execute_agent_task(
         self, agent: Agent, pre_executed: Optional[TaskStatus] = None
     ) -> Tuple[TaskStatus, Optional[str]]:
         try:
             logger.info(
                 f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Executing with pre_executed={pre_executed}"
             )
-            return agent.handle(pre_executed)
+            return await agent.handle(pre_executed)
         except Exception as e:
             logger.exception(
                 f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Execution error: {e}"
             )
             return TaskStatus.FAILED, str(e)
 
-    def execute_task(
+    async def execute_task(
         self, task_data: ExecutionRequest
     ) -> Tuple[TaskStatus, Optional[str]]:
         task_id = task_data.task_id
@@ -186,7 +186,7 @@ class AgentService:
                 msg = f"[{_format_task_log(task_id, subtask_id)}] Unable to get or create agent"
                 logger.error(msg)
                 return TaskStatus.FAILED, msg
-            return self.execute_agent_task(agent)
+            return await self.execute_agent_task(agent)
         except Exception as e:
             logger.exception(
                 f"[{_format_task_log(task_id, subtask_id)}] Task execution error: {e}"
