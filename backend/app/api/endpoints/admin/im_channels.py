@@ -46,6 +46,8 @@ SENSITIVE_CONFIG_KEYS: Set[str] = {
     "encrypt_key",
     "encoding_aes_key",
     "bot_token",
+    "webhook_url",
+    "sign_secret",
 }
 
 
@@ -231,7 +233,7 @@ async def create_im_channel(
     Create a new IM channel.
     """
     # Validate channel type
-    valid_types = ["dingtalk", "feishu", "wechat", "telegram"]
+    valid_types = ["dingtalk", "dingtalk_group", "feishu", "wechat", "telegram"]
     if channel_data.channel_type not in valid_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

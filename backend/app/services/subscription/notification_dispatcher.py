@@ -169,7 +169,7 @@ class SubscriptionNotificationDispatcher:
             db, user_id=user_id
         )
 
-        # Format the notification message
+        # Format the notification message (truncated for single-user channels)
         logger.info(
             f"[_send_messager_notifications] Formatting message with detail_url: {detail_url}"
         )
@@ -180,20 +180,18 @@ class SubscriptionNotificationDispatcher:
             detail_url=detail_url,
         )
 
+        # Format the full notification message (for group channels)
+        group_message = self._format_group_notification_message(
+            subscription_display_name=subscription_display_name,
+            status=status,
+            result_summary=result_summary,
+            detail_url=detail_url,
+        )
+
         # Send to each configured channel
         tasks = []
         for channel_id in channel_ids:
             channel_id_str = str(channel_id)
-
-            # Check if user has binding for this channel
-            if channel_id_str not in user_bindings:
-                logger.warning(
-                    f"[SubscriptionNotificationDispatcher] User {user_id} has no binding "
-                    f"for channel {channel_id}"
-                )
-                continue
-
-            binding = user_bindings[channel_id_str]
 
             # Get channel info
             channel = (
@@ -216,7 +214,26 @@ class SubscriptionNotificationDispatcher:
             channel_type = spec.get("channelType", "")
 
             # Dispatch based on channel type
-            if channel_type == "dingtalk":
+            if channel_type == "dingtalk_group":
+                # dingtalk_group sends directly to webhook, no user binding needed
+                tasks.append(
+                    self._send_dingtalk_group_notification(
+                        db=db,
+                        channel=channel,
+                        message=group_message,
+                        subscription_id=subscription_id,
+                        execution_id=execution_id,
+                    )
+                )
+            elif channel_type == "dingtalk":
+                # Check if user has binding for this channel
+                if channel_id_str not in user_bindings:
+                    logger.warning(
+                        f"[SubscriptionNotificationDispatcher] User {user_id} has no binding "
+                        f"for channel {channel_id}"
+                    )
+                    continue
+                binding = user_bindings[channel_id_str]
                 tasks.append(
                     self._send_dingtalk_notification(
                         db=db,
@@ -229,6 +246,14 @@ class SubscriptionNotificationDispatcher:
                     )
                 )
             elif channel_type == "telegram":
+                # Check if user has binding for this channel
+                if channel_id_str not in user_bindings:
+                    logger.warning(
+                        f"[SubscriptionNotificationDispatcher] User {user_id} has no binding "
+                        f"for channel {channel_id}"
+                    )
+                    continue
+                binding = user_bindings[channel_id_str]
                 tasks.append(
                     self._send_telegram_notification(
                         db=db,
@@ -421,6 +446,91 @@ class SubscriptionNotificationDispatcher:
             )
             raise
 
+    async def _send_dingtalk_group_notification(
+        self,
+        db: Session,
+        *,
+        channel: Kind,
+        message: str,
+        subscription_id: int,
+        execution_id: int,
+    ) -> None:
+        """
+        Send notification to DingTalk group via webhook.
+
+        Unlike single-chat DingTalk notifications, group notifications
+        don't require user binding - they send directly to the group webhook.
+
+        Args:
+            db: Database session
+            channel: Messager Kind
+            message: Notification message (full content)
+            subscription_id: Subscription ID
+            execution_id: Background execution ID
+        """
+        try:
+            # Get channel config
+            spec = channel.json.get("spec", {})
+            config = spec.get("config", {})
+            webhook_url_encrypted = config.get("webhook_url")
+            sign_secret_encrypted = config.get("sign_secret")
+
+            if not webhook_url_encrypted:
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] Channel {channel.id} missing "
+                    f"webhook_url"
+                )
+                return
+
+            # Decrypt the sensitive fields
+            from shared.utils.crypto import decrypt_sensitive_data
+
+            webhook_url = decrypt_sensitive_data(webhook_url_encrypted)
+            sign_secret = (
+                decrypt_sensitive_data(sign_secret_encrypted)
+                if sign_secret_encrypted
+                else None
+            )
+
+            # Send message via group webhook
+            from app.services.channels.dingtalk.group_sender import (
+                DingTalkGroupWebhookSender,
+            )
+
+            sender = DingTalkGroupWebhookSender(
+                webhook_url=webhook_url,
+                sign_secret=sign_secret,
+            )
+
+            logger.info(
+                f"[_send_dingtalk_group_notification] Sending message to group, "
+                f"channel_id={channel.id}, message_length={len(message)}"
+            )
+
+            result = await sender.send_markdown_message(
+                title="订阅通知",
+                text=message,
+            )
+
+            if result.get("success"):
+                logger.info(
+                    f"[SubscriptionNotificationDispatcher] Sent DingTalk group notification "
+                    f"to channel {channel.id} (subscription={subscription_id}, "
+                    f"execution={execution_id})"
+                )
+            else:
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] Failed to send DingTalk group "
+                    f"notification to channel {channel.id}: {result.get('error')}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"[SubscriptionNotificationDispatcher] Failed to send DingTalk group "
+                f"notification to channel {channel.id}: {e}"
+            )
+            raise
+
     def _format_notification_message(
         self,
         *,
@@ -465,6 +575,55 @@ class SubscriptionNotificationDispatcher:
 
         if detail_url:
             message_lines.extend(["", f"[查看详情]({detail_url})"])
+
+        # Join with explicit newlines for better DingTalk rendering
+        message = "\n".join(message_lines)
+
+        return message
+
+    def _format_group_notification_message(
+        self,
+        *,
+        subscription_display_name: str,
+        status: str,
+        result_summary: str,
+        detail_url: Optional[str] = None,
+    ) -> str:
+        """
+        Format the notification message for group channels (full content).
+
+        Unlike _format_notification_message which truncates to 300 chars,
+        this method sends the full result_summary for group channels.
+        The DingTalkGroupWebhookSender handles the 20000 char limit internally.
+
+        Args:
+            subscription_display_name: Display name of the subscription
+            status: Execution status
+            result_summary: Full execution result (not truncated)
+            detail_url: URL to view execution details
+
+        Returns:
+            Formatted notification message with full content
+        """
+        status_emoji = "✅" if status == "COMPLETED" else "❌"
+        status_text = "执行成功" if status == "COMPLETED" else "执行失败"
+
+        # For group notifications, send full result_summary without truncation
+        # For DingTalk markdown, use explicit line breaks with double newlines
+        message_lines = [
+            "📬 **订阅任务通知**",
+            "",
+            f"**订阅名称**: {subscription_display_name}",
+            "",
+            f"**执行状态**: {status_emoji} {status_text}",
+            "",
+            "**执行结果**:",
+            "",
+            result_summary,
+        ]
+
+        if detail_url:
+            message_lines.extend(["", "---", f"[查看详情]({detail_url})"])
 
         # Join with explicit newlines for better DingTalk rendering
         message = "\n".join(message_lines)

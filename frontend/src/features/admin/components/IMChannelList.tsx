@@ -95,6 +95,8 @@ const IMChannelList: React.FC = () => {
     client_id: string
     client_secret: string
     bot_token: string
+    webhook_url: string
+    sign_secret: string
     user_mapping_mode: UserMappingMode
     target_user_id: number
   }>({
@@ -106,6 +108,8 @@ const IMChannelList: React.FC = () => {
     client_id: '',
     client_secret: '',
     bot_token: '',
+    webhook_url: '',
+    sign_secret: '',
     user_mapping_mode: 'select_user',
     target_user_id: 0,
   })
@@ -253,6 +257,14 @@ const IMChannelList: React.FC = () => {
         })
         return
       }
+    } else if (formData.channel_type === 'dingtalk_group') {
+      if (!formData.webhook_url.trim()) {
+        toast({
+          variant: 'destructive',
+          title: t('admin:im_channels.errors.webhook_url_required'),
+        })
+        return
+      }
     } else {
       // DingTalk and other channels use client_id/client_secret
       if (!formData.client_id.trim() || !formData.client_secret.trim()) {
@@ -264,8 +276,8 @@ const IMChannelList: React.FC = () => {
       }
     }
 
-    // Validate: default team is required
-    if (!formData.default_team_id) {
+    // Validate: default team is required (except for dingtalk_group which is notification-only)
+    if (formData.channel_type !== 'dingtalk_group' && !formData.default_team_id) {
       toast({
         variant: 'destructive',
         title: t('admin:im_channels.errors.team_required'),
@@ -273,8 +285,12 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    // Validate: if team has no model, must select a default model
-    if (!teamHasModel(formData.default_team_id) && !formData.default_model_name) {
+    // Validate: if team has no model, must select a default model (not applicable for dingtalk_group)
+    if (
+      formData.channel_type !== 'dingtalk_group' &&
+      !teamHasModel(formData.default_team_id) &&
+      !formData.default_model_name
+    ) {
       toast({
         variant: 'destructive',
         title: t('admin:im_channels.errors.model_required_for_team'),
@@ -282,8 +298,12 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    // Validate: if select_user mode, must select a target user
-    if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
+    // Validate: if select_user mode, must select a target user (not applicable for dingtalk_group)
+    if (
+      formData.channel_type !== 'dingtalk_group' &&
+      formData.user_mapping_mode === 'select_user' &&
+      !formData.target_user_id
+    ) {
       toast({
         variant: 'destructive',
         title: t('admin:im_channels.errors.target_user_required'),
@@ -294,19 +314,28 @@ const IMChannelList: React.FC = () => {
     setSaving(true)
     try {
       // Build config based on channel type
-      const config: Record<string, unknown> = {
-        user_mapping_mode: formData.user_mapping_mode,
-      }
+      const config: Record<string, unknown> = {}
 
       if (formData.channel_type === 'telegram') {
         config.bot_token = formData.bot_token.trim()
+        config.user_mapping_mode = formData.user_mapping_mode
+      } else if (formData.channel_type === 'dingtalk_group') {
+        config.webhook_url = formData.webhook_url.trim()
+        if (formData.sign_secret.trim()) {
+          config.sign_secret = formData.sign_secret.trim()
+        }
       } else {
         config.client_id = formData.client_id.trim()
         config.client_secret = formData.client_secret.trim()
+        config.user_mapping_mode = formData.user_mapping_mode
       }
 
-      // Add user_mapping_config if select_user mode
-      if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
+      // Add user_mapping_config if select_user mode (not for dingtalk_group)
+      if (
+        formData.channel_type !== 'dingtalk_group' &&
+        formData.user_mapping_mode === 'select_user' &&
+        formData.target_user_id
+      ) {
         config.user_mapping_config = {
           target_user_id: formData.target_user_id,
         }
@@ -316,8 +345,11 @@ const IMChannelList: React.FC = () => {
         name: formData.name.trim(),
         channel_type: formData.channel_type,
         is_enabled: formData.is_enabled,
-        default_team_id: formData.default_team_id,
-        default_model_name: formData.default_model_name || undefined,
+        default_team_id: formData.channel_type === 'dingtalk_group' ? 0 : formData.default_team_id,
+        default_model_name:
+          formData.channel_type === 'dingtalk_group'
+            ? undefined
+            : formData.default_model_name || undefined,
         config,
       }
       await adminApis.createIMChannel(createData)
@@ -339,8 +371,8 @@ const IMChannelList: React.FC = () => {
   const handleUpdateChannel = async () => {
     if (!selectedChannel) return
 
-    // Validate: default team is required
-    if (!formData.default_team_id) {
+    // Validate: default team is required (except for dingtalk_group which is notification-only)
+    if (selectedChannel.channel_type !== 'dingtalk_group' && !formData.default_team_id) {
       toast({
         variant: 'destructive',
         title: t('admin:im_channels.errors.team_required'),
@@ -348,8 +380,12 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    // Validate: if team has no model, must select a default model
-    if (!teamHasModel(formData.default_team_id) && !formData.default_model_name) {
+    // Validate: if team has no model, must select a default model (not applicable for dingtalk_group)
+    if (
+      selectedChannel.channel_type !== 'dingtalk_group' &&
+      !teamHasModel(formData.default_team_id) &&
+      !formData.default_model_name
+    ) {
       toast({
         variant: 'destructive',
         title: t('admin:im_channels.errors.model_required_for_team'),
@@ -357,8 +393,12 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    // Validate: if select_user mode, must select a target user
-    if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
+    // Validate: if select_user mode, must select a target user (not applicable for dingtalk_group)
+    if (
+      selectedChannel.channel_type !== 'dingtalk_group' &&
+      formData.user_mapping_mode === 'select_user' &&
+      !formData.target_user_id
+    ) {
       toast({
         variant: 'destructive',
         title: t('admin:im_channels.errors.target_user_required'),
@@ -383,15 +423,22 @@ const IMChannelList: React.FC = () => {
       }
 
       // Build config based on channel type
-      const newConfig: Record<string, unknown> = {
-        user_mapping_mode: formData.user_mapping_mode,
-      }
+      const newConfig: Record<string, unknown> = {}
 
       if (selectedChannel.channel_type === 'telegram') {
+        newConfig.user_mapping_mode = formData.user_mapping_mode
         if (formData.bot_token.trim()) {
           newConfig.bot_token = formData.bot_token.trim()
         }
+      } else if (selectedChannel.channel_type === 'dingtalk_group') {
+        if (formData.webhook_url.trim()) {
+          newConfig.webhook_url = formData.webhook_url.trim()
+        }
+        if (formData.sign_secret.trim()) {
+          newConfig.sign_secret = formData.sign_secret.trim()
+        }
       } else {
+        newConfig.user_mapping_mode = formData.user_mapping_mode
         if (formData.client_id.trim()) {
           newConfig.client_id = formData.client_id.trim()
         }
@@ -400,8 +447,12 @@ const IMChannelList: React.FC = () => {
         }
       }
 
-      // Add user_mapping_config if select_user mode
-      if (formData.user_mapping_mode === 'select_user' && formData.target_user_id) {
+      // Add user_mapping_config if select_user mode (not for dingtalk_group)
+      if (
+        selectedChannel.channel_type !== 'dingtalk_group' &&
+        formData.user_mapping_mode === 'select_user' &&
+        formData.target_user_id
+      ) {
         newConfig.user_mapping_config = {
           target_user_id: formData.target_user_id,
         }
@@ -488,6 +539,8 @@ const IMChannelList: React.FC = () => {
       client_id: '',
       client_secret: '',
       bot_token: '',
+      webhook_url: '',
+      sign_secret: '',
       user_mapping_mode: 'select_user',
       target_user_id: 0,
     })
@@ -512,6 +565,8 @@ const IMChannelList: React.FC = () => {
       client_id: (channel.config?.client_id as string) || '',
       client_secret: '', // Don't show existing secret
       bot_token: '', // Don't show existing bot_token
+      webhook_url: '', // Don't show existing webhook_url
+      sign_secret: '', // Don't show existing sign_secret
       user_mapping_mode: userMappingMode,
       target_user_id: targetUserId,
     })
@@ -528,6 +583,8 @@ const IMChannelList: React.FC = () => {
     switch (type) {
       case 'dingtalk':
         return t('admin:im_channels.types.dingtalk')
+      case 'dingtalk_group':
+        return t('admin:im_channels.types.dingtalk_group')
       case 'feishu':
         return t('admin:im_channels.types.feishu')
       case 'wechat':
@@ -718,6 +775,9 @@ const IMChannelList: React.FC = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="dingtalk">{t('admin:im_channels.types.dingtalk')}</SelectItem>
+                  <SelectItem value="dingtalk_group">
+                    {t('admin:im_channels.types.dingtalk_group')}
+                  </SelectItem>
                   <SelectItem value="telegram">{t('admin:im_channels.types.telegram')}</SelectItem>
                   <SelectItem value="feishu" disabled>
                     {t('admin:im_channels.types.feishu')} (
@@ -726,7 +786,7 @@ const IMChannelList: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
+            {/* Telegram uses bot_token, dingtalk_group uses webhook_url, other channels use client_id/client_secret */}
             {formData.channel_type === 'telegram' ? (
               <div className="space-y-2">
                 <Label htmlFor="bot_token">{t('admin:im_channels.form.bot_token')} *</Label>
@@ -738,6 +798,32 @@ const IMChannelList: React.FC = () => {
                   placeholder={t('admin:im_channels.form.bot_token_placeholder')}
                 />
               </div>
+            ) : formData.channel_type === 'dingtalk_group' ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="webhook_url">{t('admin:im_channels.form.webhook_url')} *</Label>
+                  <Input
+                    id="webhook_url"
+                    type="text"
+                    value={formData.webhook_url}
+                    onChange={e => setFormData({ ...formData, webhook_url: e.target.value })}
+                    placeholder={t('admin:im_channels.form.webhook_url_placeholder')}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sign_secret">{t('admin:im_channels.form.sign_secret')}</Label>
+                  <Input
+                    id="sign_secret"
+                    type="password"
+                    value={formData.sign_secret}
+                    onChange={e => setFormData({ ...formData, sign_secret: e.target.value })}
+                    placeholder={t('admin:im_channels.form.sign_secret_placeholder')}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('admin:im_channels.form.sign_secret_description')}
+                  </p>
+                </div>
+              </>
             ) : (
               <>
                 <div className="space-y-2">
@@ -763,121 +849,128 @@ const IMChannelList: React.FC = () => {
                 </div>
               </>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="default_team">{t('admin:im_channels.form.default_team')} *</Label>
-              <Select
-                value={formData.default_team_id ? formData.default_team_id.toString() : ''}
-                onValueChange={value =>
-                  setFormData({ ...formData, default_team_id: parseInt(value) })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t('admin:im_channels.form.default_team_placeholder')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {teams.map(team => (
-                    <SelectItem key={team.id} value={team.id.toString()}>
-                      {team.display_name || team.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
-                <p className="text-xs text-amber-600">
-                  {t('admin:im_channels.form.team_no_model_warning')}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="default_model">
-                {t('admin:im_channels.form.default_model')}
-                {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
-                  <span className="text-red-500 ml-1">*</span>
-                )}
-              </Label>
-              <Select
-                value={formData.default_model_name || '__none__'}
-                onValueChange={value =>
-                  setFormData({
-                    ...formData,
-                    default_model_name: value === '__none__' ? '' : value,
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue
-                    placeholder={t('admin:im_channels.form.default_model_placeholder')}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">
-                    {t('admin:im_channels.form.no_default_model')}
-                  </SelectItem>
-                  {models.map(model => (
-                    <SelectItem key={model.id} value={model.name}>
-                      {model.display_name || model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {/* User Mapping Mode */}
-            <div className="space-y-2">
-              <Label htmlFor="user_mapping_mode">
-                {t('admin:im_channels.form.user_mapping_mode')} *
-              </Label>
-              <Select
-                value={formData.user_mapping_mode}
-                onValueChange={value =>
-                  setFormData({ ...formData, user_mapping_mode: value as UserMappingMode })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="select_user">
-                    {t('admin:im_channels.form.user_mapping_modes.select_user')}
-                  </SelectItem>
-                  <SelectItem value="staff_id">
-                    {t('admin:im_channels.form.user_mapping_modes.staff_id')}
-                  </SelectItem>
-                  <SelectItem value="email">
-                    {t('admin:im_channels.form.user_mapping_modes.email')}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-text-muted">
-                {t('admin:im_channels.form.user_mapping_mode_description')}
-              </p>
-            </div>
-            {/* Target User (only for select_user mode) */}
-            {formData.user_mapping_mode === 'select_user' && (
-              <div className="space-y-2">
-                <Label htmlFor="target_user">{t('admin:im_channels.form.target_user')} *</Label>
-                <Select
-                  value={formData.target_user_id ? formData.target_user_id.toString() : ''}
-                  onValueChange={value =>
-                    setFormData({ ...formData, target_user_id: parseInt(value) })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={t('admin:im_channels.form.select_user_placeholder')}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {users.map(user => (
-                      <SelectItem key={user.id} value={user.id.toString()}>
-                        {user.user_name} ({user.email || user.id})
+            {/* Default team and model selection - not shown for dingtalk_group */}
+            {formData.channel_type !== 'dingtalk_group' && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="default_team">{t('admin:im_channels.form.default_team')} *</Label>
+                  <Select
+                    value={formData.default_team_id ? formData.default_team_id.toString() : ''}
+                    onValueChange={value =>
+                      setFormData({ ...formData, default_team_id: parseInt(value) })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={t('admin:im_channels.form.default_team_placeholder')}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {teams.map(team => (
+                        <SelectItem key={team.id} value={team.id.toString()}>
+                          {team.display_name || team.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
+                    <p className="text-xs text-amber-600">
+                      {t('admin:im_channels.form.team_no_model_warning')}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="default_model">
+                    {t('admin:im_channels.form.default_model')}
+                    {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
+                      <span className="text-red-500 ml-1">*</span>
+                    )}
+                  </Label>
+                  <Select
+                    value={formData.default_model_name || '__none__'}
+                    onValueChange={value =>
+                      setFormData({
+                        ...formData,
+                        default_model_name: value === '__none__' ? '' : value,
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={t('admin:im_channels.form.default_model_placeholder')}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">
+                        {t('admin:im_channels.form.no_default_model')}
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-text-muted">
-                  {t('admin:im_channels.form.target_user_description')}
-                </p>
-              </div>
+                      {models.map(model => (
+                        <SelectItem key={model.id} value={model.name}>
+                          {model.display_name || model.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* User Mapping Mode */}
+                <div className="space-y-2">
+                  <Label htmlFor="user_mapping_mode">
+                    {t('admin:im_channels.form.user_mapping_mode')} *
+                  </Label>
+                  <Select
+                    value={formData.user_mapping_mode}
+                    onValueChange={value =>
+                      setFormData({ ...formData, user_mapping_mode: value as UserMappingMode })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="select_user">
+                        {t('admin:im_channels.form.user_mapping_modes.select_user')}
+                      </SelectItem>
+                      <SelectItem value="staff_id">
+                        {t('admin:im_channels.form.user_mapping_modes.staff_id')}
+                      </SelectItem>
+                      <SelectItem value="email">
+                        {t('admin:im_channels.form.user_mapping_modes.email')}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-text-muted">
+                    {t('admin:im_channels.form.user_mapping_mode_description')}
+                  </p>
+                </div>
+                {/* Target User (only for select_user mode) */}
+                {formData.user_mapping_mode === 'select_user' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="target_user">{t('admin:im_channels.form.target_user')} *</Label>
+                    <Select
+                      value={formData.target_user_id ? formData.target_user_id.toString() : ''}
+                      onValueChange={value =>
+                        setFormData({ ...formData, target_user_id: parseInt(value) })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={t('admin:im_channels.form.select_user_placeholder')}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {users.map(user => (
+                          <SelectItem key={user.id} value={user.id.toString()}>
+                            {user.user_name} ({user.email || user.id})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-text-muted">
+                      {t('admin:im_channels.form.target_user_description')}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex items-center justify-between">
               <Label htmlFor="is_enabled">{t('admin:im_channels.form.is_enabled')}</Label>
@@ -924,7 +1017,7 @@ const IMChannelList: React.FC = () => {
                 className="bg-muted"
               />
             </div>
-            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
+            {/* Telegram uses bot_token, dingtalk_group uses webhook_url, other channels use client_id/client_secret */}
             {formData.channel_type === 'telegram' ? (
               <div className="space-y-2">
                 <Label htmlFor="edit-bot_token">
@@ -941,6 +1034,42 @@ const IMChannelList: React.FC = () => {
                   placeholder={t('admin:im_channels.form.bot_token_edit_placeholder')}
                 />
               </div>
+            ) : formData.channel_type === 'dingtalk_group' ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-webhook_url">
+                    {t('admin:im_channels.form.webhook_url')}
+                    <span className="text-xs text-text-muted ml-2">
+                      ({t('admin:im_channels.form.leave_empty_to_keep')})
+                    </span>
+                  </Label>
+                  <Input
+                    id="edit-webhook_url"
+                    type="text"
+                    value={formData.webhook_url}
+                    onChange={e => setFormData({ ...formData, webhook_url: e.target.value })}
+                    placeholder={t('admin:im_channels.form.webhook_url_edit_placeholder')}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-sign_secret">
+                    {t('admin:im_channels.form.sign_secret')}
+                    <span className="text-xs text-text-muted ml-2">
+                      ({t('admin:im_channels.form.leave_empty_to_keep')})
+                    </span>
+                  </Label>
+                  <Input
+                    id="edit-sign_secret"
+                    type="password"
+                    value={formData.sign_secret}
+                    onChange={e => setFormData({ ...formData, sign_secret: e.target.value })}
+                    placeholder={t('admin:im_channels.form.sign_secret_edit_placeholder')}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('admin:im_channels.form.sign_secret_description')}
+                  </p>
+                </div>
+              </>
             ) : (
               <>
                 <div className="space-y-2">
@@ -969,125 +1098,132 @@ const IMChannelList: React.FC = () => {
                 </div>
               </>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="edit-default_team">
-                {t('admin:im_channels.form.default_team')} *
-              </Label>
-              <Select
-                value={formData.default_team_id ? formData.default_team_id.toString() : ''}
-                onValueChange={value =>
-                  setFormData({ ...formData, default_team_id: parseInt(value) })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t('admin:im_channels.form.default_team_placeholder')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {teams.map(team => (
-                    <SelectItem key={team.id} value={team.id.toString()}>
-                      {team.display_name || team.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
-                <p className="text-xs text-amber-600">
-                  {t('admin:im_channels.form.team_no_model_warning')}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-default_model">
-                {t('admin:im_channels.form.default_model')}
-                {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
-                  <span className="text-red-500 ml-1">*</span>
-                )}
-              </Label>
-              <Select
-                value={formData.default_model_name || '__none__'}
-                onValueChange={value =>
-                  setFormData({
-                    ...formData,
-                    default_model_name: value === '__none__' ? '' : value,
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue
-                    placeholder={t('admin:im_channels.form.default_model_placeholder')}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">
-                    {t('admin:im_channels.form.no_default_model')}
-                  </SelectItem>
-                  {models.map(model => (
-                    <SelectItem key={model.id} value={model.name}>
-                      {model.display_name || model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {/* User Mapping Mode */}
-            <div className="space-y-2">
-              <Label htmlFor="edit-user_mapping_mode">
-                {t('admin:im_channels.form.user_mapping_mode')} *
-              </Label>
-              <Select
-                value={formData.user_mapping_mode}
-                onValueChange={value =>
-                  setFormData({ ...formData, user_mapping_mode: value as UserMappingMode })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="select_user">
-                    {t('admin:im_channels.form.user_mapping_modes.select_user')}
-                  </SelectItem>
-                  <SelectItem value="staff_id">
-                    {t('admin:im_channels.form.user_mapping_modes.staff_id')}
-                  </SelectItem>
-                  <SelectItem value="email">
-                    {t('admin:im_channels.form.user_mapping_modes.email')}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-text-muted">
-                {t('admin:im_channels.form.user_mapping_mode_description')}
-              </p>
-            </div>
-            {/* Target User (only for select_user mode) */}
-            {formData.user_mapping_mode === 'select_user' && (
-              <div className="space-y-2">
-                <Label htmlFor="edit-target_user">
-                  {t('admin:im_channels.form.target_user')} *
-                </Label>
-                <Select
-                  value={formData.target_user_id ? formData.target_user_id.toString() : ''}
-                  onValueChange={value =>
-                    setFormData({ ...formData, target_user_id: parseInt(value) })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={t('admin:im_channels.form.select_user_placeholder')}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {users.map(user => (
-                      <SelectItem key={user.id} value={user.id.toString()}>
-                        {user.user_name} ({user.email || user.id})
+            {/* Default team and model selection - not shown for dingtalk_group */}
+            {formData.channel_type !== 'dingtalk_group' && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-default_team">
+                    {t('admin:im_channels.form.default_team')} *
+                  </Label>
+                  <Select
+                    value={formData.default_team_id ? formData.default_team_id.toString() : ''}
+                    onValueChange={value =>
+                      setFormData({ ...formData, default_team_id: parseInt(value) })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={t('admin:im_channels.form.default_team_placeholder')}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {teams.map(team => (
+                        <SelectItem key={team.id} value={team.id.toString()}>
+                          {team.display_name || team.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
+                    <p className="text-xs text-amber-600">
+                      {t('admin:im_channels.form.team_no_model_warning')}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-default_model">
+                    {t('admin:im_channels.form.default_model')}
+                    {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
+                      <span className="text-red-500 ml-1">*</span>
+                    )}
+                  </Label>
+                  <Select
+                    value={formData.default_model_name || '__none__'}
+                    onValueChange={value =>
+                      setFormData({
+                        ...formData,
+                        default_model_name: value === '__none__' ? '' : value,
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={t('admin:im_channels.form.default_model_placeholder')}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">
+                        {t('admin:im_channels.form.no_default_model')}
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-text-muted">
-                  {t('admin:im_channels.form.target_user_description')}
-                </p>
-              </div>
+                      {models.map(model => (
+                        <SelectItem key={model.id} value={model.name}>
+                          {model.display_name || model.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* User Mapping Mode */}
+                <div className="space-y-2">
+                  <Label htmlFor="edit-user_mapping_mode">
+                    {t('admin:im_channels.form.user_mapping_mode')} *
+                  </Label>
+                  <Select
+                    value={formData.user_mapping_mode}
+                    onValueChange={value =>
+                      setFormData({ ...formData, user_mapping_mode: value as UserMappingMode })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="select_user">
+                        {t('admin:im_channels.form.user_mapping_modes.select_user')}
+                      </SelectItem>
+                      <SelectItem value="staff_id">
+                        {t('admin:im_channels.form.user_mapping_modes.staff_id')}
+                      </SelectItem>
+                      <SelectItem value="email">
+                        {t('admin:im_channels.form.user_mapping_modes.email')}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-text-muted">
+                    {t('admin:im_channels.form.user_mapping_mode_description')}
+                  </p>
+                </div>
+                {/* Target User (only for select_user mode) */}
+                {formData.user_mapping_mode === 'select_user' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-target_user">
+                      {t('admin:im_channels.form.target_user')} *
+                    </Label>
+                    <Select
+                      value={formData.target_user_id ? formData.target_user_id.toString() : ''}
+                      onValueChange={value =>
+                        setFormData({ ...formData, target_user_id: parseInt(value) })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={t('admin:im_channels.form.select_user_placeholder')}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {users.map(user => (
+                          <SelectItem key={user.id} value={user.id.toString()}>
+                            {user.user_name} ({user.email || user.id})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-text-muted">
+                      {t('admin:im_channels.form.target_user_description')}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex items-center justify-between">
               <Label htmlFor="edit-is_enabled">{t('admin:im_channels.form.is_enabled')}</Label>

@@ -718,6 +718,7 @@
     "restart_channel": "Restart Connection",
     "types": {
       "dingtalk": "DingTalk",
+      "dingtalk_group": "DingTalk Group Bot",
       "feishu": "Feishu",
       "telegram": "Telegram",
       "not_supported": "Not supported"
@@ -742,6 +743,13 @@
       "bot_token": "Bot Token",
       "bot_token_placeholder": "Enter Telegram Bot Token",
       "bot_token_edit_placeholder": "Enter new Bot Token (leave empty to keep existing)",
+      "webhook_url": "Webhook URL",
+      "webhook_url_placeholder": "Enter DingTalk group robot Webhook URL",
+      "webhook_url_edit_placeholder": "Enter new Webhook URL (leave empty to keep existing)",
+      "sign_secret": "Signing Secret",
+      "sign_secret_placeholder": "Enter signing secret (optional)",
+      "sign_secret_edit_placeholder": "Enter new signing secret (leave empty to keep existing)",
+      "sign_secret_description": "Optional. HMAC-SHA256 signing will be enabled if configured",
       "leave_empty_to_keep": "Leave empty to keep existing",
       "default_team": "Default Agent",
       "default_team_placeholder": "Select default agent",
@@ -784,6 +792,7 @@
       "name_required": "Channel name is required",
       "config_required": "Client ID and Client Secret are required",
       "bot_token_required": "Bot Token is required",
+      "webhook_url_required": "Webhook URL is required",
       "team_required": "A default agent must be selected",
       "model_required_for_team": "The selected agent has no model configured. You must select a default model.",
       "target_user_required": "A target user must be selected when using Specific User mode"

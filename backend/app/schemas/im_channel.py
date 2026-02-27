@@ -14,14 +14,15 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 # Channel type literals
-ChannelType = Literal["dingtalk", "feishu", "wechat", "telegram"]
+ChannelType = Literal["dingtalk", "dingtalk_group", "feishu", "wechat", "telegram"]
 
 
 class MessagerSpec(BaseModel):
     """Spec for Messager CRD."""
 
     channelType: ChannelType = Field(
-        ..., description="Channel type: dingtalk, feishu, wechat, telegram"
+        ...,
+        description="Channel type: dingtalk, dingtalk_group, feishu, wechat, telegram",
     )
     isEnabled: bool = Field(default=True, description="Whether channel is enabled")
     config: Dict[str, Any] = Field(
@@ -41,7 +42,8 @@ class IMChannelCreate(BaseModel):
     )
     namespace: str = Field(default="default", description="Namespace")
     channel_type: ChannelType = Field(
-        ..., description="Channel type: dingtalk, feishu, wechat, telegram"
+        ...,
+        description="Channel type: dingtalk, dingtalk_group, feishu, wechat, telegram",
     )
     config: Dict[str, Any] = Field(
         ..., description="Channel configuration (varies by type)"
@@ -152,6 +154,23 @@ class DingTalkChannelConfig(BaseModel):
     user_mapping_config: Optional[Dict[str, Any]] = Field(
         default=None,
         description="User mapping configuration. For select_user mode: {target_user_id: int}",
+    )
+
+
+class DingTalkGroupChannelConfig(BaseModel):
+    """Configuration schema for DingTalk Group Webhook channel.
+
+    This channel type is used for sending notifications to DingTalk groups
+    via webhook. Unlike the regular DingTalk channel, it does not require
+    user binding and sends messages directly to the group.
+    """
+
+    webhook_url: str = Field(
+        ..., description="DingTalk Group Webhook URL (includes access_token)"
+    )
+    sign_secret: Optional[str] = Field(
+        None,
+        description="Optional signing secret for HMAC-SHA256 signature verification",
     )
 
 
