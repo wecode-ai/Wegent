@@ -23,6 +23,10 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **docs/**: Detailed architecture, design documents, and comprehensive guides
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
 
+**Recent design docs:**
+- Prompt caching optimization via dynamic context injection: [`docs/zh/developer-guide/dynamic-context.md`](docs/zh/developer-guide/dynamic-context.md)
+- English version: [`docs/en/developer-guide/dynamic-context.md`](docs/en/developer-guide/dynamic-context.md)
+
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
   ```markdown

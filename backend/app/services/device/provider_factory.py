@@ -39,9 +39,7 @@ class DeviceProviderFactory:
     @classmethod
     def _initialize_providers(cls) -> None:
         """Initialize default providers if not already done."""
-        # Check for LOCAL provider specifically, not if dict is empty
-        # (CLOUD provider may be registered first by cloud_device_patch)
-        if DeviceType.LOCAL not in cls._providers:
+        if not cls._providers:
             # Register built-in providers
             cls._providers[DeviceType.LOCAL] = LocalDeviceProvider()
 

@@ -11,14 +11,9 @@ Supports two modes:
 - HTTP mode: Remote API call via /internal/chat/history (session_id: "task-{task_id}")
 """
 
-from .loader import (
-    close_remote_history_store,
-    get_chat_history,
-    get_knowledge_base_meta_prompt,
-)
+from .loader import close_remote_history_store, get_chat_history
 
 __all__ = [
     "get_chat_history",
-    "get_knowledge_base_meta_prompt",
     "close_remote_history_store",
 ]

@@ -41,6 +41,7 @@ import {
   MessageCircleQuestion,
   Plus,
   ChevronUp,
+  Cloud,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -54,7 +55,6 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { getSocketUrl } from '@/lib/runtime-config'
 import { LocalExecutorGuide } from '@wecode/components/devices/LocalExecutorGuide'
-import { CloudDeviceSection } from '@wecode/components/devices/CloudDeviceSection'
 
 // Device type constants matching backend DeviceType enum
 const DEVICE_TYPE = {
@@ -390,49 +390,70 @@ export default function DevicesPage() {
 
             {/* Local Devices Section */}
             {sortedDevices.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 mb-4">
-                  <Monitor className="w-5 h-5 text-text-secondary" />
-                  <h3 className="text-sm font-medium text-text-secondary">
-                    {t('local_devices_section')}
-                  </h3>
-                  <span className="text-xs text-text-muted">({localDevices.length})</span>
+              <div className="space-y-6">
+                {/* Local Devices */}
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Monitor className="w-5 h-5 text-text-secondary" />
+                    <h3 className="text-sm font-medium text-text-secondary">
+                      {t('local_devices_section')}
+                    </h3>
+                    <span className="text-xs text-text-muted">({localDevices.length})</span>
+                  </div>
+                  {localDevices.length > 0 ? (
+                    <div className="grid gap-4">
+                      {localDevices.map(device => (
+                        <DeviceCard
+                          key={device.device_id}
+                          device={device}
+                          onStartTask={handleStartTask}
+                          onSetDefault={handleSetDefault}
+                          onDelete={handleDeleteDevice}
+                          onCancelTask={handleCancelTask}
+                          getStatusColor={getStatusColor}
+                          getStatusText={getStatusText}
+                          t={t}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-text-muted py-4 text-center border border-dashed border-border rounded-lg">
+                      {t('no_local_devices')}
+                    </div>
+                  )}
                 </div>
-                {localDevices.length > 0 ? (
-                  <div className="grid gap-4">
-                    {localDevices.map(device => (
-                      <DeviceCard
-                        key={device.device_id}
-                        device={device}
-                        onStartTask={handleStartTask}
-                        onSetDefault={handleSetDefault}
-                        onDelete={handleDeleteDevice}
-                        onCancelTask={handleCancelTask}
-                        getStatusColor={getStatusColor}
-                        getStatusText={getStatusText}
-                        t={t}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-sm text-text-muted py-4 text-center border border-dashed border-border rounded-lg">
-                    {t('no_local_devices')}
-                  </div>
-                )}
-              </div>
-            )}
 
-            {/* Cloud Devices Section - always visible regardless of local devices */}
-            {!isLoading && (
-              <div className="mt-8">
-                <CloudDeviceSection
-                  cloudDevices={cloudDevices}
-                  onDeviceCreated={refreshDevices}
-                  onDeleteDevice={handleDeleteDevice}
-                  onSetDefault={handleSetDefault}
-                  onStartTask={handleStartTask}
-                  onCancelTask={handleCancelTask}
-                />
+                {/* Cloud Devices Section (placeholder for future) */}
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Cloud className="w-5 h-5 text-text-secondary" />
+                    <h3 className="text-sm font-medium text-text-secondary">
+                      {t('cloud_devices_section')}
+                    </h3>
+                    <span className="text-xs text-text-muted">({cloudDevices.length})</span>
+                  </div>
+                  {cloudDevices.length > 0 ? (
+                    <div className="grid gap-4">
+                      {cloudDevices.map(device => (
+                        <DeviceCard
+                          key={device.device_id}
+                          device={device}
+                          onStartTask={handleStartTask}
+                          onSetDefault={handleSetDefault}
+                          onDelete={handleDeleteDevice}
+                          onCancelTask={handleCancelTask}
+                          getStatusColor={getStatusColor}
+                          getStatusText={getStatusText}
+                          t={t}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-text-muted py-4 text-center border border-dashed border-border rounded-lg">
+                      {t('cloud_devices_coming_soon')}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

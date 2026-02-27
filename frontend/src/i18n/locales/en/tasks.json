@@ -113,12 +113,5 @@
     "error_desc": "Could not update executor preservation setting.",
     "tooltip_preserved": "Executor is preserved and will not be cleaned up",
     "tooltip_not_preserved": "Click to preserve executor from cleanup"
-  },
-  "cloudDevice": {
-    "vncTitle": "Cloud Device Desktop",
-    "loadingVnc": "Loading VNC viewer...",
-    "vncError": "Failed to load VNC viewer",
-    "openVnc": "Open VNC panel",
-    "closeVnc": "Close VNC panel"
   }
 }

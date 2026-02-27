@@ -310,6 +310,14 @@ show_uv_install_instructions() {
     exit 1
 }
 
+# Detect if running in WSL
+is_wsl() {
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 # Check if docker is installed
 check_docker_installed() {
     if command -v docker &> /dev/null; then
@@ -1133,8 +1141,23 @@ start_services() {
     export RUNTIME_INTERNAL_API_URL=http://localhost:$BACKEND_PORT
     export RUNTIME_SOCKET_DIRECT_URL=$WEGENT_SOCKET_URL
 
+    # Build the frontend startup command
+    # In WSL, use full path to node to ensure we use the correct nvm-installed version
+    # instead of potentially using Windows node or a different version
+    local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT npm run dev"
+    
+    if is_wsl; then
+        # Get the full path to node from the current shell (which has nvm loaded)
+        local node_path=$(command -v node)
+        if [ -n "$node_path" ]; then
+            # Set PATH to use the nvm node directory
+            local node_dir=$(dirname "$node_path")
+            frontend_cmd="PATH=$node_dir:\$PATH $frontend_cmd"
+        fi
+    fi
+
     # Start frontend in background
-    nohup bash -c "PORT=$WEGENT_FRONTEND_PORT npm run dev" > "$PID_DIR/frontend.log" 2>&1 &
+    nohup bash -c "$frontend_cmd" > "$PID_DIR/frontend.log" 2>&1 &
     local frontend_pid=$!
     echo $frontend_pid > "$PID_DIR/frontend.pid"
 
