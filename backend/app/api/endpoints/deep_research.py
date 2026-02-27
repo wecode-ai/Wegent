@@ -5,25 +5,27 @@
 """
 Deep Research API endpoints.
 
-Proxies requests to Chat Shell's deep research API for long-running
-research tasks using Gemini Interaction API.
+Calls the Gemini Interaction API directly via GeminiInteractionClient
+for long-running research tasks.
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Optional
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.config import settings
 from app.core.rate_limit import get_limiter
+from shared.clients.gemini_interaction import (
+    GeminiInteractionClient,
+    GeminiInteractionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,9 @@ class DeepResearchModelConfig(BaseModel):
 
     api_key: str = Field(..., description="API key for Gemini")
     base_url: str = Field(..., description="Base URL for Gemini Interaction API")
+    default_headers: dict[str, str] = Field(
+        default_factory=dict, description="Custom request headers for authentication"
+    )
 
 
 class DeepResearchMetadata(BaseModel):
@@ -111,76 +116,27 @@ class DeepResearchStreamRequest(BaseModel):
 
 
 # ============================================================
-# Helper Functions
+# SSE Event Formatting
 # ============================================================
 
 
-def _get_chat_shell_url() -> str:
-    """Get chat shell URL from settings."""
-    return settings.CHAT_SHELL_URL.rstrip("/")
+def _format_sse_event(event_type: str, data: dict[str, Any]) -> str:
+    """Format data as SSE event."""
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def _proxy_post_request(
-    path: str,
-    data: dict[str, Any],
-    timeout: float = 60.0,
-) -> dict[str, Any]:
-    """Proxy a POST request to chat shell."""
-    url = f"{_get_chat_shell_url()}{path}"
-    logger.debug("[DEEP_RESEARCH] Proxying POST to %s", url)
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(url, json=data)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "[DEEP_RESEARCH] HTTP error: %d - %s", e.response.status_code, e
-            )
-            # Try to parse error details from response
-            try:
-                detail = e.response.json().get("detail", str(e))
-            except Exception:
-                detail = str(e)
-            raise HTTPException(
-                status_code=e.response.status_code,
-                detail=detail,
-            )
-        except httpx.RequestError as e:
-            logger.error("[DEEP_RESEARCH] Request error: %s", e)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to connect to chat shell service: {e}",
-            )
-
-
-async def _proxy_stream_request(
-    path: str,
-    data: dict[str, Any],
-    timeout: float = 600.0,  # 10 minutes for streaming
-):
-    """Proxy a streaming POST request to chat shell."""
-    url = f"{_get_chat_shell_url()}{path}"
-    logger.debug("[DEEP_RESEARCH] Proxying stream POST to %s", url)
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            async with client.stream("POST", url, json=data) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line:
-                        yield line + "\n"
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "[DEEP_RESEARCH] Stream HTTP error: %d - %s",
-                e.response.status_code,
-                e,
-            )
-            yield f"event: error\ndata: {{'error': 'HTTP {e.response.status_code}'}}\n\n"
-        except httpx.RequestError as e:
-            logger.error("[DEEP_RESEARCH] Stream request error: %s", e)
-            yield f"event: error\ndata: {{'error': 'Connection error: {e}'}}\n\n"
+def _map_gemini_event_type(gemini_event: str) -> str:
+    """Map Gemini event types to frontend-expected event types."""
+    mapping = {
+        "interaction.start": "response.start",
+        "interaction.status_update": "response.status_update",
+        "content.start": "content.start",
+        "content.delta": "content.delta",
+        "content.stop": "content.stop",
+        "interaction.complete": "response.done",
+        "done": "done",
+    }
+    return mapping.get(gemini_event, gemini_event)
 
 
 # ============================================================
@@ -196,21 +152,10 @@ async def create_deep_research(
     db: Session = Depends(get_db),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
-    """
-    Create a new deep research task.
+    """Create a new deep research task.
 
     This initiates a long-running research task using the Gemini Interaction API.
     The task runs in the background and can be polled for status.
-
-    Args:
-        request_body: DeepResearchCreateRequest containing:
-        - model_config: API key and base URL for Gemini
-        - input: The research query
-        - agent: Optional agent model to use (default: deep-research-pro-preview-12-2025)
-        - metadata: Optional metadata for tracking
-
-    Returns:
-        DeepResearchCreateResponse with interaction_id for polling
     """
     current_user = auth_context.user
 
@@ -221,13 +166,30 @@ async def create_deep_research(
         len(request_body.input),
     )
 
-    # Prepare request data for chat shell
-    data = request_body.model_dump()
+    client = GeminiInteractionClient(
+        base_url=request_body.model_config_data.base_url,
+        api_key=request_body.model_config_data.api_key,
+        default_headers=request_body.model_config_data.default_headers,
+    )
 
-    # Pass through to chat shell
-    result = await _proxy_post_request("/v1/deep-research", data)
+    try:
+        result = await client.create_interaction(
+            input_text=request_body.input,
+            agent=request_body.agent,
+        )
 
-    return DeepResearchCreateResponse(**result)
+        return DeepResearchCreateResponse(
+            interaction_id=result["id"],
+            status=result.get("status", "in_progress"),
+            created_at=datetime.utcnow(),
+        )
+
+    except GeminiInteractionError as e:
+        logger.error("[DEEP_RESEARCH] Create failed: %s", e)
+        raise HTTPException(
+            status_code=e.status_code or 500,
+            detail=str(e),
+        )
 
 
 @router.post("/{interaction_id}/status", response_model=DeepResearchStatusResponse)
@@ -239,17 +201,9 @@ async def get_deep_research_status(
     db: Session = Depends(get_db),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
-    """
-    Get the status of a deep research task.
+    """Get the status of a deep research task.
 
     Poll this endpoint to check if the task has completed.
-
-    Args:
-        interaction_id: The interaction ID returned from create
-        request_body: DeepResearchStatusRequest with model_config
-
-    Returns:
-        DeepResearchStatusResponse with current status
     """
     current_user = auth_context.user
 
@@ -259,15 +213,45 @@ async def get_deep_research_status(
         interaction_id,
     )
 
-    # Prepare request data for chat shell
-    data = request_body.model_dump()
-
-    # Pass through to chat shell
-    result = await _proxy_post_request(
-        f"/v1/deep-research/{interaction_id}/status", data
+    client = GeminiInteractionClient(
+        base_url=request_body.model_config_data.base_url,
+        api_key=request_body.model_config_data.api_key,
+        default_headers=request_body.model_config_data.default_headers,
     )
 
-    return DeepResearchStatusResponse(**result)
+    try:
+        result = await client.get_interaction_status(interaction_id)
+
+        created_at = None
+        updated_at = None
+        if result.get("created"):
+            try:
+                created_at = datetime.fromisoformat(
+                    result["created"].replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+        if result.get("updated"):
+            try:
+                updated_at = datetime.fromisoformat(
+                    result["updated"].replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+
+        return DeepResearchStatusResponse(
+            interaction_id=result["id"],
+            status=result.get("status", "unknown"),
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    except GeminiInteractionError as e:
+        logger.error("[DEEP_RESEARCH] Get status failed: %s", e)
+        raise HTTPException(
+            status_code=e.status_code or 500,
+            detail=str(e),
+        )
 
 
 @router.post("/{interaction_id}/stream")
@@ -279,18 +263,10 @@ async def stream_deep_research_result(
     db: Session = Depends(get_db),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
-    """
-    Stream the results of a completed deep research task.
+    """Stream the results of a completed deep research task.
 
     Returns an SSE stream with research results including thought summaries
     and the final research report.
-
-    Args:
-        interaction_id: The interaction ID returned from create
-        request_body: DeepResearchStreamRequest with model_config
-
-    Returns:
-        Server-Sent Events stream with research results
     """
     current_user = auth_context.user
 
@@ -300,11 +276,49 @@ async def stream_deep_research_result(
         interaction_id,
     )
 
-    # Prepare request data for chat shell
-    data = request_body.model_dump()
+    client = GeminiInteractionClient(
+        base_url=request_body.model_config_data.base_url,
+        api_key=request_body.model_config_data.api_key,
+        default_headers=request_body.model_config_data.default_headers,
+    )
+
+    async def generate_sse():
+        """Generate SSE events from Gemini stream."""
+        try:
+            async for event_type, event_data in client.stream_interaction_result(
+                interaction_id
+            ):
+                mapped_type = _map_gemini_event_type(event_type)
+
+                try:
+                    data = json.loads(event_data)
+                    yield _format_sse_event(mapped_type, data)
+                except json.JSONDecodeError:
+                    yield _format_sse_event(mapped_type, {"raw": event_data})
+
+        except GeminiInteractionError as e:
+            logger.error("[DEEP_RESEARCH] Stream error: %s", e)
+            yield _format_sse_event(
+                "response.error",
+                {
+                    "code": "stream_error",
+                    "message": str(e),
+                    "status_code": e.status_code,
+                },
+            )
+
+        except Exception as e:
+            logger.exception("[DEEP_RESEARCH] Unexpected stream error: %s", e)
+            yield _format_sse_event(
+                "response.error",
+                {
+                    "code": "internal_error",
+                    "message": str(e),
+                },
+            )
 
     return StreamingResponse(
-        _proxy_stream_request(f"/v1/deep-research/{interaction_id}/stream", data),
+        generate_sse(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
