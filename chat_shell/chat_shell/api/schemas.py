@@ -48,8 +48,6 @@ class ChatEvent:
         history: Historical messages (loaded by caller)
         tools: Tool configurations (prepared by caller)
         extra_tools: Extra tool instances (e.g., knowledge base tools)
-        enable_web_search: Whether to enable web search
-        search_engine: Search engine to use
         max_iterations: Maximum iterations for tool calls
         message_id: Message ID for tracking
         shell_type: Shell type identifier
@@ -74,8 +72,6 @@ class ChatEvent:
     history: list[dict[str, Any]] | None = None
     tools: list[dict[str, Any]] | None = None
     extra_tools: list[Any] | None = None
-    enable_web_search: bool = False
-    search_engine: str | None = None
     max_iterations: int = 10
 
     # Metadata
@@ -95,8 +91,6 @@ class ChatEvent:
             "system_prompt": self.system_prompt,
             "history": self.history,
             "tools": self.tools,
-            "enable_web_search": self.enable_web_search,
-            "search_engine": self.search_engine,
             "max_iterations": self.max_iterations,
             "message_id": self.message_id,
             "shell_type": self.shell_type,
@@ -117,8 +111,6 @@ class ChatEvent:
             history=data.get("history"),
             tools=data.get("tools"),
             extra_tools=data.get("extra_tools"),
-            enable_web_search=data.get("enable_web_search", False),
-            search_engine=data.get("search_engine"),
             max_iterations=data.get("max_iterations", 10),
             message_id=data.get("message_id"),
             shell_type=data.get("shell_type", "Chat"),

@@ -17,7 +17,6 @@ import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
 import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
-import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
@@ -93,7 +92,6 @@ export interface ChatAreaState {
   enableCorrectionMode: boolean
   correctionModelId: string | null
   correctionModelName: string | null
-  enableCorrectionWebSearch: boolean
   handleCorrectionModeToggle: (enabled: boolean, modelId?: string, modelName?: string) => void
 
   // External API params
@@ -207,8 +205,6 @@ export function useChatAreaState({
   const [enableCorrectionMode, setEnableCorrectionMode] = useState(false)
   const [correctionModelId, setCorrectionModelId] = useState<string | null>(null)
   const [correctionModelName, setCorrectionModelName] = useState<string | null>(null)
-  const [enableCorrectionWebSearch, setEnableCorrectionWebSearch] = useState(false)
-
   // External API params
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({})
   const [appMode, setAppMode] = useState<string | undefined>(undefined)
@@ -348,16 +344,8 @@ export function useChatAreaState({
       setEnableCorrectionMode(enabled)
       setCorrectionModelId(modelId || null)
       setCorrectionModelName(modelName || null)
-      // When correction mode is enabled, read web search settings from localStorage
-      const taskId = selectedTaskDetail?.id ?? null
-      if (enabled) {
-        const savedState = correctionApis.getCorrectionModeState(taskId)
-        setEnableCorrectionWebSearch(savedState.enableWebSearch ?? true)
-      } else {
-        setEnableCorrectionWebSearch(false)
-      }
     },
-    [selectedTaskDetail?.id]
+    []
   )
 
   // Check if a team is compatible with the current mode
@@ -595,7 +583,6 @@ export function useChatAreaState({
     enableCorrectionMode,
     correctionModelId,
     correctionModelName,
-    enableCorrectionWebSearch,
     handleCorrectionModeToggle,
 
     // External API params

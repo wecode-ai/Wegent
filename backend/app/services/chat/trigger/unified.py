@@ -136,7 +136,6 @@ async def build_execution_request(
     is_subscription: bool = False,
     enable_tools: bool = True,
     enable_deep_thinking: bool = True,
-    enable_web_search: bool = False,
     enable_clarification: bool = False,
     preload_skills: Optional[list] = None,
 ):
@@ -158,7 +157,6 @@ async def build_execution_request(
         is_subscription: Whether this is a subscription task
         enable_tools: Whether to enable tool usage (default: True)
         enable_deep_thinking: Whether to enable deep thinking mode (default: True)
-        enable_web_search: Whether to enable web search (default: False)
         enable_clarification: Whether to enable clarification mode (default: False)
         preload_skills: Optional list of skills to preload
 
@@ -181,7 +179,6 @@ async def build_execution_request(
 
         # Extract feature flags from payload if provided
         if payload is not None:
-            enable_web_search = getattr(payload, "enable_web_search", enable_web_search)
             enable_clarification = getattr(
                 payload, "enable_clarification", enable_clarification
             )
@@ -212,7 +209,6 @@ async def build_execution_request(
             team=team,
             message=message,
             enable_tools=enable_tools,
-            enable_web_search=enable_web_search,
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
             preload_skills=preload_skills,

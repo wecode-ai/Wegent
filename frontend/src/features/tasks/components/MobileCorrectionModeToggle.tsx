@@ -113,7 +113,6 @@ export default function MobileCorrectionModeToggle({
       enabled: true,
       correctionModelId: model.name,
       correctionModelName: displayName,
-      enableWebSearch: true,
     }
     correctionApis.saveCorrectionModeState(taskId, state)
 

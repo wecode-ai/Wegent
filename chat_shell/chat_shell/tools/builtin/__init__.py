@@ -14,12 +14,10 @@ from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
 from .load_skill import LoadSkillTool
 from .preview_subscription import PreviewSubscriptionTool
 from .silent_exit import SilentExitException
-from .web_search import WebSearchTool
 
 __all__ = [
     "CreateSubscriptionTool",
     "PreviewSubscriptionTool",
-    "WebSearchTool",
     "KnowledgeBaseTool",
     "KnowledgeBaseToolABC",
     "KbLsTool",

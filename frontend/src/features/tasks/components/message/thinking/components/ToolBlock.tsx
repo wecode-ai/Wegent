@@ -75,8 +75,7 @@ function getToolInputPreview(
       }
       break
     }
-    case 'knowledge_base_search':
-    case 'web_search': {
+    case 'knowledge_base_search': {
       const query = typeof input === 'object' ? (input.query as string) : input
       if (query) {
         return truncateText(`"${query}"`, maxLength)
@@ -260,7 +259,6 @@ function getToolDisplayName(tool: ToolRendererProps['tool'], t: (key: string) =>
     Glob: t('thinking.tools.glob') || 'Find Files',
     TodoWrite: t('thinking.tools.todo') || 'Update Tasks',
     knowledge_base_search: t('thinking.tools.kb_search') || 'Search Knowledge Base',
-    web_search: t('thinking.tools.web_search') || 'Web Search',
   }
 
   // Priority 1: If we have a known tool name, use it

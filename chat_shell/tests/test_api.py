@@ -44,7 +44,6 @@ class TestExecutionRequest:
             team_id=4,
             team_name="Test Team",
             enable_tools=True,
-            enable_web_search=False,
         )
 
         data = request.to_dict()
@@ -53,7 +52,6 @@ class TestExecutionRequest:
         assert data["prompt"] == "Hello"
         assert data["user_id"] == 3
         assert data["enable_tools"] is True
-        assert data["enable_web_search"] is False
 
 
 class TestExecutionEvent:

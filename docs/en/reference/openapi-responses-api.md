@@ -94,7 +94,7 @@ The `tools` array enables additional server-side capabilities:
 
 | Tool Type | Description |
 |-----------|-------------|
-| `wegent_chat_bot` | Enable all server-side capabilities (deep thinking, web search, server MCP tools, message enhancement) |
+| `wegent_chat_bot` | Enable all server-side capabilities (deep thinking, server MCP tools, message enhancement) |
 | `wegent_code_bot` | Enable code task with git repository (for Executor-based Teams) |
 | `mcp` | Add custom MCP servers |
 | `skill` | Preload specific skills |

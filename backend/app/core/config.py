@@ -319,13 +319,6 @@ class Settings(BaseSettings):
     # Default is "fallback" for better reliability
     WEBSCRAPER_PROXY_MODE: str = "fallback"
 
-    # Web search configuration
-    WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
-    WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
-    WEB_SEARCH_DEFAULT_MAX_RESULTS: int = (
-        50  # Default max results when not specified by LLM or engine config
-    )
-
     # Message compression configuration
     # Enable/disable automatic message compression when context limit is exceeded
     MESSAGE_COMPRESSION_ENABLED: bool = True

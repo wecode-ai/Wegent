@@ -199,8 +199,7 @@
       "grep": "搜索代码",
       "glob": "查找文件",
       "todo": "更新待办事项",
-      "kb_search": "搜索知识库",
-      "web_search": "网页搜索"
+      "kb_search": "搜索知识库"
     }
   },
   "send_button": {
@@ -287,11 +286,6 @@
     "preparing": "正在准备导出...",
     "font_load_failed": "字体加载失败，请重试",
     "retry": "重试"
-  },
-  "web_search": {
-    "enable": "启用联网搜索",
-    "disable": "禁用联网搜索",
-    "select_engine": "选择搜索引擎"
   },
   "deep_thinking": {
     "enable": "启用深度思考",

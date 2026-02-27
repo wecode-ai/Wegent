@@ -206,8 +206,6 @@ class FeaturesConfig(BaseModel):
     clarification: bool = Field(False, description="Enable clarification questions")
     streaming: bool = Field(True, description="Enable streaming output")
     message_compression: bool = Field(True, description="Enable message compression")
-    web_search: bool = Field(False, description="Enable web search tool")
-    search_engine: Optional[str] = Field(None, description="Preferred search engine")
 
 
 class Metadata(BaseModel):

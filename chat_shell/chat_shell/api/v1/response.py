@@ -253,7 +253,6 @@ async def _stream_response(
                 if execution_request.knowledge_base_ids
                 else ""
             ),
-            SpanAttributes.CHAT_WEB_SEARCH: execution_request.enable_web_search,
             SpanAttributes.CHAT_DEEP_THINKING: execution_request.enable_deep_thinking,
             SpanAttributes.CHAT_TYPE: (
                 "group" if execution_request.is_group_chat else "single"

@@ -115,8 +115,7 @@
       "grep": "Search Code",
       "glob": "Find Files",
       "todo": "Update Tasks",
-      "kb_search": "Search Knowledge Base",
-      "web_search": "Web Search"
+      "kb_search": "Search Knowledge Base"
     }
   },
   "shared_task": {
@@ -221,8 +220,7 @@
       "grep": "Search Code",
       "glob": "Find Files",
       "todo": "Update Tasks",
-      "kb_search": "Search Knowledge Base",
-      "web_search": "Web Search"
+      "kb_search": "Search Knowledge Base"
     }
   },
   "send_button": {
@@ -309,11 +307,6 @@
     "preparing": "Preparing export...",
     "font_load_failed": "Failed to load font, please retry",
     "retry": "Retry"
-  },
-  "web_search": {
-    "enable": "Enable web search",
-    "disable": "Disable web search",
-    "select_engine": "Select search engine"
   },
   "deep_thinking": {
     "enable": "Enable deep thinking",

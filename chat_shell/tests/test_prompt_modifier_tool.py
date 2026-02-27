@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from chat_shell.agents.graph_builder import LangGraphAgentBuilder
 from chat_shell.tools.base import PromptModifierTool, ToolRegistry
-from chat_shell.tools.builtin import LoadSkillTool, WebSearchTool
+from chat_shell.tools.builtin import DataTableTool, LoadSkillTool
 
 
 class TestPromptModifierToolProtocol:
@@ -35,7 +35,7 @@ class TestPromptModifierToolProtocol:
     def test_non_modifier_tool_not_instance(self):
         """Test that tools without get_prompt_modification are not instances."""
         # Arrange
-        tool = WebSearchTool()
+        tool = DataTableTool(table_contexts=[], user_id=1)
 
         # Act & Assert
         assert not isinstance(tool, PromptModifierTool)
@@ -123,7 +123,7 @@ class TestLangGraphAgentBuilderPromptModifierDetection:
         # Arrange
         mock_llm = MagicMock()
         registry = ToolRegistry()
-        registry.register(WebSearchTool())
+        registry.register(DataTableTool(table_contexts=[], user_id=1))
 
         # Act
         builder = LangGraphAgentBuilder(llm=mock_llm, tool_registry=registry)
@@ -172,7 +172,7 @@ class TestLangGraphAgentBuilderPromptModifierDetection:
         # Arrange
         mock_llm = MagicMock()
         registry = ToolRegistry()
-        registry.register(WebSearchTool())
+        registry.register(DataTableTool(table_contexts=[], user_id=1))
 
         # Act
         builder = LangGraphAgentBuilder(llm=mock_llm, tool_registry=registry)

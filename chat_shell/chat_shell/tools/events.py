@@ -289,16 +289,6 @@ def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:
             except json.JSONDecodeError as e:
                 logger.warning(f"[TOOL_OUTPUT] Failed to parse tool output: {e}")
 
-    # Extract sources from web_search results
-    elif tool_name == "web_search":
-        if isinstance(tool_output, str):
-            # Try to extract URLs from the output
-            import re
-
-            urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', tool_output)
-            for url in urls[:5]:  # Limit to 5 sources
-                sources.append({"type": "url", "url": url})
-
     return sources
 
 

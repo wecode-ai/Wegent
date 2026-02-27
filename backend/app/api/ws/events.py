@@ -133,8 +133,6 @@ class ChatSendPayload(BaseModel):
     enable_deep_thinking: bool = Field(
         True, description="Enable deep thinking mode (enables tool usage)"
     )
-    enable_web_search: bool = Field(False, description="Enable web search")
-    search_engine: Optional[str] = Field(None, description="Search engine to use")
     enable_clarification: bool = Field(
         False, description="Enable clarification mode for smart follow-up questions"
     )
