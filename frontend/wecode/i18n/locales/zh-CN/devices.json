@@ -45,6 +45,7 @@
   "plugin_browser_name": "Browser 插件",
   "plugin_browser_description": "让 Agent 能够操作浏览器，实现网页自动化",
   "vnc_title": "桌面",
+  "vnc_open_desktop": "打开桌面",
   "vnc_loading": "正在加载桌面...",
   "vnc_error": "加载桌面查看器失败",
   "vnc_close": "关闭桌面面板"
