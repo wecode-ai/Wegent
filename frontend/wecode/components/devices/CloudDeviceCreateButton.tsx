@@ -100,6 +100,10 @@ export function CloudDeviceCreateButton({ onDeviceCreated }: CloudDeviceCreateBu
             <AlertDialogTitle>{t('cloud_device.create_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
               {t('cloud_device.create_confirm_message')}
+              <br />
+              <span className="text-yellow-600 dark:text-yellow-500">
+                {t('cloud_device.create_confirm_note')}
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
