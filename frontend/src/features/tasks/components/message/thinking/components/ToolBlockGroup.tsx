@@ -64,10 +64,10 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
         )}
       </div>
 
-      {/* Tools List */}
+      {/* Tools List - inline display */}
       {isExpanded && (
-        <div className="p-3 bg-base">
-          <div className="space-y-2">
+        <div className="px-4 py-3 bg-base">
+          <div className="flex flex-wrap gap-2">
             {group.tools.map(tool => (
               <ToolBlock key={tool.toolUseId} tool={tool} defaultExpanded={false} />
             ))}
