@@ -96,6 +96,28 @@ trigger_update_executor_manager:
           - wecode/docker/executor_manager/**/*
           - shared/**/*
 
+trigger_update_simulation_executor_manager:
+    stage: production
+    variables:
+        APP: simulation-wegent-executor-manager-web
+        SERVICE: wegent-executor-manager
+        IMAGE_NAME: wegent-executor-manager-web
+        MASTER_BRANCH: master
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+        changes:
+          - executor_manager/**/*
+          - wecode/docker/executor_manager/**/*
+          - shared/**/*
+
 wegent-executor:
   stage: package
   retry: 1
@@ -134,6 +156,28 @@ trigger_update_executor:
         strategy: depend
     rules:
       - if: '$CI_COMMIT_BRANCH == "main"'
+        changes:
+          - executor/**/*
+          - wecode/docker/executor/**/*
+          - shared/**/*
+
+trigger_update_simulation_executor:
+    stage: production
+    variables:
+        APP: simulation-wegent-executor-manager-web
+        SERVICE: wegent-executor
+        IMAGE_NAME: wegent-executor
+        MASTER_BRANCH: master
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
         changes:
           - executor/**/*
           - wecode/docker/executor/**/*
