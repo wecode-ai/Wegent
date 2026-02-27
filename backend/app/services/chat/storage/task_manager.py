@@ -63,6 +63,8 @@ class TaskCreationParams:
     # Pipeline mode: specific bot_ids for the next stage
     # When set, only create subtask for these bots instead of all team members
     pipeline_bot_ids: Optional[List[int]] = None
+    # Device ID for local device execution (saved at task creation to avoid race condition)
+    device_id: Optional[str] = None
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -301,6 +303,11 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
+            **(
+                {"device_id": params.device_id}
+                if params.device_id
+                else {}
+            ),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}
                 if knowledge_base_refs
