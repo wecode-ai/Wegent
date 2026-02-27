@@ -1233,9 +1233,7 @@ def download_report_file(
             attachment = report_data["final_report"].get("attachment")
             if attachment:
                 filename = attachment.get("filename", "final_report")
-                content_type = attachment.get(
-                    "content_type", "application/octet-stream"
-                )
+                content_type = attachment.get("content_type", "application/octet-stream")
             else:
                 filename = "final_report.md"
         elif report_data.get("human_report", {}).get("s3_path"):
@@ -1270,10 +1268,7 @@ def download_report_file(
         )
 
     # Use stored content type if available
-    if (
-        file_info.get("content_type")
-        and file_info["content_type"] != "application/octet-stream"
-    ):
+    if file_info.get("content_type") and file_info["content_type"] != "application/octet-stream":
         content_type = file_info["content_type"]
 
     # RFC 5987 encoding for non-ASCII filenames
@@ -1661,9 +1656,7 @@ def get_grader_question(
     criteria_data = criteria.get("data", {}) if criteria else {}
 
     # Get content data without criteria
-    content_data = {
-        k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
-    }
+    content_data = {k: v for k, v in (question.content_data or {}).items() if k != "_criteria"}
 
     return QuestionInDB(
         id=question.id,

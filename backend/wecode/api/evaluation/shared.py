@@ -17,16 +17,7 @@ from enum import Enum
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    UploadFile,
-    status,
-)
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -171,9 +162,7 @@ async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
     file_type: FileType = Form(..., description="Type of file being uploaded"),
     topic_id: int = Form(..., description="Topic ID for the file"),
-    question_id: Optional[int] = Form(
-        None, description="Question ID (required for question files)"
-    ),
+    question_id: Optional[int] = Form(None, description="Question ID (required for question files)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
