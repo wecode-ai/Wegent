@@ -12,7 +12,6 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import WorkbenchToggle from '@/features/layout/WorkbenchToggle'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -54,8 +53,7 @@ export default function DeviceChatPage() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
-  // VNC panel state for cloud devices
-  const [isVncPanelOpen, setIsVncPanelOpen] = useState(true)
+  // VNC URL state for cloud devices (used for link button)
   const [vncUrl, setVncUrl] = useState<string | null>(null)
 
   // Load collapsed state from localStorage
@@ -210,11 +208,7 @@ export default function DeviceChatPage() {
             </select>
           </div>
           {isCloudDevice && vncUrl && (
-            <WorkbenchToggle
-              isOpen={isVncPanelOpen}
-              onOpen={() => setIsVncPanelOpen(true)}
-              onClose={() => setIsVncPanelOpen(false)}
-            />
+            <CloudDeviceVncPanel vncUrl={vncUrl} deviceName={selectedDevice?.name} />
           )}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
@@ -223,13 +217,8 @@ export default function DeviceChatPage() {
         {/* Show ChatArea when device is selected OR when viewing an existing task */}
         {selectedDeviceId || selectedTaskDetail ? (
           <div className="flex flex-1 min-h-0">
-            {/* Chat area - shrinks when VNC panel is open */}
-            <div
-              className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
-              style={{
-                width: isCloudDevice && vncUrl && isVncPanelOpen ? '30%' : '100%',
-              }}
-            >
+            {/* Chat area - full width */}
+            <div className="flex-1 flex flex-col min-h-0">
               <ChatArea
                 teams={teams}
                 isTeamsLoading={isTeamsLoading}
@@ -243,16 +232,6 @@ export default function DeviceChatPage() {
                 }
               />
             </div>
-
-            {/* VNC desktop panel for cloud devices */}
-            {isCloudDevice && vncUrl && (
-              <CloudDeviceVncPanel
-                vncUrl={vncUrl}
-                isOpen={isVncPanelOpen}
-                onClose={() => setIsVncPanelOpen(false)}
-                deviceName={selectedDevice?.name}
-              />
-            )}
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">
