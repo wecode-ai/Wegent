@@ -12,6 +12,8 @@ import React, {
 } from 'react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
 import {
   Select,
@@ -960,13 +962,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   {t('common:bot.name')} <span className="text-red-400">*</span>
                 </label>
               </div>
-              <input
-                type="text"
+              <Input
                 value={botName}
                 onChange={e => setBotName(e.target.value)}
                 placeholder={t('common:bot.name_placeholder')}
                 disabled={readOnly}
-                className={`w-full h-10 px-4 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                className={`text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
               />
             </div>
 
@@ -1161,7 +1162,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   </div>
                 )}
 
-                {/* Protocol selector - only show in advanced mode */}
                 {isCustomModel && (
                   <div className="mb-3">
                     <label className="block text-sm font-medium text-text-primary mb-1">
@@ -1201,7 +1201,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 )}
 
                 {isCustomModel ? (
-                  <textarea
+                  <Textarea
                     value={agentConfig}
                     onChange={e => {
                       if (readOnly) return
@@ -1235,7 +1235,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 }`
                           : ''
                     }
-                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                    className={`font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border-red-400 focus-visible:ring-red-300' : ''} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   />
                 ) : (
                   <Select
@@ -1531,7 +1531,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             </div>
 
             {/* textarea occupies all space in the second row */}
-            <textarea
+            <Textarea
               value={prompt}
               onChange={e => {
                 if (readOnly) return
@@ -1539,7 +1539,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               }}
               disabled={readOnly}
               placeholder={t('common:bot.prompt_placeholder')}
-              className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-y custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`text-base resize-y custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
         )}
