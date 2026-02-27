@@ -82,8 +82,7 @@ export function CreateKnowledgeBaseDialog({
 
   // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     setError('')
     setSummaryModelError('')
 
@@ -174,12 +173,11 @@ export function CreateKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
-          <div className="space-y-4 py-4">
+        <div className="flex-1 overflow-y-auto space-y-4 py-4">
             <KnowledgeBaseForm
               typeSection={
                 <div className="space-y-2">
@@ -254,18 +252,16 @@ export function CreateKnowledgeBaseDialog({
           </div>
           <DialogFooter>
             <Button
-              type="button"
               variant="outline"
               onClick={() => handleOpenChange(false)}
               disabled={loading}
             >
               {t('common:actions.cancel')}
             </Button>
-            <Button type="submit" variant="primary" disabled={loading}>
+            <Button onClick={handleSubmit} variant="primary" disabled={loading}>
               {loading ? t('common:actions.creating') : t('common:actions.create')}
             </Button>
           </DialogFooter>
-        </form>
       </DialogContent>
     </Dialog>
   )
