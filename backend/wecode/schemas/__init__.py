@@ -3,9 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-WeCode evaluation module schemas package.
+WeCode schemas package.
 """
 
+from wecode.schemas.cloud_device import (
+    CloudDeviceConfig,
+    CloudDeviceResponse,
+    NevisSandboxStatus,
+)
 from wecode.schemas.evaluation import (
     AnswerCreate,
     AnswerInDB,
@@ -30,6 +35,11 @@ from wecode.schemas.evaluation import (
 )
 
 __all__ = [
+    # Cloud device schemas
+    "CloudDeviceConfig",
+    "CloudDeviceResponse",
+    "NevisSandboxStatus",
+    # Evaluation schemas
     "TopicCreate",
     "TopicUpdate",
     "TopicInDB",

@@ -6,6 +6,7 @@
 
 # -*- coding: utf-8 -*-
 
+import asyncio
 import os
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -250,71 +251,65 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
 
     add_span_event("task_started_event_sent")
 
-    # Execute task using AgentService
-    try:
-        agent_service = AgentService()
-        status, error_message = agent_service.execute_task(task_data)
+    # Both subscription and regular tasks are backgrounded so the HTTP response
+    # returns RUNNING immediately — well within executor-manager's 5s dispatch timeout.
+    # Subscription tasks call os._exit() at the end of the background coroutine
+    # once the task completes (success or failure).
+    agent_service = AgentService()
 
-        message = (
-            "Task executed successfully"
-            if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]
-            else error_message
-        )
+    async def _run_in_background():
+        try:
+            status, error_message = await agent_service.execute_task(task_data)
+            message = (
+                "Task executed successfully"
+                if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]
+                else error_message
+            )
+            logger.info(
+                f"Background task completed: task_id={task_data.task_id}, status={status}"
+            )
+        except Exception as e:
+            error_msg = f"Unexpected error during background task execution: {str(e)}"
+            logger.exception(error_msg)
+            status = TaskStatus.FAILED
+            message = error_msg
+            await emitter.error(message)
+            if is_subscription:
+                os._exit(1)
+            return
 
-        set_span_attribute("task.execution_status", status.value)
-        if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
-            add_span_event("task_execution_completed")
-        elif status == TaskStatus.FAILED:
-            set_span_attribute("error", True)
-            set_span_attribute("error.message", error_message or "Unknown error")
-        elif status == TaskStatus.RUNNING:
-            add_span_event("task_execution_running")
+        # For subscription tasks, exit container after completion.
+        # NOTE: Do NOT call emitter.done()/emitter.error() here for regular subscription tasks.
+        # The agent's execute_async() already sent response.completed with the actual content.
+        # Calling emitter.done(content="") again would overwrite the result with empty string.
+        # Exception: validation tasks don't send their own done event, so we handle them here.
+        if is_subscription:
+            if validation_id and status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
+                import json
+                done_result = {"validation_id": validation_id, "stage": "completed"}
+                try:
+                    agent = agent_service.get_agent(task_data.task_id)
+                    if agent and hasattr(agent, "validation_result"):
+                        done_result["value"] = json.dumps(agent.validation_result)
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve validation result: {e}")
+                await emitter.done(content=json.dumps(done_result))
 
-    except Exception as e:
-        error_msg = f"Unexpected error during task execution: {str(e)}"
-        logger.exception(error_msg)
-        status = TaskStatus.FAILED
-        message = error_msg
-        set_span_attribute("error", True)
-        set_span_attribute("error.message", error_msg)
+            exit_code = 0 if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED] else 1
+            logger.info(
+                f"Subscription task completed with status {status.value}, "
+                f"exiting container with code {exit_code}"
+            )
+            os._exit(exit_code)
 
-    # Send task completion or failure event using emitter
-    if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
-        done_content = ""
-        if validation_id:
-            import json
 
-            done_result = {"validation_id": validation_id, "stage": "completed"}
-            # Try to retrieve detailed validation results from the agent
-            try:
-                agent = agent_service.get_agent(task_data.task_id)
-                if agent and hasattr(agent, "validation_result"):
-                    done_result["value"] = json.dumps(agent.validation_result)
-            except Exception as e:
-                logger.warning(f"Failed to retrieve validation result: {e}")
-            done_content = json.dumps(done_result)
-        await emitter.done(content=done_content)
-        add_span_event("task_done_event_sent")
-    elif status == TaskStatus.FAILED:
-        await emitter.error(message or "Unknown error")
-        add_span_event("task_error_event_sent")
+    asyncio.create_task(_run_in_background())
+    logger.info(
+        f"Task {task_data.task_id} dispatched to background, returning RUNNING immediately"
+    )
+    return TaskStatus.RUNNING
 
-    # For subscription tasks, exit container after completion
-    # Subscription tasks are one-time background executions that don't need
-    # to keep the container running for follow-up messages
-    if is_subscription and status in [
-        TaskStatus.SUCCESS,
-        TaskStatus.COMPLETED,
-        TaskStatus.FAILED,
-    ]:
-        exit_code = 0 if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED] else 1
-        logger.info(
-            f"Subscription task completed with status {status.value}, "
-            f"exiting container with code {exit_code}"
-        )
-        os._exit(exit_code)
 
-    return status
 
 
 def run_task() -> TaskStatus:

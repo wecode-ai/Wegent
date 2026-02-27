@@ -181,7 +181,12 @@ class DockerExecutor(Executor):
         try:
             # Determine execution path based on whether container name exists
             if executor_name:
-                self._execute_in_existing_container(task_dict, execution_status)
+                # Check if container needs to be recreated (not running or doesn't exist)
+                if self._should_recreate_container(executor_name, task_id):
+                    execution_status["executor_name"] = executor_name
+                    self._create_new_container(task_dict, task_info, execution_status)
+                else:
+                    self._execute_in_existing_container(task_dict, execution_status)
             else:
                 # Generate new container name
                 execution_status["executor_name"] = generate_executor_name(
@@ -231,6 +236,48 @@ class DockerExecutor(Executor):
             "user_name": user_name,
             "executor_name": executor_name,
         }
+
+    def _should_recreate_container(self, executor_name: str, task_id: int) -> bool:
+        """Check if container should be recreated due to stale or non-running state.
+
+        Quick liveness check: if the named container no longer exists or has
+        already exited (e.g. after a subscription task completes), clean it up
+        and restart with the same name rather than blocking wait_instance_ready
+        for up to 180 s on a dead container.
+
+        Args:
+            executor_name: Name of the container to check
+            task_id: Task ID for logging purposes
+
+        Returns:
+            True if container should be recreated, False if it can be reused
+        """
+        container_status = self.get_container_status(executor_name)
+        
+        # Container is running and healthy, can be reused
+        if container_status.get("exists", False) and container_status.get("status") == "running":
+            return False
+
+        # Container is stale or not running, needs recreation
+        logger.info(
+            f"Container '{executor_name}' is not running "
+            f"(exists={container_status.get('exists')}, "
+            f"status={container_status.get('status')}). "
+            f"Removing stale container and restarting for task {task_id}."
+        )
+
+        # Remove the exited container so Docker won't complain about
+        # name collision when we recreate it with the same executor_name.
+        if container_status.get("exists", False):
+            try:
+                delete_container(executor_name)
+                logger.info(f"Deleted stale container '{executor_name}'")
+            except Exception as del_err:
+                logger.warning(
+                    f"Failed to delete stale container '{executor_name}': {del_err}"
+                )
+
+        return True
 
     def _execute_in_existing_container(
         self, task: Dict[str, Any], status: Dict[str, Any]

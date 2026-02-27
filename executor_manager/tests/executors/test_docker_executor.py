@@ -177,6 +177,11 @@ class TestDockerExecutor:
 
         with (
             patch.object(
+                executor,
+                "get_container_status",
+                return_value={"exists": True, "status": "running"},
+            ),
+            patch.object(
                 executor, "wait_instance_ready", return_value={"port": 8080}
             ) as mock_wait_ready,
             patch.object(
@@ -203,11 +208,18 @@ class TestDockerExecutor:
             "executor_name": "existing-executor",
         }
 
-        with patch.object(
-            executor,
-            "wait_instance_ready",
-            side_effect=RuntimeError(
-                "Container existing-executor exists but has no ports mapped"
+        with (
+            patch.object(
+                executor,
+                "get_container_status",
+                return_value={"exists": True, "status": "running"},
+            ),
+            patch.object(
+                executor,
+                "wait_instance_ready",
+                side_effect=RuntimeError(
+                    "Container existing-executor exists but has no ports mapped"
+                ),
             ),
         ):
             result = executor.submit_executor(task)

@@ -16,7 +16,7 @@ const supportedLanguages = ['en', 'zh-CN']
 
 // Wecode-specific namespaces that have extension translations
 // Note: evaluation namespace is in src/i18n/locales/, not here
-const wecodeNamespaces = ['devices']
+const wecodeNamespaces = ['devices', 'wecode']
 
 /**
  * Load and register wecode translations into i18next

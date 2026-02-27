@@ -1,0 +1,19 @@
+{
+  "cloud_device": {
+    "title": "Cloud Devices",
+    "create": "Create Cloud Device",
+    "creating": "Creating...",
+    "starting": "Starting...",
+    "empty": "No cloud devices yet. Click the button above to create one.",
+    "not_configured": "Cloud device service not configured",
+    "create_confirm_title": "Create Cloud Device",
+    "create_confirm_message": "An API Key will be automatically generated for device authentication. The key will be embedded in the cloud device — no manual configuration needed.",
+    "delete_confirm_title": "Delete Cloud Device",
+    "delete_confirm_message": "Are you sure you want to delete this cloud device? The VM will be destroyed and cannot be recovered.",
+    "limit_reached": "Cloud device limit reached (max {{max}})",
+    "create_success": "Cloud device created, starting executor...",
+    "create_error": "Failed to create cloud device",
+    "delete_success": "Cloud device deleted",
+    "delete_error": "Failed to delete cloud device"
+  }
+}
