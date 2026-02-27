@@ -386,7 +386,7 @@ class ClaudeCodeAgent(Agent):
         self._claude_config_dir = config_dir
         self._claude_env_config = env_config
 
-    def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> TaskStatus:
         """
         Pre-execution setup for Claude Code Agent
 
@@ -397,7 +397,7 @@ class ClaudeCodeAgent(Agent):
             git_url = self.task_data.git_url
             # Download code if git_url is provided
             if git_url and git_url != "":
-                self.download_code()
+                await self.download_code()
 
                 # Update cwd in options if not already set
                 if (
@@ -446,6 +446,7 @@ class ClaudeCodeAgent(Agent):
                 details={"error": str(e)},
             )
             return TaskStatus.FAILED
+
 
     def execute(self) -> TaskStatus:
         """

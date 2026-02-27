@@ -428,7 +428,7 @@ class LocalRunner:
             return
 
         # Pre-execute
-        pre_status = self.current_agent.pre_execute()
+        pre_status = await self.current_agent.pre_execute()
         if pre_status != TaskStatus.SUCCESS:
             logger.error(f"Agent pre-execution failed: {pre_status}")
             await ws_emitter.error("Agent pre-execution failed", "pre_execute_error")

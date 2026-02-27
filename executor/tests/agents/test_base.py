@@ -62,9 +62,10 @@ class TestAgent:
         """Test get_name returns class name"""
         assert agent.get_name() == "Agent"
 
-    def test_pre_execute_default(self, agent):
+    @pytest.mark.asyncio
+    async def test_pre_execute_default(self, agent):
         """Test default pre_execute returns SUCCESS"""
-        status = agent.pre_execute()
+        status = await agent.pre_execute()
         assert status == TaskStatus.SUCCESS
 
     def test_execute_not_implemented(self, agent):
@@ -91,10 +92,11 @@ class TestAgent:
         # Verify emitter.in_progress was called
         mock_emitter.in_progress.assert_called_once()
 
+    @pytest.mark.asyncio
     @patch("executor.agents.base.git_util.clone_repo")
     @patch("executor.agents.base.git_util.get_repo_name_from_url")
     @patch("os.path.exists")
-    def test_download_code_success(
+    async def test_download_code_success(
         self, mock_exists, mock_get_repo_name, mock_clone, agent
     ):
         """Test successful code download"""
@@ -102,52 +104,58 @@ class TestAgent:
         mock_get_repo_name.return_value = "repo"
         mock_clone.return_value = (True, None)
 
-        with patch.object(agent, "setup_git_config"):
-            agent.download_code()
+        with patch.object(agent, "setup_git_config", new_callable=AsyncMock):
+            await agent.download_code()
 
         mock_clone.assert_called_once()
         assert agent.project_path is not None
 
+    @pytest.mark.asyncio
     @patch("executor.agents.base.git_util.get_repo_name_from_url")
     @patch("os.path.exists")
-    def test_download_code_already_exists(self, mock_exists, mock_get_repo_name, agent):
+    async def test_download_code_already_exists(
+        self, mock_exists, mock_get_repo_name, agent
+    ):
         """Test code download when project already exists"""
         mock_exists.return_value = True
         mock_get_repo_name.return_value = "repo"
 
-        agent.download_code()
+        await agent.download_code()
 
         # Should not raise exception
         assert True
 
-    def test_download_code_empty_git_url(self, agent):
+    @pytest.mark.asyncio
+    async def test_download_code_empty_git_url(self, agent):
         """Test download_code with empty git_url"""
         agent.task_data.git_url = ""
-        agent.download_code()
+        await agent.download_code()
         # Should not raise exception
         assert True
 
+    @pytest.mark.asyncio
     @patch("executor.agents.base.git_util.set_git_config")
-    def test_setup_git_config(self, mock_set_config, agent):
+    async def test_setup_git_config(self, mock_set_config, agent):
         """Test git config setup"""
         mock_set_config.return_value = (True, None)
         user_config = agent.task_data.user
         project_path = "/test/path"
 
-        agent.setup_git_config(user_config, project_path)
+        await agent.setup_git_config(user_config, project_path)
 
         mock_set_config.assert_called_once_with(
             project_path, user_config["git_login"], user_config["git_email"]
         )
 
+    @pytest.mark.asyncio
     @patch("executor.agents.base.git_util.set_git_config")
-    def test_setup_git_config_no_email(self, mock_set_config, agent):
+    async def test_setup_git_config_no_email(self, mock_set_config, agent):
         """Test git config setup without email"""
         mock_set_config.return_value = (True, None)
         user_config = {"git_id": "12345", "git_login": "testuser"}
         project_path = "/test/path"
 
-        agent.setup_git_config(user_config, project_path)
+        await agent.setup_git_config(user_config, project_path)
 
         # Should generate email from git_id and git_login
         expected_email = "12345+testuser@users.noreply.github.com"
@@ -204,37 +212,45 @@ class TestAgentHandle:
     def concrete_agent(self, task_data, mock_emitter):
         return ConcreteAgent(task_data, mock_emitter)
 
-    def test_handle_success(self, concrete_agent):
+    @pytest.mark.asyncio
+    async def test_handle_success(self, concrete_agent):
         """Test successful handle execution"""
-        status, error = concrete_agent.handle()
+        status, error = await concrete_agent.handle()
 
         assert status == TaskStatus.SUCCESS
         assert error is None
 
-    def test_handle_with_pre_executed_status(self, concrete_agent):
+    @pytest.mark.asyncio
+    async def test_handle_with_pre_executed_status(self, concrete_agent):
         """Test handle with pre_executed parameter"""
-        status, error = concrete_agent.handle(pre_executed=TaskStatus.PRE_EXECUTED)
+        status, error = await concrete_agent.handle(
+            pre_executed=TaskStatus.PRE_EXECUTED
+        )
 
         assert status == TaskStatus.SUCCESS
         assert error is None
         assert concrete_agent.execution_status == TaskStatus.RUNNING
 
-    def test_handle_pre_execute_failure(self, concrete_agent):
+    @pytest.mark.asyncio
+    async def test_handle_pre_execute_failure(self, concrete_agent):
         """Test handle when pre_execute fails"""
         with patch.object(
-            concrete_agent, "pre_execute", return_value=TaskStatus.FAILED
+            concrete_agent, "pre_execute", new=AsyncMock(return_value=TaskStatus.FAILED)
         ):
-            status, error = concrete_agent.handle()
+            status, error = await concrete_agent.handle()
 
         assert status == TaskStatus.FAILED
         assert error is not None
 
-    def test_handle_execute_exception(self, concrete_agent):
+    @pytest.mark.asyncio
+    async def test_handle_execute_exception(self, concrete_agent):
         """Test handle when execute raises exception"""
         with patch.object(
             concrete_agent, "execute", side_effect=Exception("Test error")
         ):
-            status, error = concrete_agent.handle(pre_executed=TaskStatus.PRE_EXECUTED)
+            status, error = await concrete_agent.handle(
+                pre_executed=TaskStatus.PRE_EXECUTED
+            )
 
         assert status == TaskStatus.FAILED
         assert error is not None
