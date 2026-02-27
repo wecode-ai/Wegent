@@ -176,7 +176,9 @@ class TaskQueryMixin:
 
         total = total_result if total_result else 0
 
-        # Get task member counts in batch for is_group_chat detection using ResourceMember
+        # Get tasks where the CURRENT USER is a member for is_group_chat detection
+        # Important: We only mark a task as group chat if the current user is a member,
+        # not based on whether the task has any members at all.
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
@@ -192,6 +194,7 @@ class TaskQueryMixin:
                     ResourceMember.resource_type == ResourceType.TASK,
                     ResourceMember.resource_id.in_(task_ids_for_members),
                     ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.user_id == user_id,  # Only count current user's membership
                 )
                 .group_by(ResourceMember.resource_id)
                 .all()
@@ -214,17 +217,19 @@ class TaskQueryMixin:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
-        # Get task IDs that are group chats (have members) using resource_members
+        # Get task IDs where the CURRENT USER is a member (group chats user participates in)
+        # Important: We only consider tasks where the current user is explicitly a member,
+        # not just any task that has any member.
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.resource_id
             FROM resource_members tm
             INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
             WHERE tm.status = 'approved'
+            AND tm.user_id = :user_id
             AND k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
-            AND (k.user_id = :user_id OR tm.user_id = :user_id)
         """
         )
         member_task_ids_result = db.execute(
@@ -302,20 +307,47 @@ class TaskQueryMixin:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
-        # Get all task IDs that are group chats (have members) using resource_members
+        # Get task IDs where the CURRENT USER is a member (group chats user participates in)
+        # Important: Only exclude tasks where the current user is explicitly a member,
+        # not just any task that has any member.
+        # Note: We query ALL member tasks (not just owned) because we need to exclude
+        # tasks where the user is a member but not the owner from personal tasks list.
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.resource_id
             FROM resource_members tm
             INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
             WHERE tm.status = 'approved'
+            AND tm.user_id = :user_id
             AND k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
         """
         )
-        member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
+        member_task_ids_result = db.execute(
+            member_task_ids_sql, {"user_id": user_id}
+        ).fetchall()
         member_task_ids = {row[0] for row in member_task_ids_result}
+
+        # Get owned tasks where user is a member (for accurate total calculation)
+        # These are the tasks the user owns AND is a member of (group chats they created)
+        owned_member_task_ids_sql = text(
+            """
+            SELECT DISTINCT tm.resource_id
+            FROM resource_members tm
+            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
+            WHERE tm.status = 'approved'
+            AND tm.user_id = :user_id
+            AND k.user_id = :user_id
+            AND k.kind = 'Task'
+            AND k.is_active = true
+            AND k.namespace != 'system'
+        """
+        )
+        owned_member_task_ids_result = db.execute(
+            owned_member_task_ids_sql, {"user_id": user_id}
+        ).fetchall()
+        owned_member_task_ids = {row[0] for row in owned_member_task_ids_result}
 
         # Also get task IDs where is_group_chat is explicitly set to true
         explicit_group_sql = text(
@@ -334,8 +366,13 @@ class TaskQueryMixin:
         ).fetchall()
         explicit_group_ids = {row[0] for row in explicit_group_result}
 
-        # Combine all group task IDs to exclude
+        # Combine all group task IDs to exclude from personal tasks
+        # This includes: tasks where user is member (owned or not) + explicitly marked group chats
         all_group_task_ids = member_task_ids | explicit_group_ids
+
+        # Calculate owned group task IDs for accurate total calculation
+        # Only count owned tasks as group chats (owned + member OR owned + explicit group chat)
+        owned_group_task_ids = owned_member_task_ids | explicit_group_ids
 
         # Get user's owned tasks (not group chats)
         count_sql = text(
@@ -389,8 +426,10 @@ class TaskQueryMixin:
         # Build lightweight result
         result = build_lite_task_list(db, ordered_tasks, user_id)
 
-        # Recalculate total
-        total = total_result - len(all_group_task_ids) if total_result else 0
+        # Recalculate total using owned_group_task_ids (not all_group_task_ids)
+        # This ensures we only subtract group chats that the user owns,
+        # not group chats that the user was invited to
+        total = total_result - len(owned_group_task_ids) if total_result else 0
         if total < 0:
             total = len(ordered_tasks)
 
@@ -479,7 +518,8 @@ class TaskQueryMixin:
         # Restore the original order
         filtered_tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
 
-        # Get task member counts using ResourceMember
+        # Get tasks where the CURRENT USER is a member for is_group_chat detection
+        # Important: We only mark a task as group chat if the current user is a member
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
@@ -495,6 +535,7 @@ class TaskQueryMixin:
                     ResourceMember.resource_type == ResourceType.TASK,
                     ResourceMember.resource_id.in_(task_ids_for_members),
                     ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.user_id == user_id,  # Only count current user's membership
                 )
                 .group_by(ResourceMember.resource_id)
                 .all()
