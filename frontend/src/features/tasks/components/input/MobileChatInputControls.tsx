@@ -30,6 +30,7 @@ import type { UnifiedSkill } from '@/apis/skills'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
+import DeviceSelectorTab from './DeviceSelectorTab'
 
 export interface MobileChatInputControlsProps {
   // Team and Model
@@ -219,8 +220,17 @@ export function MobileChatInputControls({
     <div
       className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
-      {/* Left: Attachment, Context, Settings menu */}
+      {/* Left: Attachment, Context, Device Selector, Settings menu */}
       <div className="flex items-center gap-1 flex-shrink-0" data-tour="input-controls">
+        {/* Device Selector Tab - show for executor-based teams (not chat shell) */}
+        {!isChatShell(selectedTeam) && (
+          <DeviceSelectorTab
+            disabled={isLoading || isStreaming}
+            hasMessages={hasMessages}
+            taskDeviceId={selectedTaskDetail?.device_id}
+          />
+        )}
+
         {/* Attachment */}
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />

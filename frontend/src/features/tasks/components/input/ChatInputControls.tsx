@@ -30,6 +30,7 @@ import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
 import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+import DeviceSelectorTab from './DeviceSelectorTab'
 
 export interface ChatInputControlsProps {
   // Team and Model
@@ -308,6 +309,15 @@ export function ChatInputControls({
         className="flex-1 min-w-0 overflow-visible flex items-center gap-3"
         data-tour="input-controls"
       >
+        {/* Device Selector Tab - show for executor-based teams (not chat shell) */}
+        {!isChatShell(selectedTeam) && (
+          <DeviceSelectorTab
+            disabled={isLoading || isStreaming}
+            hasMessages={hasMessages}
+            taskDeviceId={selectedTaskDetail?.device_id}
+          />
+        )}
+
         {/* Context Selection - only show for chat shell */}
         {isChatShell(selectedTeam) && (
           <ChatContextInput
