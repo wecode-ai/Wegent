@@ -44,6 +44,10 @@ from app.services.subscription.helpers import (
     extract_trigger_config,
     resolve_workspace_repo_fields,
 )
+from app.services.subscription.market_access import (
+    filter_existing_market_whitelist_user_ids,
+    get_market_whitelist_user_ids_from_internal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +139,10 @@ class SubscriptionService:
             webhook_token = secrets.token_urlsafe(32)
             webhook_secret = secrets.token_urlsafe(32)  # HMAC signing secret
 
+        market_whitelist_user_ids = filter_existing_market_whitelist_user_ids(
+            db, subscription_in.market_whitelist_user_ids
+        )
+
         # Build CRD JSON
         subscription_crd = build_subscription_crd(
             subscription_in, team, workspace, webhook_token
@@ -166,6 +174,7 @@ class SubscriptionService:
             "success_count": 0,
             "failure_count": 0,
             "bound_task_id": 0,
+            "market_whitelist_user_ids": market_whitelist_user_ids,
         }
 
         # Create Subscription as a Kind resource
@@ -449,6 +458,13 @@ class SubscriptionService:
         # Update knowledge base references
         if "knowledge_base_refs" in update_data:
             subscription_crd.spec.knowledgeBaseRefs = update_data["knowledge_base_refs"]
+
+        if "market_whitelist_user_ids" in update_data:
+            internal["market_whitelist_user_ids"] = (
+                filter_existing_market_whitelist_user_ids(
+                    db, update_data["market_whitelist_user_ids"]
+                )
+            )
 
         # Update trigger configuration
         if "trigger_type" in update_data or "trigger_config" in update_data:
@@ -841,6 +857,9 @@ class SubscriptionService:
         )
         source_owner_username = internal.get("source_owner_username")
         rental_count = internal.get("rental_count", 0)
+        market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
+            internal
+        )
         workspace_repo_fields = (
             resolve_workspace_repo_fields(
                 db,
@@ -906,6 +925,7 @@ class SubscriptionService:
             source_subscription_display_name=source_subscription_display_name,
             source_owner_username=source_owner_username,
             rental_count=rental_count,
+            market_whitelist_user_ids=market_whitelist_user_ids,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )
