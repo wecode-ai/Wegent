@@ -5,7 +5,6 @@
 import httpx
 import pytest
 
-import app.services.mcp_providers.service as service_module
 from app.schemas.mcp_provider_config import (
     MCPProviderConfig,
     ProviderAPIConfig,

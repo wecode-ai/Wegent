@@ -63,7 +63,6 @@ class MCPProviderPlugin(ABC):
         Returns:
             MCPProviderConfig: The configuration for this provider
         """
-        pass
 
     async def fetch_servers(
         self, token: str, user_name: Optional[str] = None

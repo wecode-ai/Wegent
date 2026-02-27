@@ -19,7 +19,7 @@ For HTTP Mode (CHAT_SHELL_MODE=http):
 
 import asyncio
 import logging
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from chat_shell.core.config import settings
 

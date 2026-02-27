@@ -21,7 +21,6 @@ from chat_shell.agents.graph_builder import (
 from chat_shell.services.streaming.core import (
     TRUNCATED_END,
     TRUNCATED_START,
-    TRUNCATION_WARNING_MESSAGE,
     StreamingState,
 )
 

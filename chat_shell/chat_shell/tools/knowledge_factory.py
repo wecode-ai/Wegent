@@ -8,7 +8,7 @@ Responsible for creating knowledge base search tools and enhancing system prompt
 """
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

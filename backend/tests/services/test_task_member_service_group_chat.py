@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.services.task_member_service import TaskMemberService
 
