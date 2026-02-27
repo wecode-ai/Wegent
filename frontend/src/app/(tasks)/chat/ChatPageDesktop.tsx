@@ -21,6 +21,7 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useDevices } from '@/contexts/DeviceContext'
 import { paths } from '@/config/paths'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -47,6 +48,21 @@ export function ChatPageDesktop() {
   // Task context for refreshing task list
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
     useTaskContext()
+
+  // Device context - when a device is selected, switch to 'task' mode
+  const { selectedDeviceId, devices } = useDevices()
+  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+
+  // Determine taskType based on device selection
+  // When a device is selected, use 'task' mode (same as /devices/chat)
+  // Otherwise, use 'chat' mode
+  const taskType = selectedDeviceId ? 'task' : 'chat'
+
+  // Compute disabled reason for device mode
+  const disabledReason =
+    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+      ? t('devices:device_offline_cannot_send')
+      : undefined
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -194,15 +210,16 @@ export function ChatPageDesktop() {
           {shareButton}
           <GithubStarButton />
         </TopNavigation>
-        {/* Chat area without repository selector */}
+        {/* Chat area - taskType switches based on device selection */}
         <ChatArea
           teams={teams}
           isTeamsLoading={isTeamsLoading}
           selectedTeamForNewTask={_selectedTeamForNewTask}
           showRepositorySelector={false}
-          taskType="chat"
+          taskType={taskType}
           onShareButtonRender={handleShareButtonRender}
           onRefreshTeams={handleRefreshTeams}
+          disabledReason={disabledReason}
         />
       </div>
       {/* Create Group Chat Dialog */}
