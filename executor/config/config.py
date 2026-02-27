@@ -120,20 +120,10 @@ def get_workspace_root() -> str:
     Returns:
         For local mode: LOCAL_WORKSPACE_ROOT (~/.wegent-executor/workspace)
         For docker mode: WORKSPACE_ROOT (/workspace/)
-        Fallback: LOCAL_WORKSPACE_ROOT if WORKSPACE_ROOT is not writable
     """
     if EXECUTOR_MODE == "local":
         return LOCAL_WORKSPACE_ROOT
-
-    # For docker mode, verify the workspace root is usable
-    # If /workspace is not writable (e.g., cloud device without proper setup),
-    # fall back to LOCAL_WORKSPACE_ROOT
-    workspace = WORKSPACE_ROOT
-    try:
-        os.makedirs(workspace, exist_ok=True)
-    except PermissionError:
-        return LOCAL_WORKSPACE_ROOT
-    return workspace
+    return WORKSPACE_ROOT
 
 
 # Local mode logging configuration
