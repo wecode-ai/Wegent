@@ -2159,7 +2159,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 has_access = True
 
         if not has_access:
-            raise HTTPException(status_code=403, detail="Access denied to this team")
+            raise HTTPException(
+                status_code=403, detail="Access denied to this team"
+            )
 
         team_crd = Team.model_validate(team.json)
         all_skills = set()

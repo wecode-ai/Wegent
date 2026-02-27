@@ -344,7 +344,9 @@ class GradingTaskMonitor:
                 )
 
         if recovered_count > 0:
-            logger.info(f"[Evaluation Monitor] Synced {recovered_count} grading tasks")
+            logger.info(
+                f"[Evaluation Monitor] Synced {recovered_count} grading tasks"
+            )
 
         return recovered_count
 

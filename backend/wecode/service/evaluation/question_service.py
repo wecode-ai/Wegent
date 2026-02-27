@@ -349,9 +349,7 @@ class QuestionService:
             ).update({"order_index": index})
 
         db.flush()
-        logger.info(
-            f"[Evaluation] Reordered {len(question_ids)} questions in topic {topic_id}"
-        )
+        logger.info(f"[Evaluation] Reordered {len(question_ids)} questions in topic {topic_id}")
         return True
 
     def get_criteria_data(self, db: Session, question: EvalQuestion) -> Dict:

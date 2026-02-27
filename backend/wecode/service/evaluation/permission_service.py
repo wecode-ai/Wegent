@@ -276,9 +276,7 @@ class PermissionService:
         db.add(permission)
         db.flush()
 
-        logger.info(
-            f"[Evaluation] Granted {role} permission to user {user_id} on topic {topic_id}"
-        )
+        logger.info(f"[Evaluation] Granted {role} permission to user {user_id} on topic {topic_id}")
         return permission
 
     def revoke_permission(
@@ -316,9 +314,7 @@ class PermissionService:
         db.delete(permission)
         db.flush()
 
-        logger.info(
-            f"[Evaluation] Revoked permission for user {user_id} on topic {topic_id}"
-        )
+        logger.info(f"[Evaluation] Revoked permission for user {user_id} on topic {topic_id}")
         return True
 
     def batch_grant_permissions(

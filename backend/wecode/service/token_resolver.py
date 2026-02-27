@@ -4,7 +4,7 @@
 
 import base64
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional, Dict, Any
 
 import httpx
 
@@ -17,9 +17,7 @@ class TokenResolver:
 
     def __init__(self) -> None:
         self.logger = logging.getLogger(__name__)
-        self.git_token_api_url = (
-            "http://paas.intra.weibo.com/2/appnest/api/code-server-new/secret/get"
-        )
+        self.git_token_api_url = "http://paas.intra.weibo.com/2/appnest/api/code-server-new/secret/get"
         self.git_token_auth = "Basic L3BhYXMvd2ItcGxhdC1wYWFzL3diLXBsYXQtcGFhcy1hZG1pbiN3ZWdlbnQ6b2JOd0dkS1J4ZUxRRHk4aGQ1Z3B3WGpvMG5nQ05xV3E="
         # Supported domain keys
         self.target_keys = [
@@ -74,9 +72,7 @@ class TokenResolver:
                 decoded = base64.b64decode(token_b64).decode("utf-8")
                 return decoded or ""
             except Exception as e:
-                self.logger.error(
-                    f"TokenResolver: base64 decode failed domain={git_domain}, err={e}"
-                )
+                self.logger.error(f"TokenResolver: base64 decode failed domain={git_domain}, err={e}")
                 return ""
         except httpx.RequestError as e:
             self.logger.error(f"TokenResolver: external API request failed {e}")

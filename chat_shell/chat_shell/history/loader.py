@@ -232,20 +232,14 @@ async def _load_history_from_remote(
         # Log message content length for debugging attachment loading
         for i, msg in enumerate(history):
             content = msg.get("content", "")
-            content_len = (
-                len(content) if isinstance(content, str) else len(str(content))
-            )
+            content_len = len(content) if isinstance(content, str) else len(str(content))
             logger.info(
                 "[history] _load_history_from_remote: message[%d] role=%s, content_len=%d, "
                 "content_preview='%s'",
                 i,
                 msg.get("role"),
                 content_len,
-                (
-                    (content[:200] + "...")
-                    if isinstance(content, str) and len(content) > 200
-                    else str(content)[:200]
-                ),
+                (content[:200] + "...") if isinstance(content, str) and len(content) > 200 else str(content)[:200],
             )
 
         logger.info(

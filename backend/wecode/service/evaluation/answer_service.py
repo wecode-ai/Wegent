@@ -130,9 +130,7 @@ class AnswerService:
                         f"with team {team_id} for answer {answer.id}"
                     )
                     try:
-                        from wecode.service.evaluation.grading_service import (
-                            GradingService,
-                        )
+                        from wecode.service.evaluation.grading_service import GradingService
 
                         grading_service = GradingService()
                         # For auto-triggered tasks, the task belongs to the topic creator
