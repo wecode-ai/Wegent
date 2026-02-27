@@ -6,15 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import {
-  ArrowLeft,
-  FileText,
-  User,
-  ClipboardList,
-  Calendar,
-  CheckCircle2,
-  Link,
-} from 'lucide-react'
+import { ArrowLeft, FileText, User, ClipboardList, Calendar, CheckCircle2, Link } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -182,9 +174,7 @@ function SharedReportViewContent() {
               <User className="h-4 w-4 text-text-muted" />
               <div>
                 <p className="text-sm text-text-muted">{t('permissions.user')}</p>
-                <p className="font-medium">
-                  {report.respondent_name || `User #${report.respondent_id}`}
-                </p>
+                <p className="font-medium">{report.respondent_name || `User #${report.respondent_id}`}</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -199,7 +189,9 @@ function SharedReportViewContent() {
               <div>
                 <p className="text-sm text-text-muted">{t('grading.completed_at')}</p>
                 <p className="font-medium">
-                  {report.completed_at ? new Date(report.completed_at).toLocaleString() : '-'}
+                  {report.completed_at
+                    ? new Date(report.completed_at).toLocaleString()
+                    : '-'}
                 </p>
               </div>
             </div>
@@ -208,7 +200,9 @@ function SharedReportViewContent() {
               <div>
                 <p className="text-sm text-text-muted">{t('grading.published_at')}</p>
                 <p className="font-medium">
-                  {report.published_at ? new Date(report.published_at).toLocaleString() : '-'}
+                  {report.published_at
+                    ? new Date(report.published_at).toLocaleString()
+                    : '-'}
                 </p>
               </div>
             </div>

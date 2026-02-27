@@ -175,7 +175,9 @@ function NewQuestionContent() {
                 placeholder={t('questions.title_placeholder', 'Enter question title')}
                 maxLength={500}
               />
-              <p className="text-xs text-text-muted text-right">{title.length}/500</p>
+              <p className="text-xs text-text-muted text-right">
+                {title.length}/500
+              </p>
             </div>
 
             {/* Tabs for editing */}
@@ -231,10 +233,7 @@ function NewQuestionContent() {
                     />
                   )}
                   <p className="text-xs text-text-muted">
-                    {t(
-                      'questions.markdown_hint',
-                      'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.'
-                    )}
+                    {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
                   </p>
                 </div>
 

@@ -220,7 +220,9 @@ function GraderReportsContent() {
               <FileText className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-text-primary">{t('grader.all_reports')}</h1>
+              <h1 className="text-xl font-semibold text-text-primary">
+                {t('grader.all_reports')}
+              </h1>
               <p className="text-sm text-text-secondary">
                 {total} {t('grading.status.published').toLowerCase()}
               </p>

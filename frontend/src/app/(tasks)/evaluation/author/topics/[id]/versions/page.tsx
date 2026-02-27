@@ -95,11 +95,7 @@ function VersionsContent() {
       await rollbackAuthorTopic(topicId, rollbackVersion.version)
       toast({
         title: t('versions.rollback_success', 'Rollback successful'),
-        description: t(
-          'versions.rollback_success_description',
-          'Topic has been rolled back to version {{version}}',
-          { version: rollbackVersion.version }
-        ),
+        description: t('versions.rollback_success_description', 'Topic has been rolled back to version {{version}}', { version: rollbackVersion.version }),
       })
       // Reload data to get updated current_version
       loadData()
@@ -175,7 +171,7 @@ function VersionsContent() {
           ) : (
             <div className="space-y-4">
               <Accordion type="single" collapsible className="w-full">
-                {versions.map(version => {
+                {versions.map((version) => {
                   const isCurrentVersion = topic.current_version === version.version
                   return (
                     <AccordionItem key={version.id} value={`version-${version.id}`}>
@@ -204,7 +200,7 @@ function VersionsContent() {
                               variant="outline"
                               size="sm"
                               className="ml-4"
-                              onClick={e => {
+                              onClick={(e) => {
                                 e.stopPropagation()
                                 handleRollbackClick(version)
                               }}
@@ -274,7 +270,9 @@ function VersionsContent() {
       <AlertDialog open={isRollbackDialogOpen} onOpenChange={setIsRollbackDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('versions.rollback_title', 'Confirm Rollback')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t('versions.rollback_title', 'Confirm Rollback')}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {t(
                 'versions.rollback_description',

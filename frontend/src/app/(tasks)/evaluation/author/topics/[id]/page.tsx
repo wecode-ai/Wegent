@@ -32,7 +32,11 @@ import {
   listAuthorQuestions,
 } from '@wecode/api/evaluation-author'
 import type { Topic, Question, TopicStatistics } from '@wecode/types/evaluation'
-import { TopicStatus, TopicVisibility, QuestionStatus } from '@wecode/types/evaluation'
+import {
+  TopicStatus,
+  TopicVisibility,
+  QuestionStatus,
+} from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function TopicDetailContent() {
@@ -177,7 +181,9 @@ function TopicDetailContent() {
           </Button>
         ) : questions.length > 0 ? (
           <div className="rounded-lg border border-border bg-surface p-4">
-            <p className="text-sm text-text-muted">{t('topics.publish_hint')}</p>
+            <p className="text-sm text-text-muted">
+              {t('topics.publish_hint')}
+            </p>
           </div>
         ) : null}
       </div>
@@ -195,7 +201,9 @@ function TopicDetailContent() {
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-text-secondary">{t('answers.respondents')}</div>
+              <div className="text-sm text-text-secondary">
+                {t('answers.respondents')}
+              </div>
               <div className="text-2xl font-semibold">{statistics.total_respondents}</div>
             </CardContent>
           </Card>
@@ -252,7 +260,9 @@ function TopicDetailContent() {
           {questions.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-center">
-                <p className="text-text-secondary">{t('questions.no_questions')}</p>
+                <p className="text-text-secondary">
+                  {t('questions.no_questions')}
+                </p>
                 <Button
                   variant="outline"
                   className="mt-4"
@@ -303,7 +313,9 @@ function TopicDetailContent() {
               <CardTitle>{t('permissions.management')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="mb-4 text-text-secondary">{t('permissions.description')}</p>
+              <p className="mb-4 text-text-secondary">
+                {t('permissions.description')}
+              </p>
               <Button
                 variant="primary"
                 onClick={() => router.push(`/evaluation/author/topics/${topicId}/permissions`)}
@@ -348,7 +360,9 @@ function TopicDetailContent() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="mb-4 text-sm text-text-secondary">{t('grading.description')}</p>
+                <p className="mb-4 text-sm text-text-secondary">
+                  {t('grading.description')}
+                </p>
                 <Button
                   variant="primary"
                   onClick={() => router.push(`/evaluation/grader/topics/${topicId}`)}
@@ -366,7 +380,9 @@ function TopicDetailContent() {
               <CardTitle>{t('topics.version_history')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="mb-4 text-text-secondary">{t('topics.version_description')}</p>
+              <p className="mb-4 text-text-secondary">
+                {t('topics.version_description')}
+              </p>
               <Button
                 variant="primary"
                 onClick={() => router.push(`/evaluation/author/topics/${topicId}/versions`)}

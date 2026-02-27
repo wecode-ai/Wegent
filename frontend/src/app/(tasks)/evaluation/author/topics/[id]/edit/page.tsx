@@ -55,7 +55,7 @@ function EditTopicContent() {
       setName(topicData.name)
       setDescription(topicData.description || '')
       setVisibility(topicData.visibility)
-      setInstructions((topicData.extra_data?.instructions as string) || '')
+      setInstructions(topicData.extra_data?.instructions as string || '')
     } catch (_error) {
       toast({
         title: t('errors.load_failed'),
@@ -231,7 +231,9 @@ function EditTopicContent() {
                   className="font-mono text-sm"
                 />
               )}
-              <p className="text-xs text-text-muted">{t('topics.instructions_hint')}</p>
+              <p className="text-xs text-text-muted">
+                {t('topics.instructions_hint')}
+              </p>
             </div>
 
             <div className="flex justify-end gap-4">

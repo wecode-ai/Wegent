@@ -184,7 +184,9 @@ function RespondentTopicDetailContent() {
                   size="sm"
                   onClick={e => {
                     e.stopPropagation()
-                    router.push(`/evaluation/respondent/topics/${topicId}/questions/${question.id}`)
+                    router.push(
+                      `/evaluation/respondent/topics/${topicId}/questions/${question.id}`
+                    )
                   }}
                 >
                   {t('answers.submit')}

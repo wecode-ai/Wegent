@@ -37,12 +37,7 @@ import {
   deleteAuthorQuestion,
   publishAuthorQuestion,
 } from '@wecode/api/evaluation-author'
-import {
-  ContentType,
-  QuestionStatus,
-  type Question,
-  type EvalAttachment,
-} from '@wecode/types/evaluation'
+import { ContentType, QuestionStatus, type Question, type EvalAttachment } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function QuestionDetailContent() {
@@ -298,7 +293,10 @@ function QuestionDetailContent() {
     <div className="container mx-auto max-w-3xl px-4 py-8">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}>
+        <Button
+          variant="ghost"
+          onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}
+        >
           <ArrowLeft className="mr-2 h-4 w-4" />
           {t('actions.back')}
         </Button>
@@ -380,7 +378,9 @@ function QuestionDetailContent() {
                   placeholder={t('questions.title_placeholder')}
                   maxLength={500}
                 />
-                <p className="text-xs text-text-muted text-right">{title.length}/500</p>
+                <p className="text-xs text-text-muted text-right">
+                  {title.length}/500
+                </p>
               </div>
 
               {/* Tabs for editing */}
@@ -437,10 +437,7 @@ function QuestionDetailContent() {
                       />
                     )}
                     <p className="text-xs text-text-muted">
-                      {t(
-                        'questions.markdown_hint',
-                        'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.'
-                      )}
+                      {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
                     </p>
                   </div>
 
@@ -524,9 +521,7 @@ function QuestionDetailContent() {
                 <TabsContent value="instructions" className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="instructionsText">
-                        {t('questions.instructions')} (Markdown)
-                      </Label>
+                      <Label htmlFor="instructionsText">{t('questions.instructions')} (Markdown)</Label>
                       <Button
                         type="button"
                         variant="ghost"
@@ -567,7 +562,9 @@ function QuestionDetailContent() {
                         className="font-mono text-sm"
                       />
                     )}
-                    <p className="text-xs text-text-muted">{t('questions.instructions_hint')}</p>
+                    <p className="text-xs text-text-muted">
+                      {t('questions.instructions_hint')}
+                    </p>
                   </div>
                 </TabsContent>
               </Tabs>
@@ -587,10 +584,7 @@ function QuestionDetailContent() {
                 ) : (
                   <p className="text-text-muted">{t('questions.no_content')}</p>
                 )}
-                {renderAttachmentList(
-                  question.content_data?.attachments as EvalAttachment[] | undefined,
-                  t('questions.content_attachments')
-                )}
+                {renderAttachmentList(question.content_data?.attachments as EvalAttachment[] | undefined, t('questions.content_attachments'))}
               </div>
 
               {/* Display mode - Criteria (Markdown rendered) */}
@@ -606,17 +600,13 @@ function QuestionDetailContent() {
                 ) : (
                   <p className="text-text-muted">{t('questions.no_criteria')}</p>
                 )}
-                {renderAttachmentList(
-                  question.criteria_data?.attachments as EvalAttachment[] | undefined,
-                  t('questions.criteria_attachments')
-                )}
+                {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[] | undefined, t('questions.criteria_attachments'))}
               </div>
 
               {/* Display mode - Instructions */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.instructions')}</Label>
-                {typeof question.content_data?.instructions === 'string' &&
-                question.content_data.instructions ? (
+                {typeof question.content_data?.instructions === 'string' && question.content_data.instructions ? (
                   <div className="rounded-lg border border-border bg-surface p-4">
                     <EnhancedMarkdown
                       source={question.content_data.instructions as string}

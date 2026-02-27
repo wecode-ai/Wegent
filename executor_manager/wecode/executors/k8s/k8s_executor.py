@@ -546,7 +546,9 @@ class K8sExecutor(Executor):
             if attempt < max_retries and retry_interval > 0:
                 time.sleep(retry_interval)
 
-        raise RuntimeError(f"Pod {executor_name} failed to become ready: {last_error}")
+        raise RuntimeError(
+            f"Pod {executor_name} failed to become ready: {last_error}"
+        )
 
     def dispatch_task_to_instance(
         self,

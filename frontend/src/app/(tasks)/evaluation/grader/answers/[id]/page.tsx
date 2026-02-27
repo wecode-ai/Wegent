@@ -156,9 +156,7 @@ function GraderAnswerContent() {
             <File className="h-4 w-4 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate text-sm">{attachment.filename}</span>
             {attachment.file_size && (
-              <span className="text-xs text-text-muted">
-                {formatFileSize(attachment.file_size)}
-              </span>
+              <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
             )}
             <Button
               variant="ghost"
@@ -189,7 +187,10 @@ function GraderAnswerContent() {
     if (typeof contentData.text === 'string' && contentData.text) {
       elements.push(
         <div key="text" className="markdown-content">
-          <EnhancedMarkdown source={contentData.text} theme={theme === 'dark' ? 'dark' : 'light'} />
+          <EnhancedMarkdown
+            source={contentData.text}
+            theme={theme === 'dark' ? 'dark' : 'light'}
+          />
         </div>
       )
     }
@@ -491,7 +492,9 @@ function GraderAnswerContent() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="rounded-lg bg-surface p-4">{renderContentData(answer.content_data)}</div>
+          <div className="rounded-lg bg-surface p-4">
+            {renderContentData(answer.content_data)}
+          </div>
         </CardContent>
       </Card>
 

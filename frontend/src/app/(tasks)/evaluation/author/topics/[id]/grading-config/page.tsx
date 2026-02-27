@@ -165,14 +165,19 @@ function GradingConfigContent() {
     <div className="container mx-auto max-w-2xl px-4 py-8">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
-        <Button variant="ghost" onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}>
+        <Button
+          variant="ghost"
+          onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}
+        >
           <ArrowLeft className="mr-2 h-4 w-4" />
           {t('actions.back')}
         </Button>
       </div>
 
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-text-primary">{t('grading.config_title')}</h1>
+        <h1 className="text-2xl font-semibold text-text-primary">
+          {t('grading.config_title')}
+        </h1>
         <p className="text-text-secondary">
           {t('topics.title')}: {topic.name}
         </p>
@@ -207,10 +212,14 @@ function GradingConfigContent() {
                 </SelectContent>
               </Select>
               {groupTeams.length === 0 && (
-                <p className="text-xs text-amber-600">{t('grading.no_group_teams')}</p>
+                <p className="text-xs text-amber-600">
+                  {t('grading.no_group_teams')}
+                </p>
               )}
               {chatTeams.length === 0 && groupTeams.length > 0 && (
-                <p className="text-xs text-text-muted">{t('grading.all_teams_shown')}</p>
+                <p className="text-xs text-text-muted">
+                  {t('grading.all_teams_shown')}
+                </p>
               )}
             </div>
 
@@ -238,11 +247,7 @@ function GradingConfigContent() {
                 <Label>{t('grading.enable_auto_trigger')}</Label>
                 <p className="text-xs text-text-muted">{t('grading.enable_auto_trigger_hint')}</p>
               </div>
-              <Switch
-                checked={autoTrigger}
-                onCheckedChange={setAutoTrigger}
-                disabled={!teamId || teamId === NO_TEAM_VALUE}
-              />
+              <Switch checked={autoTrigger} onCheckedChange={setAutoTrigger} disabled={!teamId || teamId === NO_TEAM_VALUE} />
             </div>
 
             {autoTrigger && (

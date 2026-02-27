@@ -90,7 +90,10 @@ function EvaluationContent() {
             </CardHeader>
             <CardContent className="pt-4">
               <div className="flex flex-wrap gap-3">
-                <Button variant="primary" onClick={() => router.push(card.primaryAction.href)}>
+                <Button
+                  variant="primary"
+                  onClick={() => router.push(card.primaryAction.href)}
+                >
                   {card.primaryAction.label}
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>

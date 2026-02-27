@@ -361,18 +361,10 @@ function GraderDashboardContent() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push('/evaluation/grader/tasks')}
-          >
+          <Button variant="outline" size="sm" onClick={() => router.push('/evaluation/grader/tasks')}>
             {t('grading.tasks')}
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push('/evaluation/grader/reports')}
-          >
+          <Button variant="outline" size="sm" onClick={() => router.push('/evaluation/grader/reports')}>
             {t('grader.all_reports')}
           </Button>
           <Button variant="outline" onClick={handleRefresh}>
@@ -564,7 +556,9 @@ function GraderDashboardContent() {
                         onCheckedChange={checked => handleSelectTask(task.id, checked as boolean)}
                       />
                     </TableCell>
-                    <TableCell className="text-text-secondary">{task.topic_name || '-'}</TableCell>
+                    <TableCell className="text-text-secondary">
+                      {task.topic_name || '-'}
+                    </TableCell>
                     <TableCell>{task.question_title || `Question #${task.question_id}`}</TableCell>
                     <TableCell>{task.respondent_name || `User #${task.respondent_id}`}</TableCell>
                     <TableCell>
@@ -671,7 +665,8 @@ function GraderDashboardContent() {
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
+            ) : selectedTask?.report_data &&
+              Object.keys(selectedTask.report_data).length > 0 ? (
               <div className="rounded-lg bg-surface p-4">
                 <EnhancedMarkdown
                   source={

@@ -622,7 +622,8 @@ function TopicGradingContent() {
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
+            ) : selectedTask?.report_data &&
+              Object.keys(selectedTask.report_data).length > 0 ? (
               <div className="rounded-lg bg-surface p-4">
                 <EnhancedMarkdown
                   source={

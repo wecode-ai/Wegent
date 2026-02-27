@@ -201,9 +201,7 @@ function RespondentHistoryContent() {
                     </a>
                   </div>
                 )}
-                {renderAttachments(
-                  answer.content_data?.attachments as ContentDataAttachment[] | undefined
-                )}
+                {renderAttachments(answer.content_data?.attachments as ContentDataAttachment[] | undefined)}
               </CardContent>
             </Card>
           ))}
