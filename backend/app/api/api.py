@@ -33,6 +33,7 @@ from app.api.endpoints.adapter import (
     attachments,
     bots,
     chat,
+    chunked_upload,
     dify,
     models,
     retrievers,
@@ -102,6 +103,9 @@ api_router.include_router(
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
+)
+api_router.include_router(
+    chunked_upload.router, prefix="/attachments/chunked", tags=["chunked-upload"]
 )
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
