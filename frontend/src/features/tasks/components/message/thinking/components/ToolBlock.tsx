@@ -100,6 +100,12 @@ export const ToolBlock = memo(function ToolBlock({
   const hasContent = hasInput || hasOutput
   const isExpandable = hasContent
 
+  // Check if tool is loading based on status
+  const isLoading =
+    tool.status === 'pending' ||
+    tool.status === 'streaming' ||
+    tool.status === 'invoking'
+
   // Check if this tool is currently selected
   const isSelected = selectedTool?.toolUseId === tool.toolUseId
 
@@ -118,7 +124,9 @@ export const ToolBlock = memo(function ToolBlock({
         isSelected
           ? 'bg-hover text-text-primary'
           : 'bg-muted text-text-secondary hover:bg-hover'
-      } ${isExpandable ? 'cursor-pointer' : 'cursor-default'}`}
+      } ${isExpandable ? 'cursor-pointer' : 'cursor-default'} ${
+        isLoading ? 'animate-pulse' : ''
+      }`}
       onClick={handleClick}
       disabled={!isExpandable}
     >
