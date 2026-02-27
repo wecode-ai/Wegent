@@ -40,6 +40,7 @@ export interface NevisSandboxStatus {
 export interface CloudDeviceConfig {
   enabled: boolean
   max_devices_per_user: number
+  can_create: boolean
 }
 
 /**

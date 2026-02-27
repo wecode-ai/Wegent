@@ -79,6 +79,13 @@ async def create_cloud_device(
             detail="Cloud device provider is not configured",
         )
 
+    # Check if user is in whitelist
+    if not nevis_settings.can_create_cloud_device(current_user.user_name):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to create cloud devices",
+        )
+
     try:
         # Get backend URL for executor to connect
         backend_url = _get_backend_url(request)
@@ -260,4 +267,5 @@ async def get_cloud_device_config(
     return {
         "enabled": cloud_device_provider.is_configured(),
         "max_devices_per_user": nevis_settings.NEVIS_MAX_DEVICES_PER_USER,
+        "can_create": nevis_settings.can_create_cloud_device(current_user.user_name),
     }

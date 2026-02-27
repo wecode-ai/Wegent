@@ -38,6 +38,7 @@ import { cloudDeviceApis, CloudDeviceConfig } from '@wecode/apis/cloud-devices'
 import type { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { VersionBadge } from '@/features/devices/components/VersionBadge'
+import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
 
 interface CloudDeviceSectionProps {
   cloudDevices: DeviceInfo[]
@@ -51,7 +52,7 @@ interface CloudDeviceSectionProps {
 export function CloudDeviceSection({
   cloudDevices,
   onDeviceCreated,
-  onDeleteDevice,
+  onDeleteDevice: _onDeleteDevice,
   onSetDefault,
   onStartTask,
   onCancelTask,
@@ -60,6 +61,7 @@ export function CloudDeviceSection({
   const [isCreating, setIsCreating] = useState(false)
   const [deviceToDelete, setDeviceToDelete] = useState<DeviceInfo | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [showCreateConfirm, setShowCreateConfirm] = useState(false)
   const [cloudConfig, setCloudConfig] = useState<CloudDeviceConfig | null>(null)
 
   // Fetch cloud device configuration
@@ -76,6 +78,7 @@ export function CloudDeviceSection({
   }, [])
 
   const handleCreateCloudDevice = useCallback(async () => {
+    setShowCreateConfirm(false)
     setIsCreating(true)
     try {
       await cloudDeviceApis.createCloudDevice()
@@ -84,7 +87,9 @@ export function CloudDeviceSection({
     } catch (error: unknown) {
       const apiError = error as { status?: number; message?: string }
       if (apiError?.status === 400) {
-        toast.error(t('cloud_device.limit_reached', { max: cloudConfig?.max_devices_per_user || 3 }))
+        toast.error(
+          t('cloud_device.limit_reached', { max: cloudConfig?.max_devices_per_user || 1 })
+        )
       } else if (apiError?.status === 503) {
         toast.error(t('cloud_device.not_configured'))
       } else {
@@ -114,35 +119,41 @@ export function CloudDeviceSection({
     }
   }, [deviceToDelete, t, onDeviceCreated])
 
-  // Don't render if cloud devices are not enabled
+  // Don't render if cloud devices are not enabled or user cannot create
   if (cloudConfig && !cloudConfig.enabled) {
     return null
   }
 
-  const canCreateMore = !cloudConfig || cloudDevices.length < cloudConfig.max_devices_per_user
+  const canCreateMore =
+    cloudConfig?.can_create !== false &&
+    (!cloudConfig || cloudDevices.length < cloudConfig.max_devices_per_user)
+  const showCreateButton = cloudConfig?.can_create !== false
 
   return (
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold flex items-center gap-2 text-text-primary">
-          <Cloud className="w-5 h-5 text-primary" />
-          {t('cloud_device.title')}
-        </h3>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleCreateCloudDevice}
-          disabled={isCreating || !canCreateMore}
-          className="h-8"
-        >
-          {isCreating ? (
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <Plus className="w-4 h-4 mr-2" />
-          )}
-          {t('cloud_device.create')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Cloud className="w-5 h-5 text-text-secondary" />
+          <h3 className="text-sm font-medium text-text-secondary">{t('cloud_device.title')}</h3>
+          <span className="text-xs text-text-muted">({cloudDevices.length})</span>
+        </div>
+        {showCreateButton && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowCreateConfirm(true)}
+            disabled={isCreating || !canCreateMore}
+            className="h-8"
+          >
+            {isCreating ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Plus className="w-4 h-4 mr-2" />
+            )}
+            {t('cloud_device.create')}
+          </Button>
+        )}
       </div>
 
       {/* Cloud devices list */}
@@ -152,8 +163,8 @@ export function CloudDeviceSection({
           <p className="text-sm">{t('cloud_device.empty')}</p>
         </div>
       ) : (
-        <div className="grid gap-3">
-          {cloudDevices.map((device) => (
+        <div className="grid gap-4">
+          {cloudDevices.map(device => (
             <CloudDeviceCard
               key={device.device_id}
               device={device}
@@ -166,6 +177,27 @@ export function CloudDeviceSection({
           ))}
         </div>
       )}
+
+      {/* Create confirmation dialog */}
+      <AlertDialog open={showCreateConfirm} onOpenChange={setShowCreateConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('cloud_device.create_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('cloud_device.create_confirm_message')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCreateCloudDevice}
+              className="bg-primary text-white hover:bg-primary/90"
+            >
+              {t('cloud_device.create')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete confirmation dialog */}
       <AlertDialog open={!!deviceToDelete} onOpenChange={() => setDeviceToDelete(null)}>
@@ -185,9 +217,7 @@ export function CloudDeviceSection({
               disabled={isDeleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {isDeleting ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : null}
+              {isDeleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               {t('common:actions.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -217,99 +247,103 @@ function CloudDeviceCard({
   const isOnline = device.status === 'online' || device.status === 'busy'
   const canStartTask = isOnline && device.slot_used < device.slot_max
 
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'online':
+        return 'bg-green-500'
+      case 'busy':
+        return 'bg-yellow-500'
+      default:
+        return 'bg-gray-400'
+    }
+  }
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'online':
+        return t('devices:status_online')
+      case 'busy':
+        return t('devices:status_busy')
+      default:
+        return t('devices:status_offline')
+    }
+  }
+
   return (
     <div
       className={cn(
-        'border rounded-lg p-4 bg-surface transition-all',
-        isOnline ? 'border-primary/30' : 'border-border opacity-60'
+        'bg-surface border rounded-lg p-4',
+        device.is_default ? 'border-primary' : 'border-border'
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        {/* Left: Device info */}
-        <div className="flex items-start gap-3 flex-1 min-w-0">
-          {/* Cloud icon with status indicator */}
-          <div className="relative">
-            <Cloud
-              className={cn(
-                'w-8 h-8',
-                isOnline ? 'text-primary' : 'text-text-muted'
-              )}
-            />
-            <span
-              className={cn(
-                'absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-surface',
-                device.status === 'online' && 'bg-green-500',
-                device.status === 'busy' && 'bg-yellow-500',
-                device.status === 'offline' && 'bg-gray-400'
-              )}
-            />
+      {/* Device info row */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+            <Cloud className="w-5 h-5 text-primary" />
           </div>
-
-          {/* Device details */}
-          <div className="flex-1 min-w-0">
+          <div>
             <div className="flex items-center gap-2">
-              <h4 className="font-medium text-text-primary truncate">{device.name}</h4>
+              <h4 className="font-medium text-text-primary">{device.name}</h4>
               {device.is_default && (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{t('devices:default_device')}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
+                  <Star className="w-3 h-3 fill-current" />
+                  {t('devices:default_device')}
+                </span>
               )}
             </div>
-
-            <div className="flex items-center gap-3 mt-1 text-xs text-text-muted">
-              <span className="truncate" title={device.device_id}>
-                {device.device_id.slice(0, 16)}...
-              </span>
-              <SlotIndicator
-                used={device.slot_used}
-                max={device.slot_max}
-                runningTasks={device.running_tasks}
-              />
-            </div>
-
-            {/* Version badge */}
-            {isOnline && (
-              <div className="mt-2">
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-text-muted">{device.device_id}</p>
+              {isOnline && (
                 <VersionBadge
                   executorVersion={device.executor_version}
                   latestVersion={device.latest_version}
                   updateAvailable={device.update_available}
                 />
+              )}
+            </div>
+            {/* Slot indicator - only show for online devices */}
+            {isOnline && (
+              <div className="mt-1">
+                <SlotIndicator
+                  used={device.slot_used}
+                  max={device.slot_max}
+                  runningTasks={device.running_tasks}
+                />
               </div>
             )}
           </div>
         </div>
-
-        {/* Right: Actions */}
-        <div className="flex items-center gap-2">
-          {/* Start task button */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))} />
+            <span className="text-sm text-text-secondary">{getStatusText(device.status)}</span>
+          </div>
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onStartTask(device.device_id)}
-                  disabled={!canStartTask}
-                  className="h-8 px-3"
-                >
-                  <Play className="w-4 h-4" />
-                </Button>
+                <div>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => onStartTask(device.device_id)}
+                    disabled={!canStartTask}
+                    className="flex items-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    {device.slot_used >= device.slot_max
+                      ? t('devices:slots_full')
+                      : t('devices:start_task')}
+                  </Button>
+                </div>
               </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('devices:start_task')}</p>
-              </TooltipContent>
+              {device.slot_used >= device.slot_max && isOnline && (
+                <TooltipContent>
+                  <p className="text-sm">{t('devices:slots_full_hint')}</p>
+                </TooltipContent>
+              )}
             </Tooltip>
           </TooltipProvider>
-
-          {/* More actions dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -328,38 +362,20 @@ function CloudDeviceCard({
                 className="text-destructive focus:text-destructive"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
-                {t('common:actions.delete')}
+                {t('devices:delete_device')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
-      {/* Running tasks */}
+      {/* Running tasks list */}
       {device.running_tasks.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-border">
-          <p className="text-xs text-text-muted mb-2">
-            {t('devices:running_tasks_count', { count: device.running_tasks.length })}
-          </p>
-          <div className="space-y-1">
-            {device.running_tasks.slice(0, 3).map((task) => (
-              <div
-                key={task.subtask_id}
-                className="flex items-center justify-between text-xs"
-              >
-                <span className="truncate flex-1 text-text-secondary">{task.title}</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs"
-                  onClick={() => onCancelTask(task.task_id)}
-                >
-                  {t('common:actions.cancel')}
-                </Button>
-              </div>
-            ))}
-          </div>
-        </div>
+        <RunningTasksList
+          tasks={device.running_tasks}
+          deviceName={device.name}
+          onCancelTask={onCancelTask}
+        />
       )}
     </div>
   )
