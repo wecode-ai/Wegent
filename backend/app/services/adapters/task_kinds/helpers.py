@@ -364,7 +364,7 @@ def get_tasks_related_data_batch(
         }
 
     # Add is_group_chat to result
-    _add_group_chat_info(db, tasks, result)
+    _add_group_chat_info(db, tasks, result, user_id)
 
     return result
 
@@ -480,13 +480,21 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
 
 
 def _add_group_chat_info(
-    db: Session, tasks: List[Kind], result: Dict[str, Dict[str, Any]]
+    db: Session, tasks: List[Kind], result: Dict[str, Dict[str, Any]], user_id: int
 ) -> None:
-    """Add is_group_chat info to result dict using ResourceMember."""
+    """Add is_group_chat info to result dict using ResourceMember.
+
+    Args:
+        db: Database session
+        tasks: List of Task Kind objects
+        result: Result dictionary to update
+        user_id: Current user ID to check membership for
+    """
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
 
     task_ids = [t.id for t in tasks]
+    # Only count current user's membership, not all members
     member_count_results = (
         db.query(
             ResourceMember.resource_id, func.count(ResourceMember.id).label("count")
@@ -495,6 +503,7 @@ def _add_group_chat_info(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id.in_(task_ids),
             ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.user_id == user_id,  # Only count current user's membership
         )
         .group_by(ResourceMember.resource_id)
         .all()
@@ -528,7 +537,7 @@ def build_lite_task_list(
     Args:
         db: Database session
         tasks: List of TaskResource objects
-        user_id: User ID for looking up related data
+        user_id: User ID for looking up related data and determining group chat membership
 
     Returns:
         List of task dictionaries with essential fields
@@ -536,7 +545,9 @@ def build_lite_task_list(
     if not tasks:
         return []
 
-    # Get task member counts in batch for is_group_chat detection using ResourceMember
+    # Get tasks where the CURRENT USER is a member for is_group_chat detection
+    # Important: We only mark a task as group chat if the current user is a member,
+    # not based on whether the task has any members at all.
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
 
@@ -551,6 +562,7 @@ def build_lite_task_list(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id.in_(task_ids_for_members),
                 ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.user_id == user_id,  # Only count current user's membership
             )
             .group_by(ResourceMember.resource_id)
             .all()
