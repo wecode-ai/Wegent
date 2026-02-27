@@ -142,6 +142,22 @@ class AgentService:
             )
             return None
 
+    async def create_agent_async(self, task_data: ExecutionRequest) -> Optional[Agent]:
+        """Async version of create_agent that runs blocking operations in executor.
+        
+        This method offloads the synchronous agent creation (including Git clone
+        and skill deployment) to a thread pool executor to avoid blocking the
+        event loop.
+        
+        Args:
+            task_data: Execution request data
+            
+        Returns:
+            Created agent or None if creation failed
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.create_agent, task_data)
+
     async def execute_agent_task(
         self, agent: Agent, pre_executed: Optional[TaskStatus] = None
     ) -> Tuple[TaskStatus, Optional[str]]:
@@ -178,9 +194,9 @@ class AgentService:
                         f"{agent.subtask_id} -> {subtask_id}"
                     )
                     agent.update_emitter(subtask_id)
-            # If agent doesn't exist, create new agent
+            # If agent doesn't exist, create new agent asynchronously
             elif not agent:
-                agent = self.create_agent(task_data)
+                agent = await self.create_agent_async(task_data)
 
             if not agent:
                 msg = f"[{_format_task_log(task_id, subtask_id)}] Unable to get or create agent"
