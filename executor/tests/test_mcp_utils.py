@@ -36,7 +36,9 @@ class TestGetNestedValue:
 
     def test_deeply_nested_dict(self):
         """Test getting deeply nested keys from nested dicts"""
-        data = ExecutionRequest(user={"profile": {"address": {"city": "Beijing"}}})
+        data = ExecutionRequest(
+            user={"profile": {"address": {"city": "Beijing"}}}
+        )
         assert _get_nested_value(data, "user.profile.address.city") == "Beijing"
 
     def test_nonexistent_key(self):
@@ -57,7 +59,9 @@ class TestGetNestedValue:
 
     def test_list_index_access(self):
         """Test accessing list elements by index"""
-        data = ExecutionRequest(bot=[{"name": "bot1"}, {"name": "bot2"}])
+        data = ExecutionRequest(
+            bot=[{"name": "bot1"}, {"name": "bot2"}]
+        )
         assert _get_nested_value(data, "bot.0.name") == "bot1"
         assert _get_nested_value(data, "bot.1.name") == "bot2"
 
@@ -74,7 +78,9 @@ class TestGetNestedValue:
 
     def test_deeply_nested_with_list(self):
         """Test deeply nested path with list access"""
-        data = ExecutionRequest(bot=[{"agent_config": {"env": {"api_key": "123"}}}])
+        data = ExecutionRequest(
+            bot=[{"agent_config": {"env": {"api_key": "123"}}}]
+        )
         assert _get_nested_value(data, "bot.0.agent_config.env.api_key") == "123"
 
 
@@ -90,7 +96,10 @@ class TestReplacePlaceholdersInString:
 
     def test_multiple_placeholders(self):
         """Test replacing multiple placeholders in one string"""
-        task_data = ExecutionRequest(user={"name": "John"}, git_repo="owner/repo")
+        task_data = ExecutionRequest(
+            user={"name": "John"},
+            git_repo="owner/repo"
+        )
         text = "User ${{user.name}} working on ${{git_repo}}"
         result = _replace_placeholders_in_string(text, task_data)
         assert result == "User John working on owner/repo"
@@ -143,7 +152,9 @@ class TestReplaceVariablesRecursive:
 
     def test_nested_dict(self):
         """Test with nested dictionaries"""
-        task_data = ExecutionRequest(user={"name": "John", "token": "abc123"})
+        task_data = ExecutionRequest(
+            user={"name": "John", "token": "abc123"}
+        )
         obj = {
             "server": {
                 "url": "https://api.com/${{user.name}}",
