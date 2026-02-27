@@ -12,6 +12,7 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
+import WorkbenchToggle from '@/features/layout/WorkbenchToggle'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -27,6 +28,8 @@ import { teamService } from '@/features/tasks/service/teamService'
 import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
+import { CloudDeviceVncPanel } from '@wecode/components/cloud-device'
+import { cloudDeviceApis } from '@wecode/apis'
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
@@ -42,11 +45,18 @@ export default function DeviceChatPage() {
   // Device state
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
 
+  // Get selected device info
+  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
+
+  // VNC panel state for cloud devices
+  const [isVncPanelOpen, setIsVncPanelOpen] = useState(true)
+  const [vncUrl, setVncUrl] = useState<string | null>(null)
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -69,6 +79,33 @@ export default function DeviceChatPage() {
       }
     }
   }, [devices, selectedDeviceId, setSelectedDeviceId])
+
+  // Determine if current device is a cloud device
+  const isCloudDevice = selectedDevice?.device_type === 'cloud'
+
+  // Fetch VNC URL when a cloud device is selected
+  useEffect(() => {
+    if (!isCloudDevice || !selectedDeviceId || selectedDevice?.status === 'offline') {
+      setVncUrl(null)
+      return
+    }
+
+    let cancelled = false
+    cloudDeviceApis
+      .getCloudDeviceStatus(selectedDeviceId)
+      .then(status => {
+        if (!cancelled && status.vnc_url) {
+          setVncUrl(status.vnc_url)
+        }
+      })
+      .catch(() => {
+        // Silently handle - VNC panel won't show if URL fetch fails
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedDeviceId, isCloudDevice, selectedDevice?.status])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
@@ -112,9 +149,6 @@ export default function DeviceChatPage() {
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
-
-  // Get selected device info
-  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -175,24 +209,51 @@ export default function DeviceChatPage() {
               ))}
             </select>
           </div>
+          {isCloudDevice && vncUrl && (
+            <WorkbenchToggle
+              isOpen={isVncPanelOpen}
+              onOpen={() => setIsVncPanelOpen(true)}
+              onClose={() => setIsVncPanelOpen(false)}
+            />
+          )}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
         {/* Chat area or placeholder */}
         {/* Show ChatArea when device is selected OR when viewing an existing task */}
         {selectedDeviceId || selectedTaskDetail ? (
-          <ChatArea
-            teams={teams}
-            isTeamsLoading={isTeamsLoading}
-            showRepositorySelector={false}
-            taskType="task"
-            onRefreshTeams={handleRefreshTeams}
-            disabledReason={
-              !selectedDevice || selectedDevice.status === 'offline'
-                ? t('device_offline_cannot_send')
-                : undefined
-            }
-          />
+          <div className="flex flex-1 min-h-0">
+            {/* Chat area - shrinks when VNC panel is open */}
+            <div
+              className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
+              style={{
+                width: isCloudDevice && vncUrl && isVncPanelOpen ? '30%' : '100%',
+              }}
+            >
+              <ChatArea
+                teams={teams}
+                isTeamsLoading={isTeamsLoading}
+                showRepositorySelector={false}
+                taskType="task"
+                onRefreshTeams={handleRefreshTeams}
+                disabledReason={
+                  !selectedDevice || selectedDevice.status === 'offline'
+                    ? t('device_offline_cannot_send')
+                    : undefined
+                }
+              />
+            </div>
+
+            {/* VNC desktop panel for cloud devices */}
+            {isCloudDevice && vncUrl && (
+              <CloudDeviceVncPanel
+                vncUrl={vncUrl}
+                isOpen={isVncPanelOpen}
+                onClose={() => setIsVncPanelOpen(false)}
+                deviceName={selectedDevice?.name}
+              />
+            )}
+          </div>
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">
             <div className="text-center max-w-md px-6">

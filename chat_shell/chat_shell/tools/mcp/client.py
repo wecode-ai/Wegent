@@ -43,8 +43,8 @@ logger = logging.getLogger(__name__)
 # Type alias for connection types
 Connection = SSEConnection | StdioConnection | StreamableHttpConnection
 
-# Default timeout for MCP tool execution (60 seconds)
-DEFAULT_TOOL_TIMEOUT = 60.0
+# Default timeout for MCP tool execution (180 seconds)
+DEFAULT_TOOL_TIMEOUT = 180.0
 
 
 def wrap_tool_with_protection(
