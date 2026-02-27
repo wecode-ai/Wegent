@@ -8,6 +8,7 @@ Kubernetes executor for running tasks in K8s pods.
 Uses unified ExecutionRequest from shared.models.execution.
 """
 
+import asyncio
 import json
 import os
 import threading
@@ -240,14 +241,13 @@ class K8sExecutor(Executor):
                             )
                             error_msg = dispatch_result.get("error_msg", "")
                         except Exception:
-                            # Avoid leaking idle pod when initial dispatch fails.
-                            try:
-                                self.delete_executor(executor_name)
-                            except Exception as cleanup_error:
-                                logger.warning(
-                                    f"Failed to cleanup pod {executor_name} after "
-                                    f"initial dispatch failure: {cleanup_error}"
-                                )
+                            # Pod is intentionally kept alive for debugging.
+                            # Do NOT delete it here; the failure callback below
+                            # will inform the frontend of the error.
+                            logger.warning(
+                                f"Initial dispatch failed for pod {executor_name}; "
+                                "pod is preserved for debugging."
+                            )
                             raise
 
                     # Register regular tasks to RunningTaskTracker for heartbeat monitoring.
@@ -280,10 +280,19 @@ class K8sExecutor(Executor):
                 error_msg = f"Error: {e}"
                 callback_status = TaskStatus.FAILED.value
 
-                # For validation tasks, report failure
+                # For validation tasks, report failure via dedicated API.
+                # For regular/subagent tasks, push FAILED status to backend so
+                # the frontend is not left indefinitely in "processing" state.
                 if is_validation_task:
                     self._report_validation_failure(
                         task, "starting_container", error_msg
+                    )
+                else:
+                    self._send_failure_callback(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        executor_name=executor_name,
+                        error_message=error_msg,
                     )
 
         # Call callback function only for regular tasks
@@ -590,7 +599,7 @@ class K8sExecutor(Executor):
             0.0,
         )
         request_timeout = max(
-            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
+            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "5")),
             0.1,
         )
         last_error = "unknown error"
@@ -1632,3 +1641,42 @@ class K8sExecutor(Executor):
                     )
         except Exception as e:
             logger.error(f"Error reporting validation failure: {e}")
+
+    def _send_failure_callback(
+        self,
+        task_id: str,
+        subtask_id: str,
+        executor_name: Optional[str],
+        error_message: str,
+    ) -> None:
+        """Push a FAILED status callback to the backend for regular/subagent tasks.
+
+        Called when pod creation or initial task dispatch fails so the frontend
+        is immediately updated instead of staying stuck in a "processing" state.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            executor_name: Pod/executor name (may be None if pod was never created)
+            error_message: Human-readable error description
+        """
+        try:
+            from executor_manager.clients.callback_client import get_callback_client
+
+            cb_client = get_callback_client()
+            asyncio.run(
+                cb_client.send_error(
+                    task_id=int(task_id),
+                    subtask_id=int(subtask_id),
+                    error_message=error_message,
+                    executor_name=executor_name,
+                    error_code="dispatch_failed",
+                )
+            )
+            logger.info(
+                f"Sent dispatch failure callback for task {task_id}/{subtask_id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to send dispatch failure callback for task {task_id}: {e}"
+            )
