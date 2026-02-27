@@ -68,8 +68,8 @@ class ShareLinkConfig(BaseModel):
     require_approval: bool = Field(
         default=True, description="Whether joining requires approval"
     )
-    default_role: MemberRole = Field(
-        default=MemberRole.REPORTER, description="Default role for joiners"
+    default_role: MemberRoleNoOwner = Field(
+        default=MemberRoleNoOwner.REPORTER, description="Default role for joiners"
     )
     expires_in_hours: Optional[int] = Field(
         default=None,
@@ -92,7 +92,7 @@ class ShareLinkUpdate(BaseModel):
     require_approval: Optional[bool] = Field(
         default=None, description="Whether joining requires approval"
     )
-    default_role: Optional[MemberRole] = Field(
+    default_role: Optional[MemberRoleNoOwner] = Field(
         default=None, description="Default role for joiners"
     )
     expires_in_hours: Optional[int] = Field(

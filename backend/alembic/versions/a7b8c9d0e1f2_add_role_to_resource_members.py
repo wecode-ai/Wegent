@@ -125,21 +125,24 @@ def upgrade() -> None:
             """
             UPDATE share_links
             SET default_role = 'Reporter'
-            WHERE LOWER(default_permission_level) = 'view'
+            WHERE (default_role IS NULL OR default_role = '')
+              AND LOWER(default_permission_level) = 'view'
             """
         )
         op.execute(
             """
             UPDATE share_links
             SET default_role = 'Developer'
-            WHERE LOWER(default_permission_level) = 'edit'
+            WHERE (default_role IS NULL OR default_role = '')
+              AND LOWER(default_permission_level) = 'edit'
             """
         )
         op.execute(
             """
             UPDATE share_links
             SET default_role = 'Maintainer'
-            WHERE LOWER(default_permission_level) = 'manage'
+            WHERE (default_role IS NULL OR default_role = '')
+              AND LOWER(default_permission_level) = 'manage'
             """
         )
 

@@ -294,9 +294,9 @@ class KnowledgeShareService(UnifiedShareService):
         user_id: int,
     ) -> bool:
         """Check if user can manage permissions for a knowledge base."""
-        has_access, role, is_creator = self.get_user_kb_permission(
+        has_access, role, permission_level, is_creator = self.get_user_kb_permission(
             db, knowledge_base_id, user_id
-        )[:3]
+        )
         if is_creator:
             return True
         return has_access and role in (
@@ -606,8 +606,10 @@ class KnowledgeShareService(UnifiedShareService):
                 PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
                 PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
             }
+            perm_level = share_link.default_permission_level
             default_role = role_mapping.get(
-                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
+                perm_level.lower() if perm_level else "",
+                ResourceRole.REPORTER.value,
             )
 
         return {

@@ -194,7 +194,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                       handleApprovalRoleChange(permission.id, value as MemberRole)
                     }
                   >
-                    <SelectTrigger className="w-28 h-8">
+                    <SelectTrigger className="w-28 h-11 min-w-[44px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -374,7 +374,7 @@ function PermissionGroup({
                   value={editingRole}
                   onValueChange={v => setEditingRole(v as MemberRole)}
                 >
-                  <SelectTrigger className="w-28 h-8">
+                  <SelectTrigger className="w-28 h-11 min-w-[44px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
