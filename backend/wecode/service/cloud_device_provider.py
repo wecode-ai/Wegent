@@ -352,7 +352,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         return True
 
-    async def get_nevis_status(
+    async def get_vm_status(
         self,
         device_id: str,
     ) -> Dict[str, Any]:

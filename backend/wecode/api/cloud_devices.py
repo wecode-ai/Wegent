@@ -230,7 +230,7 @@ async def get_cloud_device_nevis_status(
     sandbox_id = cloud_config.get("sandboxId", device_id)
 
     try:
-        nevis_status = await cloud_device_provider.get_nevis_status(sandbox_id)
+        nevis_status = await cloud_device_provider.get_vm_status(sandbox_id)
         return NevisSandboxStatus(**nevis_status)
 
     except NevisClientError as e:
