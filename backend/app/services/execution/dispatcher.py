@@ -38,6 +38,7 @@ from .emitters import (
     StatusUpdatingEmitter,
     WebSocketResultEmitter,
 )
+from .polling_dispatcher import dispatch_polling
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 
 logger = logging.getLogger(__name__)
@@ -333,6 +334,8 @@ class ExecutionDispatcher:
                 await self._dispatch_sse(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.WEBSOCKET:
                 await self._dispatch_websocket(request, target, wrapped_emitter)
+            elif target.mode == CommunicationMode.POLLING:
+                await self._dispatch_polling(request, target, wrapped_emitter)
             else:
                 await self._dispatch_http_callback(request, target, wrapped_emitter)
         except Exception as e:
@@ -657,6 +660,18 @@ class ExecutionDispatcher:
             # Unregister stream to clean up
             await session_manager.unregister_stream(request.subtask_id)
 
+    async def _dispatch_polling(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Dispatch task via polling mode for long-running async APIs.
+
+        Delegates to polling_dispatcher module which calls Gemini API directly.
+        """
+        await dispatch_polling(request, target, emitter)
+
     async def _dispatch_websocket(
         self,
         request: ExecutionRequest,
@@ -835,6 +850,8 @@ class ExecutionDispatcher:
             return await self._cancel_sse(request, target)
         elif target.mode == CommunicationMode.WEBSOCKET:
             return await self._cancel_websocket(request, target)
+        elif target.mode == CommunicationMode.POLLING:
+            return await self._cancel_sse(request, target)
         else:
             return await self._cancel_http(request, target)
 

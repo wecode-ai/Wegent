@@ -495,6 +495,8 @@ def _add_group_chat_info(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id.in_(task_ids),
             ResourceMember.status == MemberStatus.APPROVED,
+            # Exclude share records (copied_resource_id > 0), only count actual group chat members
+            ResourceMember.copied_resource_id == 0,
         )
         .group_by(ResourceMember.resource_id)
         .all()
@@ -551,6 +553,8 @@ def build_lite_task_list(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id.in_(task_ids_for_members),
                 ResourceMember.status == MemberStatus.APPROVED,
+                # Exclude share records (copied_resource_id > 0), only count actual group chat members
+                ResourceMember.copied_resource_id == 0,
             )
             .group_by(ResourceMember.resource_id)
             .all()

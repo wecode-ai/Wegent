@@ -4,7 +4,7 @@
 
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class MCPServer(BaseModel):
@@ -37,6 +37,7 @@ class MCPProviderInfo(BaseModel):
     api_key_url: str
     token_field_name: str
     has_token: bool = False  # Whether user has configured token
+    requires_token: bool = True  # Whether this provider requires API key from user
 
 
 class MCPProviderListResponse(BaseModel):
@@ -55,8 +56,14 @@ class MCPServerListResponse(BaseModel):
 
 
 class MCPProviderKeysRequest(BaseModel):
-    """Request to update MCP provider API keys"""
+    """Request to update MCP provider API keys
 
+    Supports dynamic fields for flexible provider key storage.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # Legacy fields for backward compatibility
     bailian: Optional[str] = None
     modelscope: Optional[str] = None
     mcp_router: Optional[str] = None

@@ -68,6 +68,7 @@ class TaskMemberService:
             return True
 
         # Check ResourceMember for approved status
+        # Exclude share records (copied_resource_id > 0), only consider actual group chat members
         member = (
             db.query(ResourceMember)
             .filter(
@@ -75,6 +76,7 @@ class TaskMemberService:
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
                 ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.copied_resource_id == 0,
             )
             .first()
         )
@@ -131,12 +133,14 @@ class TaskMemberService:
 
     def get_member_count(self, db: Session, task_id: int) -> int:
         """Get the number of active members in a task (including owner)"""
+        # Exclude share records (copied_resource_id > 0), only count actual group chat members
         member_count = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.copied_resource_id == 0,
             )
             .count()
         )
@@ -175,12 +179,14 @@ class TaskMemberService:
         members.append(owner_member)
 
         # Get other members from ResourceMember
+        # Exclude share records (copied_resource_id > 0), only get actual group chat members
         task_members = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.copied_resource_id == 0,
             )
             .all()
         )

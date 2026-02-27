@@ -1,0 +1,103 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Example MCP Provider Template
+
+To add a new MCP provider:
+1. Copy this file and rename it to your_provider_name.py
+2. Update the configuration below
+3. Restart the service - the provider will be auto-discovered
+
+No other code changes needed!
+"""
+
+from app.schemas.mcp_provider_config import (
+    MCPProviderConfig,
+    ProviderAPIConfig,
+    ResponseMappingConfig,
+    ServerMappingConfig,
+)
+
+config = MCPProviderConfig(
+    # Unique identifier for the provider
+    key="example_provider",
+    # Display name (Chinese)
+    name="示例服务商",
+    # Display name (English)
+    name_en="Example Provider",
+    # Brief description
+    description="Example MCP provider for demonstration",
+    # URL to the provider's MCP market/discovery page
+    discover_url="https://example.com/mcp-market",
+    # URL where users can get their API key
+    api_key_url="https://example.com/api-keys",
+    # Field name for storing the API key in user preferences
+    token_field="example_provider",
+    # API configuration
+    api=ProviderAPIConfig(
+        # Base URL for the API
+        base_url="https://api.example.com",
+        # Path to the server list endpoint
+        list_path="/v1/mcp/servers",
+        # HTTP method: GET or POST
+        method="GET",
+        # Fixed query parameters (optional)
+        query_params={},
+        # Fixed headers (optional)
+        headers={},
+        # Auth header template, {token} will be replaced with user's key
+        auth_template="Bearer {token}",
+        # Request timeout in seconds
+        timeout=30.0,
+    ),
+    # Response mapping configuration
+    mapping=ResponseMappingConfig(
+        # JSON path to the server list array (dot notation for nesting)
+        items_path="data.servers",
+        # JSON path to total count (for pagination)
+        total_path="data.total",
+        # Query parameter name for page number
+        page_param="page",
+        # Query parameter name for page size
+        size_param="page_size",
+        # Default page size
+        page_size=20,
+        # Field name indicating success in response
+        success_field="success",
+        # Field name for error message
+        error_message_field="message",
+    ),
+    # Server field mapping
+    server=ServerMappingConfig(
+        # Field name for server ID
+        id_field="id",
+        # Field name for server name
+        name_field="name",
+        # Field name for server description
+        description_field="description",
+        # Field name for server URL (supports array indexing: "urls[0].url")
+        url_field="url",
+        # Field name for server type
+        type_field="type",
+        # Default type if not specified
+        type_default="streamable-http",
+        # Field name for provider (optional)
+        provider_field="provider",
+        # Static provider name if not in response
+        provider_static="ExampleProvider",
+        # Field name for active status
+        active_field="active",
+        # Field name for logo URL
+        logo_field="logo_url",
+        # Field name for tags
+        tags_field="tags",
+        # Prefix for server IDs (to avoid collisions)
+        id_prefix="@example/",
+        # Fallback field for URL if primary not found
+        url_fallback=None,
+        # Fallback field for name if primary not found
+        name_fallback=None,
+    ),
+)

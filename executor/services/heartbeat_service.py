@@ -350,17 +350,17 @@ class HeartbeatService:
             from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
             from executor.config import config
             from shared.models import EmitterBuilder, TransportFactory
+            from shared.models.execution import ExecutionRequest
             from shared.status import TaskStatus
 
             # Create minimal task data for initialization
             task_id = int(self._heartbeat_id) if self._heartbeat_id.isdigit() else -1
-            init_task_data = {
-                "task_id": task_id,
-                "subtask_id": -1,
-                "bot": [claude_config.get("bot")],
-                "user": claude_config.get("user", {}),
-                "team": claude_config.get("team", {}),
-            }
+            init_task_data = ExecutionRequest(
+                task_id=task_id,
+                subtask_id=-1,
+                bot=[claude_config.get("bot")],
+                user=claude_config.get("user", {}),
+            )
 
             # Create emitter with throttled CallbackTransport for Docker/sandbox mode
             emitter = (

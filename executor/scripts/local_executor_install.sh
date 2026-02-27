@@ -33,6 +33,13 @@ VERSION=""
 MIN_CLAUDE_CODE_VERSION="2.1.0"
 MIN_NODE_VERSION="18"
 
+# Feature flags
+# Claude Code is bundled for Linux and Windows, but not for macOS
+# macOS uses system-installed Claude Code via npm
+bundle_claude_code() {
+    [[ "$OS" == "linux" ]]
+}
+
 # Browser plugin configuration
 BROWSER_PLUGIN_PACKAGE="@wegent/cdp-relay-server"
 BROWSER_PLUGIN_CHROME_EXT_PATH="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/chrome-extension"
@@ -145,7 +152,15 @@ check_npm() {
 }
 
 # Install or upgrade Claude Code
+# Note: Claude Code is bundled for Linux/Windows, so skip check on those platforms
 install_claude_code() {
+    # Skip if Claude Code is bundled (Linux only, macOS uses system-installed)
+    if bundle_claude_code; then
+        print_info "Claude Code is bundled in the executor binary."
+        print_info "Skipping system-wide Claude Code installation."
+        return 0
+    fi
+
     print_info "Checking Claude Code installation..."
 
     local claude_installed=false
@@ -553,8 +568,14 @@ main() {
 
     parse_args "$@"
     detect_platform
-    check_nodejs
-    install_claude_code
+
+    # Node.js and Claude Code checks are only needed on macOS (not bundled)
+    # Linux bundles Claude Code, so no need to check/install
+    if ! bundle_claude_code; then
+        check_nodejs
+        install_claude_code
+    fi
+
     get_download_url
     create_install_dir
     download_binary
