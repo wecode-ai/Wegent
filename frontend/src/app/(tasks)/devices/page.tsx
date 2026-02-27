@@ -55,6 +55,7 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { getSocketUrl } from '@/lib/runtime-config'
 import { LocalExecutorGuide } from '@wecode/components/devices/LocalExecutorGuide'
+import { CloudDeviceCreateButton } from '@wecode/components/devices/CloudDeviceCreateButton'
 
 // Device type constants matching backend DeviceType enum
 const DEVICE_TYPE = {
@@ -284,6 +285,8 @@ export default function DevicesPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                {/* Cloud device create button */}
+                <CloudDeviceCreateButton onDeviceCreated={refreshDevices} />
                 {/* Add Device button - only show when devices exist */}
                 {sortedDevices.length > 0 && (
                   <Button

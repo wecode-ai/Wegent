@@ -371,6 +371,15 @@ class Settings(BaseSettings):
     # Used by chat_shell to download skill binaries
     BACKEND_INTERNAL_URL: str = "http://localhost:8000"
 
+    # Backend URL for external callbacks (e.g., cloud device executor registration)
+    # If not set, falls back to BACKEND_INTERNAL_URL
+    BACKEND_URL: str = ""
+
+    # Nevis cloud device callback URL (optional)
+    # If set, used as the callback URL for Nevis sandbox devices
+    # If not set, falls back to BACKEND_URL
+    NEVIS_CALLBACK_URL: str = ""
+
     # Streaming architecture mode configuration
     # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
     # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket

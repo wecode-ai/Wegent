@@ -179,6 +179,7 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [keyName, setKeyName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
+  const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null)
 
   // Fetch API keys on mount (for all OS)
   const fetchApiKeys = useCallback(async () => {
@@ -208,9 +209,7 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
     setIsCreating(true)
     try {
       const created = await apiKeyApis.createApiKey({ name: keyName.trim() })
-      setCreateDialogOpen(false)
-      setKeyName('')
-      toast.success(t('apikey_create_success'))
+      setCreatedKey(created)
       setSelectedKeyId(created.id)
       setNewlyCreatedKey(created)
       fetchApiKeys()
@@ -220,6 +219,13 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
     } finally {
       setIsCreating(false)
     }
+  }
+
+  // Close dialog and reset state
+  const handleCloseDialog = () => {
+    setCreateDialogOpen(false)
+    setKeyName('')
+    setCreatedKey(null)
   }
 
   // Get the auth token value for commands
@@ -525,50 +531,87 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
       <Dialog
         open={createDialogOpen}
         onOpenChange={open => {
-          setCreateDialogOpen(open)
           if (!open) {
-            setKeyName('')
+            handleCloseDialog()
+          } else {
+            setCreateDialogOpen(true)
           }
         }}
       >
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('create_apikey_title')}</DialogTitle>
-            <DialogDescription>{t('create_apikey_desc')}</DialogDescription>
-          </DialogHeader>
-          <div className="py-4">
-            <label className="text-sm font-medium text-text-primary">{t('apikey_name')}</label>
-            <Input
-              className="mt-2"
-              placeholder={t('apikey_name_placeholder')}
-              value={keyName}
-              onChange={e => setKeyName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && !isCreating && handleCreateKey()}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setCreateDialogOpen(false)}
-              disabled={isCreating}
-            >
-              {t('cancel')}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleCreateKey}
-              disabled={isCreating || !keyName.trim()}
-            >
-              {isCreating ? (
-                <div className="flex items-center">
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  {t('creating')}
+          {createdKey ? (
+            // Success state - show the created API Key
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Check className="w-5 h-5 text-green-500" />
+                  {t('apikey_create_success')}
+                </DialogTitle>
+                <DialogDescription>{t('apikey_save_warning')}</DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                <label className="text-sm font-medium text-text-primary mb-2 block">
+                  {t('apikey_value_label')}
+                </label>
+                <div className="bg-gray-900 rounded-lg px-4 py-3 flex items-center gap-3">
+                  <code className="flex-1 text-sm font-mono text-green-400 truncate">
+                    {createdKey.key}
+                  </code>
+                  <CopyButton text={createdKey.key} />
                 </div>
-              ) : (
-                t('create')
-              )}
-            </Button>
-          </DialogFooter>
+                <div className="flex items-start gap-2 p-3 mt-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-sm text-amber-700">{t('apikey_once_warning')}</p>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="primary" onClick={handleCloseDialog}>
+                  {t('done')}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            // Create form state
+            <>
+              <DialogHeader>
+                <DialogTitle>{t('create_apikey_title')}</DialogTitle>
+                <DialogDescription>{t('create_apikey_desc')}</DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                <label className="text-sm font-medium text-text-primary">{t('apikey_name')}</label>
+                <Input
+                  className="mt-2"
+                  placeholder={t('apikey_name_placeholder')}
+                  value={keyName}
+                  onChange={e => setKeyName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !isCreating && handleCreateKey()}
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setCreateDialogOpen(false)}
+                  disabled={isCreating}
+                >
+                  {t('cancel')}
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={handleCreateKey}
+                  disabled={isCreating || !keyName.trim()}
+                >
+                  {isCreating ? (
+                    <div className="flex items-center">
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      {t('creating')}
+                    </div>
+                  ) : (
+                    t('create')
+                  )}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
