@@ -13,10 +13,11 @@ import json
 import os
 import stat
 import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from shared.models.execution import ExecutionRequest
 
 
 def create_mock_emitter():
@@ -36,14 +37,14 @@ class TestSaveClaudeConfigFiles:
     @pytest.fixture
     def task_data(self):
         """Sample task data for testing."""
-        return {
-            "task_id": 12345,
-            "subtask_id": 67890,
-            "task_title": "Test Task",
-            "subtask_title": "Test Subtask",
-            "user": {"user_name": "testuser"},
-            "bot": [{"api_key": "test_api_key", "model": "claude-3-5-sonnet-20241022"}],
-        }
+        return ExecutionRequest(
+            task_id=12345,
+            subtask_id=67890,
+            task_title="Test Task",
+            subtask_title="Test Subtask",
+            user={"user_name": "testuser"},
+            bot=[{"api_key": "test_api_key", "model": "claude-3-5-sonnet-20241022"}],
+        )
 
     @pytest.fixture
     def agent_config_with_sensitive_data(self):
@@ -91,7 +92,7 @@ class TestSaveClaudeConfigFiles:
 
             # Verify settings.json was NOT created
             settings_path = os.path.join(
-                temp_workspace, str(task_data["task_id"]), ".claude", "settings.json"
+                temp_workspace, str(task_data.task_id), ".claude", "settings.json"
             )
             assert not os.path.exists(
                 settings_path
@@ -117,7 +118,7 @@ class TestSaveClaudeConfigFiles:
 
             # Verify claude.json was created
             claude_json_path = os.path.join(
-                temp_workspace, str(task_data["task_id"]), ".claude", "claude.json"
+                temp_workspace, str(task_data.task_id), ".claude", "claude.json"
             )
             assert os.path.exists(
                 claude_json_path
@@ -178,9 +179,7 @@ class TestSaveClaudeConfigFiles:
             agent = self._create_agent(task_data)
             agent._save_claude_config_files(agent_config_with_sensitive_data)
 
-            config_dir = os.path.join(
-                temp_workspace, str(task_data["task_id"]), ".claude"
-            )
+            config_dir = os.path.join(temp_workspace, str(task_data.task_id), ".claude")
             dir_stat = os.stat(config_dir)
             dir_mode = stat.S_IMODE(dir_stat.st_mode)
 
@@ -207,7 +206,7 @@ class TestSaveClaudeConfigFiles:
             agent._save_claude_config_files(agent_config_with_sensitive_data)
 
             claude_json_path = os.path.join(
-                temp_workspace, str(task_data["task_id"]), ".claude", "claude.json"
+                temp_workspace, str(task_data.task_id), ".claude", "claude.json"
             )
             file_stat = os.stat(claude_json_path)
             file_mode = stat.S_IMODE(file_stat.st_mode)
@@ -300,9 +299,7 @@ class TestSaveClaudeConfigFiles:
             agent._save_claude_config_files(agent_config_with_sensitive_data)
 
             # Walk through all created files
-            config_dir = os.path.join(
-                temp_workspace, str(task_data["task_id"]), ".claude"
-            )
+            config_dir = os.path.join(temp_workspace, str(task_data.task_id), ".claude")
 
             for root, dirs, files in os.walk(config_dir):
                 for filename in files:
@@ -334,14 +331,14 @@ class TestCreateAndConnectClientEnvPassing:
     @pytest.fixture
     def task_data(self):
         """Sample task data for testing."""
-        return {
-            "task_id": 12345,
-            "subtask_id": 67890,
-            "task_title": "Test Task",
-            "subtask_title": "Test Subtask",
-            "user": {"user_name": "testuser"},
-            "bot": [{"api_key": "test_api_key", "model": "claude-3-5-sonnet-20241022"}],
-        }
+        return ExecutionRequest(
+            task_id=12345,
+            subtask_id=67890,
+            task_title="Test Task",
+            subtask_title="Test Subtask",
+            user={"user_name": "testuser"},
+            bot=[{"api_key": "test_api_key", "model": "claude-3-5-sonnet-20241022"}],
+        )
 
     @pytest.fixture
     def temp_workspace(self):
@@ -369,7 +366,7 @@ class TestCreateAndConnectClientEnvPassing:
 
             # Simulate what _save_claude_config_files does
             agent._claude_config_dir = os.path.join(
-                temp_workspace, str(task_data["task_id"]), ".claude"
+                temp_workspace, str(task_data.task_id), ".claude"
             )
             agent._claude_env_config = {
                 "ANTHROPIC_AUTH_TOKEN": "sk-ant-api-test-key",

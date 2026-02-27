@@ -5,6 +5,13 @@
 """
 Internal API endpoints
 """
+# Register Weibo MCP Provider before MCPProviderRegistry.initialize() is called
+# This must be done before importing any modules that trigger app.services.mcp_providers.service import
+from app.services.mcp_providers.core.registry import MCPProviderRegistry
+from wecode.service.mcp_providers.providers.weibo import WeiboMCPProvider
+
+MCPProviderRegistry.register_plugin(WeiboMCPProvider())
+
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.device_router_patch  # noqa: F401  patch app.services.device_router to replace API key placeholders for device task dispatch
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
@@ -17,6 +24,7 @@ import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.us
 import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProvider with factory
 import wecode.service.device_service_patch  # noqa: F401  patch DeviceService to aggregate cloud devices
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
+import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
 from app.api.router import api_router
 from wecode.api.auth import router as auth_router

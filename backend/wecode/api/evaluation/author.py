@@ -216,6 +216,7 @@ def create_topic(
         description=topic_create.description,
         visibility=topic_create.visibility,
         grading_team_id=topic_create.grading_team_id,
+        instructions=topic_create.instructions,
     )
     db.commit()
 
@@ -262,6 +263,7 @@ def update_topic(
         description=topic_update.description,
         visibility=topic_update.visibility,
         grading_team_id=topic_update.grading_team_id,
+        instructions=topic_update.instructions,
     )
     db.commit()
 

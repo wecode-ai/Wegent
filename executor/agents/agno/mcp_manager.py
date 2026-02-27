@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import json
 from datetime import timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from agno.tools.mcp import (
     MCPTools,
@@ -15,6 +15,7 @@ from executor.utils.mcp_utils import (
     replace_mcp_server_variables,
 )
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
@@ -36,14 +37,14 @@ class MCPManager:
         self.thinking_manager = thinking_manager
 
     async def setup_mcp_tools(
-        self, config: Dict[str, Any], task_data: Optional[Dict[str, Any]] = None
+        self, config: Dict[str, Any], task_data: Optional[ExecutionRequest] = None
     ) -> Optional[List[MCPTools]]:
         """
         Setup MCP tools if configured
 
         Args:
             config: Configuration dictionary containing MCP server settings
-            task_data: Optional task data dictionary for variable replacement in MCP config.
+            task_data: Optional task data ExecutionRequest for variable replacement in MCP config.
                        Supports placeholders like ${{user.name}}, ${{git_repo}}, ${{bot.0.name}}
 
         Returns:

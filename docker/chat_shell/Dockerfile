@@ -39,4 +39,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
 # Start command with graceful shutdown support
-CMD ["sh", "-c", "exec uvicorn chat_shell.main:app --host ${HOST} --port ${PORT} --workers 4 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]
+CMD ["sh", "-c", "exec uvicorn chat_shell.main:app --host ${HOST} --port ${PORT} --workers 1 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]

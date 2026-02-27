@@ -59,6 +59,8 @@ export function EvaluationFileUpload({
 }: EvaluationFileUploadProps) {
   const { t } = useTranslation('evaluation')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const attachmentsRef = useRef<EvalAttachment[]>(attachments)
+  attachmentsRef.current = attachments
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, UploadingFile>>(new Map())
   const [isDragging, setIsDragging] = useState(false)
 
@@ -67,15 +69,19 @@ export function EvaluationFileUpload({
       if (!files || files.length === 0) return
       if (disabled) return
 
-      const remainingSlots = maxFiles - attachments.length
+      const remainingSlots = maxFiles - attachments.length - uploadingFiles.size
       if (remainingSlots <= 0) {
         return
       }
 
       const filesToUpload = Array.from(files).slice(0, remainingSlots)
 
+      // Collect all uploaded attachments first
+      const uploadedAttachments: EvalAttachment[] = []
+
+      // Upload files sequentially (one by one) to avoid race conditions
       for (const file of filesToUpload) {
-        const fileId = `${file.name}-${Date.now()}`
+        const fileId = `${file.name}-${Date.now()}-${Math.random()}`
 
         // Add to uploading state
         setUploadingFiles(prev => {
@@ -109,8 +115,7 @@ export function EvaluationFileUpload({
             file_size: file.size,
             content_type: file.type,
           }
-
-          onChange([...attachments, newAttachment])
+          uploadedAttachments.push(newAttachment)
 
           // Remove from uploading state
           setUploadingFiles(prev => {
@@ -133,8 +138,13 @@ export function EvaluationFileUpload({
           })
         }
       }
+
+      // Update attachments once at the end with all uploaded files
+      if (uploadedAttachments.length > 0) {
+        onChange([...attachments, ...uploadedAttachments])
+      }
     },
-    [topicId, questionId, fileType, attachments, onChange, maxFiles, disabled]
+    [topicId, questionId, fileType, onChange, maxFiles, disabled, uploadingFiles.size, attachments]
   )
 
   const handleRemove = useCallback(

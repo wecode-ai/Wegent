@@ -179,7 +179,14 @@ function RespondentTopicDetailContent() {
                     </span>
                   </div>
                 </div>
-                <Button variant="outline" size="sm">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={e => {
+                    e.stopPropagation()
+                    router.push(`/evaluation/respondent/topics/${topicId}/questions/${question.id}`)
+                  }}
+                >
                   {t('answers.submit')}
                 </Button>
               </CardContent>

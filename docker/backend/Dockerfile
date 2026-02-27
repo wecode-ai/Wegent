@@ -42,4 +42,4 @@ EXPOSE ${PORT}
 # Start command with graceful shutdown support
 # --timeout-graceful-shutdown: Time to wait for active connections to close
 # Using exec form to ensure proper signal handling (SIGTERM)
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 4 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]

@@ -12,7 +12,7 @@ import React, {
 } from 'react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Loader2, XIcon, SettingsIcon, Edit, Wand2, ExternalLink } from 'lucide-react'
+import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import McpConfigImportModal from './McpConfigImportModal'
+import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
 import DifyBotConfig from './DifyBotConfig'
 import { PromptFineTuneDialog } from './prompt-fine-tune'
@@ -169,13 +169,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [agentConfigError, setAgentConfigError] = useState(false)
 
-  const [importModalVisible, setImportModalVisible] = useState(false)
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false)
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
 
   // Check if current agent is Dify
   const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName])
+  const mcpAgentType = useMemo(
+    () => (isValidAgentType(agentName) ? agentName : undefined),
+    [agentName]
+  )
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -198,53 +201,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     })
   }, [toast, t])
-
-  // Handle MCP configuration import
-  const handleImportMcpConfig = useCallback(() => {
-    if (readOnly) {
-      return
-    }
-    setImportModalVisible(true)
-  }, [readOnly])
-
-  // Handle import configuration confirmation
-  const handleImportConfirm = useCallback(
-    (config: Record<string, unknown>, mode: 'replace' | 'append') => {
-      try {
-        // Update MCP configuration
-        if (mode === 'replace') {
-          // Replace mode: directly use new configuration
-          setMcpConfig(JSON.stringify(config, null, 2))
-          toast({
-            title: t('common:bot.import_success'),
-          })
-        } else {
-          // Append mode: merge existing configuration with new configuration
-          try {
-            const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {}
-            const mergedConfig = { ...currentConfig, ...config }
-            setMcpConfig(JSON.stringify(mergedConfig, null, 2))
-            toast({
-              title: t('common:bot.append_success'),
-            })
-          } catch {
-            toast({
-              variant: 'destructive',
-              title: t('common:bot.errors.mcp_config_json'),
-            })
-            return
-          }
-        }
-        setImportModalVisible(false)
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:bot.errors.mcp_config_json'),
-        })
-      }
-    },
-    [mcpConfig, toast, t]
-  )
 
   // Template handlers
   const handleApplyClaudeSonnetTemplate = useCallback(() => {
@@ -1537,49 +1493,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
 
               {/* MCP Config */}
-              <div className="flex flex-col flex-grow">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <label className="block text-base font-medium leading-8 text-text-primary">
-                      {t('common:bot.mcp_config')}
-                    </label>
-                    <Button
-                      size="sm"
-                      onClick={() => handleImportMcpConfig()}
-                      disabled={readOnly}
-                      aria-disabled={readOnly}
-                      className="h-8 text-xs gap-1.5 disabled:cursor-not-allowed"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                      {t('common:bot.import_mcp_button')}
-                    </Button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {process.env.NEXT_PUBLIC_MCP_MARKET_URL && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          window.open(process.env.NEXT_PUBLIC_MCP_MARKET_URL, '_blank')
-                        }
-                        className="text-xs gap-1.5"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        {t('common:bot.mcp_market')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                <textarea
-                  value={mcpConfig}
-                  readOnly={true}
-                  className={`w-full px-4 py-2 bg-base-secondary rounded-md text-text-primary focus:outline-none font-mono text-base flex-grow resize-y custom-scrollbar border border-border cursor-text min-h-[120px]`}
-                  placeholder={t(
-                    'common:bot.mcp_config_readonly_placeholder',
-                    'MCP configuration is read-only. Please use the Edit button to modify.'
-                  )}
-                />
-              </div>
+              <McpConfigSection
+                mcpConfig={mcpConfig}
+                onMcpConfigChange={setMcpConfig}
+                agentType={mcpAgentType}
+                readOnly={readOnly}
+                toast={toast}
+              />
             </>
           )}
         </div>
@@ -1624,15 +1544,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           </div>
         )}
       </div>
-
-      {/* MCP Configuration Import Modal */}
-      <McpConfigImportModal
-        visible={importModalVisible}
-        onClose={() => setImportModalVisible(false)}
-        onImport={handleImportConfirm}
-        toast={toast}
-        agentType={agentName as 'ClaudeCode' | 'Agno'}
-      />
 
       {/* Skill Management Modal */}
       <SkillManagementModal

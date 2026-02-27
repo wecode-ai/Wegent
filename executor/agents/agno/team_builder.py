@@ -6,19 +6,18 @@
 
 # -*- coding: utf-8 -*-
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional
 
 from agno.agent import Agent as AgnoSdkAgent
 from agno.db.sqlite import SqliteDb
 from agno.team import Team
-from agno.tools.reasoning import ReasoningTools
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 from .config_utils import ConfigManager
 from .mcp_manager import MCPManager
 from .member_builder import MemberBuilder
-from .model_factory import ModelFactory
 
 logger = setup_logger("agno_team_builder")
 
@@ -49,7 +48,7 @@ class TeamBuilder:
         options: Dict[str, Any],
         mode: str,
         session_id: str,
-        task_data: Dict[str, Any],
+        task_data: ExecutionRequest,
     ) -> Optional[Team]:
         """
         Create a team with configured members
@@ -116,7 +115,7 @@ class TeamBuilder:
         return team
 
     async def _create_team_members(
-        self, options: Dict[str, Any], task_data: Dict[str, Any]
+        self, options: Dict[str, Any], task_data: ExecutionRequest
     ) -> Dict[str, Any]:
         """
         Create team members based on configuration, separating team leader from other members
@@ -183,7 +182,7 @@ class TeamBuilder:
         return {"leader": team_leader, "members": team_members}
 
     async def _create_team_member(
-        self, member_config: Dict[str, Any], task_data: Dict[str, Any]
+        self, member_config: Dict[str, Any], task_data: ExecutionRequest
     ) -> Optional[AgnoSdkAgent]:
         """
         Create a single team member (delegated to MemberBuilder)

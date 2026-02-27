@@ -158,12 +158,21 @@ async def _process_dispatch_response(response_data: Dict, username: str) -> Dict
     if not isinstance(tasks, list):
         return response_data
 
-    # Check if any bot has the placeholder
+    # Check if any bot or model_config has the placeholder
     needs_replacement = False
     for task in tasks:
-        if not isinstance(task, dict) or "bot" not in task:
+        if not isinstance(task, dict):
             continue
 
+        # Check model_config.api_key
+        model_config = task.get("model_config")
+        if model_config and isinstance(model_config, dict):
+            api_key = model_config.get("api_key", "")
+            if api_key and "${WECODE_USER_API_KEY}" in api_key:
+                needs_replacement = True
+                break
+
+        # Check bot.agent_config
         bots = task.get("bot", [])
         if not isinstance(bots, list):
             continue
@@ -196,6 +205,16 @@ async def _process_dispatch_response(response_data: Dict, username: str) -> Dict
                 continue
 
             processed_task = dict(task)
+
+            # Replace in model_config.api_key
+            if "model_config" in processed_task and isinstance(
+                processed_task["model_config"], dict
+            ):
+                processed_task["model_config"] = _replace_api_key_in_config(
+                    processed_task["model_config"], real_apikey
+                )
+
+            # Replace in bot.agent_config
             if "bot" in processed_task and isinstance(processed_task["bot"], list):
                 processed_bots = []
                 for bot in processed_task["bot"]:

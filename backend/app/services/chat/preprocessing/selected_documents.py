@@ -66,12 +66,12 @@ def process_selected_documents_contexts(
     db: Session,
     selected_docs_contexts: List[SubtaskContext],
     user_id: int,
-    message: str | dict[str, Any],
+    message: str | list[dict[str, Any]],
     base_system_prompt: str,
     extra_tools: List[BaseTool],
     user_subtask_id: Optional[int] = None,
     context_window: int = DEFAULT_CONTEXT_WINDOW,
-) -> Tuple[str | dict[str, Any], str, List[BaseTool]]:
+) -> Tuple[str | list[dict[str, Any]], str, List[BaseTool]]:
     """
     Process selected_documents contexts for notebook mode.
 
@@ -85,7 +85,10 @@ def process_selected_documents_contexts(
         db: Database session
         selected_docs_contexts: List of selected_documents SubtaskContext records
         user_id: User ID for access control
-        message: Original user message (string or vision structure)
+        message: Original user message. Can be:
+            - string: Plain text message
+            - list[dict]: OpenAI Responses API format content blocks
+              [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
         base_system_prompt: Current system prompt (may already be enhanced)
         extra_tools: Current list of extra tools (may already contain KB tool)
         user_subtask_id: User subtask ID for RAG persistence
@@ -262,16 +265,16 @@ def _load_documents_content(
 
 def _inject_documents_directly(
     documents_content: List[Dict[str, Any]],
-    message: str | dict[str, Any],
+    message: str | list[dict[str, Any]],
     base_system_prompt: str,
     extra_tools: List[BaseTool],
-) -> Tuple[str | dict[str, Any], str, List[BaseTool]]:
+) -> Tuple[str | list[dict[str, Any]], str, List[BaseTool]]:
     """
     Inject document content directly into the message.
 
     Args:
         documents_content: List of document content dicts
-        message: Original user message
+        message: Original user message (string or OpenAI Responses API format list)
         base_system_prompt: Current system prompt
         extra_tools: Current list of extra tools
 
@@ -291,10 +294,9 @@ def _inject_documents_directly(
     )
 
     # Inject into message
-    if isinstance(message, dict) and message.get("type") == "multi_vision":
-        # Vision structure - prepend to text
-        message["text"] = documents_text + "\n\n" + message["text"]
-        final_message = message
+    if isinstance(message, list):
+        # OpenAI Responses API format - prepend to first input_text block
+        final_message = _prepend_to_responses_api_content(message, documents_text)
     else:
         # String message - prepend documents
         final_message = documents_text + f"\n\n[User Question]:\n{message}"
@@ -307,16 +309,54 @@ def _inject_documents_directly(
     return final_message, base_system_prompt, extra_tools
 
 
+def _prepend_to_responses_api_content(
+    content_blocks: list[dict[str, Any]],
+    prefix_text: str,
+) -> list[dict[str, Any]]:
+    """
+    Prepend text to the first input_text block in OpenAI Responses API format.
+
+    Args:
+        content_blocks: List of content blocks in Responses API format
+        prefix_text: Text to prepend
+
+    Returns:
+        Modified content blocks with prefix prepended to first text block
+    """
+    result = []
+    prefix_added = False
+
+    for block in content_blocks:
+        if block.get("type") == "input_text" and not prefix_added:
+            # Prepend to first input_text block
+            original_text = block.get("text", "")
+            result.append(
+                {
+                    "type": "input_text",
+                    "text": prefix_text + "\n\n" + original_text,
+                }
+            )
+            prefix_added = True
+        else:
+            result.append(block)
+
+    # If no input_text block found, add one at the beginning
+    if not prefix_added:
+        result.insert(0, {"type": "input_text", "text": prefix_text})
+
+    return result
+
+
 def _create_rag_fallback(
     db: Session,
     knowledge_base_ids: List[int],
     document_ids: List[int],
     user_id: int,
-    message: str | dict[str, Any],
+    message: str | list[dict[str, Any]],
     base_system_prompt: str,
     extra_tools: List[BaseTool],
     user_subtask_id: Optional[int] = None,
-) -> Tuple[str | dict[str, Any], str, List[BaseTool]]:
+) -> Tuple[str | list[dict[str, Any]], str, List[BaseTool]]:
     """
     Create KnowledgeBaseTool with document_ids filter for RAG fallback.
 

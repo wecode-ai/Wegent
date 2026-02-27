@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Optional
 
 from executor.config.config import get_wegent_mcp_url
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 logger = setup_logger("claude_code_config_manager")
@@ -272,13 +273,13 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     return {}
 
 
-def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
+def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
     Collects all non-None configuration parameters from task_data.
 
     Args:
-        task_data: The task data dictionary
+        task_data: The task data object
 
     Returns:
         Dict containing valid Claude Code options
@@ -317,10 +318,12 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
         "include_partial_messages": True,  # Enable streaming output for real-time text updates
     }
 
-    bots = task_data.get("bot", [])
+    bots = task_data.bot
     bot_config = bots[0] if bots else {}
 
     if bot_config:
+        # Create a shallow copy of bot_config to avoid modifying the original
+        bot_config = bot_config.copy()
         # Extract MCP servers configuration
         mcp_servers = extract_mcp_servers_config(bot_config)
         if mcp_servers:
@@ -331,7 +334,7 @@ def extract_claude_options(task_data: Dict[str, Any]) -> Dict[str, Any]:
             bot_config["mcp_servers"] = mcp_servers
 
         # Add wegent MCP server for subscription tasks
-        if task_data.get("is_subscription"):
+        if task_data.is_subscription:
             wegent_mcp_url = get_wegent_mcp_url()
             wegent_mcp = {
                 "wegent": {

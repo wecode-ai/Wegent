@@ -2,21 +2,28 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import os
 
 import yaml
 from jinja2 import Environment, FileSystemLoader
-from shared.telemetry.config import get_otel_config
 
 from executor_manager.config.config import EXECUTOR_ENV
-from executor_manager.wecode.config.config import (EXECUTOR_CUSTOM_CONFIG,
-                                                   REPO_PROXY_CONFIG)
+from executor_manager.wecode.config.config import (
+    EXECUTOR_CUSTOM_CONFIG,
+    REPO_PROXY_CONFIG,
+)
 from executor_manager.wecode.executors.k8s.binary_extractor import (
-    get_init_container_config, should_use_init_container)
+    get_init_container_config,
+    should_use_init_container,
+)
+from shared.models.openai_converter import get_metadata_field
+from shared.telemetry.config import get_otel_config
 
-executor_manager_host = os.getenv("EXECUTOR_MANAGER_URL", "http://wegent-executor-manager-web.wb-plat-ide:8080")
+executor_manager_host = os.getenv(
+    "EXECUTOR_MANAGER_URL", "http://wegent-executor-manager-web.wb-plat-ide:8080"
+)
 callback_url = executor_manager_host + "/executor-manager/callback"
+
 
 def to_nice_yaml(value, indent=2):
     """
@@ -57,7 +64,8 @@ def build_pod_configuration(
     template = env.get_template("pod_template.yaml")
 
     repo_proxy_config = {}
-    if "github.com" in task.get("git_domain", ""):
+    git_domain = get_metadata_field(task, "git_domain", "")
+    if "github.com" in git_domain:
         repo_proxy_config = REPO_PROXY_CONFIG
 
     volumes_info = build_pod_volumes(task)
@@ -67,11 +75,11 @@ def build_pod_configuration(
     use_init_container = should_use_init_container(base_image)
 
     # Check task type for sandbox/subagent support
-    task_type = task.get("type", "online")
+    task_type = get_metadata_field(task, "type", "online")
     is_sandbox = task_type == "sandbox"
 
     # Get sandbox metadata for e2b protocol support
-    sandbox_metadata = task.get("sandbox_metadata", {})
+    sandbox_metadata = get_metadata_field(task, "sandbox_metadata", {})
     sandbox_id = sandbox_metadata.get("sandbox_id")
 
     # Compute heartbeat ID and type for OOM detection
@@ -125,11 +133,10 @@ def build_pod_configuration(
         "username": username,
         "executor_name": executor_name,
         "namespace": namespace,
-        "task_str": json.dumps(task),
         "image": container_image,
-        "auth_token": task.get("auth_token"),
+        "auth_token": get_metadata_field(task, "auth_token"),
         "task_id": task_id,
-        "task_type": task.get("type", "online"),
+        "task_type": get_metadata_field(task, "type", "online"),
         "mode": mode,
         "executor_env": EXECUTOR_ENV,
         "repo_proxy_config": repo_proxy_config,
@@ -185,7 +192,7 @@ def _get_base_image_from_task(task):
     Returns:
         Optional[str]: base_image if found, None otherwise
     """
-    bots = task.get("bot", [])
+    bots = get_metadata_field(task, "bot", [])
     if bots and isinstance(bots, list) and len(bots) > 0:
         # Use the first bot's base_image if available
         first_bot = bots[0]
@@ -204,9 +211,9 @@ def build_pod_volumes(task):
     Returns:
         dict: Volume mounts and volumes configuration
     """
-    user_info = task.get("user", {})
-    user_name = user_info.get("name", "").replace("_", "--")
-    git_domain = user_info.get("git_domain", "")
+    user_info = get_metadata_field(task, "user", {})
+    user_name = (user_info.get("name") or "").replace("_", "--")
+    git_domain = user_info.get("git_domain") or ""
 
     # Supported Git domains
     supported_domains = [

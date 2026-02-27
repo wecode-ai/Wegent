@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("claude_code_attachment_handler")
 
@@ -29,7 +30,7 @@ class AttachmentProcessResult:
 
 
 def download_attachments(
-    task_data: Dict[str, Any],
+    task_data: ExecutionRequest,
     task_id: int,
     subtask_id: int,
     prompt: str,
@@ -40,7 +41,7 @@ def download_attachments(
     to a local directory, and updates the prompt to reference the local paths.
 
     Args:
-        task_data: Task data dictionary containing attachments and auth_token
+        task_data: Task data object containing attachments and auth_token
         task_id: Task ID
         subtask_id: Subtask ID
         prompt: Original prompt to modify
@@ -48,7 +49,7 @@ def download_attachments(
     Returns:
         AttachmentProcessResult with modified prompt and image content blocks
     """
-    attachments = task_data.get("attachments", [])
+    attachments = task_data.attachments
     if not attachments:
         logger.debug("No attachments to download for this task")
         return AttachmentProcessResult(
@@ -61,7 +62,7 @@ def download_attachments(
     logger.info(f"Found {len(attachments)} attachments to download")
 
     # Get auth token for API calls
-    auth_token = task_data.get("auth_token")
+    auth_token = task_data.auth_token
     if not auth_token:
         logger.warning("No auth token available, cannot download attachments")
         return AttachmentProcessResult(

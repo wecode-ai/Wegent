@@ -93,7 +93,7 @@ async def process_response(
                 # Also detect SDK interrupt messages (user cancelled via SDK)
                 if task_state_manager:
                     task_id = (
-                        state_manager.task_data.get("task_id")
+                        getattr(state_manager.task_data, "task_id", None)
                         if state_manager
                         else None
                     )
@@ -170,7 +170,7 @@ async def process_response(
 
                         # Save the Claude session ID for future resume
                         task_id = (
-                            state_manager.task_data.get("task_id")
+                            getattr(state_manager.task_data, "task_id", None)
                             if state_manager
                             else None
                         )
@@ -227,7 +227,7 @@ async def process_response(
         # When client is interrupted/terminated, it raises an exception
         # We should check task state before treating it as a failure
         if task_state_manager and state_manager:
-            task_id = state_manager.task_data.get("task_id")
+            task_id = getattr(state_manager.task_data, "task_id", None)
             if task_id and task_state_manager.is_cancelled(task_id):
                 logger.info(
                     f"Exception due to user cancellation for task {task_id}, "
@@ -284,7 +284,9 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
     # Save Claude session ID from init message for future resume
     # This ensures session can be resumed even if task is cancelled early
     if msg.subtype == "init" and "session_id" in msg.data:
-        task_id = state_manager.task_data.get("task_id") if state_manager else None
+        task_id = (
+            getattr(state_manager.task_data, "task_id", None) if state_manager else None
+        )
         if task_id:
             try:
                 from executor.agents.claude_code.session_manager import SessionManager
@@ -375,7 +377,7 @@ async def _handle_user_message(
                 # Check if this is SDK interruption text block
                 if "[Request interrupted by user for tool use]" in block.text:
                     logger.info(
-                        f"Skipping SDK interruption text block for task {state_manager.task_data.get('task_id') if state_manager else 'unknown'}"
+                        f"Skipping SDK interruption text block for task {getattr(state_manager.task_data, 'task_id', None) if state_manager else 'unknown'}"
                     )
                     saw_sdk_interrupt_messages = (
                         True  # Mark that we saw interrupt messages
@@ -393,7 +395,7 @@ async def _handle_user_message(
                 if block.is_error and "Request interrupted" in str(block.content):
                     # This is expected on resume - skip this error block
                     logger.info(
-                        f"Skipping SDK interrupt error on resume for task {state_manager.task_data.get('task_id') if state_manager else 'unknown'}"
+                        f"Skipping SDK interrupt error on resume for task {getattr(state_manager.task_data, 'task_id', None) if state_manager else 'unknown'}"
                     )
                     saw_sdk_interrupt_messages = (
                         True  # Mark that we saw interrupt messages
@@ -885,7 +887,9 @@ async def _process_result_message(
     # If it's a successful result message, send the result back via emitter
     if msg.subtype == "success" and not msg.is_error:
         # Get task info from state_manager
-        task_id = state_manager.task_data.get("task_id", -1) if state_manager else -1
+        task_id = (
+            getattr(state_manager.task_data, "task_id", -1) if state_manager else -1
+        )
 
         # Ensure result is string type
         result_str = str(msg.result) if msg.result is not None else "No result"
@@ -1063,7 +1067,7 @@ async def _process_result_message(
         is_resuming_from_interruption = saw_sdk_interrupt_messages
 
         if not is_resuming_from_interruption and task_state_manager and state_manager:
-            task_id = state_manager.task_data.get("task_id")
+            task_id = getattr(state_manager.task_data, "task_id", None)
             if task_id:
                 from executor.tasks.task_state_manager import TaskState
 
@@ -1081,7 +1085,7 @@ async def _process_result_message(
             # Return SUCCESS to indicate initialization can continue
             # The actual new message will be processed in execute phase
             if state_manager:
-                task_id = state_manager.task_data.get("task_id")
+                task_id = getattr(state_manager.task_data, "task_id", None)
             logger.info(
                 f"Ignoring error_during_execution on resume for task {task_id}, returning SUCCESS"
             )

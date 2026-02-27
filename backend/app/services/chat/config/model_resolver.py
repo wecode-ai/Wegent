@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
@@ -44,16 +45,17 @@ def resolve_env_placeholder(value: str) -> str:
 
     def replace_env(match):
         env_var = match.group(1)
-        env_value = os.environ.get(env_var, "")
-        if env_value:
+        env_value = os.environ.get(env_var)
+        if env_value is not None:
             logger.info(
                 f"[model_resolver] Resolved env var ${{{env_var}}} to value (length={len(env_value)})"
             )
+            return env_value
         else:
             logger.warning(
-                f"[model_resolver] Env var ${{{env_var}}} not found or empty"
+                f"[model_resolver] Env var ${{{env_var}}} not found, keeping placeholder"
             )
-        return env_value
+            return match.group(0)  # Return original placeholder unchanged
 
     return re.sub(pattern, replace_env, value)
 
@@ -226,7 +228,7 @@ def _process_model_config_placeholders(
     user_id: int,
     user_name: str,
     agent_config: Optional[Dict[str, Any]] = None,
-    task_data: Optional[Dict[str, Any]] = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> Dict[str, Any]:
     """
     Process placeholders in model_config (api_key and default_headers).
@@ -239,7 +241,7 @@ def _process_model_config_placeholders(
         user_id: Current user's ID
         user_name: Current user's username
         agent_config: Optional agent config from bot (for chat mode)
-        task_data: Optional task data (for chat mode)
+        task_data: Optional[ExecutionRequest] containing task-specific data (for chat mode)
 
     Returns:
         Model config with placeholders replaced in api_key and default_headers
@@ -251,9 +253,18 @@ def _process_model_config_placeholders(
         "user_name": user_name or "",
     }
 
-    # Build task_data with user info if not provided
+    # Build task_data dict for data_sources
     # This ensures ${task_data.user.name} placeholders work even without full task context
-    effective_task_data = task_data or {}
+    if task_data is not None:
+        if isinstance(task_data, dict):
+            effective_task_data = task_data
+        elif hasattr(task_data, "to_dict") and callable(task_data.to_dict):
+            effective_task_data = task_data.to_dict()
+        else:
+            effective_task_data = {}
+    else:
+        effective_task_data = {}
+
     if "user" not in effective_task_data:
         effective_task_data = {**effective_task_data, "user": user_info}
 
@@ -271,11 +282,11 @@ def _process_model_config_placeholders(
     api_key = model_config.get("api_key", "")
     if api_key and "${" in api_key:
         processed_api_key = replace_placeholders_with_sources(api_key, data_sources)
-        model_config["api_key"] = processed_api_key
-        logger.info(
-            f"[model_resolver] Processed api_key placeholder, "
-            f"has_value={bool(processed_api_key)}"
-        )
+        if processed_api_key:
+            model_config["api_key"] = processed_api_key
+            logger.debug(
+                f"[model_resolver] Processed api_key placeholder, from: {api_key} "
+            )
 
     # Process DEFAULT_HEADERS with placeholder replacement
     raw_default_headers = model_config.get("default_headers", {})
@@ -294,7 +305,7 @@ def extract_and_process_model_config(
     user_id: int,
     user_name: str,
     agent_config: Optional[Dict[str, Any]] = None,
-    task_data: Optional[Dict[str, Any]] = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> Dict[str, Any]:
     """
     Extract model configuration from spec and process all placeholders.
@@ -309,7 +320,8 @@ def extract_and_process_model_config(
         user_id: Current user's ID
         user_name: Current user's username
         agent_config: Optional agent config from bot (for chat mode)
-        task_data: Optional task data (for chat mode)
+        task_data: Optional[ExecutionRequest] containing task-specific data
+            used for placeholder substitution (e.g., ${task_data.user.name})
 
     Returns:
         Dict with fully processed model configuration:
@@ -630,7 +642,6 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     model_type = env.get("model", "openai")
 
     # Resolve environment variable placeholders in api_key
-    # This handles cases like api_key="${WECODE_API_KEY}"
     if api_key and "${" in api_key:
         logger.info(
             f"[model_resolver] api_key contains placeholder, resolving from env..."

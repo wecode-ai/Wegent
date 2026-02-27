@@ -21,7 +21,6 @@ from kubernetes.client.rest import ApiException
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
     DEFAULT_API_ENDPOINT,
-    DEFAULT_PROGRESS_COMPLETE,
 )
 from executor_manager.utils.executor_name import generate_executor_name
 from executor_manager.wecode.config.config import (
@@ -47,6 +46,10 @@ _thread_local = threading.local()
 # Global lock for configuration loading
 _config_lock = threading.Lock()
 _config_loaded = False
+
+
+class PodCompletedError(RuntimeError):
+    """Raised when an executor pod has already completed and must be recreated."""
 
 
 def _ensure_k8s_config_loaded() -> bool:
@@ -139,6 +142,20 @@ class K8sExecutor(Executor):
             return None
         return client.CoreV1Api(api_client)
 
+    def _extract_task_info(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract basic task metadata from unified task payload."""
+        task_id = get_metadata_field(task, "task_id", "-1")
+        subtask_id = get_metadata_field(task, "subtask_id", "-1")
+        user_config = get_metadata_field(task, "user", {})
+        user_name = user_config.get("name", "unknown") if user_config else "unknown"
+        executor_name = get_metadata_field(task, "executor_name")
+        return {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "user_name": user_name,
+            "executor_name": executor_name,
+        }
+
     def submit_executor(
         self,
         task: Union[Dict[str, Any], ExecutionRequest],
@@ -156,13 +173,11 @@ class K8sExecutor(Executor):
         """
         # Convert ExecutionRequest to dict for internal processing
         task_dict = task.to_dict() if isinstance(task, ExecutionRequest) else task
+        task_info = self._extract_task_info(task_dict)
 
-        image = get_metadata_field(task_dict, "executor_image", EXECUTOR_DEFAULT_MAGE)
-        task_id = get_metadata_field(task_dict, "task_id", "-1")
-        subtask_id = get_metadata_field(task_dict, "subtask_id", "-1")
-
-        user_config = get_metadata_field(task_dict, "user", {})
-        user_name = user_config.get("name", "unknown") if user_config else "unknown"
+        task_id = task_info["task_id"]
+        subtask_id = task_info["subtask_id"]
+        user_name = task_info["user_name"]
 
         # Check task type for special handling
         task_type = get_metadata_field(task_dict, "type")
@@ -175,12 +190,10 @@ class K8sExecutor(Executor):
         error_msg = ""
         callback_status = TaskStatus.RUNNING.value
 
-        # Initialize executor_name to None - will be set later if needed
-        executor_name = None
-        should_create_new_pod = not get_metadata_field(task_dict, "executor_name")
+        executor_name = task_info["executor_name"]
+        should_create_new_pod = not executor_name
 
-        if get_metadata_field(task_dict, "executor_name"):
-            executor_name = get_metadata_field(task_dict, "executor_name")
+        if executor_name:
             result = self._submit_to_existing_executor(
                 task=task_dict,
                 executor_name=executor_name,
@@ -215,65 +228,35 @@ class K8sExecutor(Executor):
                     )
                     callback_status = TaskStatus.FAILED.value
                 else:
-                    # Check if warm pool is enabled for sandbox tasks
-                    if WARMPOOL_ENABLED and is_sandbox_task:
-                        # Create pod from warm pool
-                        pod_result = self._create_pod_from_warmpool(
-                            task=task_dict,
-                            executor_name=executor_name,
-                            user_name=user_name,
-                            task_id=task_id,
-                            subtask_id=subtask_id,
-                        )
-                    else:
-                        # Extract base_image from bot configuration (if available)
-                        base_image = self._get_base_image_from_task(task_dict)
+                    task_info["executor_name"] = executor_name
+                    self.create_instance(task_dict, task_info, executor_name)
 
-                        # Log base_image usage
-                        if base_image:
-                            logger.info(
-                                f"Using custom base image: {base_image} with InitContainer pattern"
+                    # Non-sandbox tasks must be explicitly dispatched after pod ready.
+                    if not is_sandbox_task:
+                        try:
+                            ready_info = self.wait_instance_ready(executor_name)
+                            dispatch_result = self.dispatch_task_to_instance(
+                                task_dict, executor_name, ready_info
                             )
+                            error_msg = dispatch_result.get("error_msg", "")
+                        except Exception:
+                            # Avoid leaking idle pod when initial dispatch fails.
+                            try:
+                                self.delete_executor(executor_name)
+                            except Exception as cleanup_error:
+                                logger.warning(
+                                    f"Failed to cleanup pod {executor_name} after "
+                                    f"initial dispatch failure: {cleanup_error}"
+                                )
+                            raise
 
-                        # Need to mount the internal git_token to the pod via secret
-                        pod = build_pod_configuration(
-                            user_name,
-                            executor_name,
-                            K8S_NAMESPACE,
-                            task_dict,
-                            image,
-                            task_id,
-                            get_metadata_field(task_dict, "mode", "default"),
-                        )
-                        pod_result = self._submit_kubernetes_pod(
-                            pod, K8S_NAMESPACE, executor_name, task_id
-                        )
-
-                    if pod_result and pod_result.get("status") == "success":
-                        # Register regular tasks to RunningTaskTracker for heartbeat monitoring
-                        # This enables OOM detection for non-sandbox tasks
-                        self.register_task_for_heartbeat(
-                            task_id=task_id,
-                            subtask_id=subtask_id,
-                            executor_name=executor_name,
-                            task_type=get_metadata_field(task_dict, "type", "online"),
-                        )
-                    elif not pod_result or pod_result.get("status") != "success":
-                        logger.error(
-                            f"Kubernetes pod creation failed for task {task_id}: {pod_result.get('error_msg', '')}"
-                        )
-                        status = "failed"
-                        progress = 100
-                        error_msg = pod_result.get(
-                            "error_msg", "Kubernetes pod creation failed"
-                        )
-                        callback_status = TaskStatus.FAILED.value
-
-                        # For validation tasks, report failure
-                        if is_validation_task:
-                            self._report_validation_failure(
-                                task, "starting_container", error_msg
-                            )
+                    # Register regular tasks to RunningTaskTracker for heartbeat monitoring.
+                    self.register_task_for_heartbeat(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        executor_name=executor_name,
+                        task_type=get_metadata_field(task_dict, "type", "online"),
+                    )
             except ApiException as e:
                 logger.error(
                     f"Kubernetes API error creating pod for task {task_id}: {e}"
@@ -289,7 +272,9 @@ class K8sExecutor(Executor):
                         task, "starting_container", error_msg
                     )
             except Exception as e:
-                logger.error(f"Error creating Kubernetes pod for task {task_id}: {e}")
+                logger.exception(
+                    f"Error creating Kubernetes pod for task {task_id}: {e}"
+                )
                 status = "failed"
                 progress = 100
                 error_msg = f"Error: {e}"
@@ -349,8 +334,8 @@ class K8sExecutor(Executor):
         """
         Submit task to an existing executor pod.
 
-        Validates pod status before sending the task. If pod is not running
-        or has no IP, returns an error indicating the executor needs to be recreated.
+        Checks whether pod should be recreated, then executes unified
+        ready -> dispatch flow for running pods.
 
         Args:
             task: Task information
@@ -375,7 +360,6 @@ class K8sExecutor(Executor):
 
         pod = pod_list[0]
         pod_name = pod.get("name")
-        ip = pod.get("ip")
         pod_status = pod.get("status")
 
         # If pod is Succeeded (completed), delete it and signal to create new pod
@@ -392,61 +376,260 @@ class K8sExecutor(Executor):
                 "callback_status": TaskStatus.RUNNING.value,
             }
 
-        # Check if pod is in Running state
-        if pod_status != "Running":
-            logger.warning(
-                f"Pod {executor_name} exists but is not running (status: {pod_status})"
+        try:
+            ready_info = self.wait_instance_ready(executor_name)
+            dispatch_result = self.dispatch_task_to_instance(
+                task, executor_name, ready_info
             )
+        except PodCompletedError:
+            # Pod may complete between status query and dispatch.
+            self.delete_executor(pod_name)
             return {
-                "status": "failed",
-                "progress": 100,
-                "error_msg": "Executor is deleted. Please create a new session.",
-                "callback_status": TaskStatus.FAILED.value,
-            }
-
-        if not ip:
-            logger.warning(f"Pod {executor_name} has no IP address")
-            return {
-                "status": "failed",
-                "progress": 100,
-                "error_msg": "Executor is deleted. Please create a new session.",
-                "callback_status": TaskStatus.FAILED.value,
-            }
-
-        # Send task to the running pod
-        response = self._send_task_to_container(task=task, host=ip, port=8080)
-
-        if response.status_code == 200:
-            # Task sent successfully, register for heartbeat monitoring
-            self.register_task_for_heartbeat(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                executor_name=executor_name,
-                task_type=get_metadata_field(task, "type", "online"),
-                context=f"existing executor: {executor_name}",
-            )
-            return {
-                "status": "success",
+                "status": "pod_completed",
                 "progress": 30,
                 "error_msg": "",
                 "callback_status": TaskStatus.RUNNING.value,
             }
-        else:
-            error_msg = response.json().get("error_msg", "Request failed")
+        except Exception as e:
             return {
                 "status": "failed",
                 "progress": 100,
-                "error_msg": error_msg,
+                "error_msg": str(e),
                 "callback_status": TaskStatus.FAILED.value,
             }
 
+        # Task sent successfully, register for heartbeat monitoring
+        self.register_task_for_heartbeat(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            executor_name=executor_name,
+            task_type=get_metadata_field(task, "type", "online"),
+            context=f"existing executor: {executor_name}",
+        )
+        return {
+            "status": "success",
+            "progress": 30,
+            "error_msg": dispatch_result.get("error_msg", ""),
+            "callback_status": TaskStatus.RUNNING.value,
+        }
+
     def _send_task_to_container(
-        self, task: Dict[str, Any], host: str, port: int
+        self,
+        task: Dict[str, Any],
+        host: str,
+        port: int,
+        timeout: Optional[float] = None,
     ) -> requests.Response:
-        """Send task to container API endpoint"""
+        """Send task to runtime API endpoint."""
         endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
         logger.info(f"Sending task to {endpoint}")
-        return self.requests.post(endpoint, json=task)
+        request_kwargs = {}
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        return self.requests.post(endpoint, json=task, **request_kwargs)
+
+    def create_instance(
+        self, task: Dict[str, Any], task_info: Dict[str, Any], executor_name: str
+    ) -> None:
+        """Create a new Kubernetes runtime pod (or warm-pool sandbox)."""
+        task_id = task_info["task_id"]
+        user_name = task_info["user_name"]
+        image = get_metadata_field(task, "executor_image", EXECUTOR_DEFAULT_MAGE)
+        is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
+
+        # Check if warm pool is enabled for sandbox tasks.
+        if WARMPOOL_ENABLED and is_sandbox_task:
+            pod_result = self._create_pod_from_warmpool(
+                task=task,
+                executor_name=executor_name,
+                user_name=user_name,
+                task_id=task_id,
+                subtask_id=task_info["subtask_id"],
+            )
+        else:
+            base_image = self._get_base_image_from_task(task)
+            if base_image:
+                logger.info(
+                    f"Using custom base image: {base_image} with InitContainer pattern"
+                )
+
+            pod = build_pod_configuration(
+                user_name,
+                executor_name,
+                K8S_NAMESPACE,
+                task,
+                image,
+                task_id,
+                get_metadata_field(task, "mode", "default"),
+            )
+            pod_result = self._submit_kubernetes_pod(
+                pod, K8S_NAMESPACE, executor_name, task_id
+            )
+
+        if not pod_result or pod_result.get("status") != "success":
+            error_msg = (
+                pod_result.get("error_msg", "Kubernetes pod creation failed")
+                if pod_result
+                else "Kubernetes pod creation failed"
+            )
+            raise RuntimeError(error_msg)
+
+    def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
+        """Wait until Kubernetes pod is running and HTTP endpoint is available."""
+        max_retries = max(
+            int(
+                os.getenv(
+                    "EXECUTOR_READY_MAX_RETRIES",
+                    os.getenv("SANDBOX_READY_MAX_RETRIES", "180"),
+                )
+            ),
+            1,
+        )
+        retry_interval = max(
+            float(
+                os.getenv(
+                    "EXECUTOR_READY_INTERVAL",
+                    os.getenv("SANDBOX_READY_INTERVAL", "1"),
+                )
+            ),
+            0.0,
+        )
+        success_threshold = max(
+            int(os.getenv("EXECUTOR_READY_SUCCESS_THRESHOLD", "1")),
+            1,
+        )
+
+        success_count = 0
+        last_error = "pod not ready"
+
+        for attempt in range(1, max_retries + 1):
+            pod_result = self.get_pods_by_executor_name(executor_name)
+            pods = pod_result.get("pods", [])
+
+            if pod_result.get("status") != "success":
+                success_count = 0
+                last_error = pod_result.get("error_msg", "failed to list pod status")
+            elif not pods:
+                success_count = 0
+                last_error = "pod does not exist"
+            else:
+                pod = pods[0]
+                pod_status = pod.get("status")
+                host = pod.get("ip")
+
+                if pod_status == "Succeeded":
+                    raise PodCompletedError(
+                        f"Pod {executor_name} already completed before dispatch"
+                    )
+                if pod_status != "Running":
+                    success_count = 0
+                    last_error = f"pod status is '{pod_status}'"
+                elif not host:
+                    success_count = 0
+                    last_error = "pod has no IP address"
+                elif self._is_instance_http_ready(host, 8080):
+                    success_count += 1
+                    if success_count >= success_threshold:
+                        logger.info(
+                            f"Pod ready: {executor_name}, host={host}, "
+                            f"attempt={attempt}/{max_retries}"
+                        )
+                        return {"host": host, "port": 8080}
+                else:
+                    success_count = 0
+                    last_error = "http health probe failed"
+
+            logger.debug(
+                f"Waiting pod ready {attempt}/{max_retries} for {executor_name}: "
+                f"{last_error}"
+            )
+            if attempt < max_retries and retry_interval > 0:
+                time.sleep(retry_interval)
+
+        raise RuntimeError(f"Pod {executor_name} failed to become ready: {last_error}")
+
+    def dispatch_task_to_instance(
+        self,
+        task: Dict[str, Any],
+        executor_name: str,
+        ready_info: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Dispatch first task payload to a ready Kubernetes pod."""
+        host = ready_info.get("host")
+        port = ready_info.get("port", 8080)
+        if not host:
+            raise RuntimeError(f"Ready info for {executor_name} does not contain host")
+        return self._dispatch_initial_task_to_instance(task, executor_name, host, port)
+
+    def _is_instance_http_ready(self, host: str, port: int) -> bool:
+        """Check runtime HTTP readiness via /ready then fallback /."""
+        timeout = float(os.getenv("EXECUTOR_READY_HTTP_TIMEOUT", "2"))
+        endpoints = ["/ready", "/"]
+        for path in endpoints:
+            url = f"http://{host}:{port}{path}"
+            try:
+                response = self.requests.get(url, timeout=timeout)
+                if response.status_code < 500:
+                    return True
+            except requests.RequestException:
+                continue
+        return False
+
+    def _dispatch_initial_task_to_instance(
+        self, task: Dict[str, Any], executor_name: str, host: str, port: int
+    ) -> Dict[str, Any]:
+        """Dispatch first task request with retries and timeout controls."""
+        max_retries = max(
+            int(os.getenv("EXECUTOR_INITIAL_DISPATCH_MAX_RETRIES", "3")),
+            1,
+        )
+        retry_interval = max(
+            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_RETRY_INTERVAL", "1")),
+            0.0,
+        )
+        request_timeout = max(
+            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
+            0.1,
+        )
+        last_error = "unknown error"
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self._send_task_to_container(
+                    task,
+                    host,
+                    port,
+                    timeout=request_timeout,
+                )
+                if response.status_code == 200:
+                    error_msg = ""
+                    try:
+                        error_msg = response.json().get("error_msg", "")
+                    except Exception:
+                        error_msg = ""
+                    logger.info(
+                        f"Initial task dispatched successfully to {executor_name} "
+                        f"(attempt {attempt}/{max_retries})"
+                    )
+                    return {"status": "success", "error_msg": error_msg}
+
+                response_text = getattr(response, "text", "") or ""
+                last_error = (
+                    f"status={response.status_code}, response={response_text[:500]}"
+                )
+            except requests.RequestException as e:
+                last_error = str(e)
+
+            logger.warning(
+                f"Initial task dispatch attempt {attempt}/{max_retries} failed for "
+                f"{executor_name}: {last_error}"
+            )
+            if attempt < max_retries and retry_interval > 0:
+                time.sleep(retry_interval)
+
+        raise RuntimeError(
+            f"Failed to dispatch initial task to pod {executor_name}: {last_error}"
+        )
 
     def _submit_kubernetes_pod(self, pod, namespace, pod_name, task_id):
         """

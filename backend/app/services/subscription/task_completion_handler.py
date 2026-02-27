@@ -177,11 +177,12 @@ class SubscriptionTaskCompletionHandler:
         Returns:
             Result summary string or None
         """
-        if event.result and isinstance(event.result, dict):
-            value = event.result.get("value")
-            if value and isinstance(value, str):
-                return value[:1000]  # Limit to 1000 chars
-        return None
+        if not event.result or not isinstance(event.result, dict):
+            return None
+
+        from app.services.subscription.helpers import extract_result_summary
+
+        return extract_result_summary(event.result)
 
     def _map_status(self, event_status: str) -> BackgroundExecutionStatus:
         """Map event status to BackgroundExecutionStatus.

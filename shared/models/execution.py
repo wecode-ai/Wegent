@@ -17,7 +17,7 @@ Design principles:
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from dacite import Config, from_dict
 
@@ -80,7 +80,10 @@ class ExecutionRequest:
 
     # === Prompt ===
     system_prompt: str = ""
-    prompt: str = ""  # User message
+    # User message - can be string or OpenAI Responses API format content list
+    # When vision content is present, this will be a list of content blocks:
+    # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
+    prompt: Union[str, list[dict[str, Any]]] = ""
 
     # === Feature Toggles ===
     enable_tools: bool = True
@@ -148,8 +151,6 @@ class ExecutionRequest:
     is_subscription: bool = False
     system_mcp_config: Optional[dict] = None
 
-    # === Task Data (from ChatRequest) ===
-    task_data: Optional[dict] = None  # Task data for MCP tools
     extra_tools: list = field(default_factory=list)  # Extra tools to add
     timezone: str = "Asia/Shanghai"  # User timezone for CreateSubscriptionTool
 
@@ -186,6 +187,11 @@ class ExecutionRequest:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict - automatically serializes all fields."""
         return asdict(self)
+
+    @property
+    def task_token(self) -> str:
+        """Alias for auth_token, used by MCP configs as ${{task_token}}."""
+        return self.auth_token
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionRequest":

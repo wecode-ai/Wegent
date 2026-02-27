@@ -39,6 +39,7 @@ class TopicService:
         description: Optional[str] = None,
         visibility: str = TopicVisibility.PRIVATE,
         grading_team_id: Optional[int] = None,
+        instructions: Optional[str] = None,
     ) -> EvalTopic:
         """
         Create a new topic.
@@ -50,6 +51,7 @@ class TopicService:
             description: Topic description
             visibility: 'public' or 'private'
             grading_team_id: Optional team ID for AI grading
+            instructions: Optional exam instructions in Markdown format
 
         Returns:
             Created topic
@@ -57,6 +59,8 @@ class TopicService:
         extra_data = {}
         if description:
             extra_data["description"] = description
+        if instructions:
+            extra_data["instructions"] = instructions
 
         grading_config = {}
         if grading_team_id:
@@ -186,6 +190,7 @@ class TopicService:
         description: Optional[str] = None,
         visibility: Optional[str] = None,
         grading_team_id: Optional[int] = None,
+        instructions: Optional[str] = None,
     ) -> EvalTopic:
         """
         Update a topic.
@@ -197,6 +202,7 @@ class TopicService:
             description: New description (optional)
             visibility: New visibility (optional)
             grading_team_id: New grading team ID (optional)
+            instructions: New exam instructions (optional)
 
         Returns:
             Updated topic
@@ -204,10 +210,15 @@ class TopicService:
         if name:
             topic.name = name
 
-        if description is not None:
-            if not topic.extra_data:
-                topic.extra_data = {}
-            topic.extra_data["description"] = description
+        # Handle extra_data updates (description, instructions)
+        # Reassign the entire dict for SQLAlchemy JSON column mutation detection
+        if description is not None or instructions is not None:
+            extra_data = dict(topic.extra_data) if topic.extra_data else {}
+            if description is not None:
+                extra_data["description"] = description
+            if instructions is not None:
+                extra_data["instructions"] = instructions
+            topic.extra_data = extra_data
 
         if visibility:
             topic.visibility = visibility
