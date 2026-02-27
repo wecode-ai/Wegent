@@ -21,7 +21,9 @@ from app.models.share_link import PermissionLevel, ResourceType, ShareLink
 from app.models.user import User
 from app.schemas.share import (
     KBShareInfoResponse,
-    MemberRole as SchemaMemberRole,
+)
+from app.schemas.share import MemberRole as SchemaMemberRole
+from app.schemas.share import (
     MyKBPermissionResponse,
     PendingRequestInfo,
 )
@@ -260,12 +262,27 @@ class KnowledgeShareService(UnifiedShareService):
                 # Map group role to permission level
                 # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view
                 role_mapping = {
-                    "Owner": (ResourceRole.MAINTAINER.value, PermissionLevel.MANAGE.value),
-                    "Maintainer": (ResourceRole.MAINTAINER.value, PermissionLevel.MANAGE.value),
-                    "Developer": (ResourceRole.DEVELOPER.value, PermissionLevel.EDIT.value),
-                    "Reporter": (ResourceRole.REPORTER.value, PermissionLevel.VIEW.value),
+                    "Owner": (
+                        ResourceRole.MAINTAINER.value,
+                        PermissionLevel.MANAGE.value,
+                    ),
+                    "Maintainer": (
+                        ResourceRole.MAINTAINER.value,
+                        PermissionLevel.MANAGE.value,
+                    ),
+                    "Developer": (
+                        ResourceRole.DEVELOPER.value,
+                        PermissionLevel.EDIT.value,
+                    ),
+                    "Reporter": (
+                        ResourceRole.REPORTER.value,
+                        PermissionLevel.VIEW.value,
+                    ),
                 }
-                role, perm_level = role_mapping.get(group_role, (ResourceRole.REPORTER.value, PermissionLevel.VIEW.value))
+                role, perm_level = role_mapping.get(
+                    group_role,
+                    (ResourceRole.REPORTER.value, PermissionLevel.VIEW.value),
+                )
                 return True, role, perm_level, False
 
         return False, None, None, False
@@ -277,12 +294,15 @@ class KnowledgeShareService(UnifiedShareService):
         user_id: int,
     ) -> bool:
         """Check if user can manage permissions for a knowledge base."""
-        has_access, role, level, is_creator = self.get_user_kb_permission(
+        has_access, role, is_creator = self.get_user_kb_permission(
             db, knowledge_base_id, user_id
-        )
+        )[:3]
         if is_creator:
             return True
-        return has_access and role in (ResourceRole.OWNER.value, ResourceRole.MAINTAINER.value)
+        return has_access and role in (
+            ResourceRole.OWNER.value,
+            ResourceRole.MAINTAINER.value,
+        )
 
     def get_my_permission(
         self,
@@ -374,20 +394,35 @@ class KnowledgeShareService(UnifiedShareService):
             team_role = get_effective_role_in_group(db, user_id, kb.namespace)
             if team_role is not None:
                 role_mapping = {
-                    "Owner": (SchemaMemberRole.MAINTAINER, SchemaPermissionLevel.MANAGE),
-                    "Maintainer": (SchemaMemberRole.MAINTAINER, SchemaPermissionLevel.MANAGE),
-                    "Developer": (SchemaMemberRole.DEVELOPER, SchemaPermissionLevel.EDIT),
+                    "Owner": (
+                        SchemaMemberRole.MAINTAINER,
+                        SchemaPermissionLevel.MANAGE,
+                    ),
+                    "Maintainer": (
+                        SchemaMemberRole.MAINTAINER,
+                        SchemaPermissionLevel.MANAGE,
+                    ),
+                    "Developer": (
+                        SchemaMemberRole.DEVELOPER,
+                        SchemaPermissionLevel.EDIT,
+                    ),
                     "Reporter": (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
                 }
-                group_role, group_level = role_mapping.get(team_role, (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW))
+                group_role, group_level = role_mapping.get(
+                    team_role, (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW)
+                )
 
         # Determine final access level (higher of explicit vs group)
         if has_explicit_access and group_level:
             # Take the higher permission
             explicit_priority = self.get_permission_priority(explicit_level.value)
             group_priority = self.get_permission_priority(group_level.value)
-            final_role = explicit_role if explicit_priority >= group_priority else group_role
-            final_level = explicit_level if explicit_priority >= group_priority else group_level
+            final_role = (
+                explicit_role if explicit_priority >= group_priority else group_role
+            )
+            final_level = (
+                explicit_level if explicit_priority >= group_priority else group_level
+            )
             return MyKBPermissionResponse(
                 has_access=True,
                 role=final_role,
@@ -564,7 +599,7 @@ class KnowledgeShareService(UnifiedShareService):
         creator_name = creator.user_name if creator else f"User {kb.user_id}"
 
         # Get default_role from the model, fallback to mapping from default_permission_level
-        default_role = getattr(share_link, 'default_role', None)
+        default_role = getattr(share_link, "default_role", None)
         if not default_role:
             role_mapping = {
                 PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
@@ -572,8 +607,7 @@ class KnowledgeShareService(UnifiedShareService):
                 PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
             }
             default_role = role_mapping.get(
-                share_link.default_permission_level.lower(),
-                ResourceRole.REPORTER.value
+                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
             )
 
         return {

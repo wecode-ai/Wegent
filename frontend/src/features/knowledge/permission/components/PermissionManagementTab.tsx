@@ -56,7 +56,8 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
         const additions: Record<number, MemberRole> = {}
         permissions.pending.forEach(p => {
           if (!(p.id in prev)) {
-            additions[p.id] = p.role
+            // Use role if available, otherwise fallback to permission_level
+            additions[p.id] = p.role || 'Reporter'
           }
         })
         return Object.keys(additions).length ? { ...prev, ...additions } : prev
@@ -70,16 +71,8 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
 
   const handleApprove = async (permission: PendingPermissionInfo) => {
     try {
-      const role = approvalRoles[permission.id] || permission.role
+      const role = approvalRoles[permission.id] || permission.role || 'Reporter'
       await reviewPermission(permission.id, 'approve', role)
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
-
-  const handleReject = async (permission: PendingPermissionInfo) => {
-    try {
-      await reviewPermission(permission.id, 'reject')
     } catch (_err) {
       // Error is handled by the hook
     }
@@ -105,7 +98,15 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
 
   const startEditing = (permission: PermissionUserInfo) => {
     setEditingId(permission.id)
-    setEditingRole(permission.role)
+    setEditingRole(permission.role || 'Reporter')
+  }
+
+  const handleReject = async (permission: PendingPermissionInfo) => {
+    try {
+      await reviewPermission(permission.id, 'reject')
+    } catch (_err) {
+      // Error is handled by the hook
+    }
   }
 
   const cancelEditing = () => {
@@ -181,12 +182,14 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                   </div>
                   <div className="text-xs text-text-muted mt-1">
                     {t('document.permission.requesting')}:{' '}
-                    {t(`document.permission.role.${permission.role}`)}
+                    {permission.role
+                      ? t(`document.permission.role.${permission.role}`)
+                      : permission.permission_level || 'view'}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Select
-                    value={approvalRoles[permission.id] || permission.role}
+                    value={approvalRoles[permission.id] || permission.role || 'Reporter'}
                     onValueChange={value =>
                       handleApprovalRoleChange(permission.id, value as MemberRole)
                     }

@@ -396,9 +396,9 @@ export interface PermissionReviewRequest {
 export interface PermissionReviewResponse {
   id: number
   user_id: number
-  role: MemberRole
+  role: MemberRole | null
   /** @deprecated Use role instead */
-  permission_level: PermissionLevel
+  permission_level: PermissionLevel | null
   status: PermissionStatus
   reviewed_at: string
   message: string

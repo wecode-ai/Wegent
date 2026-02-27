@@ -65,33 +65,39 @@ def upgrade() -> None:
         )
 
     # 2. Migrate data from permission_level to role
-    # permission_level = 'view'/'VIEW' -> role = 'Reporter'
-    op.execute(
-        """
-        UPDATE resource_members
-        SET role = 'Reporter'
-        WHERE role = '' AND LOWER(permission_level) = 'view'
-        """
-    )
+    # Only run if table and columns exist
+    if (
+        table_exists(conn, "resource_members")
+        and column_exists(conn, "resource_members", "role")
+        and column_exists(conn, "resource_members", "permission_level")
+    ):
+        # permission_level = 'view'/'VIEW' -> role = 'Reporter'
+        op.execute(
+            """
+            UPDATE resource_members
+            SET role = 'Reporter'
+            WHERE role = '' AND LOWER(permission_level) = 'view'
+            """
+        )
 
-    # permission_level = 'edit'/'EDIT' -> role = 'Developer'
-    op.execute(
-        """
-        UPDATE resource_members
-        SET role = 'Developer'
-        WHERE role = '' AND LOWER(permission_level) = 'edit'
-        """
-    )
+        # permission_level = 'edit'/'EDIT' -> role = 'Developer'
+        op.execute(
+            """
+            UPDATE resource_members
+            SET role = 'Developer'
+            WHERE role = '' AND LOWER(permission_level) = 'edit'
+            """
+        )
 
-    # permission_level = 'manage'/'MANAGE' -> role = 'Maintainer'
-    # Note: Owner is not set via migration, only creator can be Owner
-    op.execute(
-        """
-        UPDATE resource_members
-        SET role = 'Maintainer'
-        WHERE role = '' AND LOWER(permission_level) = 'manage'
-        """
-    )
+        # permission_level = 'manage'/'MANAGE' -> role = 'Maintainer'
+        # Note: Owner is not set via migration, only creator can be Owner
+        op.execute(
+            """
+            UPDATE resource_members
+            SET role = 'Maintainer'
+            WHERE role = '' AND LOWER(permission_level) = 'manage'
+            """
+        )
 
     # 3. Update share_links table - add default_role column and migrate
     if table_exists(conn, "share_links") and not column_exists(
@@ -109,27 +115,33 @@ def upgrade() -> None:
         )
 
     # Migrate share_links default_permission_level to default_role
-    op.execute(
-        """
-        UPDATE share_links
-        SET default_role = 'Reporter'
-        WHERE LOWER(default_permission_level) = 'view'
-        """
-    )
-    op.execute(
-        """
-        UPDATE share_links
-        SET default_role = 'Developer'
-        WHERE LOWER(default_permission_level) = 'edit'
-        """
-    )
-    op.execute(
-        """
-        UPDATE share_links
-        SET default_role = 'Maintainer'
-        WHERE LOWER(default_permission_level) = 'manage'
-        """
-    )
+    # Only run if table and columns exist
+    if (
+        table_exists(conn, "share_links")
+        and column_exists(conn, "share_links", "default_role")
+        and column_exists(conn, "share_links", "default_permission_level")
+    ):
+        op.execute(
+            """
+            UPDATE share_links
+            SET default_role = 'Reporter'
+            WHERE LOWER(default_permission_level) = 'view'
+            """
+        )
+        op.execute(
+            """
+            UPDATE share_links
+            SET default_role = 'Developer'
+            WHERE LOWER(default_permission_level) = 'edit'
+            """
+        )
+        op.execute(
+            """
+            UPDATE share_links
+            SET default_role = 'Maintainer'
+            WHERE LOWER(default_permission_level) = 'manage'
+            """
+        )
 
 
 def downgrade() -> None:

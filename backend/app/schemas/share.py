@@ -41,6 +41,22 @@ class MemberRole(str, Enum):
     REPORTER = "Reporter"
 
 
+class MemberRoleNoOwner(str, Enum):
+    """Member role for resource access control (excluding Owner).
+
+    Used in request schemas where Owner cannot be assigned via API.
+    Owner role is reserved for the resource creator only.
+
+    - Maintainer: Can manage members, has manage permission
+    - Developer: Can edit content, has edit permission
+    - Reporter: Can only view, has view permission
+    """
+
+    MAINTAINER = "Maintainer"
+    DEVELOPER = "Developer"
+    REPORTER = "Reporter"
+
+
 # =============================================================================
 # Share Link Schemas
 # =============================================================================
@@ -133,13 +149,18 @@ class ResourceMemberCreate(BaseModel):
     """Request body for adding a member directly."""
 
     user_id: int = Field(description="User ID to add as member")
-    role: MemberRole = Field(default=MemberRole.REPORTER, description="Member role")
+    role: MemberRoleNoOwner = Field(
+        default=MemberRoleNoOwner.REPORTER,
+        description="Member role (Owner not allowed)",
+    )
 
 
 class ResourceMemberUpdate(BaseModel):
     """Request body for updating member permissions."""
 
-    role: Optional[MemberRole] = Field(default=None, description="New member role")
+    role: Optional[MemberRoleNoOwner] = Field(
+        default=None, description="New member role (Owner not allowed)"
+    )
 
 
 class ResourceMemberResponse(BaseModel):
@@ -207,8 +228,8 @@ class JoinByLinkRequest(BaseModel):
     """Request body for joining via share link."""
 
     share_token: str = Field(description="Share token from URL")
-    requested_role: Optional[MemberRole] = Field(
-        default=None, description="Requested role (optional)"
+    requested_role: Optional[MemberRoleNoOwner] = Field(
+        default=None, description="Requested role (optional, Owner not allowed)"
     )
 
 
@@ -255,9 +276,9 @@ class ReviewRequestBody(BaseModel):
     """Request body for reviewing a join request."""
 
     approved: bool = Field(description="Whether to approve the request")
-    role: Optional[MemberRole] = Field(
+    role: Optional[MemberRoleNoOwner] = Field(
         default=None,
-        description="Role to grant (only for approval, defaults to requested role)",
+        description="Role to grant (only for approval, defaults to requested role, Owner not allowed)",
     )
 
 
