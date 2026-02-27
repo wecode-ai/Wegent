@@ -84,6 +84,9 @@ class ExecutionRequest:
     # When vision content is present, this will be a list of content blocks:
     # [{"type": "input_text", "text": "..."}, {"type": "input_image", "image_url": "data:..."}]
     prompt: Union[str, list[dict[str, Any]]] = ""
+    kb_meta_prompt: str = (
+        ""  # Knowledge base meta prompt (injected via dynamic_context mechanism)
+    )
 
     # === Feature Toggles ===
     enable_tools: bool = True
@@ -150,6 +153,9 @@ class ExecutionRequest:
     # === Subscription Task ===
     is_subscription: bool = False
     system_mcp_config: Optional[dict] = None
+
+    # === Task Data (from ChatRequest) ===
+    task_data: Optional[dict] = None  # Task data for MCP tools
 
     extra_tools: list = field(default_factory=list)  # Extra tools to add
     timezone: str = "Asia/Shanghai"  # User timezone for CreateSubscriptionTool
