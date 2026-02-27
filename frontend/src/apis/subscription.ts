@@ -306,8 +306,11 @@ export const subscriptionApis = {
   /**
    * Accept a subscription invitation
    */
-  async acceptInvitation(invitationId: number): Promise<{ message: string }> {
-    return apiClient.post(`/subscription-invitations/${invitationId}/accept`)
+  async acceptInvitation(
+    invitationId: number,
+    request?: { notification_level?: string; notification_channel_ids?: number[] }
+  ): Promise<{ message: string }> {
+    return apiClient.post(`/subscription-invitations/${invitationId}/accept`, request || {})
   },
 
   /**

@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, Loader2, Mail, X } from 'lucide-react'
+import { Loader2, Mail, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { subscriptionApis } from '@/apis/subscription'
 import type { SubscriptionInvitationResponse } from '@/types/subscription'
 import { paths } from '@/config/paths'
+import { AcceptWithNotificationDropdown } from './FollowWithNotificationDropdown'
 
 interface SubscriptionInvitationsProps {
   onInvitationHandled?: () => void
@@ -51,24 +52,14 @@ export function SubscriptionInvitations({ onInvitationHandled }: SubscriptionInv
     loadInvitations()
   }, [loadInvitations])
 
-  // Handle accept invitation
-  const handleAccept = useCallback(
-    async (invitationId: number) => {
-      try {
-        setProcessingId(invitationId)
-        await subscriptionApis.acceptInvitation(invitationId)
-        toast.success(t('invitation_accepted'))
-        // Remove from list
-        setInvitations(prev => prev.filter(inv => inv.id !== invitationId))
-        onInvitationHandled?.()
-      } catch (error) {
-        console.error('Failed to accept invitation:', error)
-        toast.error(t('invitation_accept_failed'))
-      } finally {
-        setProcessingId(null)
-      }
+  // Handle accept invitation success
+  const handleAcceptSuccess = useCallback(
+    (invitationId: number) => {
+      // Remove from list
+      setInvitations(prev => prev.filter(inv => inv.id !== invitationId))
+      onInvitationHandled?.()
     },
-    [t, onInvitationHandled]
+    [onInvitationHandled]
   )
 
   // Handle reject invitation
@@ -162,20 +153,11 @@ export function SubscriptionInvitations({ onInvitationHandled }: SubscriptionInv
                 </>
               )}
             </Button>
-            <Button
-              size="sm"
-              onClick={() => handleAccept(invitation.id)}
-              disabled={processingId === invitation.id}
-            >
-              {processingId === invitation.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  <Check className="h-4 w-4 mr-1" />
-                  {t('invitation_accept')}
-                </>
-              )}
-            </Button>
+            <AcceptWithNotificationDropdown
+              invitationId={invitation.id}
+              subscriptionId={invitation.subscription_id}
+              onSuccess={() => handleAcceptSuccess(invitation.id)}
+            />
           </div>
         </div>
       ))}

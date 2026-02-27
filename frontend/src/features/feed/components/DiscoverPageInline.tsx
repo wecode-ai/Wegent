@@ -162,46 +162,43 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
     setSearch(searchInput)
   }, [searchInput])
 
-  // Handle follow
-  const handleFollow = useCallback(
-    async (subscriptionId: number) => {
-      await subscriptionApis.followSubscription(subscriptionId)
-      setFollowingIds(prev => new Set([...prev, subscriptionId]))
-      // Update followers count in list
-      setSubscriptions(prev =>
-        prev.map(sub =>
-          sub.id === subscriptionId
-            ? { ...sub, followers_count: sub.followers_count + 1, is_following: true }
-            : sub
+  // Handle follow state change
+  const handleFollowChange = useCallback(
+    (subscriptionId: number, isFollowing: boolean) => {
+      if (isFollowing) {
+        setFollowingIds(prev => new Set([...prev, subscriptionId]))
+        // Update followers count in list
+        setSubscriptions(prev =>
+          prev.map(sub =>
+            sub.id === subscriptionId
+              ? { ...sub, followers_count: sub.followers_count + 1, is_following: true }
+              : sub
+          )
         )
-      )
-      // Notify parent to refresh executions
-      onInvitationHandled?.()
+        // Notify parent to refresh executions
+        onInvitationHandled?.()
+      } else {
+        setFollowingIds(prev => {
+          const next = new Set(prev)
+          next.delete(subscriptionId)
+          return next
+        })
+        // Update followers count in list
+        setSubscriptions(prev =>
+          prev.map(sub =>
+            sub.id === subscriptionId
+              ? {
+                  ...sub,
+                  followers_count: Math.max(0, sub.followers_count - 1),
+                  is_following: false,
+                }
+              : sub
+          )
+        )
+      }
     },
     [onInvitationHandled]
   )
-
-  // Handle unfollow
-  const handleUnfollow = useCallback(async (subscriptionId: number) => {
-    await subscriptionApis.unfollowSubscription(subscriptionId)
-    setFollowingIds(prev => {
-      const next = new Set(prev)
-      next.delete(subscriptionId)
-      return next
-    })
-    // Update followers count in list
-    setSubscriptions(prev =>
-      prev.map(sub =>
-        sub.id === subscriptionId
-          ? {
-              ...sub,
-              followers_count: Math.max(0, sub.followers_count - 1),
-              is_following: false,
-            }
-          : sub
-      )
-    )
-  }, [])
 
   // Load more
   const handleLoadMore = useCallback(() => {
@@ -285,8 +282,7 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
                       subscription={subscription}
                       latestExecution={executionHistory[subscription.id]}
                       isFollowing={followingIds.has(subscription.id)}
-                      onFollow={handleFollow}
-                      onUnfollow={handleUnfollow}
+                      onFollowChange={handleFollowChange}
                       onClick={handleCardClick}
                     />
                   ))}
