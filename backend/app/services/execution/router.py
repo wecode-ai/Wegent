@@ -117,7 +117,9 @@ class ExecutionRouter:
         user_id = request.user.get("id") if request.user else None
 
         # Priority 0: Protocol-based routing (e.g., gemini-deep-research)
-        protocol = request.model_config.get("protocol") if request.model_config else None
+        protocol = (
+            request.model_config.get("protocol") if request.model_config else None
+        )
         if protocol == "gemini-deep-research" and not device_id:
             return ExecutionTarget(
                 mode=CommunicationMode.POLLING,
