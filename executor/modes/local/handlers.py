@@ -11,6 +11,7 @@ This module implements handlers for events received from the Backend server.
 from typing import TYPE_CHECKING, Any, Dict
 
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 if TYPE_CHECKING:
     from executor.modes.local.runner import LocalRunner
@@ -50,8 +51,9 @@ class TaskHandler:
             f"Received task dispatch: task_id={task_id}, subtask_id={subtask_id}"
         )
 
-        # Enqueue task for execution
-        await self.runner.enqueue_task(data)
+        # Convert dict to ExecutionRequest and enqueue
+        execution_request = ExecutionRequest.from_dict(data)
+        await self.runner.enqueue_task(execution_request)
 
     async def handle_task_cancel(self, data: Dict[str, Any]) -> None:
         """Handle task cancel event from Backend.
