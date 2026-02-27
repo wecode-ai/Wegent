@@ -26,7 +26,10 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { calculateOpenLinks } from '@/utils/openLinks'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
-import { useIsToolDetailOpen, ToolDetailProvider } from '@/features/tasks/components/message/thinking/contexts/ToolDetailContext'
+import {
+  useIsToolDetailOpen,
+  ToolDetailProvider,
+} from '@/features/tasks/components/message/thinking/contexts/ToolDetailContext'
 import { ToolDetailPanel } from '@/features/tasks/components/message/thinking/components/ToolDetailPanel'
 import { Workbench } from '@/features/tasks/components'
 import { ChatArea } from '@/features/tasks/components/chat'

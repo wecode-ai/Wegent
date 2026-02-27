@@ -27,6 +27,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
+import { ToolDetailProvider } from '@/features/tasks/components/message/thinking/contexts/ToolDetailContext'
 
 /**
  * Desktop-specific implementation of Chat Page
@@ -39,6 +40,14 @@ import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
  * @see ChatPageMobile.tsx for mobile implementation
  */
 export function ChatPageDesktop() {
+  return (
+    <ToolDetailProvider>
+      <ChatPageDesktopContent />
+    </ToolDetailProvider>
+  )
+}
+
+function ChatPageDesktopContent() {
   const { t } = useTranslation()
 
   // Team state from service

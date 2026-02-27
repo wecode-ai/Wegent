@@ -5,9 +5,17 @@
 'use client'
 
 import { memo, useMemo } from 'react'
-import { XMarkIcon } from '@heroicons/react/24/outline'
+import {
+  XMarkIcon,
+  BookOpenIcon,
+  CommandLineIcon,
+  PencilSquareIcon,
+  DocumentPlusIcon,
+  MagnifyingGlassIcon,
+  FolderIcon,
+} from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ToolStatus, ToolRendererProps } from '../types'
+import type { ToolRendererProps } from '../types'
 import { useToolDetail, ToolDetailPanelContentProvider } from '../contexts/ToolDetailContext'
 import { GenericToolRenderer } from './tools/GenericToolRenderer'
 import { BashToolRenderer } from './tools/BashToolRenderer'
@@ -20,21 +28,24 @@ import { TodoWriteToolRenderer } from './tools/TodoWriteToolRenderer'
 import { UploadToolRenderer } from './tools/UploadToolRenderer'
 
 /**
- * Get status icon component based on tool status
+ * Get icon for tool based on tool name
  */
-function getStatusIcon(status: ToolStatus) {
-  // Return icon emoji instead of Lucide component for consistency with Workbench
-  switch (status) {
-    case 'done':
-      return '✅'
-    case 'error':
-      return '⚠️'
-    case 'invoking':
-    case 'streaming':
-    case 'pending':
-      return '⏳'
+function getToolIcon(toolName: string): React.ComponentType<{ className?: string }> {
+  switch (toolName) {
+    case 'Bash':
+      return CommandLineIcon
+    case 'Read':
+      return BookOpenIcon
+    case 'Edit':
+      return PencilSquareIcon
+    case 'Write':
+      return DocumentPlusIcon
+    case 'Grep':
+      return MagnifyingGlassIcon
+    case 'Glob':
+      return FolderIcon
     default:
-      return '🔧'
+      return BookOpenIcon
   }
 }
 
@@ -176,8 +187,8 @@ export const ToolDetailPanel = memo(function ToolDetailPanel() {
   // Get tool display name
   const toolDisplayName = getToolDisplayName(selectedTool, t)
 
-  // Get status icon (emoji)
-  const statusIcon = getStatusIcon(selectedTool.status)
+  // Get tool icon component
+  const ToolIcon = getToolIcon(selectedTool.toolName)
 
   // Get specialized renderer
   const ToolRenderer = getToolRenderer(selectedTool.toolName)
@@ -193,9 +204,9 @@ export const ToolDetailPanel = memo(function ToolDetailPanel() {
         <nav className="border-b border-border bg-surface">
           <div className="mx-auto px-2 sm:px-3 lg:px-4">
             <div className="flex h-12 justify-between items-center">
-              {/* Title with status icon */}
+              {/* Title with tool icon */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-lg">{statusIcon}</span>
+                <ToolIcon className="h-5 w-5 text-text-secondary" />
                 <h3 className="text-sm font-medium text-text-primary truncate">{toolDisplayName}</h3>
               </div>
               {/* Close button - matches Workbench style */}

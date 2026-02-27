@@ -218,33 +218,66 @@ const MixedContentView = memo(function MixedContentView({
 
   return (
     <div className="space-y-3">
-      {mixedItems.map((item, index) => {
-        // Null check after filter
-        if (!item) {
-          return null
-        }
+      {(() => {
+        type MixedItem =
+          | { type: 'content'; content: string; blockId?: string }
+          | { type: 'tool'; tool: ToolPair; blockId?: string }
+        const groups: Array<{ type: 'content' | 'tools'; items: MixedItem[] }> = []
+        let currentGroup: { type: 'content' | 'tools'; items: MixedItem[] } | null = null
 
-        if (item.type === 'content') {
-          // Skip empty content or non-string content
-          if (!item.content || typeof item.content !== 'string' || !item.content.trim()) {
-            return null
+        mixedItems.forEach(item => {
+          if (!item) return
+
+          if (item.type === 'tool') {
+            // If current group is tools, add to it; otherwise create new tools group
+            if (currentGroup?.type === 'tools') {
+              currentGroup.items.push(item)
+            } else {
+              currentGroup = { type: 'tools', items: [item] }
+              groups.push(currentGroup)
+            }
+          } else if (item.type === 'content') {
+            // Content always creates a new group
+            currentGroup = { type: 'content', items: [item] }
+            groups.push(currentGroup)
           }
-          const key = 'blockId' in item ? item.blockId : `content-${index}`
-          const textContent =
-            annotations && annotations.length > 0
-              ? processCitePatterns(item.content, annotations)
-              : item.content
-          return (
-            <div key={key} className="text-sm">
-              <EnhancedMarkdown source={textContent} theme={theme} />
-            </div>
-          )
-        } else if (item.type === 'tool') {
-          const key = 'blockId' in item ? item.blockId : `tool-${item.tool.toolUseId}`
-          return <ToolBlock key={key} tool={item.tool} defaultExpanded={false} />
-        }
-        return null
-      })}
+        })
+
+        return groups.flatMap((group, groupIndex) => {
+          if (group.type === 'content') {
+            // Render content items
+            return group.items.map((item, index) => {
+              if (item.type !== 'content') return null
+              // Skip empty content or non-string content
+              if (!item.content || typeof item.content !== 'string' || !item.content.trim()) {
+                return null
+              }
+              const key = 'blockId' in item ? item.blockId : `content-${groupIndex}-${index}`
+              const textContent =
+                annotations && annotations.length > 0
+                  ? processCitePatterns(item.content, annotations)
+                  : item.content
+              return (
+                <div key={key} className="text-sm">
+                  <EnhancedMarkdown source={textContent} theme={theme} />
+                </div>
+              )
+            })
+          } else if (group.type === 'tools') {
+            // Render all consecutive tools in a single container with flex wrap
+            return (
+              <div key={`tools-${groupIndex}`} className="flex flex-wrap gap-2 -mt-1">
+                {group.items.map(item => {
+                  if (item.type !== 'tool') return null
+                  const key = 'blockId' in item ? item.blockId : `tool-${item.tool.toolUseId}`
+                  return <ToolBlock key={key} tool={item.tool} defaultExpanded={false} />
+                })}
+              </div>
+            )
+          }
+          return null
+        })
+      })()}
 
       {/* Show "Processing..." indicator when task is running and last block is complete */}
       {shouldShowProcessing && (
