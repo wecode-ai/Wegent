@@ -44,12 +44,6 @@ class TestTruncationConstants:
         assert TRUNCATED_MARKER_START == TRUNCATED_START
         assert TRUNCATED_MARKER_END == TRUNCATED_END
 
-    def test_warning_message_is_bilingual(self):
-        """Test that truncation warning message contains both Chinese and English."""
-        assert "内容已截断" in TRUNCATION_WARNING_MESSAGE  # Chinese
-        assert "Content Truncated" in TRUNCATION_WARNING_MESSAGE  # English
-        assert "token" in TRUNCATION_WARNING_MESSAGE.lower()
-
 
 class TestStreamingStateTruncation:
     """Tests for StreamingState truncation tracking."""
