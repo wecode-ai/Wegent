@@ -718,6 +718,7 @@
     "restart_channel": "重启连接",
     "types": {
       "dingtalk": "钉钉",
+      "dingtalk_group": "钉钉群机器人",
       "feishu": "飞书",
       "telegram": "Telegram",
       "not_supported": "暂不支持"
@@ -742,6 +743,13 @@
       "bot_token": "Bot Token",
       "bot_token_placeholder": "请输入 Telegram Bot Token",
       "bot_token_edit_placeholder": "请输入新的 Bot Token（留空保持不变）",
+      "webhook_url": "Webhook URL",
+      "webhook_url_placeholder": "请输入钉钉群机器人 Webhook URL",
+      "webhook_url_edit_placeholder": "请输入新的 Webhook URL（留空保持不变）",
+      "sign_secret": "签名密钥",
+      "sign_secret_placeholder": "请输入签名密钥（可选）",
+      "sign_secret_edit_placeholder": "请输入新的签名密钥（留空保持不变）",
+      "sign_secret_description": "可选。配置后将使用 HMAC-SHA256 签名验证",
       "leave_empty_to_keep": "留空保持不变",
       "default_team": "默认智能体",
       "default_team_placeholder": "选择默认智能体",
@@ -784,6 +792,7 @@
       "name_required": "渠道名称不能为空",
       "config_required": "Client ID 和 Client Secret 不能为空",
       "bot_token_required": "Bot Token 不能为空",
+      "webhook_url_required": "Webhook URL 不能为空",
       "team_required": "必须选择一个默认智能体",
       "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
       "target_user_required": "使用指定用户模式时必须选择一个目标用户"

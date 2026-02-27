@@ -553,6 +553,12 @@ class SubscriptionNotificationService:
             if not spec.get("isEnabled", True):
                 continue
 
+            channel_type = spec.get("channelType", "unknown")
+            # dingtalk_group channels don't require user binding - they send directly to webhook
+            is_bound = (
+                channel_type == "dingtalk_group" or str(channel.id) in user_bindings
+            )
+
             channel_info = NotificationChannelInfo(
                 id=channel.id,
                 name=(
@@ -560,8 +566,8 @@ class SubscriptionNotificationService:
                     if channel.json
                     else channel.name
                 ),
-                channel_type=spec.get("channelType", "unknown"),
-                is_bound=str(channel.id) in user_bindings,
+                channel_type=channel_type,
+                is_bound=is_bound,
             )
             result.append(channel_info)
 
@@ -605,6 +611,12 @@ class SubscriptionNotificationService:
         for channel in channels:
             # Get spec from json field for Messager kind
             spec = channel.json.get("spec", {}) if channel.json else {}
+            channel_type = spec.get("channelType", "unknown")
+            # dingtalk_group channels don't require user binding - they send directly to webhook
+            is_bound = (
+                channel_type == "dingtalk_group" or str(channel.id) in user_bindings
+            )
+
             channel_info = NotificationChannelInfo(
                 id=channel.id,
                 name=(
@@ -612,8 +624,8 @@ class SubscriptionNotificationService:
                     if channel.json
                     else channel.name
                 ),
-                channel_type=spec.get("channelType", "unknown"),
-                is_bound=str(channel.id) in user_bindings,
+                channel_type=channel_type,
+                is_bound=is_bound,
             )
             result.append(channel_info)
 
