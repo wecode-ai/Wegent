@@ -238,8 +238,14 @@ class ChatContext:
         from chat_shell.history import get_chat_history
 
         # Use user_message_id to exclude current user message (and all messages after it)
-        # Fall back to message_id if user_message_id is not provided
-        exclude_message_id = self._request.user_message_id or self._request.message_id
+        # If user_message_id is not provided, infer it from message_id:
+        # message_id is assistant_subtask.message_id, user message is message_id - 1
+        if self._request.user_message_id:
+            exclude_message_id = self._request.user_message_id
+        elif self._request.message_id and self._request.message_id > 1:
+            exclude_message_id = self._request.message_id - 1
+        else:
+            exclude_message_id = None
 
         # Get history_limit from request (used by subscription tasks)
         history_limit = getattr(self._request, "history_limit", None)
