@@ -500,9 +500,16 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
         {/* Security hints */}
         <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
           <span className="text-blue-600 shrink-0">💡</span>
-          <p className="text-sm text-blue-700">
-            {isWindows ? t('windows_security_hint') : t('gatekeeper_hint')}
-          </p>
+          {isWindows ? (
+            <div className="text-sm text-blue-700 space-y-1.5">
+              <p>{t('windows_security_hint')}</p>
+              <p>{t('windows_prerequisite_hint')}</p>
+              <p>{t('windows_execution_policy_hint')}</p>
+              <p>{t('windows_restart_hint')}</p>
+            </div>
+          ) : (
+            <p className="text-sm text-blue-700">{t('gatekeeper_hint')}</p>
+          )}
         </div>
 
         {/* Beta warning */}

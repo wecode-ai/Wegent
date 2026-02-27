@@ -34,11 +34,18 @@
   "windows_step_execute": "Execute Installation",
   "windows_step_execute_desc": "Run the install script to complete Executor installation and startup",
   "windows_security_hint": "Windows may block running unknown scripts, please run PowerShell as Administrator",
+  "windows_prerequisite_hint": "Please install Node.js and Git first. Restart PowerShell after installation for environment variables to take effect",
+  "windows_execution_policy_hint": "If script execution is restricted, run first: Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned",
+  "windows_restart_hint": "After machine restart, simply re-run: .\\device_install-and-run-wegent.ps1 -AuthToken \"wg-xxxxx\" -SkipIfExists",
   "gatekeeper_hint": "macOS may block running unknown apps, please allow in System Settings",
   "view_config": "View Configuration",
   "beta_warning": "This feature is in beta. Running on personal devices carries risks, please use with caution",
   "plugins_title": "Plugins (Optional)",
   "plugins_description": "Install plugins to extend Agent capabilities",
   "plugin_browser_name": "Browser Plugin",
-  "plugin_browser_description": "Enable Agent to control browsers for web automation"
+  "plugin_browser_description": "Enable Agent to control browsers for web automation",
+  "vnc_title": "Desktop",
+  "vnc_loading": "Loading desktop...",
+  "vnc_error": "Failed to load desktop viewer",
+  "vnc_close": "Close desktop panel"
 }
