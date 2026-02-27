@@ -44,8 +44,8 @@ class WeiboMCPProvider(MCPProviderPlugin):
         """Return provider configuration"""
         return MCPProviderConfig(
             key="weibo",
-            name="内部 MCP",
-            name_en="Inner MCP",
+            name="微博MCP平台",
+            name_en="Weibo MCP Provider",
             description="微博内部 MCP 服务，使用当前用户身份获取可用 MCP Server",
             discover_url="http://mcp.intra.weibo.com",
             api_key_url="http://mcp.intra.weibo.com",
