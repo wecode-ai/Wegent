@@ -10,7 +10,7 @@ This migration:
 3. Updates permission_level comment to indicate deprecation
 
 Revision ID: a7b8c9d0e1f2
-Revises: h8i9j0k1l2m3
+Revises: z6a7b8c9d0e1
 Create Date: 2025-02-25
 
 Migration rules:
@@ -22,23 +22,24 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.engine import Connection
 
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a7b8c9d0e1f2"
-down_revision: Union[str, Sequence[str], None] = "h8i9j0k1l2m3"
+down_revision: Union[str, Sequence[str], None] = "z6a7b8c9d0e1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def table_exists(conn, table_name: str) -> bool:
+def table_exists(conn: Connection, table_name: str) -> bool:
     """Check if a table exists using SQLAlchemy Inspector (DB-agnostic)."""
     inspector = inspect(conn)
     return table_name in inspector.get_table_names()
 
 
-def column_exists(conn, table_name: str, column_name: str) -> bool:
+def column_exists(conn: Connection, table_name: str, column_name: str) -> bool:
     """Check if a column exists in a table."""
     inspector = inspect(conn)
     columns = inspector.get_columns(table_name)
@@ -100,6 +101,7 @@ def upgrade() -> None:
         )
 
     # 3. Update share_links table - add default_role column and migrate
+    # First add column with empty default to allow backfill based on permission_level
     if table_exists(conn, "share_links") and not column_exists(
         conn, "share_links", "default_role"
     ):
@@ -109,7 +111,7 @@ def upgrade() -> None:
                 "default_role",
                 sa.String(20),
                 nullable=False,
-                server_default="Reporter",
+                server_default="",
                 comment="Default role for joiners: Owner, Maintainer, Developer, Reporter",
             ),
         )
@@ -125,7 +127,7 @@ def upgrade() -> None:
             """
             UPDATE share_links
             SET default_role = 'Reporter'
-            WHERE (default_role IS NULL OR default_role = '')
+            WHERE default_role = ''
               AND LOWER(default_permission_level) = 'view'
             """
         )
@@ -133,7 +135,7 @@ def upgrade() -> None:
             """
             UPDATE share_links
             SET default_role = 'Developer'
-            WHERE (default_role IS NULL OR default_role = '')
+            WHERE default_role = ''
               AND LOWER(default_permission_level) = 'edit'
             """
         )
@@ -141,8 +143,28 @@ def upgrade() -> None:
             """
             UPDATE share_links
             SET default_role = 'Maintainer'
-            WHERE (default_role IS NULL OR default_role = '')
+            WHERE default_role = ''
               AND LOWER(default_permission_level) = 'manage'
+            """
+        )
+
+    # After backfill, set the stable server_default to 'Reporter' for new rows
+    # and update any remaining empty rows to 'Reporter' (fallback for unknown permission_level)
+    if table_exists(conn, "share_links") and column_exists(
+        conn, "share_links", "default_role"
+    ):
+        op.execute(
+            """
+            UPDATE share_links
+            SET default_role = 'Reporter'
+            WHERE default_role = ''
+            """
+        )
+        op.execute(
+            """
+            ALTER TABLE share_links
+            MODIFY COLUMN default_role VARCHAR(20) NOT NULL DEFAULT 'Reporter'
+            COMMENT 'Default role for joiners: Owner, Maintainer, Developer, Reporter'
             """
         )
 
