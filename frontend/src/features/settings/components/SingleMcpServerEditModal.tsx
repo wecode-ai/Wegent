@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -238,7 +239,7 @@ const SingleMcpServerEditModal: React.FC<SingleMcpServerEditModalProps> = ({
               <Label className="text-sm font-medium text-text-primary">
                 {t('common:bot.mcp_headers', 'Headers')} ({t('common:bot.optional', 'optional')})
               </Label>
-              <textarea
+              <Textarea
                 value={headers}
                 onChange={e => setHeaders(e.target.value)}
                 placeholder={t(
@@ -246,7 +247,7 @@ const SingleMcpServerEditModal: React.FC<SingleMcpServerEditModalProps> = ({
                   '{ "Authorization": "Bearer token" }'
                 )}
                 rows={3}
-                className="w-full px-3 py-2 bg-base border border-border rounded-md text-sm font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary resize-y"
+                className="text-sm font-mono resize-y"
               />
               <p className="text-xs text-text-muted">
                 {t('common:bot.mcp_headers_hint', 'JSON format')}

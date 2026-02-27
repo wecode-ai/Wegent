@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/apis/client'
 import { InformationCircleIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -204,7 +205,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               {t('common:bot.dify_api_key') || 'Dify API Key'}{' '}
               <span className="text-red-400">*</span>
             </Label>
-            <input
+            <Input
               id="dify-api-key"
               type="password"
               value={difyApiKey}
@@ -214,7 +215,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               }}
               disabled={readOnly}
               placeholder="app-xxxxxxxxxxxxxxxxxxxxxxxx"
-              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
             <p className="text-xs text-text-muted mt-1">
               {t('common:bot.dify_api_key_hint') ||
@@ -228,7 +229,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               {t('common:bot.dify_base_url') || 'Dify Base URL'}{' '}
               <span className="text-red-400">*</span>
             </Label>
-            <input
+            <Input
               id="dify-base-url"
               type="url"
               value={difyBaseUrl}
@@ -238,7 +239,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               }}
               disabled={readOnly}
               placeholder="https://api.dify.ai"
-              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
             <p className="text-xs text-text-muted mt-1">
               {t('common:bot.dify_base_url_hint') ||
@@ -353,7 +354,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                                 ))}
                               </select>
                             ) : field.type === 'text-input' || field.type === 'paragraph' ? (
-                              <textarea
+                              <Textarea
                                 id={`param-${field.variable}`}
                                 value={difyParams[field.variable] || ''}
                                 onChange={e => {
@@ -366,10 +367,10 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                                 disabled={readOnly}
                                 placeholder={field.label?.en || field.label?.['en-US'] || ''}
                                 rows={field.type === 'paragraph' ? 4 : 2}
-                                className={`w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm resize-none ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                                className={`text-sm resize-none ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                               />
                             ) : (
-                              <input
+                              <Input
                                 id={`param-${field.variable}`}
                                 type="text"
                                 value={difyParams[field.variable] || ''}
@@ -382,7 +383,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                                 }}
                                 disabled={readOnly}
                                 placeholder={field.label?.en || field.label?.['en-US'] || ''}
-                                className={`w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                                className={`text-sm ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                               />
                             )}
                           </div>
