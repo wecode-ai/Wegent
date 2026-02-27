@@ -107,6 +107,8 @@ export interface Subscription {
   last_execution_status?: string
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
   next_execution_time?: string
   execution_count: number
   success_count: number
@@ -154,6 +156,8 @@ export interface SubscriptionCreateRequest {
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
 }
 
 // Subscription update request
@@ -182,6 +186,8 @@ export interface SubscriptionUpdateRequest {
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
 }
 
 // Subscription list response

@@ -139,6 +139,7 @@ def build_subscription_crd(
     spec = SubscriptionSpec(
         displayName=subscription_in.display_name,
         taskType=subscription_in.task_type,
+        visibility=subscription_in.visibility,
         trigger=trigger,
         teamRef=SubscriptionTeamRef(name=team.name, namespace=team.namespace),
         workspaceRef=(

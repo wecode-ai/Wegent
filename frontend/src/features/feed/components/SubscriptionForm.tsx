@@ -42,7 +42,7 @@ import {
 import { subscriptionApis } from '@/apis/subscription'
 import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
-import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch, SearchUser } from '@/types/api'
 import type {
   NotificationChannelInfo,
   NotificationLevel,
@@ -59,6 +59,7 @@ import { CronSchedulePicker } from './CronSchedulePicker'
 import { KnowledgeBaseSelector } from './KnowledgeBaseSelector'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
+import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { cn, parseUTCDate } from '@/lib/utils'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 
@@ -294,6 +295,7 @@ export function SubscriptionForm({
   const [visibility, setVisibility] = useState<SubscriptionVisibility>(
     initialData?.visibility || 'private'
   ) // Visibility setting
+  const [marketWhitelistUsers, setMarketWhitelistUsers] = useState<SearchUser[]>([])
 
   // Knowledge base selection state
   const [knowledgeBaseRefs, setKnowledgeBaseRefs] = useState<SubscriptionKnowledgeBaseRef[]>([])
@@ -494,6 +496,12 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
+      setMarketWhitelistUsers(
+        (subscription.market_whitelist_user_ids || []).map(userId => ({
+          id: userId,
+          user_name: `ID: ${userId}`,
+        }))
+      )
       setKnowledgeBaseRefs(subscription.knowledge_base_refs || [])
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
@@ -531,6 +539,7 @@ export function SubscriptionForm({
       setEnabled(initialData?.enabled ?? true)
       setPreserveHistory(initialData?.preserveHistory ?? false)
       setVisibility(initialData?.visibility || 'private')
+      setMarketWhitelistUsers([])
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
@@ -595,6 +604,8 @@ export function SubscriptionForm({
 
     setSubmitting(true)
     try {
+      const marketWhitelistUserIds = Array.from(new Set(marketWhitelistUsers.map(user => user.id)))
+
       if (isEditing && subscription) {
         // For rental subscriptions, only update allowed fields (not team, prompt, visibility)
         const updateData: SubscriptionUpdateRequest = {
@@ -614,6 +625,7 @@ export function SubscriptionForm({
                 team_id: teamId ?? undefined,
                 prompt_template: promptTemplate,
                 visibility,
+                market_whitelist_user_ids: marketWhitelistUserIds,
               }),
           // Include git repo info if selected (only for non-rental)
           ...(!isRental &&
@@ -668,6 +680,7 @@ export function SubscriptionForm({
           enabled,
           preserve_history: preserveHistory,
           visibility,
+          market_whitelist_user_ids: marketWhitelistUserIds,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -706,6 +719,7 @@ export function SubscriptionForm({
     enabled,
     preserveHistory,
     visibility,
+    marketWhitelistUsers,
     selectedRepo,
     selectedBranch,
     selectedModel,
@@ -1205,6 +1219,19 @@ export function SubscriptionForm({
                   <p className="text-xs text-text-muted">
                     {visibility === 'market' ? t('visibility_market_hint') : t('visibility_hint')}
                   </p>
+                </div>
+              )}
+
+              {/* Market whitelist - only shown for market subscriptions */}
+              {!isRental && visibility === 'market' && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{t('market_whitelist')}</Label>
+                  <UserSearchSelect<SearchUser>
+                    selectedUsers={marketWhitelistUsers}
+                    onSelectedUsersChange={setMarketWhitelistUsers}
+                    placeholder={t('market_whitelist_search_placeholder')}
+                  />
+                  <p className="text-xs text-text-muted">{t('market_whitelist_hint')}</p>
                 </div>
               )}
 
