@@ -56,6 +56,16 @@ class DeviceRunningTask(BaseModel):
     created_at: Optional[str] = Field(None, description="Task creation timestamp")
 
 
+class CloudConfig(BaseModel):
+    """Cloud device configuration from Device CRD spec."""
+
+    sandboxId: str = Field(..., description="Cloud sandbox ID")
+    imageId: str = Field(..., description="Image ID used for VM creation")
+    createdAt: Optional[str] = Field(
+        None, description="Cloud device creation timestamp"
+    )
+
+
 class DeviceInfo(BaseModel):
     """Response schema for device information."""
 
@@ -92,6 +102,10 @@ class DeviceInfo(BaseModel):
     update_available: bool = Field(False, description="Whether an update is available")
     # Network information
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
+    # Cloud device specific config
+    cloud_config: Optional[CloudConfig] = Field(
+        None, description="Cloud device configuration (only for cloud devices)"
+    )
 
     class Config:
         from_attributes = True
