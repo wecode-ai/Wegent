@@ -68,10 +68,20 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
 # Detect if this is a source clone scenario
-# Check for both regular git clone (.git directory) and git submodule (.git file)
-IS_SOURCE_BUILD=0
-if [ -e ".git" ]; then
-    IS_SOURCE_BUILD=1
+# Check if WEGENT_SOURCE_BUILD is explicitly set, otherwise check git remote
+IS_SOURCE_BUILD="${WEGENT_SOURCE_BUILD:-}"
+
+if [ -z "$IS_SOURCE_BUILD" ]; then
+    # Check if we are in a git repository AND have the build configuration file
+    # This prevents false positives (e.g., running in ~) and supports forks/renamed repos
+    if git rev-parse --git-dir > /dev/null 2>&1 && [ -f "docker-compose.build.yml" ]; then
+        IS_SOURCE_BUILD=1
+    else
+        IS_SOURCE_BUILD=0
+    fi
+fi
+
+if [ "$IS_SOURCE_BUILD" = "1" ]; then
     echo -e "${GREEN}Detected Wegent source code (git clone).${NC}"
     echo -e "${YELLOW}Will build images from source code.${NC}"
 fi
