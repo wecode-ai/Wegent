@@ -599,7 +599,7 @@ class K8sExecutor(Executor):
             0.0,
         )
         request_timeout = max(
-            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "5")),
+            float(os.getenv("EXECUTOR_INITIAL_DISPATCH_TIMEOUT", "10")),
             0.1,
         )
         last_error = "unknown error"
