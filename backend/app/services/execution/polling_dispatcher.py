@@ -78,9 +78,7 @@ async def dispatch_polling(
     )
 
     model_config = request.model_config or {}
-    gemini_base_url = (
-        model_config.get("base_url") or DEFAULT_GEMINI_BASE_URL
-    )
+    gemini_base_url = model_config.get("base_url") or DEFAULT_GEMINI_BASE_URL
     agent = model_config.get("model_id", DEFAULT_DEEP_RESEARCH_AGENT)
 
     gemini_client = GeminiInteractionClient(
@@ -107,25 +105,20 @@ async def dispatch_polling(
                 agent=agent,
             )
         except GeminiInteractionError as e:
-            raise Exception(
-                f"Failed to create deep research job: {e}"
-            ) from e
+            raise Exception(f"Failed to create deep research job: {e}") from e
 
         job_id = result.get("id")
         if not job_id:
             raise Exception(f"No interaction id returned: {result}")
 
         logger.info(
-            f"[PollingDispatcher] Job created: job_id={job_id}, "
-            f"task_id={task_id}"
+            f"[PollingDispatcher] Job created: job_id={job_id}, " f"task_id={task_id}"
         )
 
         # Step 2: Poll for completion, emit thinking progress
         for poll_num in range(1, MAX_POLL_COUNT + 1):
             # Check cancellation
-            if cancel_event.is_set() or await session_manager.is_cancelled(
-                subtask_id
-            ):
+            if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
                 logger.info(
                     f"[PollingDispatcher] Cancelled: "
                     f"task_id={task_id}, subtask_id={subtask_id}"
@@ -144,28 +137,20 @@ async def dispatch_polling(
             try:
                 status_result = await gemini_client.get_interaction_status(job_id)
             except GeminiInteractionError:
-                logger.warning(
-                    f"[PollingDispatcher] Status check failed, retrying..."
-                )
+                logger.warning(f"[PollingDispatcher] Status check failed, retrying...")
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
             status = status_result.get("status", "in_progress")
 
             if status == "completed":
-                logger.info(
-                    f"[PollingDispatcher] Job completed: job_id={job_id}"
-                )
+                logger.info(f"[PollingDispatcher] Job completed: job_id={job_id}")
                 break
             elif status == "failed":
-                raise Exception(
-                    status_result.get("error", "Deep research job failed")
-                )
+                raise Exception(status_result.get("error", "Deep research job failed"))
 
             # Fetch thinking progress from stream
-            thinking_steps = await _fetch_thought_summaries(
-                gemini_client, job_id
-            )
+            thinking_steps = await _fetch_thought_summaries(gemini_client, job_id)
             if thinking_steps:
                 await emitter.emit(
                     ExecutionEvent(
@@ -199,9 +184,7 @@ async def dispatch_polling(
             )
         )
 
-        full_content, annotations = await _stream_final_report(
-            gemini_client, job_id
-        )
+        full_content, annotations = await _stream_final_report(gemini_client, job_id)
 
         if full_content:
             await emitter.emit(
@@ -274,7 +257,7 @@ async def _fetch_thought_summaries(
                         clean = text.strip()
                         for prefix in ("```json", "```"):
                             if clean.startswith(prefix):
-                                clean = clean[len(prefix):]
+                                clean = clean[len(prefix) :]
                         if clean.endswith("```"):
                             clean = clean[:-3]
                         clean = clean.strip()
@@ -283,9 +266,7 @@ async def _fetch_thought_summaries(
                             if isinstance(summaries, list):
                                 thought_summaries = [
                                     {
-                                        "title": item.get(
-                                            "title", "Research Progress"
-                                        ),
+                                        "title": item.get("title", "Research Progress"),
                                         "next_action": "continue",
                                         "details": {
                                             "type": "text",
