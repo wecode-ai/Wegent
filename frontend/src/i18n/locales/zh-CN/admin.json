@@ -129,7 +129,9 @@
     "namespace_label": "命名空间",
     "status": {
       "active": "启用",
-      "inactive": "禁用"
+      "inactive": "禁用",
+      "advanced": "高级",
+      "standard": "普通"
     },
     "columns": {
       "id": "ID",

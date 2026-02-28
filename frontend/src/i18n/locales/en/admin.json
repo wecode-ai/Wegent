@@ -129,7 +129,9 @@
     "namespace_label": "Namespace",
     "status": {
       "active": "Active",
-      "inactive": "Inactive"
+      "inactive": "Inactive",
+      "advanced": "Advanced",
+      "standard": "Standard"
     },
     "columns": {
       "id": "ID",
