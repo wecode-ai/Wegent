@@ -50,7 +50,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { getSocketUrl } from '@/lib/runtime-config'
@@ -543,19 +543,14 @@ function DeviceCard({
                     variant="default"
                     size="sm"
                     onClick={() => onStartTask(device.device_id)}
-                    disabled={device.status !== 'online' || device.slot_used >= device.slot_max}
+                    disabled={device.status !== 'online'}
                     className="flex items-center gap-2"
                   >
                     <Play className="w-4 h-4" />
-                    {device.slot_used >= device.slot_max ? t('slots_full') : t('start_task')}
+                    {t('start_task')}
                   </Button>
                 </div>
               </TooltipTrigger>
-              {device.slot_used >= device.slot_max && device.status === 'online' && (
-                <TooltipContent>
-                  <p className="text-sm">{t('slots_full_hint')}</p>
-                </TooltipContent>
-              )}
             </Tooltip>
           </TooltipProvider>
           <DropdownMenu>

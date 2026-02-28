@@ -153,7 +153,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
             device_type: 'local' as const,
             connection_mode: 'websocket' as const,
             slot_used: 0,
-            slot_max: 5,
+            slot_max: 0,
             running_tasks: [],
             executor_version: null,
             latest_version: null,
