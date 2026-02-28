@@ -15,6 +15,11 @@
     "create_success": "云设备创建成功，正在启动执行器...",
     "create_error": "云设备创建失败",
     "delete_success": "云设备已删除",
-    "delete_error": "删除云设备失败"
+    "delete_error": "删除云设备失败",
+    "mail_enable": "启用邮件功能",
+    "mail_email": "邮箱账号",
+    "mail_email_placeholder": "例如: zhangsan",
+    "mail_email_hint": "无需输入 @staff.sina.com.cn 后缀",
+    "mail_password": "邮箱密码"
   }
 }

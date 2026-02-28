@@ -44,15 +44,25 @@ export interface CloudDeviceConfig {
 }
 
 /**
+ * Request body for cloud device creation
+ */
+export interface CreateCloudDeviceRequest {
+  mail_email?: string
+  mail_password?: string
+}
+
+/**
  * Cloud device API services
  */
 export const cloudDeviceApis = {
   /**
    * Create a new cloud device via Nevis Sandbox API.
    * Creates a VM with pre-installed wegent-executor.
+   *
+   * @param body - Optional request body with mail configuration
    */
-  async createCloudDevice(): Promise<CloudDeviceResponse> {
-    return apiClient.post('/cloud-devices')
+  async createCloudDevice(body?: CreateCloudDeviceRequest): Promise<CloudDeviceResponse> {
+    return apiClient.post('/cloud-devices', body)
   },
 
   /**

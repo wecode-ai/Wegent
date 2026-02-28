@@ -23,6 +23,8 @@ def generate_cloud_init_script(
     auth_token: str,
     install_script_url: str = "",
     install_script_token: str = "",
+    mail_email: str = "",
+    mail_password: str = "",
 ) -> str:
     """Generate Base64 encoded cloud-init startup script.
 
@@ -37,6 +39,8 @@ def generate_cloud_init_script(
         auth_token: User's authentication token
         install_script_url: URL of the install script to download and execute.
         install_script_token: Private token for authenticated download.
+        mail_email: Optional mail account username for himalaya mail skill.
+        mail_password: Optional mail account password for himalaya mail skill.
 
     Returns:
         Base64 encoded script string for cloud-init user_data
@@ -47,6 +51,8 @@ def generate_cloud_init_script(
         auth_token,
         install_script_url,
         install_script_token,
+        mail_email,
+        mail_password,
     )
 
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
@@ -65,6 +71,8 @@ def generate_simple_startup_script(
     auth_token: str,
     install_script_url: str = "",
     install_script_token: str = "",
+    mail_email: str = "",
+    mail_password: str = "",
 ) -> str:
     """Generate Base64 encoded simple startup script (non-MIME format).
 
@@ -77,6 +85,8 @@ def generate_simple_startup_script(
         auth_token: User's authentication token
         install_script_url: URL of the install script to download and execute.
         install_script_token: Private token for authenticated download.
+        mail_email: Optional mail account username for himalaya mail skill.
+        mail_password: Optional mail account password for himalaya mail skill.
 
     Returns:
         Base64 encoded script string
@@ -87,6 +97,8 @@ def generate_simple_startup_script(
         auth_token,
         install_script_url,
         install_script_token,
+        mail_email,
+        mail_password,
     )
 
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
@@ -105,12 +117,23 @@ def _generate_user_data_script(
     auth_token: str,
     install_script_url: str = "",
     install_script_token: str = "",
+    mail_email: str = "",
+    mail_password: str = "",
 ) -> str:
     """Generate startup script (user_data) for cloud device.
 
     This script runs when the VM starts. It downloads and executes the
     shared install script (device_install-and-run-wegent.sh) as ubuntu user,
     passing the auth token and backend URL via environment variable.
+
+    Args:
+        user_name: User name for logging purposes
+        backend_url: Backend WebSocket URL for executor connection
+        auth_token: User's authentication token
+        install_script_url: URL of the install script to download and execute.
+        install_script_token: Private token for authenticated download.
+        mail_email: Optional mail account username for himalaya mail skill.
+        mail_password: Optional mail account password for himalaya mail skill.
     """
     # Build curl command for downloading the install script
     curl_parts = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "5"]
@@ -118,6 +141,11 @@ def _generate_user_data_script(
         curl_parts.append(f"-H 'PRIVATE-TOKEN: {install_script_token}'")
     curl_parts.append(f'"{install_script_url}"')
     curl_download_cmd = " ".join(curl_parts)
+
+    # Build install script arguments
+    install_args = f'-t "{auth_token}"'
+    if mail_email and mail_password:
+        install_args += f' -m -e "{mail_email}" -p "{mail_password}"'
 
     return f"""#!/bin/bash
 # ===============================
@@ -146,7 +174,7 @@ set -x
 export WEGENT_BACKEND_URL="{backend_url}"
 
 # Download and execute the shared install script
-{curl_download_cmd} | bash -s -- -t "{auth_token}"
+{curl_download_cmd} | bash -s -- {install_args}
 
 UBUNTU_SCRIPT
 
