@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
+import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import { PromptFineTuneDialog } from './prompt-fine-tune'
 
@@ -1339,29 +1340,19 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <Select
-                          value=""
-                          onValueChange={value => {
+                        <RichSkillSelector
+                          skills={availableSkills}
+                          selectedSkillNames={selectedSkills}
+                          onSelectSkill={(skillName: string) => {
                             if (readOnly) return
-                            if (value && !selectedSkills.includes(value)) {
-                              setSelectedSkills([...selectedSkills, value])
+                            if (skillName && !selectedSkills.includes(skillName)) {
+                              setSelectedSkills([...selectedSkills, skillName])
                             }
                           }}
+                          placeholder={t('common:skills.select_skill_to_add')}
                           disabled={readOnly}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder={t('common:skills.select_skill_to_add')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableSkills
-                              .filter(skill => !selectedSkills.includes(skill.name))
-                              .map(skill => (
-                                <SelectItem key={skill.name} value={skill.name}>
-                                  {skill.displayName || skill.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
+                          readOnly={readOnly}
+                        />
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
