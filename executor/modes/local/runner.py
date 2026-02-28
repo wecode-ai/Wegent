@@ -19,6 +19,7 @@ import asyncio
 import logging
 import os
 import signal
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -37,13 +38,22 @@ from shared.status import TaskStatus
 logger = setup_logger("local_runner")
 
 
+@dataclass
+class RunningTaskInfo:
+    """Tracks a concurrently running task."""
+
+    task_data: ExecutionRequest
+    agent: Optional[Any] = None
+    asyncio_task: Optional[asyncio.Task] = None
+
+
 class LocalRunner:
     """Main runner for local executor mode.
 
     Features:
     - WebSocket connection to Backend for bidirectional communication
     - Device-based registration with unique device_id
-    - Task queue for serial task execution (one task at a time)
+    - Task queue with parallel task execution
     - Heartbeat service for connection health monitoring
     - Graceful shutdown handling via SIGINT/SIGTERM
     """
@@ -66,16 +76,11 @@ class LocalRunner:
         # Event handlers
         self.task_handler = TaskHandler(self)
 
-        # Task queue for serial execution
+        # Task queue for execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
 
-        # Current task tracking
-        self.current_task: Optional[ExecutionRequest] = None
-        self.current_agent: Optional[Any] = None
-
-        # Active sessions tracking (task_id -> session_info)
-        # Each task_id represents an active Claude Code session/process
-        self.active_sessions: Dict[int, Dict[str, Any]] = {}
+        # Running tasks tracking (task_id -> RunningTaskInfo)
+        self._running_tasks: Dict[int, RunningTaskInfo] = {}
 
         # Runner state
         self._running = False
@@ -175,6 +180,16 @@ class LocalRunner:
         """Perform graceful shutdown."""
         logger.info("Shutting down Local Executor Runner...")
 
+        # Wait for all running tasks to finish
+        running = [
+            info.asyncio_task
+            for info in self._running_tasks.values()
+            if info.asyncio_task and not info.asyncio_task.done()
+        ]
+        if running:
+            logger.info(f"Waiting for {len(running)} running task(s) to finish...")
+            await asyncio.gather(*running, return_exceptions=True)
+
         # Stop heartbeat service
         await self.heartbeat_service.stop()
 
@@ -216,9 +231,10 @@ class LocalRunner:
         Note: Cancel callback will be sent by response_processor after SDK interrupt
         messages are fully processed, to avoid duplicate status updates to frontend.
         """
-        if self.current_task and self.current_task.task_id == task_id:
-            if self.current_agent and hasattr(self.current_agent, "cancel_run"):
-                self.current_agent.cancel_run()
+        info = self._running_tasks.get(task_id)
+        if info:
+            if info.agent and hasattr(info.agent, "cancel_run"):
+                info.agent.cancel_run()
                 logger.info(f"Cancelled task: task_id={task_id}")
 
                 # NOTE: Do NOT send cancel callback here - response_processor will send it
@@ -244,27 +260,27 @@ class LocalRunner:
         """
         logger.info(f"Closing session for task: task_id={task_id}")
 
-        # If this is the current task, handle it
-        if self.current_task and self.current_task.task_id == task_id:
+        # If this task is running, handle it
+        info = self._running_tasks.get(task_id)
+        if info:
             # Cancel the task if agent supports it
-            if self.current_agent and hasattr(self.current_agent, "cancel_run"):
-                self.current_agent.cancel_run()
+            if info.agent and hasattr(info.agent, "cancel_run"):
+                info.agent.cancel_run()
 
             # Cleanup agent resources
-            if self.current_agent and hasattr(self.current_agent, "cleanup"):
+            if info.agent and hasattr(info.agent, "cleanup"):
                 try:
-                    self.current_agent.cleanup()
+                    info.agent.cleanup()
                     logger.info(
-                        f"Cleaned up current agent resources for task {task_id}"
+                        f"Cleaned up agent resources for task {task_id}"
                     )
                 except Exception as e:
                     logger.error(
-                        f"Error cleaning up current agent for task {task_id}: {e}"
+                        f"Error cleaning up agent for task {task_id}: {e}"
                     )
 
-            # Clear current task
-            self.current_task = None
-            self.current_agent = None
+            # Remove from running tasks
+            self._running_tasks.pop(task_id, None)
         else:
             # Task is not currently running, but may have a lingering client
             logger.info(
@@ -303,8 +319,12 @@ class LocalRunner:
             logger.error(f"Failed to send heartbeat after closing session: {e}")
 
     async def _task_loop(self) -> None:
-        """Main task processing loop."""
-        logger.info("Starting task processing loop")
+        """Main task processing loop.
+
+        Tasks are dispatched concurrently via asyncio.create_task,
+        allowing multiple tasks to run in parallel.
+        """
+        logger.info("Starting task processing loop (parallel mode)")
 
         while self._running:
             try:
@@ -315,30 +335,40 @@ class LocalRunner:
                 except asyncio.TimeoutError:
                     continue
 
-                try:
-                    self.current_task = task_data
-                    await self._execute_task(task_data)
-                except Exception as e:
-                    task_id = task_data.task_id if task_data else -1
-                    logger.exception(
-                        f"Task execution failed for task_id={task_id}: {e}"
-                    )
-                    try:
-                        await self._report_task_failure(task_data, str(e))
-                    except Exception as report_err:
-                        logger.exception(
-                            f"Failed to report task failure for task_id={task_id}: {report_err}"
-                        )
-                finally:
-                    self.current_task = None
-                    self.current_agent = None
-                    self.task_queue.task_done()
+                task_id = task_data.task_id
+                logger.info(f"Dispatching task in parallel: task_id={task_id}")
+
+                # Register the task and dispatch it concurrently
+                info = RunningTaskInfo(task_data=task_data)
+                self._running_tasks[task_id] = info
+                info.asyncio_task = asyncio.create_task(
+                    self._run_task_wrapper(task_data)
+                )
+                self.task_queue.task_done()
 
             except asyncio.CancelledError:
                 logger.info("Task loop cancelled")
                 break
 
         logger.info("Task processing loop ended")
+
+    async def _run_task_wrapper(self, task_data: ExecutionRequest) -> None:
+        """Wrapper that executes a task and handles cleanup on completion."""
+        task_id = task_data.task_id
+        try:
+            await self._execute_task(task_data)
+        except Exception as e:
+            logger.exception(
+                f"Task execution failed for task_id={task_id}: {e}"
+            )
+            try:
+                await self._report_task_failure(task_data, str(e))
+            except Exception as report_err:
+                logger.exception(
+                    f"Failed to report task failure for task_id={task_id}: {report_err}"
+                )
+        finally:
+            self._running_tasks.pop(task_id, None)
 
     async def _on_client_created(self, task_id: int) -> None:
         """Callback for when Claude client is created (sends heartbeat update)."""
@@ -408,12 +438,16 @@ class LocalRunner:
         ws_emitter = self._create_emitter(task_id, subtask_id)
 
         # Create and initialize agent with WebSocket emitter
-        self.current_agent = ClaudeCodeAgent(task_data, emitter=ws_emitter)
+        agent = ClaudeCodeAgent(task_data, emitter=ws_emitter)
 
-        self.current_agent.on_client_created_callback = lambda: self._on_client_created(
+        # Register agent in running tasks
+        if task_id in self._running_tasks:
+            self._running_tasks[task_id].agent = agent
+
+        agent.on_client_created_callback = lambda: self._on_client_created(
             task_id
         )
-        self.current_agent.report_progress = self._make_emitter_report_progress(
+        agent.report_progress = self._make_emitter_report_progress(
             ws_emitter
         )
 
@@ -421,32 +455,27 @@ class LocalRunner:
         await ws_emitter.in_progress()
 
         # Initialize agent
-        init_status = self.current_agent.initialize()
+        init_status = agent.initialize()
         if init_status != TaskStatus.SUCCESS:
             logger.error(f"Agent initialization failed: {init_status}")
             await ws_emitter.error("Agent initialization failed", "init_error")
             return
 
         # Pre-execute
-        pre_status = await self.current_agent.pre_execute()
+        pre_status = await agent.pre_execute()
         if pre_status != TaskStatus.SUCCESS:
             logger.error(f"Agent pre-execution failed: {pre_status}")
             await ws_emitter.error("Agent pre-execution failed", "pre_execute_error")
             return
 
         # Execute the task (Claude client will be created inside, triggering heartbeat callback)
-        result = await self.current_agent.execute_async()
+        result = await agent.execute_async()
         logger.info(f"Task execution completed: task_id={task_id}")
 
         # Get execution result for logging
         execution_result = {}
-        if (
-            hasattr(self.current_agent, "state_manager")
-            and self.current_agent.state_manager
-        ):
-            execution_result = (
-                self.current_agent.state_manager.get_current_state() or {}
-            )
+        if hasattr(agent, "state_manager") and agent.state_manager:
+            execution_result = agent.state_manager.get_current_state() or {}
             # Truncate execution_result to 20 characters for logging
             result_str = str(execution_result)
             truncated_result = (
