@@ -195,6 +195,10 @@ class ModelSpec(BaseModel):
     rerankConfig: Optional[RerankConfig] = Field(
         None, description="Rerank-specific configuration (when modelType='rerank')"
     )
+    isAdvanced: Optional[bool] = Field(
+        None,
+        description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
+    )
 
 
 class ModelStatus(Status):

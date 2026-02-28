@@ -62,11 +62,13 @@ const PublicModelList: React.FC = () => {
     namespace: string
     config: string
     is_active: boolean
+    is_advanced: boolean
   }>({
     name: '',
     namespace: 'default',
     config: '{}',
     is_active: true,
+    is_advanced: false,
   })
   const [configError, setConfigError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -177,6 +179,9 @@ const PublicModelList: React.FC = () => {
       if (formData.is_active !== selectedModel.is_active) {
         updateData.is_active = formData.is_active
       }
+      if (formData.is_advanced !== (selectedModel.is_advanced ?? false)) {
+        updateData.is_advanced = formData.is_advanced
+      }
 
       await adminApis.updatePublicModel(selectedModel.id, updateData)
       toast({ title: t('admin:public_models.success.updated') })
@@ -221,6 +226,7 @@ const PublicModelList: React.FC = () => {
       namespace: 'default',
       config: '{}',
       is_active: true,
+      is_advanced: false,
     })
     setConfigError('')
     setSelectedModel(null)
@@ -233,6 +239,7 @@ const PublicModelList: React.FC = () => {
       namespace: model.namespace,
       config: JSON.stringify(model.json, null, 2),
       is_active: model.is_active,
+      is_advanced: model.is_advanced ?? false,
     })
     setIsEditDialogOpen(true)
   }
@@ -303,6 +310,9 @@ const PublicModelList: React.FC = () => {
                           <Tag variant="success">{t('admin:public_models.status.active')}</Tag>
                         ) : (
                           <Tag variant="error">{t('admin:public_models.status.inactive')}</Tag>
+                        )}
+                        {model.is_advanced && (
+                          <Tag variant="warning">{t('admin:public_models.status.advanced')}</Tag>
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
@@ -465,6 +475,21 @@ const PublicModelList: React.FC = () => {
                   id="edit-is-active"
                   checked={formData.is_active}
                   onCheckedChange={checked => setFormData({ ...formData, is_active: checked })}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="edit-is-advanced">{t('admin:public_models.form.is_advanced')}</Label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-text-muted">
+                  {formData.is_advanced
+                    ? t('admin:public_models.status.advanced')
+                    : t('admin:public_models.status.standard')}
+                </span>
+                <Switch
+                  id="edit-is-advanced"
+                  checked={formData.is_advanced}
+                  onCheckedChange={checked => setFormData({ ...formData, is_advanced: checked })}
                 />
               </div>
             </div>
