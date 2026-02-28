@@ -48,5 +48,7 @@
   "vnc_open_desktop": "打开桌面",
   "vnc_loading": "正在加载桌面...",
   "vnc_error": "加载桌面查看器失败",
-  "vnc_close": "关闭桌面面板"
+  "vnc_close": "关闭桌面面板",
+  "slots_full": "任务槽已满",
+  "slots_full_hint": "所有任务槽已被占用，请等待当前任务完成后再试"
 }

@@ -124,8 +124,8 @@ class CloudDeviceProvider(BaseDeviceProvider):
             user_name=user_name,
             backend_url=backend_url,
             auth_token=auth_token,
-            executor_download_url=nevis_settings.NEVIS_EXECUTOR_DOWNLOAD_URL,
-            executor_download_token=nevis_settings.NEVIS_EXECUTOR_DOWNLOAD_TOKEN,
+            install_script_url=nevis_settings.NEVIS_INSTALL_SCRIPT_URL,
+            install_script_token=nevis_settings.NEVIS_EXECUTOR_DOWNLOAD_TOKEN,
         )
 
         # Create sandbox via Nevis API

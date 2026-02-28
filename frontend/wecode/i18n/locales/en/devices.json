@@ -48,5 +48,7 @@
   "vnc_open_desktop": "Open Desktop",
   "vnc_loading": "Loading desktop...",
   "vnc_error": "Failed to load desktop viewer",
-  "vnc_close": "Close desktop panel"
+  "vnc_close": "Close desktop panel",
+  "slots_full": "Slots Full",
+  "slots_full_hint": "All task slots are occupied. Please wait for current tasks to finish."
 }
