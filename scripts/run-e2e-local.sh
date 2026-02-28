@@ -49,7 +49,12 @@ cleanup() {
         echo "Stopping frontend (PID: $FRONTEND_PID)..."
         kill $FRONTEND_PID 2>/dev/null || true
     fi
-    
+
+    if [ ! -z "$MOCK_SERVER_PID" ]; then
+        echo "Stopping mock model server (PID: $MOCK_SERVER_PID)..."
+        kill $MOCK_SERVER_PID 2>/dev/null || true
+    fi
+
     # Stop docker services if we started them
     if [ "$STARTED_DOCKER" = "true" ]; then
         echo "Stopping Docker services..."
@@ -67,6 +72,26 @@ if ! docker info > /dev/null 2>&1; then
     echo -e "${RED}Error: Docker is not running. Please start Docker first.${NC}"
     exit 1
 fi
+
+# Step 0: Kill any existing processes on required ports
+echo -e "\n${YELLOW}Step 0: Checking for existing processes on required ports...${NC}"
+
+# Function to kill process on a specific port
+kill_port() {
+    local port=$1
+    local pid=$(lsof -ti:$port 2>/dev/null)
+    if [ ! -z "$pid" ]; then
+        echo "Killing existing process on port $port (PID: $pid)..."
+        kill -9 $pid 2>/dev/null || true
+        sleep 1
+    fi
+}
+
+kill_port 8000  # Backend
+kill_port 3000  # Frontend
+kill_port 9999  # Mock server
+
+echo -e "${GREEN}Port check complete.${NC}"
 
 # Step 1: Start MySQL and Redis via docker-compose
 echo -e "\n${YELLOW}Step 1: Starting MySQL and Redis...${NC}"
@@ -114,6 +139,8 @@ export DB_AUTO_MIGRATE="True"
 export INIT_DATA_ENABLED="True"
 export INIT_DATA_DIR="$PROJECT_ROOT/backend/init_data"
 export PYTHONPATH="$PROJECT_ROOT"
+export SECRET_KEY="test-secret-key-for-e2e-testing"
+export ALGORITHM="HS256"
 
 # Sync dependencies
 echo "Syncing backend dependencies..."
@@ -154,8 +181,16 @@ echo "Starting frontend in dev mode (logs: $FRONTEND_LOG)..."
 npm run dev > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 
-# Step 5: Wait for services to be ready
-echo -e "\n${YELLOW}Step 5: Waiting for services to be ready...${NC}"
+# Step 5: Start Mock Model Server
+echo -e "\n${YELLOW}Step 5: Starting Mock Model Server...${NC}"
+MOCK_SERVER_LOG="$LOG_DIR/mock-server.log"
+echo "Starting mock model server (logs: $MOCK_SERVER_LOG)..."
+npx tsx e2e/utils/mock-model-server.ts > "$MOCK_SERVER_LOG" 2>&1 &
+MOCK_SERVER_PID=$!
+export MOCK_MODEL_SERVER_URL="http://localhost:9999"
+
+# Step 6: Wait for services to be ready
+echo -e "\n${YELLOW}Step 6: Waiting for services to be ready...${NC}"
 
 echo "Waiting for backend..."
 for i in {1..60}; do
@@ -185,8 +220,22 @@ for i in {1..30}; do
     sleep 2
 done
 
-# Step 6: Run E2E tests
-echo -e "\n${YELLOW}Step 6: Running E2E tests...${NC}"
+echo "Waiting for mock model server..."
+for i in {1..15}; do
+    if curl -s http://localhost:9999/health > /dev/null 2>&1; then
+        echo -e "${GREEN}Mock model server is ready!${NC}"
+        break
+    fi
+    if [ $i -eq 15 ]; then
+        echo -e "${RED}Mock model server failed to start within 30 seconds${NC}"
+        exit 1
+    fi
+    echo "Waiting for mock model server... ($i/15)"
+    sleep 2
+done
+
+# Step 7: Run E2E tests
+echo -e "\n${YELLOW}Step 7: Running E2E tests...${NC}"
 cd "$PROJECT_ROOT/frontend"
 
 export E2E_BASE_URL="http://localhost:3000"
