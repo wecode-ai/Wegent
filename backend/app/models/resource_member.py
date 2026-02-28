@@ -6,9 +6,9 @@
 Resource member model for unified resource sharing.
 
 Stores user access permissions to shared resources.
-Supports Team, Task, and KnowledgeBase resource types.
+Supports Team, Task, KnowledgeBase, and Namespace resource types.
 
-This model replaces the legacy SharedTeam, SharedTask, and TaskMember models
+This model replaces the legacy SharedTeam, SharedTask, TaskMember, and NamespaceMember models
 to provide a unified access control system for all shareable resources.
 """
 
@@ -87,7 +87,7 @@ class ResourceMember(Base):
     resource_type = Column(
         String(50),
         nullable=False,
-        comment="Resource type: Team, Task, KnowledgeBase",
+        comment="Resource type: Team, Task, KnowledgeBase, Namespace",
     )
     resource_id = Column(
         Integer,

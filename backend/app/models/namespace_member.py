@@ -13,9 +13,15 @@ from app.db.base import Base
 
 class NamespaceMember(Base):
     """
-    Group membership model.
+    Group membership model - DEPRECATED.
 
-    Stores user membership in groups with role-based permissions.
+    This model is deprecated and will be removed in a future version.
+    All group membership data has been migrated to resource_members table
+    with resource_type='Namespace'.
+
+    Use ResourceMember model with resource_type='Namespace' for new code.
+    This class is kept for backward compatibility during the transition period.
+
     Roles: Owner, Maintainer, Developer, Reporter
     """
 

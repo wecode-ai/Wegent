@@ -5,7 +5,8 @@
 """
 GroupMember reader - read-only queries with optional extension.
 
-Note: The underlying table is 'namespace_members', but we use 'group_members' in code for clarity.
+Note: The underlying table is now 'resource_members' with resource_type='Namespace'.
+This reader provides backward compatibility for code using group membership queries.
 
 Usage:
     from app.services.readers.group_members import groupMemberReader
@@ -23,7 +24,13 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.namespace_member import NamespaceMember
+from app.models.namespace import Namespace
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.services.group_member_helper import (
+    NAMESPACE_RESOURCE_TYPE,
+    get_group_member,
+    get_namespace_id_by_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,7 @@ class IGroupMemberReader(ABC):
     @abstractmethod
     def get_by_group_and_user(
         self, db: Session, group_name: str, user_id: int
-    ) -> Optional[NamespaceMember]:
+    ) -> Optional[ResourceMember]:
         """Get GroupMember record by group_name and user_id."""
         pass
 
@@ -70,19 +77,10 @@ class IGroupMemberReader(ABC):
 
 
 class GroupMemberReader(IGroupMemberReader):
-    """GroupMember reader with direct database queries."""
+    """GroupMember reader with direct database queries using ResourceMember."""
 
     def is_member(self, db: Session, group_name: str, user_id: int) -> bool:
-        return (
-            db.query(NamespaceMember)
-            .filter(
-                NamespaceMember.group_name == group_name,
-                NamespaceMember.user_id == user_id,
-                NamespaceMember.is_active == True,
-            )
-            .first()
-            is not None
-        )
+        return get_group_member(db, group_name, user_id) is not None
 
     def get_role(self, db: Session, group_name: str, user_id: int) -> Optional[str]:
         member = self.get_by_group_and_user(db, group_name, user_id)
@@ -90,27 +88,33 @@ class GroupMemberReader(IGroupMemberReader):
 
     def get_by_group_and_user(
         self, db: Session, group_name: str, user_id: int
-    ) -> Optional[NamespaceMember]:
-        return (
-            db.query(NamespaceMember)
-            .filter(
-                NamespaceMember.group_name == group_name,
-                NamespaceMember.user_id == user_id,
-                NamespaceMember.is_active == True,
-            )
-            .first()
-        )
+    ) -> Optional[ResourceMember]:
+        return get_group_member(db, group_name, user_id)
 
     def get_user_groups(self, db: Session, user_id: int) -> List[str]:
-        results = (
-            db.query(NamespaceMember.group_name)
+        # Get all approved memberships for user
+        memberships = (
+            db.query(ResourceMember)
             .filter(
-                NamespaceMember.user_id == user_id,
-                NamespaceMember.is_active == True,
+                ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
-        return [r[0] for r in results]
+
+        # Get namespace names for each membership
+        namespace_ids = [m.resource_id for m in memberships]
+        if not namespace_ids:
+            return []
+
+        namespaces = (
+            db.query(Namespace)
+            .filter(Namespace.id.in_(namespace_ids), Namespace.is_active == True)
+            .all()
+        )
+
+        return [n.name for n in namespaces]
 
     def on_change(self, group_name: str, user_id: int) -> None:
         pass
