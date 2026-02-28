@@ -1405,7 +1405,7 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
 
     def test_create_knowledge_base_context_with_empty_rag_result(self) -> None:
         """Test creating KB context with empty RAG result sets EMPTY status."""
-        from app.models.subtask_context import ContextStatus, ContextType
+        from app.models.subtask_context import ContextStatus
         from app.services.context import context_service
 
         # Arrange
@@ -1442,7 +1442,6 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
 
     def test_create_knowledge_base_context_fetches_kb_name(self) -> None:
         """Test that KB name is fetched from Kind table when not provided."""
-        from app.models.subtask_context import ContextType
         from app.services.context import context_service
 
         # Arrange

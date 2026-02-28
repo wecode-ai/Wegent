@@ -5,10 +5,7 @@
 """Unit tests for memory utility functions."""
 
 import re
-from datetime import datetime
 from unittest.mock import MagicMock
-
-import pytest
 
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User

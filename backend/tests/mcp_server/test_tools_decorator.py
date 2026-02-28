@@ -6,8 +6,6 @@
 
 from typing import Any, Dict, Optional
 
-import pytest
-
 from app.mcp_server.tools.decorator import (
     _extract_first_docstring_line,
     _extract_parameters_from_signature,

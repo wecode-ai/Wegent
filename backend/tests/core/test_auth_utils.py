@@ -17,7 +17,6 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.auth_utils import (
-    API_KEY_PREFIX,
     is_api_key,
     verify_api_key,
     verify_jwt_token_with_db,

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
-from app.services.knowledge import SummaryService, get_summary_service
+from app.services.knowledge import get_summary_service
 
 
 class TestTriggerKbSummaryClearIfEmpty:

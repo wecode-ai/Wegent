@@ -79,11 +79,9 @@ class BusinessContextSpanProcessor(SpanProcessor):
 
     def on_end(self, span: ReadableSpan) -> None:
         """Called when a span is ended. No action needed."""
-        pass
 
     def shutdown(self) -> None:
         """Called when the processor is shut down. No action needed."""
-        pass
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         """Force flush any pending spans. No action needed."""

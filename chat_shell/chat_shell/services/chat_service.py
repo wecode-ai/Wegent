@@ -20,7 +20,7 @@ Uses unified ResponsesAPIEmitter from shared module for event emission.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
 from chat_shell.core.config import settings
 from chat_shell.services.context import ChatContext
@@ -54,19 +54,16 @@ class ChatInterface(ABC):
             request: Execution request data
             emitter: ResponsesAPIEmitter for streaming events directly to SSE
         """
-        pass
 
     @abstractmethod
     async def resume(
         self, subtask_id: int, offset: int = 0
     ) -> AsyncIterator[ExecutionEvent]:
         """Resume a streaming session from a given offset."""
-        pass
 
     @abstractmethod
     async def cancel(self, subtask_id: int) -> bool:
         """Cancel an ongoing chat request."""
-        pass
 
 
 class ChatService(ChatInterface):

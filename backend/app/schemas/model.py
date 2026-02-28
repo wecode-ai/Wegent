@@ -19,8 +19,6 @@ class ModelBase(BaseModel):
 class ModelCreate(ModelBase):
     """Model creation schema"""
 
-    pass
-
 
 class ModelUpdate(BaseModel):
     """Model update schema"""

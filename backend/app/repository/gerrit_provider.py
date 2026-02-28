@@ -7,10 +7,8 @@ Gerrit repository provider implementation
 """
 
 import asyncio
-import base64
 import hashlib
 import logging
-import re
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -22,7 +20,6 @@ from app.core.config import settings
 from app.models.user import User
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
-from shared.utils.sensitive_data_masker import mask_string
 from shared.utils.url_util import build_url
 
 
@@ -803,7 +800,6 @@ class GerritProvider(RepositoryProvider):
             self.logger.error(
                 f"Failed to fetch gerrit projects for user {user.user_name}: {str(e)}"
             )
-            pass
         finally:
             # Always clear build status
             await cache_manager.set_building(user.id, git_domain, False)

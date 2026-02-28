@@ -8,7 +8,6 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.services.adapters.task_kinds import TaskKindsService
 

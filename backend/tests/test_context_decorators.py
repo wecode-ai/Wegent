@@ -6,10 +6,10 @@
 Tests for WebSocket context decorators.
 """
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.api.ws.context_decorators import (
     auto_payload_validation,

@@ -2,9 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 
-from chat_shell.api.v1.schemas import Metadata, ResponseRequest
+from chat_shell.api.v1.schemas import Metadata
 from shared.models.execution import ExecutionRequest
 
 

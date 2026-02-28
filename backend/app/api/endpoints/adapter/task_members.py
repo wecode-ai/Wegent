@@ -6,11 +6,9 @@
 API endpoints for task members (group chat) management.
 """
 
-import asyncio
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db

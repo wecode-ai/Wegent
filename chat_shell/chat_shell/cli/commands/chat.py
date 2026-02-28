@@ -114,7 +114,6 @@ async def _chat_interactive(
     """Interactive chat main loop."""
     try:
         from rich.console import Console
-        from rich.markdown import Markdown
         from rich.panel import Panel
 
         HAS_RICH = True

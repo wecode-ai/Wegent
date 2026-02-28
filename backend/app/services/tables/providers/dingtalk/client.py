@@ -10,7 +10,7 @@ Provides access to DingTalk Notable API with automatic token refresh.
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 

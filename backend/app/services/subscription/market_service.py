@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -397,7 +396,6 @@ class SubscriptionMarketService:
             SubscriptionMetadata,
             SubscriptionSpec,
             SubscriptionStatus,
-            SubscriptionTaskType,
             SubscriptionTeamRef,
         )
 

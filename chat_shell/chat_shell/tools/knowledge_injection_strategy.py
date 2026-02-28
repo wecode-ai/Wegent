@@ -8,12 +8,11 @@ This module implements a smart injection strategy that automatically chooses
 between direct injection and RAG retrieval based on context window capacity.
 """
 
-import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..compression.token_counter import TokenCounter
-from .knowledge_content_cleaner import KnowledgeContentCleaner, get_content_cleaner
+from .knowledge_content_cleaner import get_content_cleaner
 
 logger = logging.getLogger(__name__)
 

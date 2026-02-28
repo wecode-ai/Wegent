@@ -6,8 +6,6 @@
 Unit tests for the document parser service.
 """
 
-import io
-from unittest.mock import MagicMock, patch
 
 import pytest
 

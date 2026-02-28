@@ -69,13 +69,11 @@ class SchedulerBackend(ABC):
     @abstractmethod
     def backend_type(self) -> str:
         """Return the backend type identifier (e.g., 'celery', 'apscheduler', 'xxljob')."""
-        pass
 
     @property
     @abstractmethod
     def state(self) -> SchedulerState:
         """Return the current scheduler state."""
-        pass
 
     # ============ Lifecycle Management ============
 
@@ -88,7 +86,6 @@ class SchedulerBackend(ABC):
         For APScheduler: Call scheduler.start()
         For XXL-JOB: Register executor and start heartbeat
         """
-        pass
 
     @abstractmethod
     def stop(self, wait: bool = True) -> None:
@@ -98,7 +95,6 @@ class SchedulerBackend(ABC):
         Args:
             wait: Whether to wait for running jobs to complete
         """
-        pass
 
     def pause(self) -> None:
         """Pause the scheduler (optional implementation)."""
@@ -136,7 +132,6 @@ class SchedulerBackend(ABC):
         Returns:
             ScheduledJob: The scheduled job object
         """
-        pass
 
     @abstractmethod
     def remove_job(self, job_id: str) -> bool:
@@ -149,7 +144,6 @@ class SchedulerBackend(ABC):
         Returns:
             bool: Whether the job was successfully removed
         """
-        pass
 
     def pause_job(self, job_id: str) -> bool:
         """Pause a single job (optional implementation)."""
@@ -172,7 +166,6 @@ class SchedulerBackend(ABC):
         Returns:
             ScheduledJob or None
         """
-        pass
 
     @abstractmethod
     def get_jobs(self) -> List[ScheduledJob]:
@@ -182,7 +175,6 @@ class SchedulerBackend(ABC):
         Returns:
             List[ScheduledJob]: List of scheduled jobs
         """
-        pass
 
     @abstractmethod
     def get_next_run_time(self, job_id: str) -> Optional[datetime]:
@@ -195,7 +187,6 @@ class SchedulerBackend(ABC):
         Returns:
             datetime or None
         """
-        pass
 
     # ============ Job Execution (for manual trigger) ============
 
@@ -230,4 +221,3 @@ class SchedulerBackend(ABC):
                 "details": {...}
             }
         """
-        pass

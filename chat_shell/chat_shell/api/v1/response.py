@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
-from shared.models import ExecutionRequest, OpenAIRequestConverter, ResponsesAPIEmitter
+from shared.models import OpenAIRequestConverter, ResponsesAPIEmitter
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
 

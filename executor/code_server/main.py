@@ -4,7 +4,7 @@ import json
 import logging
 import sys
 from contextlib import asynccontextmanager
-from typing import AsyncIterable, Dict, List, Mapping, Optional, Union
+from typing import AsyncIterable, Dict, List, Mapping, Optional
 
 import httpx
 from fastapi import FastAPI

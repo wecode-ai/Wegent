@@ -96,7 +96,6 @@ class GitSkillService:
         Returns:
             GitImportResult with success, skipped, and failed lists
         """
-        from app.services.adapters.skill_kinds import skill_kinds_service
 
         if overwrite_names is None:
             overwrite_names = []
@@ -388,7 +387,6 @@ class GitSkillService:
         Returns:
             GitBatchUpdateResult with success, skipped, and failed lists
         """
-        from app.models.kind import Kind
 
         result = GitBatchUpdateResult()
 

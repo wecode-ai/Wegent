@@ -44,22 +44,18 @@ class IUserReader(ABC):
     @abstractmethod
     def get_by_id(self, db: Session, user_id: int) -> Optional[User]:
         """Get user by ID (includes inactive users)."""
-        pass
 
     @abstractmethod
     def get_by_name(self, db: Session, user_name: str) -> Optional[User]:
         """Get user by username (includes inactive users)."""
-        pass
 
     @abstractmethod
     def get_all(self, db: Session) -> List[User]:
         """Get all users (includes inactive users)."""
-        pass
 
     @abstractmethod
     def on_change(self, user_id: int, user_name: str) -> None:
         """Handle user change event."""
-        pass
 
 
 # =============================================================================

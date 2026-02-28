@@ -8,7 +8,7 @@ Batch operation API endpoints
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from app.core.security import get_current_user
 from app.models.user import User

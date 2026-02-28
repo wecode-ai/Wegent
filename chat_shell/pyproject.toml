@@ -93,6 +93,7 @@ dev = [
     "isort>=5.12.0",
     "flake8>=6.0.0",
     "mypy>=1.5.0",
+    "autoflake>=2.2.0",
 ]
 
 [tool.black]
@@ -137,6 +138,19 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "^.venv/",
+    "^venv/",
+    "^build/",
+    "^dist/",
+]
 
 [build-system]
 requires = ["hatchling"]

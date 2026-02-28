@@ -34,9 +34,6 @@ from app.schemas.subscription import (
 )
 from app.services.subscription import subscription_service
 from app.services.subscription.follow_service import subscription_follow_service
-from app.services.subscription.notification_service import (
-    subscription_notification_service,
-)
 
 logger = logging.getLogger(__name__)
 

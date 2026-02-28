@@ -2,9 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -98,6 +97,8 @@ class TestExecutorDispatcher:
             with pytest.raises(ValueError, match="Invalid JSON"):
                 from executor_manager.executors.dispatcher import ExecutorDispatcher
 
+                ExecutorDispatcher._load_executors()
+
     def test_load_executors_invalid_import_path(self):
         """Test that invalid import path raises error"""
         # Clear module cache to force reimport
@@ -111,6 +112,8 @@ class TestExecutorDispatcher:
             with pytest.raises((ImportError, ValueError, RuntimeError)):
                 from executor_manager.executors.dispatcher import ExecutorDispatcher
 
+                ExecutorDispatcher._load_executors()
+
     def test_load_executors_nonexistent_module(self):
         """Test that nonexistent module raises RuntimeError"""
         # Clear module cache to force reimport
@@ -123,6 +126,8 @@ class TestExecutorDispatcher:
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", config):
             with pytest.raises(RuntimeError):
                 from executor_manager.executors.dispatcher import ExecutorDispatcher
+
+                ExecutorDispatcher._load_executors()
 
     def test_get_executor_docker_type(self):
         """Test getting docker executor"""

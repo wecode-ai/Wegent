@@ -11,10 +11,10 @@ follow relationships between users and subscriptions.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_, desc, func
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -23,7 +23,6 @@ from app.models.namespace_member import NamespaceMember
 from app.models.subscription_follow import (
     FollowType,
     InvitationStatus,
-    NotificationLevel,
     SubscriptionFollow,
     SubscriptionShareNamespace,
 )

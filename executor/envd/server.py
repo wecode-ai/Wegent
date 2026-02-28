@@ -7,7 +7,6 @@ Registers Connect protocol HTTP endpoints to existing FastAPI app
 """
 
 import json
-from typing import AsyncIterator
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse

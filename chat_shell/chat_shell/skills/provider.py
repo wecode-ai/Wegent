@@ -62,7 +62,6 @@ class SkillToolProvider(ABC):
         Returns:
             Provider name string
         """
-        pass
 
     @property
     @abstractmethod
@@ -72,7 +71,6 @@ class SkillToolProvider(ABC):
         Returns:
             List of supported tool names
         """
-        pass
 
     @abstractmethod
     def create_tool(
@@ -94,7 +92,6 @@ class SkillToolProvider(ABC):
         Raises:
             ValueError: If tool_name is not supported
         """
-        pass
 
     def validate_config(self, tool_config: dict[str, Any]) -> bool:
         """Validate tool configuration.

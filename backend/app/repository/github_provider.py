@@ -666,7 +666,6 @@ class GitHubProvider(RepositoryProvider):
             self.logger.error(
                 f"Failed to fetch github repositories for user {user.user_name}: {str(e)}"
             )
-            pass
         finally:
             # Always clear build status
             await cache_manager.set_building(user.id, git_domain, False)

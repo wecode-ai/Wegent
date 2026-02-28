@@ -1,14 +1,11 @@
 #!/usr/bin/env python
 import json
-import os
 from dataclasses import asdict
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Union
 
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
     AssistantMessage,
-    Message,
     ResultMessage,
     StreamEvent,
     SystemMessage,
@@ -20,7 +17,6 @@ from claude_agent_sdk.types import (
 
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
-from shared.models.task import ExecutionResult
 from shared.status import TaskStatus
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 

@@ -7,7 +7,7 @@
 # -*- coding: utf-8 -*-
 
 import os
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Union
 
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini

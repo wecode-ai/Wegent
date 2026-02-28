@@ -11,9 +11,8 @@ This module tests:
 - Prompt modification during agent execution
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from chat_shell.agents.graph_builder import LangGraphAgentBuilder

@@ -8,10 +8,8 @@ This module provides the SandboxClaudeTool class that executes
 Claude commands in an isolated sandbox environment with streaming output.
 """
 
-import asyncio
 import json
 import logging
-import re
 import time
 from typing import Optional
 

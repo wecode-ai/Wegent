@@ -98,7 +98,6 @@ class BaseTruncationStrategy(ABC):
         Returns:
             Tuple of (truncated_text, truncation_info)
         """
-        pass
 
     def _estimate_length(self, text: str) -> int:
         """Estimate the length of text."""

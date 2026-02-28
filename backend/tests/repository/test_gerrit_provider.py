@@ -6,7 +6,7 @@
 Tests for GerritProvider authentication type handling
 """
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import requests

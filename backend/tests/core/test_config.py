@@ -2,10 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import os
 
 import pytest
-from pydantic import ValidationError
 
 from app.core.config import Settings, settings
 

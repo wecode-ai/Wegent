@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Model, ModelCategoryType, Shell
+from app.schemas.kind import Model, Shell
 from app.services.adapters.public_model import public_model_service
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.kind import kind_service

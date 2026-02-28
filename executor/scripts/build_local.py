@@ -147,7 +147,9 @@ def find_claude_agent_sdk_binary(
     # macOS uses system-installed Claude Code (no binary bundled)
     # Linux and Windows bundle the binary
     if target == "Darwin":
-        print(f"Platform {target}: Using system-installed Claude Code (no binary bundled)")
+        print(
+            f"Platform {target}: Using system-installed Claude Code (no binary bundled)"
+        )
         return None
 
     # Determine binary name based on platform
@@ -450,7 +452,9 @@ def build_executable(
             cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
             print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
         elif effective_platform in ["Windows", "Linux"]:
-            print(f"Warning: Claude CLI binary not found for {effective_platform}, executor may fail")
+            print(
+                f"Warning: Claude CLI binary not found for {effective_platform}, executor may fail"
+            )
 
         # Continue with remaining options
         cmd += [

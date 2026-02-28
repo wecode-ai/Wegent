@@ -15,9 +15,8 @@ Uses unified ExecutionRequest from shared.models.execution.
 import os
 import subprocess
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
-import httpx
 import requests
 
 from executor_manager.config.config import EXECUTOR_ENV

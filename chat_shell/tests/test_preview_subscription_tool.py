@@ -14,7 +14,6 @@ This module tests:
 
 import json
 import time
-from unittest.mock import patch
 
 import pytest
 

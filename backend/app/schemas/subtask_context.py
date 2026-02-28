@@ -12,9 +12,9 @@ attachments, knowledge bases, and other context types.
 import logging
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 logger = logging.getLogger(__name__)
 

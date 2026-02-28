@@ -66,7 +66,6 @@ class BaseUserMapper(ABC):
         Returns:
             MappedUserInfo if mapping successful, None otherwise
         """
-        pass
 
 
 class DefaultUserMapper(BaseUserMapper):

@@ -8,7 +8,6 @@ This module provides the SandboxWriteFileTool class that writes
 file contents to the sandbox environment.
 """
 
-import asyncio
 import base64
 import json
 import logging

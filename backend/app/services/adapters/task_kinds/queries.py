@@ -16,7 +16,6 @@ from fastapi import HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
 
@@ -25,8 +24,6 @@ from .filters import (
     filter_tasks_for_display,
     filter_tasks_since_id,
     filter_tasks_with_title_match,
-    is_background_task,
-    is_non_interacted_subscription_task,
 )
 from .helpers import build_lite_task_list, get_tasks_related_data_batch
 
@@ -211,8 +208,6 @@ class TaskQueryMixin:
 
         Returns only group chat tasks sorted by updated_at descending.
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
 
         # Get task IDs that are group chats (have members) using resource_members
         # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
@@ -301,9 +296,6 @@ class TaskQueryMixin:
         """
         if types is None:
             types = ["online", "offline"]
-
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
 
         # Get all task IDs that are group chats (have members) using resource_members
         # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)

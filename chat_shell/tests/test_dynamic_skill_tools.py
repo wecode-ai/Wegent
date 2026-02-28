@@ -10,8 +10,6 @@ a skill is loaded via the load_skill tool.
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from chat_shell.tools.builtin.load_skill import LoadSkillTool
 
 

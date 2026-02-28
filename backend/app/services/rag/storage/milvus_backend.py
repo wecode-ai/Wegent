@@ -17,7 +17,6 @@ import logging
 from typing import Any, ClassVar, Dict, List, Optional
 
 from llama_index.core import StorageContext, VectorStoreIndex
-from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.schema import BaseNode
 from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
 from llama_index.core.vector_stores.types import (
@@ -26,7 +25,6 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQueryMode,
 )
 from llama_index.vector_stores.milvus import MilvusVectorStore
-from llama_index.vector_stores.milvus.base import IndexManagement
 from pymilvus import AsyncMilvusClient, MilvusClient
 
 from app.services.rag.retrieval.filters import parse_metadata_filters

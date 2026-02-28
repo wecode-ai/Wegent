@@ -18,10 +18,9 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 import socketio
-from sqlalchemy.orm import Session
 
 from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
@@ -29,13 +28,8 @@ from app.api.ws.events import (
     ChatCancelPayload,
     ChatResumePayload,
     ChatRetryPayload,
-    ChatSendAck,
     ChatSendPayload,
-    ClientEvents,
-    GenericAck,
-    HistorySyncAck,
     HistorySyncPayload,
-    TaskJoinAck,
     TaskJoinPayload,
     TaskLeavePayload,
 )
@@ -44,7 +38,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Task, Team
+from app.schemas.kind import Task
 
 # Import from services/chat modules
 from app.services.chat.access import (
@@ -54,11 +48,9 @@ from app.services.chat.access import (
     verify_jwt_token,
 )
 from app.services.chat.operations import (
-    call_executor_cancel,
     extract_model_override_info,
     fetch_retry_context,
     reset_subtask_for_retry,
-    update_subtask_on_cancel,
 )
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
@@ -583,7 +575,6 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.info(f"[WS] chat:send team found: {team.name} (id={team.id})")
 
             # Import existing helpers from service layer
-            from app.api.endpoints.adapter.chat import StreamChatRequest
             from app.services.chat.config import is_deep_research_protocol
             from app.services.chat.storage import (
                 TaskCreationParams,
@@ -1525,7 +1516,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
-        from app.api.ws.events import SkillResponsePayload
         from chat_shell.tools import (
             get_pending_request_registry,
         )

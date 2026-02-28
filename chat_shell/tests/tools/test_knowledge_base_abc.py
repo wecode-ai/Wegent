@@ -5,7 +5,6 @@
 """Tests for KnowledgeBaseToolABC abstract base class."""
 
 from typing import Any, Dict, List, Optional
-from unittest.mock import Mock
 
 import pytest
 

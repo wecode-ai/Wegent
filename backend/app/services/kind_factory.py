@@ -6,7 +6,7 @@
 Factory for creating Kind services
 """
 
-from typing import Dict, Type
+from typing import Dict
 
 from app.services.kind_base import KindBaseService
 from app.services.kind_impl import (

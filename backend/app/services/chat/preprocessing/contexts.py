@@ -21,7 +21,6 @@ from typing import Any, List, Optional, Tuple
 from langchain_core.tools import BaseTool
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 from shared.models.knowledge import KnowledgeBaseToolsResult
@@ -390,7 +389,6 @@ def link_contexts_to_subtask(
         List of all linked/created context IDs
     """
     # Import TaskResource for type hint
-    from app.models.task import TaskResource
 
     linked_context_ids = []
 

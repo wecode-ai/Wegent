@@ -254,7 +254,7 @@ class KnowledgeOrchestrator:
         Returns:
             Dict with name, namespace, and type, or None if not found
         """
-        from app.schemas.kind import Bot, Task, Team
+        from app.schemas.kind import Task
 
         logger.debug(
             f"[Orchestrator] Resolving summary model from task: task_id={task_id}, user_id={user_id}"
@@ -1564,8 +1564,6 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If document not found, not a web document, or refresh fails
         """
-        from app.models.knowledge import KnowledgeDocument
-        from app.models.subtask_context import SubtaskContext
         from app.schemas.knowledge import DocumentSourceType
         from app.services.context import context_service
         from app.services.web_scraper import get_web_scraper_service

@@ -15,18 +15,16 @@ Run these tests to verify the fixes work correctly.
 import asyncio
 import threading
 import time
-from typing import Any, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Optional
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.core.async_utils import (
     AsyncSessionManager,
     execute_async_safely,
-    get_main_event_loop,
     run_in_main_loop,
     schedule_async_task,
-    set_main_event_loop,
 )
 
 

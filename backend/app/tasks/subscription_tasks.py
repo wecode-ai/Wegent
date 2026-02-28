@@ -18,7 +18,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from celery.exceptions import SoftTimeLimitExceeded
 from prometheus_client import Counter, Histogram
@@ -105,7 +105,6 @@ def _load_subscription_execution_context(
     from app.core.constants import KIND_TEAM
     from app.models.kind import Kind
     from app.models.subscription import BackgroundExecution
-    from app.models.task import TaskResource
     from app.models.user import User
     from app.schemas.subscription import Subscription, SubscriptionVisibility
 

@@ -15,8 +15,6 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from sqlalchemy.orm import Session
-
 logger = logging.getLogger(__name__)
 
 
@@ -235,7 +233,6 @@ class _DispatchStrategy(ABC):
         Returns:
             True if this strategy is applicable, False otherwise
         """
-        pass
 
     @abstractmethod
     def execute(self, task_id: int) -> None:
@@ -244,7 +241,6 @@ class _DispatchStrategy(ABC):
         Args:
             task_id: Task ID to dispatch
         """
-        pass
 
 
 class _RunningLoopStrategy(_DispatchStrategy):

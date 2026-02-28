@@ -21,7 +21,7 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from sqlalchemy.orm import Session
 

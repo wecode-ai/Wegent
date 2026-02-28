@@ -166,7 +166,6 @@ async def build_execution_request(
         ExecutionRequest ready for dispatch
     """
     from app.services.execution import TaskRequestBuilder
-    from shared.models import ExecutionRequest
 
     logger.info(
         "[build_execution_request] Building request: task_id=%d, subtask_id=%d",

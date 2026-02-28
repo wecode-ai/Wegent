@@ -13,8 +13,6 @@ This module tests the core message conversion functionality including:
 import base64
 from datetime import datetime
 
-import pytest
-
 # Import directly from the module to avoid triggering __init__.py dependencies
 from chat_shell.messages.converter import MessageConverter
 

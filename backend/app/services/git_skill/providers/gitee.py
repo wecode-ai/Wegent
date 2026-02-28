@@ -4,7 +4,7 @@
 
 """Gitee repository provider implementation."""
 
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 from app.services.git_skill.models import RepoAuthInfo
 from app.services.git_skill.providers.base import (

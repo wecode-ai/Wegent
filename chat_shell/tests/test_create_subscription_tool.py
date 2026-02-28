@@ -924,7 +924,6 @@ class TestCreateSubscriptionToolWithPreviewId:
         """Test creating subscription with valid preview_id."""
         # Arrange - Create a preview first
         from chat_shell.tools.builtin.preview_subscription import (
-            PreviewSubscriptionTool,
             _store_preview,
         )
 

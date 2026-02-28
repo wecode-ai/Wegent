@@ -12,7 +12,6 @@ Utility functions for Docker executor
 
 import os
 import re
-import socket
 import subprocess
 from typing import Optional, Set
 from urllib.parse import urlparse

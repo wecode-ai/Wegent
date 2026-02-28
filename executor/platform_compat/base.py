@@ -9,7 +9,7 @@ These classes define the interface that platform-specific implementations must f
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 
 class PtyProcess(ABC):
@@ -25,7 +25,6 @@ class PtyProcess(ABC):
         Returns:
             Bytes read from the PTY, or empty bytes if no data available.
         """
-        pass
 
     @abstractmethod
     def write(self, data: bytes) -> int:
@@ -37,7 +36,6 @@ class PtyProcess(ABC):
         Returns:
             Number of bytes written.
         """
-        pass
 
     @abstractmethod
     def resize(self, rows: int, cols: int) -> None:
@@ -47,7 +45,6 @@ class PtyProcess(ABC):
             rows: Number of rows.
             cols: Number of columns.
         """
-        pass
 
     @abstractmethod
     def poll(self) -> Optional[int]:
@@ -56,7 +53,6 @@ class PtyProcess(ABC):
         Returns:
             Exit code if terminated, None if still running.
         """
-        pass
 
     @abstractmethod
     def terminate(self, force: bool = False) -> None:
@@ -65,7 +61,6 @@ class PtyProcess(ABC):
         Args:
             force: If True, force kill the process.
         """
-        pass
 
     @abstractmethod
     def wait(self, timeout: Optional[float] = None) -> int:
@@ -80,19 +75,16 @@ class PtyProcess(ABC):
         Raises:
             TimeoutError: If timeout is reached.
         """
-        pass
 
     @property
     @abstractmethod
     def pid(self) -> int:
         """Get the process ID."""
-        pass
 
     @property
     @abstractmethod
     def returncode(self) -> Optional[int]:
         """Get the return code, or None if not terminated."""
-        pass
 
     @property
     @abstractmethod
@@ -101,7 +93,6 @@ class PtyProcess(ABC):
 
         On Windows, this may return a handle or -1 if not applicable.
         """
-        pass
 
 
 class PtyManager(ABC):
@@ -128,7 +119,6 @@ class PtyManager(ABC):
         Returns:
             PtyProcess instance.
         """
-        pass
 
     @abstractmethod
     def is_available(self) -> bool:
@@ -137,7 +127,6 @@ class PtyManager(ABC):
         Returns:
             True if PTY is available, False otherwise.
         """
-        pass
 
     def set_nonblocking(self, fd: int) -> None:
         """Set a file descriptor to non-blocking mode.
@@ -148,7 +137,6 @@ class PtyManager(ABC):
         Note:
             This is a no-op on platforms that don't support it.
         """
-        pass
 
     def read_available(self, fd: int, timeout: float = 0.5) -> Optional[bytes]:
         """Read available data from file descriptor with timeout.
@@ -160,7 +148,6 @@ class PtyManager(ABC):
         Returns:
             Bytes read, or None if no data available.
         """
-        pass
 
 
 class PermissionsManager(ABC):
@@ -177,7 +164,6 @@ class PermissionsManager(ABC):
             path: Path to the file or directory.
             is_directory: True if path is a directory.
         """
-        pass
 
     @abstractmethod
     def set_mode(self, path: str, mode: int) -> None:
@@ -190,7 +176,6 @@ class PermissionsManager(ABC):
         Note:
             On Windows, this is a best-effort translation to ACLs.
         """
-        pass
 
     @abstractmethod
     def get_mode(self, path: str) -> int:
@@ -205,7 +190,6 @@ class PermissionsManager(ABC):
         Note:
             On Windows, this returns an approximation based on ACLs.
         """
-        pass
 
 
 class SignalHandler(ABC):
@@ -224,7 +208,6 @@ class SignalHandler(ABC):
         Returns:
             True if signal was sent successfully.
         """
-        pass
 
     @abstractmethod
     def terminate_forcefully(self, pid: int) -> bool:
@@ -239,7 +222,6 @@ class SignalHandler(ABC):
         Returns:
             True if process was terminated successfully.
         """
-        pass
 
     @abstractmethod
     def get_termination_signal(self) -> int:
@@ -248,7 +230,6 @@ class SignalHandler(ABC):
         Returns:
             Signal number (SIGTERM on Unix, approximation on Windows).
         """
-        pass
 
     @abstractmethod
     def get_kill_signal(self) -> int:
@@ -257,7 +238,6 @@ class SignalHandler(ABC):
         Returns:
             Signal number (SIGKILL on Unix, approximation on Windows).
         """
-        pass
 
 
 class UserInfoProvider(ABC):
@@ -273,7 +253,6 @@ class UserInfoProvider(ABC):
         Returns:
             Username string, or the UID as string if not found.
         """
-        pass
 
     @abstractmethod
     def get_group_name(self, gid: int) -> str:
@@ -285,7 +264,6 @@ class UserInfoProvider(ABC):
         Returns:
             Group name string, or the GID as string if not found.
         """
-        pass
 
     @abstractmethod
     def get_owner_name_from_path(self, path: str) -> str:
@@ -297,7 +275,6 @@ class UserInfoProvider(ABC):
         Returns:
             Owner name string.
         """
-        pass
 
     @abstractmethod
     def get_group_name_from_path(self, path: str) -> str:
@@ -309,4 +286,3 @@ class UserInfoProvider(ABC):
         Returns:
             Group name string.
         """
-        pass

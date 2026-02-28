@@ -12,7 +12,6 @@ The sync is performed in the background and failures are logged but do not
 block the attachment upload flow.
 """
 
-import asyncio
 import logging
 import os
 from typing import Optional

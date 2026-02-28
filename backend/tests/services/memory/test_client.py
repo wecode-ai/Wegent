@@ -11,7 +11,6 @@ import aiohttp
 import pytest
 
 from app.services.memory.client import LongTermMemoryClient
-from app.services.memory.schemas import MemorySearchResponse, MemorySearchResult
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@
 Tests for WebSocket event tracing decorators.
 """
 
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import Mock, patch
 
 import pytest
 

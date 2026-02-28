@@ -238,7 +238,6 @@ def _build_user_message_content(
 
     Returns either a string or a list of content blocks (for multimodal messages).
     """
-    import base64
 
     from app.services.context import context_service
 

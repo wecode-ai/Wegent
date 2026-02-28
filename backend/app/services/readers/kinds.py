@@ -66,35 +66,30 @@ class IKindReader(ABC):
         self, db: Session, kind: KindType, resource_id: int
     ) -> Optional[Kind]:
         """Get resource by ID."""
-        pass
 
     @abstractmethod
     def get_by_ids(
         self, db: Session, kind: KindType, resource_ids: List[int]
     ) -> List[Kind]:
         """Get resources by IDs."""
-        pass
 
     @abstractmethod
     def get_personal(
         self, db: Session, user_id: int, kind: KindType, namespace: str, name: str
     ) -> Optional[Kind]:
         """Get personal resource (owned by user)."""
-        pass
 
     @abstractmethod
     def get_public(
         self, db: Session, kind: KindType, namespace: str, name: str
     ) -> Optional[Kind]:
         """Get public resource (user_id=0)."""
-        pass
 
     @abstractmethod
     def get_group(
         self, db: Session, kind: KindType, namespace: str, name: str
     ) -> Optional[Kind]:
         """Get group resource."""
-        pass
 
     def get_by_name_and_namespace(
         self,
@@ -222,7 +217,6 @@ class IKindReader(ABC):
         name: str,
     ) -> None:
         """Handle resource change event."""
-        pass
 
 
 # =============================================================================

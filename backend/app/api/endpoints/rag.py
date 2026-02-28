@@ -22,7 +22,6 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.rag import (
     DocumentDeleteResponse,
-    DocumentDetailResponse,
     DocumentListResponse,
     DocumentUploadResponse,
     IndexNameResponse,

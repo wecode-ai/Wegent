@@ -229,7 +229,6 @@ class BaseStorageBackend(ABC):
         Returns:
             Vector store instance compatible with LlamaIndex
         """
-        pass
 
     @abstractmethod
     def index_with_metadata(
@@ -263,7 +262,6 @@ class BaseStorageBackend(ABC):
                 - index_name: Index/collection name
                 - status: Indexing status
         """
-        pass
 
     @abstractmethod
     def retrieve(
@@ -304,7 +302,6 @@ class BaseStorageBackend(ABC):
                     ]
                 }
         """
-        pass
 
     @abstractmethod
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
@@ -319,7 +316,6 @@ class BaseStorageBackend(ABC):
         Returns:
             Deletion result dict
         """
-        pass
 
     @abstractmethod
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
@@ -334,7 +330,6 @@ class BaseStorageBackend(ABC):
         Returns:
             Document details dict
         """
-        pass
 
     @abstractmethod
     def list_documents(
@@ -352,7 +347,6 @@ class BaseStorageBackend(ABC):
         Returns:
             Document list dict
         """
-        pass
 
     @abstractmethod
     def test_connection(self) -> bool:
@@ -362,7 +356,6 @@ class BaseStorageBackend(ABC):
         Returns:
             True if connection successful, False otherwise
         """
-        pass
 
     @abstractmethod
     def get_all_chunks(
@@ -387,4 +380,3 @@ class BaseStorageBackend(ABC):
                 - doc_ref: str, document reference ID
                 - metadata: dict, additional metadata
         """
-        pass

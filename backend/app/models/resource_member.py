@@ -29,7 +29,7 @@ from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
-from app.models.share_link import PermissionLevel, ResourceType
+from app.models.share_link import PermissionLevel
 
 if TYPE_CHECKING:
     from app.models.user import User

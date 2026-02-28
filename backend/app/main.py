@@ -15,15 +15,13 @@ if _get_otel_config_early("wegent-backend").enabled:
 
 import asyncio
 import logging
-import signal
-import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 import redis
 import socketio
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
@@ -38,7 +36,6 @@ from app.core.exceptions import (
 from app.core.logging import setup_logging
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
-from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.jobs import start_background_jobs, stop_background_jobs
@@ -147,7 +144,6 @@ async def lifespan(app: FastAPI):
                 try:
                     import os
 
-                    from alembic import command
                     from alembic.config import Config as AlembicConfig
                     from alembic.runtime.migration import MigrationContext
                     from alembic.script import ScriptDirectory

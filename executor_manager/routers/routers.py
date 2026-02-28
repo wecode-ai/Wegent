@@ -19,7 +19,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -27,15 +27,11 @@ from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
-from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
-from shared.models.execution import ExecutionRequest
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import (
-    set_request_context,
     set_task_context,
-    set_user_context,
 )
 from shared.utils.http_client import traced_async_client
 

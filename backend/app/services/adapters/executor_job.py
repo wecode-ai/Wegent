@@ -2,9 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List, Set
 
 from sqlalchemy import and_
@@ -12,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.services.adapters.executor_kinds import executor_kinds_service

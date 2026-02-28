@@ -5,10 +5,7 @@
 """Tests for MCP tool registry."""
 
 import json
-from typing import Optional
-from unittest.mock import MagicMock, patch
 
-import pytest
 from pydantic import BaseModel
 
 from app.mcp_server.context import MCPRequestContext, get_mcp_context, set_mcp_context

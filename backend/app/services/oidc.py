@@ -6,12 +6,11 @@ import base64
 import json
 import logging
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import urlencode
 
 import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from authlib.jose import jwt
-from authlib.oidc.core import CodeIDToken
 from fastapi import HTTPException
 
 from shared.utils.sensitive_data_masker import mask_sensitive_data

@@ -11,7 +11,7 @@ This module provides session lifecycle management for Claude Code agents.
 
 import asyncio
 import os
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from claude_agent_sdk import ClaudeSDKClient
 

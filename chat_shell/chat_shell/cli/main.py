@@ -18,7 +18,6 @@ def cli():
     - HTTP server mode
     - Multiple model providers (OpenAI, Claude, Google)
     """
-    pass
 
 
 from chat_shell.cli.commands.chat import chat

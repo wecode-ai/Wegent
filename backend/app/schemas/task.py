@@ -8,7 +8,6 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
-from app.schemas.subtask import SubtaskWithBot
 from app.schemas.team import TeamInDB
 from app.schemas.user import UserInDB
 

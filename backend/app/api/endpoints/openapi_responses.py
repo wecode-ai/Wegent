@@ -18,7 +18,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -879,7 +878,7 @@ async def cancel_response(
     """
     from sqlalchemy.orm.attributes import flag_modified
 
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):

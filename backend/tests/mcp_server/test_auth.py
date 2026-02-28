@@ -4,9 +4,6 @@
 
 """Tests for task token authentication."""
 
-from datetime import datetime, timedelta, timezone
-
-import pytest
 
 from app.mcp_server.auth import (
     TaskTokenInfo,

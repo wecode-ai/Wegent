@@ -9,7 +9,7 @@ Defines Pydantic models for document-level and knowledge-base-level summary data
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 

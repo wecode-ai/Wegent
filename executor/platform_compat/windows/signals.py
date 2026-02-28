@@ -7,7 +7,6 @@
 import ctypes
 import signal
 import sys
-from typing import Optional
 
 from executor.platform_compat.base import SignalHandler
 
@@ -16,7 +15,6 @@ if sys.platform == "win32":
     try:
         import win32api
         import win32con
-        import win32process
 
         WIN32_AVAILABLE = True
     except ImportError:

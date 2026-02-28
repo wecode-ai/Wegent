@@ -32,7 +32,6 @@ from app.schemas.shared_task import (
     JoinSharedTaskResponse,
     PublicSharedTaskResponse,
     PublicSubtaskData,
-    SharedTaskCreate,
     SharedTaskInDB,
     TaskShareInfo,
     TaskShareResponse,
@@ -323,7 +322,7 @@ class SharedTaskService:
         branch_name: Optional[str] = None,
     ) -> Kind:
         """Copy task and all its subtasks to new user"""
-        from app.schemas.kind import Task, Team, Workspace
+        from app.schemas.kind import Task, Workspace
 
         # Get the new team to get its name and namespace
         new_team = (

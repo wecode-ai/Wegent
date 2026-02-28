@@ -19,9 +19,7 @@ from app.schemas.namespace import (
     GroupVisibility,
 )
 from app.schemas.namespace_member import (
-    GroupMemberCreate,
     GroupMemberResponse,
-    GroupMemberUpdate,
 )
 from app.services.group_permission import (
     check_group_permission,

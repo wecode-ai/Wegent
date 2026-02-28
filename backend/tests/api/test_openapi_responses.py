@@ -287,7 +287,6 @@ class TestOpenAPIResponsesCreate:
         """
         # This test is removed since the endpoint doesn't validate this case
         # The endpoint only checks if format starts with "resp_" and then validates the number
-        pass
 
     def test_create_response_invalid_previous_response_id_number(
         self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind

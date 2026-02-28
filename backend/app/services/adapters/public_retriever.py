@@ -8,7 +8,7 @@ Public retrievers are stored in the kinds table with user_id=0.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session

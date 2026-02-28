@@ -6,7 +6,6 @@
 Unit tests for the smart truncation strategies.
 """
 
-import pytest
 
 from app.services.attachment.smart_truncation import (
     CSVTruncationStrategy,

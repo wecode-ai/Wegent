@@ -6,7 +6,6 @@
 
 import os
 import sys
-from typing import Optional
 
 from executor.platform_compat.base import UserInfoProvider
 

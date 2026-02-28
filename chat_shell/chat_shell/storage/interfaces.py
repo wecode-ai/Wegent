@@ -12,7 +12,6 @@ allowing different implementations for different deployment modes:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Optional
 
 
@@ -107,7 +106,6 @@ class HistoryStoreInterface(ABC):
         Returns:
             List of Message objects, ordered by creation time (oldest first)
         """
-        pass
 
     @abstractmethod
     async def append_message(
@@ -125,7 +123,6 @@ class HistoryStoreInterface(ABC):
         Returns:
             Message ID of the appended message
         """
-        pass
 
     @abstractmethod
     async def append_messages(
@@ -143,7 +140,6 @@ class HistoryStoreInterface(ABC):
         Returns:
             List of message IDs
         """
-        pass
 
     @abstractmethod
     async def clear_history(self, session_id: str) -> bool:
@@ -156,7 +152,6 @@ class HistoryStoreInterface(ABC):
         Returns:
             True if successful
         """
-        pass
 
     @abstractmethod
     async def list_sessions(
@@ -174,7 +169,6 @@ class HistoryStoreInterface(ABC):
         Returns:
             List of session IDs
         """
-        pass
 
     async def update_message(
         self,
@@ -242,7 +236,6 @@ class ToolResultStoreInterface(ABC):
         Returns:
             True if successful
         """
-        pass
 
     @abstractmethod
     async def get_tool_result(
@@ -260,7 +253,6 @@ class ToolResultStoreInterface(ABC):
         Returns:
             Tool result or None if not found
         """
-        pass
 
     @abstractmethod
     async def get_pending_tool_calls(
@@ -276,7 +268,6 @@ class ToolResultStoreInterface(ABC):
         Returns:
             List of pending tool call dicts
         """
-        pass
 
     async def save_pending_tool_call(
         self,
@@ -322,7 +313,6 @@ class StorageProvider(ABC):
     @abstractmethod
     def history(self) -> HistoryStoreInterface:
         """Get history storage."""
-        pass
 
     @property
     def tool_results(self) -> Optional[ToolResultStoreInterface]:
@@ -332,12 +322,10 @@ class StorageProvider(ABC):
     @abstractmethod
     async def initialize(self) -> None:
         """Initialize storage (create tables, connect to DB, etc.)."""
-        pass
 
     @abstractmethod
     async def close(self) -> None:
         """Close storage connections."""
-        pass
 
     async def health_check(self) -> dict:
         """

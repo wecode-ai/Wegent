@@ -5,7 +5,6 @@ Provides storage that calls Backend APIs.
 Used when chat_shell runs as HTTP service and needs to access Backend's data.
 """
 
-import json
 import logging
 from typing import Any, Optional
 

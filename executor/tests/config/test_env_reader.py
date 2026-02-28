@@ -11,8 +11,6 @@ import os
 import tempfile
 from unittest.mock import patch
 
-import pytest
-
 from executor.config.env_reader import (
     get_env,
     get_env_json,

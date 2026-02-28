@@ -185,7 +185,6 @@ class WindowsPtyManager(PtyManager):
 
     def set_nonblocking(self, fd: int) -> None:
         """No-op on Windows (not applicable)."""
-        pass
 
     def read_available(self, fd: int, timeout: float = 0.5) -> Optional[bytes]:
         """Not applicable on Windows - use PtyProcess.read() instead."""

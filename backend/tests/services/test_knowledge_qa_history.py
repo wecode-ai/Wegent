@@ -7,13 +7,12 @@ Unit tests for knowledge base QA history API.
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask
 from app.schemas.knowledge_qa_history import (
     KnowledgeBaseConfigInfo,
     KnowledgeBaseResult,
@@ -21,15 +20,12 @@ from app.schemas.knowledge_qa_history import (
     PaginationInfo,
     QAHistoryItem,
     QAHistoryResponse,
-    RetrievalConfigInfo,
 )
 from app.services.knowledge.knowledge_base_qa_service import (
     MAX_QUERY_DAYS,
     KnowledgeBaseQAService,
     knowledge_base_qa_service,
 )
-from shared.models.db.enums import SubtaskRole
-from shared.models.db.subtask_context import SubtaskContext
 
 
 class TestKnowledgeBaseQAServiceValidation:

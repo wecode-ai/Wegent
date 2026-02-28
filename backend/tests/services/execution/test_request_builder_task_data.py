@@ -126,7 +126,9 @@ class TestMcpPlaceholderWithExecutionRequest:
         result = replace_mcp_server_variables(mcp_servers, request)
 
         assert result["server"]["url"] == f"{TEST_BACKEND_URL}/mcp/sse"
-        assert result["server"]["headers"]["Authorization"] == f"Bearer {TEST_AUTH_TOKEN}"
+        assert (
+            result["server"]["headers"]["Authorization"] == f"Bearer {TEST_AUTH_TOKEN}"
+        )
 
     def test_nested_user_git_token_replaced(self) -> None:
         """${{user.git_token}} should resolve via ExecutionRequest.user['git_token']."""

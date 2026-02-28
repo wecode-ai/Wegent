@@ -14,11 +14,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
-    EmbeddingModelRef,
     HybridWeights,
     RetrievalConfig,
-    RetrieverRef,
-    SummaryModelRef,
 )
 
 # Import SplitterConfig from rag.py to use unified splitter configuration

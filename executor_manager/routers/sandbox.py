@@ -18,11 +18,8 @@ Execution API:
 Note: sandbox_id is derived from task_id internally (sandbox_id = str(task_id))
 """
 
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Request
 
-from fastapi import APIRouter, HTTPException, Query, Request
-
-from executor_manager.models.sandbox import SandboxStatus
 from executor_manager.schemas.sandbox import (
     CreateSandboxRequest,
     CreateSandboxResponse,

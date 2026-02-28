@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.schemas.subscription import (
     NotificationLevel,
-    SubscriptionFollowConfig,
 )
 from app.services.subscription.notification_service import (
     subscription_notification_service,

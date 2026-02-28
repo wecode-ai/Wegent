@@ -39,29 +39,24 @@ class IGroupMemberReader(ABC):
     @abstractmethod
     def is_member(self, db: Session, group_name: str, user_id: int) -> bool:
         """Check if user is member of group."""
-        pass
 
     @abstractmethod
     def get_role(self, db: Session, group_name: str, user_id: int) -> Optional[str]:
         """Get user's role in group (Owner/Maintainer/Developer/Reporter)."""
-        pass
 
     @abstractmethod
     def get_by_group_and_user(
         self, db: Session, group_name: str, user_id: int
     ) -> Optional[NamespaceMember]:
         """Get GroupMember record by group_name and user_id."""
-        pass
 
     @abstractmethod
     def get_user_groups(self, db: Session, user_id: int) -> List[str]:
         """Get all group names that user is member of."""
-        pass
 
     @abstractmethod
     def on_change(self, group_name: str, user_id: int) -> None:
         """Handle change event."""
-        pass
 
 
 # =============================================================================

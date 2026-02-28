@@ -12,7 +12,7 @@ Uses unified block types from shared.models.blocks for consistency.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
 from shared.models import EventType, ExecutionEvent

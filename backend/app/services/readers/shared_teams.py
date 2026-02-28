@@ -40,24 +40,20 @@ class ISharedTeamReader(ABC):
     @abstractmethod
     def is_shared_to_user(self, db: Session, team_id: int, user_id: int) -> bool:
         """Check if team is shared to user."""
-        pass
 
     @abstractmethod
     def get_shared_team_ids(self, db: Session, user_id: int) -> List[int]:
         """Get all team_ids shared to user."""
-        pass
 
     @abstractmethod
     def get_by_team_and_user(
         self, db: Session, team_id: int, user_id: int
     ) -> Optional[ResourceMember]:
         """Get ResourceMember record by team_id and user_id."""
-        pass
 
     @abstractmethod
     def on_change(self, team_id: int, user_id: int) -> None:
         """Handle change event."""
-        pass
 
 
 # =============================================================================

@@ -10,7 +10,7 @@ that can be used across different services (bot_kinds, executor_kinds, etc.).
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Optional, Set, Tuple
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session

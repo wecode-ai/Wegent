@@ -164,7 +164,7 @@ class TestKBPromptMarkdownLevel:
         # Should start with ## (H2) not # (H1)
         assert "## Knowledge Base Available" in KB_PROMPT_RELAXED
         # Sub-sections should use ### (H3)
-        assert "### Recommended Workflow:" in KB_PROMPT_RELAXED
+        assert "### Intent Routing" in KB_PROMPT_RELAXED
         assert "### Guidelines:" in KB_PROMPT_RELAXED
 
 

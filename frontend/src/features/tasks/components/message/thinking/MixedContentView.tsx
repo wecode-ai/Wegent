@@ -230,9 +230,10 @@ const MixedContentView = memo(function MixedContentView({
             return null
           }
           const key = 'blockId' in item ? item.blockId : `content-${index}`
-          const textContent = annotations && annotations.length > 0
-            ? processCitePatterns(item.content, annotations)
-            : item.content
+          const textContent =
+            annotations && annotations.length > 0
+              ? processCitePatterns(item.content, annotations)
+              : item.content
           return (
             <div key={key} className="text-sm">
               <EnhancedMarkdown source={textContent} theme={theme} />

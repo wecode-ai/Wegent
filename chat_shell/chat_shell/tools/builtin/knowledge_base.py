@@ -16,7 +16,6 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
-from ..knowledge_content_cleaner import get_content_cleaner
 from ..knowledge_injection_strategy import InjectionMode, InjectionStrategy
 from .knowledge_base_abc import KnowledgeBaseToolABC
 
@@ -1289,7 +1288,7 @@ class KnowledgeBaseTool(KnowledgeBaseToolABC, BaseTool):
 
         # Try package mode first (direct DB access)
         try:
-            from app.services.context.context_service import context_service
+            pass
 
             # Package mode: use context_service directly
             for kb_id, chunks in chunks_by_kb.items():

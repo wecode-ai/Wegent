@@ -4,7 +4,7 @@
 
 """Unit tests for SandboxScheduler service."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

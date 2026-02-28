@@ -14,7 +14,7 @@ This module provides functionality to detect and mask sensitive data such as:
 """
 
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 
 
 class SensitiveDataMasker:

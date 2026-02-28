@@ -25,12 +25,9 @@ Usage:
     await emitter.done(content="Hello world", usage={"input_tokens": 10})
 """
 
-import json
 import logging
-import time
-import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
 from .responses_api import ResponsesAPIEventBuilder, ResponsesAPIStreamEvents
 
@@ -388,7 +385,6 @@ class EventTransport(ABC):
         Returns:
             Transport-specific result
         """
-        pass
 
 
 class CallbackTransport(EventTransport):

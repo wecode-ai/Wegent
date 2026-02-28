@@ -8,7 +8,6 @@ This module provides the SandboxListFilesTool class that lists
 files and directories in the sandbox environment.
 """
 
-import asyncio
 import json
 import logging
 from typing import Optional

@@ -36,7 +36,7 @@ TRUNCATED_END = "__END_TRUNCATED__"
 TRUNCATION_WARNING_MESSAGE = """
 
 ---
-⚠️ Content Truncated: Model output reached token limit, response may be incomplete."""
+⚠️ 内容已截断 / Content Truncated: Model output reached token limit, response may be incomplete."""
 
 # Semaphore for concurrent chat limit (lazy initialized)
 _chat_semaphore: Optional[asyncio.Semaphore] = None
@@ -254,7 +254,7 @@ class StreamingCore:
 
         # Use provided storage handler or import default
         if storage_handler is None:
-            from chat_shell.services.storage.session import session_manager
+            pass
 
             self._storage = storage_handler
         else:

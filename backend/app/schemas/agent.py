@@ -18,8 +18,6 @@ class AgentBase(BaseModel):
 class AgentCreate(AgentBase):
     """Agent creation schema"""
 
-    pass
-
 
 class AgentUpdate(BaseModel):
     """Agent update schema"""

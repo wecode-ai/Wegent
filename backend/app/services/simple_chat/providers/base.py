@@ -68,7 +68,6 @@ class LLMProvider(ABC):
     @abstractmethod
     def provider_name(self) -> str:
         """Return the provider name (e.g., 'openai', 'claude', 'gemini')."""
-        pass
 
     @abstractmethod
     async def stream_chat(
@@ -77,12 +76,10 @@ class LLMProvider(ABC):
         cancel_event: asyncio.Event,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream chat completion from the LLM."""
-        pass
 
     @abstractmethod
     def format_messages(self, messages: list[dict[str, Any]]) -> Any:
         """Format messages for this provider's API."""
-        pass
 
     def _build_headers(self) -> dict[str, str]:
         """Build HTTP headers for API requests."""

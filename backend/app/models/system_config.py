@@ -7,7 +7,6 @@ SystemConfig model for storing system-wide configurations like quick access reco
 """
 
 import json
-from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy import Column, DateTime, Integer, String

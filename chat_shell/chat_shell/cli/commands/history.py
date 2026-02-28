@@ -15,7 +15,6 @@ def history():
     This command group provides tools for viewing, searching, and
     managing chat history stored in the configured storage backend.
     """
-    pass
 
 
 @history.command("list")
