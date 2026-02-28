@@ -212,7 +212,7 @@ class KnowledgeShareService(UnifiedShareService):
         """
         Get user's permission for a knowledge base.
 
-        Priority: creator > explicit permission (ResourceMember) > group permission
+        Priority: creator > explicit permission (ResourceMember) > group permission > task binding
 
         Returns:
             Tuple of (has_access, role, permission_level, is_creator)
@@ -285,7 +285,81 @@ class KnowledgeShareService(UnifiedShareService):
                 )
                 return True, role, perm_level, False
 
+        # For personal knowledge bases (namespace == "default"), check if bound to group chat
+        if kb.namespace == "default":
+            if self._is_kb_bound_to_user_group_chat(db, knowledge_base_id, user_id):
+                # User is member of a group chat that has this KB bound
+                return (
+                    True,
+                    ResourceRole.REPORTER.value,
+                    PermissionLevel.VIEW.value,
+                    False,
+                )
+
         return False, None, None, False
+
+    def _is_kb_bound_to_user_group_chat(
+        self, db: Session, kb_id: int, user_id: int
+    ) -> bool:
+        """Check if a knowledge base is bound to any group chat that the user is a member of.
+
+        When a knowledge base is bound to a group chat, all members of that group chat
+        should have access to the knowledge base (reporter permission level).
+
+        Args:
+            db: Database session
+            kb_id: Knowledge base Kind.id
+            user_id: User ID to check
+
+        Returns:
+            True if KB is bound to at least one group chat where user is a member
+        """
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+        from app.models.task import TaskResource
+
+        # Query all group chat tasks where this KB is bound and user is a member
+        # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
+        # First, get tasks where user is the owner
+        owned_tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+                TaskResource.user_id == user_id,
+            )
+            .all()
+        )
+
+        # Then, get tasks where user is an approved member via ResourceMember
+        member_tasks = (
+            db.query(TaskResource)
+            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .all()
+        )
+
+        # Combine owned and member tasks
+        tasks_with_kb = list(owned_tasks) + list(member_tasks)
+
+        for task in tasks_with_kb:
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+
+            for ref in kb_refs:
+                # Check if this KB is bound (match by ID or by name+namespace)
+                ref_id = ref.get("id")
+                if ref_id == kb_id:
+                    return True
+
+        return False
 
     def can_manage_permissions(
         self,
