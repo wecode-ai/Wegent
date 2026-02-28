@@ -303,11 +303,7 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
-            **(
-                {"device_id": params.device_id}
-                if params.device_id
-                else {}
-            ),
+            **({"device_id": params.device_id} if params.device_id else {}),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}
                 if knowledge_base_refs

@@ -14,6 +14,21 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class CreateCloudDeviceRequest(BaseModel):
+    """Request schema for cloud device creation.
+
+    Optional mail configuration is passed through to the startup script
+    and is NOT stored in the database.
+    """
+
+    mail_email: Optional[str] = Field(
+        None, description="Mail account username (without domain suffix)"
+    )
+    mail_password: Optional[str] = Field(
+        None, description="Mail account password (pass-through only, not stored)"
+    )
+
+
 class CloudDeviceConfig(BaseModel):
     """Cloud device configuration stored in Device CRD spec.
 

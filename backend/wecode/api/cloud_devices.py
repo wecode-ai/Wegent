@@ -11,7 +11,7 @@ managed through Nevis Sandbox API.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -21,6 +21,7 @@ from app.models.user import User
 from wecode.config.nevis_config import nevis_settings
 from wecode.schemas.cloud_device import (
     CloudDeviceResponse,
+    CreateCloudDeviceRequest,
     NevisSandboxStatus,
 )
 from wecode.service.cloud_device_provider import cloud_device_provider
@@ -55,6 +56,7 @@ def _get_backend_url(request: Request) -> str:
 @router.post("", response_model=CloudDeviceResponse)
 async def create_cloud_device(
     request: Request,
+    body: CreateCloudDeviceRequest = Body(default=CreateCloudDeviceRequest()),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -102,6 +104,8 @@ async def create_cloud_device(
             user_name=current_user.user_name,
             auth_token=auth_token,
             backend_url=backend_url,
+            mail_email=body.mail_email or "",
+            mail_password=body.mail_password or "",
         )
 
         return CloudDeviceResponse(**result)
