@@ -11,6 +11,7 @@ using the unified resource_members table with resource_type='Namespace'.
 This replaces the direct usage of NamespaceMember model.
 """
 
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -18,6 +19,9 @@ from sqlalchemy.orm import Session
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.schemas.namespace import GroupRole
+
+# Define epoch time for default datetime values
+EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
 
 
 # Resource type for namespace/group memberships
@@ -154,9 +158,7 @@ def get_group_member_count(db: Session, group_name: str) -> int:
     )
 
 
-def get_user_groups_with_roles(
-    db: Session, user_id: int
-) -> list[tuple[str, str]]:
+def get_user_groups_with_roles(db: Session, user_id: int) -> list[tuple[str, str]]:
     """
     Get all group names and roles for a user.
 
@@ -240,7 +242,7 @@ def create_group_member(
         invited_by_user_id=invited_by_user_id,
         share_link_id=0,
         reviewed_by_user_id=0,
-        reviewed_at__epoch=True,  # Will be set to epoch time
+        reviewed_at=EPOCH_TIME,
         copied_resource_id=0,
     )
 
@@ -250,9 +252,7 @@ def create_group_member(
     return member
 
 
-def delete_group_member(
-    db: Session, group_name: str, user_id: int
-) -> bool:
+def delete_group_member(db: Session, group_name: str, user_id: int) -> bool:
     """
     Delete a group membership.
 
