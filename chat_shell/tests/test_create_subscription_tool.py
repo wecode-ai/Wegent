@@ -590,6 +590,29 @@ class TestCreateSubscriptionToolAsyncExecution:
         assert response["success"] is False
         assert "interval_value is required" in response["error"]
 
+    @pytest.mark.asyncio
+    async def test_arun_rejects_in_subscription_context(self):
+        """Test that _arun rejects creating subscription in subscription context."""
+        tool = CreateSubscriptionTool(
+            user_id=1,
+            team_id=10,
+            team_name="test-team",
+            team_namespace="default",
+            timezone="Asia/Shanghai",
+            is_subscription_context=True,
+        )
+
+        result = await tool._arun(
+            display_name="Test",
+            trigger_type="cron",
+            prompt_template="Test",
+            cron_expression="0 9 * * *",
+        )
+
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "订阅任务中不允许创建订阅任务" in response["error"]
+
 
 class TestCreateSubscriptionToolBackendMode:
     """Tests for CreateSubscriptionTool backend (package) mode."""
@@ -779,6 +802,11 @@ class TestCreateSubscriptionToolHttpMode:
         response = json.loads(result)
         assert response["success"] is True
         assert response["subscription"]["id"] == 456
+
+        post_call_kwargs = (
+            mock_client.return_value.__aenter__.return_value.post.call_args.kwargs
+        )
+        assert post_call_kwargs["headers"]["X-Wegent-Subscription-Context"] == "false"
 
     @pytest.mark.asyncio
     async def test_create_via_http_api_error(self):

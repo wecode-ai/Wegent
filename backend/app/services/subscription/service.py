@@ -43,6 +43,7 @@ from app.services.subscription.helpers import (
     create_or_get_workspace,
     extract_trigger_config,
     resolve_workspace_repo_fields,
+    validate_min_trigger_interval,
 )
 from app.services.subscription.market_access import (
     filter_existing_market_whitelist_user_ids,
@@ -142,6 +143,13 @@ class SubscriptionService:
         market_whitelist_user_ids = filter_existing_market_whitelist_user_ids(
             db, subscription_in.market_whitelist_user_ids
         )
+
+        try:
+            validate_min_trigger_interval(
+                subscription_in.trigger_type, subscription_in.trigger_config
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         # Build CRD JSON
         subscription_crd = build_subscription_crd(
@@ -473,6 +481,11 @@ class SubscriptionService:
                 "trigger_config",
                 extract_trigger_config(subscription_crd.spec.trigger),
             )
+
+            try:
+                validate_min_trigger_interval(trigger_type, trigger_config)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
             # Generate new webhook token if switching to event trigger
             if (

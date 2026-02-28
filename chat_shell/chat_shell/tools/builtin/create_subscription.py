@@ -153,6 +153,7 @@ class CreateSubscriptionTool(BaseTool):
 
     # Backend API configuration (HTTP mode)
     backend_url: Optional[str] = None
+    is_subscription_context: bool = False
 
     def _run(
         self,
@@ -213,6 +214,15 @@ class CreateSubscriptionTool(BaseTool):
         Returns:
             JSON string with creation result
         """
+        if self.is_subscription_context:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "订阅任务中不允许创建订阅任务",
+                },
+                ensure_ascii=False,
+            )
+
         # If preview_id is provided, load configuration from preview storage
         if preview_id:
             from .preview_subscription import clear_preview, get_preview_data
@@ -555,7 +565,12 @@ class CreateSubscriptionTool(BaseTool):
                     f"{self.backend_url}/api/internal/subscriptions",
                     json=request_body,
                     params={"user_id": self.user_id},
-                    headers={"X-Service-Name": "chat-shell"},
+                    headers={
+                        "X-Service-Name": "chat-shell",
+                        "X-Wegent-Subscription-Context": str(
+                            self.is_subscription_context
+                        ).lower(),
+                    },
                 )
 
                 if response.status_code == 200 or response.status_code == 201:

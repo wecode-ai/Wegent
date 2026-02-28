@@ -10,8 +10,9 @@ These endpoints are intended for service-to-service communication, not user acce
 """
 
 import logging
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -30,6 +31,10 @@ router = APIRouter(prefix="/subscriptions", tags=["internal-subscriptions"])
 def create_subscription_internal(
     subscription_in: SubscriptionCreate,
     user_id: int,
+    x_wegent_subscription_context: Optional[str] = Header(
+        default=None,
+        alias="X-Wegent-Subscription-Context",
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -50,6 +55,19 @@ def create_subscription_internal(
         f"[internal] Creating subscription: name={subscription_in.name}, "
         f"user_id={user_id}, team_id={subscription_in.team_id}"
     )
+
+    if str(x_wegent_subscription_context).lower() in {"true", "1", "yes"}:
+        logger.warning(
+            "[internal] Rejected subscription creation in subscription context: "
+            "name=%s, user_id=%d, team_id=%d",
+            subscription_in.name,
+            user_id,
+            subscription_in.team_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="订阅任务中不允许创建订阅任务",
+        )
 
     try:
         result = subscription_service.create_subscription(
