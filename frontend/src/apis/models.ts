@@ -116,6 +116,7 @@ export interface UnifiedModel {
   config?: Record<string, unknown>
   isActive?: boolean
   modelCategoryType?: ModelCategoryType // New: model category type (llm, tts, stt, embedding, rerank)
+  isAdvanced?: boolean
 }
 
 export interface UnifiedModelListResponse {

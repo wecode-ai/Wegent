@@ -66,6 +66,7 @@ class UnifiedModel:
         model_category_type: Optional[
             str
         ] = None,  # New: llm, tts, stt, embedding, rerank
+        is_advanced: bool = False,
     ):
         self.name = name
         self.type = (
@@ -80,6 +81,7 @@ class UnifiedModel:
         self.model_category_type = (
             model_category_type or "llm"
         )  # Default to 'llm' for backward compatibility
+        self.is_advanced = is_advanced
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -102,6 +104,7 @@ class UnifiedModel:
             "modelId": self.model_id,
             "namespace": self.namespace,
             "modelCategoryType": self.model_category_type,  # New field
+            "isAdvanced": self.is_advanced,
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
@@ -141,6 +144,7 @@ class ModelAggregationService:
                 "display_name": None,
                 "config": {},
                 "model_category_type": "llm",
+                "is_advanced": False,
             }
 
         try:
@@ -160,6 +164,7 @@ class ModelAggregationService:
                 "display_name": model_crd.metadata.displayName,
                 "config": model_crd.spec.modelConfig,
                 "model_category_type": model_category_type,
+                "is_advanced": bool(model_crd.spec.isAdvanced) if model_crd.spec.isAdvanced else False,
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -169,6 +174,7 @@ class ModelAggregationService:
                 "display_name": None,
                 "config": {},
                 "model_category_type": "llm",
+                "is_advanced": False,
             }
 
     def _is_model_compatible_with_shell(
@@ -396,6 +402,7 @@ class ModelAggregationService:
                     is_active=resource.is_active,
                     namespace=resource.namespace,
                     model_category_type=info.get("model_category_type", "llm"),
+                    is_advanced=info.get("is_advanced", False),
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -444,6 +451,7 @@ class ModelAggregationService:
                 is_active=model_dict.get("is_active", True),
                 namespace="default",
                 model_category_type=public_model_category_type,
+                is_advanced=model_dict.get("is_advanced", False),
             )
 
             # If name already exists as user model, we still add public model

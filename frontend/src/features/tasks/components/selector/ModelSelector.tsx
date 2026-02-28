@@ -412,6 +412,28 @@ export default function ModelSelector({
                   </span>
                 </div>
               )}
+              {/* Show advanced models checkbox */}
+              {modelSelection.hasAdvancedModels && (
+                <div
+                  className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-hover transition-colors duration-150"
+                  onClick={e => {
+                    e.stopPropagation()
+                    modelSelection.setShowAdvancedModels(!modelSelection.showAdvancedModels)
+                  }}
+                >
+                  <Checkbox
+                    id="show-advanced-models-dropdown"
+                    checked={modelSelection.showAdvancedModels}
+                    onCheckedChange={(checked: boolean | 'indeterminate') =>
+                      modelSelection.setShowAdvancedModels(checked === true)
+                    }
+                    className="h-4 w-4"
+                  />
+                  <span className="text-xs text-text-secondary">
+                    {t('common:task_submit.show_advanced_models', '显示高级模型')}
+                  </span>
+                </div>
+              )}
               {/* Model Settings Link */}
               <div
                 className="flex items-center gap-2 px-3 py-2.5 cursor-pointer group hover:bg-hover transition-colors duration-150"

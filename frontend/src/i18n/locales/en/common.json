@@ -965,6 +965,7 @@
     "search_model": "Search model...",
     "force_override_model": "Force override Bot's bound model",
     "override_default_model": "Override default model",
+    "show_advanced_models": "Show advanced models",
     "override_short": "Override",
     "mixed_team_warning": "This team contains multiple executor types, cannot specify a unified model",
     "default_model": "Default",

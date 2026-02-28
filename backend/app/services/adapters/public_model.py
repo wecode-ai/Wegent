@@ -29,6 +29,7 @@ class ModelAdapter:
         # Extract config and displayName from json
         config = {}
         display_name = None
+        is_advanced = False
         if isinstance(kind.json, dict):
             # Check if json has proper CRD structure (metadata and spec)
             if "metadata" in kind.json and "spec" in kind.json:
@@ -36,6 +37,7 @@ class ModelAdapter:
                     model_crd = Model.model_validate(kind.json)
                     config = model_crd.spec.modelConfig
                     display_name = model_crd.metadata.displayName
+                    is_advanced = bool(model_crd.spec.isAdvanced) if model_crd.spec.isAdvanced else False
                 except Exception:
                     # Fallback for invalid CRD structure
                     config = kind.json
@@ -49,6 +51,7 @@ class ModelAdapter:
             "displayName": display_name,
             "config": config,
             "is_active": kind.is_active,
+            "is_advanced": is_advanced,
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,
         }
