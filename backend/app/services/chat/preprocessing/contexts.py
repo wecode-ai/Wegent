@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
-from shared.models.knowledge import KnowledgeBaseToolsResult
+from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
 from shared.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
 
 logger = logging.getLogger(__name__)
@@ -808,7 +808,7 @@ async def prepare_contexts_for_chat(
     base_system_prompt: str,
     task_id: Optional[int] = None,
     context_window: Optional[int] = None,
-) -> Tuple[str, str, List[BaseTool], bool, List[dict]]:
+) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
 
@@ -832,7 +832,7 @@ async def prepare_contexts_for_chat(
             If None, uses default value (128000).
 
     Returns:
-        Tuple of (final_message, enhanced_system_prompt, extra_tools, has_table_context, table_contexts)
+        ChatContextsResult with processed message, table info, and KB results.
     """
     from .tables import parse_table_url
 
@@ -854,12 +854,11 @@ async def prepare_contexts_for_chat(
             task_id=task_id,
             user_subtask_id=user_subtask_id,
         )
-        return (
-            message,
-            kb_result.enhanced_system_prompt,
-            kb_result.extra_tools,
-            False,
-            [],
+        return ChatContextsResult(
+            final_message=message,
+            has_table_context=False,
+            table_contexts=[],
+            kb=kb_result,
         )
 
     # Separate contexts by type
@@ -911,6 +910,7 @@ async def prepare_contexts_for_chat(
 
     extra_tools = kb_result.extra_tools
     enhanced_system_prompt = kb_result.enhanced_system_prompt
+    kb_meta_prompt = kb_result.kb_meta_prompt
 
     # 3. Process table contexts - create DataTableTool and build dynamic prompt
     parsed_tables = []
@@ -988,12 +988,23 @@ async def prepare_contexts_for_chat(
         )
 
     has_table_context = len(table_contexts) > 0
-    return (
-        final_message,
-        enhanced_system_prompt,
-        extra_tools,
-        has_table_context,
-        parsed_tables,
+
+    # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
+    # and extra_tools (table prompt and selected_documents processing may have modified
+    # them after kb_result was computed).
+    final_kb = KnowledgeBaseToolsResult(
+        extra_tools=extra_tools,
+        enhanced_system_prompt=enhanced_system_prompt,
+        kb_meta_prompt=kb_meta_prompt,
+        knowledge_base_ids=kb_result.knowledge_base_ids,
+        is_user_selected_kb=kb_result.is_user_selected_kb,
+        document_ids=kb_result.document_ids,
+    )
+    return ChatContextsResult(
+        final_message=final_message,
+        has_table_context=has_table_context,
+        table_contexts=parsed_tables,
+        kb=final_kb,
     )
 
 
@@ -1064,6 +1075,8 @@ def _prepare_kb_tools_from_contexts(
     NOTE:
     - Knowledge base metadata (kb_meta_prompt) is returned separately and should be injected
       via the `dynamic_context` mechanism to keep system prompts static for better caching.
+    - knowledge_base_ids, is_user_selected_kb, and document_ids are returned so callers
+      can populate ExecutionRequest fields without extra DB queries.
     """
 
     extra_tools: List[BaseTool] = []
@@ -1095,6 +1108,15 @@ def _prepare_kb_tools_from_contexts(
     else:
         knowledge_base_ids = []
 
+    # Extract document_ids from subtask KB contexts (no extra DB query needed).
+    document_ids: List[int] = []
+    if is_user_selected_kb:
+        for c in kb_contexts:
+            if c.type_data and isinstance(c.type_data, dict):
+                doc_ids = c.type_data.get("document_ids", [])
+                if doc_ids:
+                    document_ids.extend(doc_ids)
+
     if not knowledge_base_ids:
         # Even without current knowledge bases, check for historical KB meta
         if task_id:
@@ -1103,6 +1125,9 @@ def _prepare_kb_tools_from_contexts(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
             kb_meta_prompt=kb_meta_prompt,
+            knowledge_base_ids=[],
+            is_user_selected_kb=False,
+            document_ids=[],
         )
 
     logger.info(
@@ -1150,6 +1175,9 @@ def _prepare_kb_tools_from_contexts(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt=kb_meta_prompt,
+        knowledge_base_ids=knowledge_base_ids,
+        is_user_selected_kb=is_user_selected_kb,
+        document_ids=document_ids,
     )
 
 

@@ -277,6 +277,13 @@ async def build_execution_request(
         # Process contexts (attachments, knowledge bases, etc.)
         if user_subtask_id:
             request = await _process_contexts(db, request, user_subtask_id, user.id)
+        elif request.task_id:
+            # When user_subtask_id is absent (e.g. group chat messages routed directly
+            # from task-level KB binding), we still need to inject kb_meta_prompt so
+            # that the Chat Shell can present KB metadata to the LLM via
+            # dynamic_context injection.  Attachment / table context processing is
+            # intentionally skipped because there is no per-message subtask context.
+            await _build_kb_meta_prompt(db, request, populate_kb_ids=True)
 
         return request
 
@@ -302,23 +309,12 @@ async def _process_contexts(
         Enhanced ExecutionRequest with context information
     """
     from app.services.chat.preprocessing import prepare_contexts_for_chat
-    from app.services.chat.preprocessing.contexts import (
-        _get_bound_knowledge_base_ids,
-        get_document_ids_from_subtask,
-        get_knowledge_base_ids_from_subtask,
-    )
 
     # Get context_window from model_config for selected_documents injection threshold
     model_context_window = request.model_config.get("context_window")
 
     # Process contexts (attachments, knowledge bases, etc.)
-    (
-        final_message,
-        enhanced_system_prompt,
-        extra_tools,
-        has_table_context,
-        table_contexts,
-    ) = await prepare_contexts_for_chat(
+    ctx = await prepare_contexts_for_chat(
         db=db,
         user_subtask_id=user_subtask_id,
         user_id=user_id,
@@ -328,55 +324,84 @@ async def _process_contexts(
         context_window=model_context_window,
     )
 
-    # Update request with processed contexts
-    request.prompt = final_message
-    request.system_prompt = enhanced_system_prompt
-    request.table_contexts = table_contexts
-
-    # Build KB meta prompt for dynamic_context injection in chat_shell.
-    # Keeping system prompts static improves prompt caching.
-    request.kb_meta_prompt = ""
-    if request.task_id:
-        try:
-            import asyncio
-
-            from app.services.chat.preprocessing.kb_meta import (
-                build_kb_meta_prompt_for_task,
-            )
-
-            # Use asyncio.to_thread to avoid blocking the event loop
-            request.kb_meta_prompt = await asyncio.to_thread(
-                build_kb_meta_prompt_for_task, db, request.task_id
-            )
-        except Exception as e:
-            logger.warning(
-                "[ai_trigger_unified] Failed to build kb_meta_prompt: task_id=%s, error=%s",
-                request.task_id,
-                e,
-            )
-
-    # Get knowledge base IDs
-    knowledge_base_ids = get_knowledge_base_ids_from_subtask(db, user_subtask_id)
-    is_user_selected_kb = bool(knowledge_base_ids)
-
-    if knowledge_base_ids:
-        document_ids = get_document_ids_from_subtask(db, user_subtask_id)
-        request.knowledge_base_ids = knowledge_base_ids
-        request.document_ids = document_ids
-        request.is_user_selected_kb = is_user_selected_kb
-    elif request.task_id:
-        # Fall back to task-level bound knowledge bases
-        knowledge_base_ids = _get_bound_knowledge_base_ids(db, request.task_id)
-        if knowledge_base_ids:
-            request.knowledge_base_ids = knowledge_base_ids
-            request.is_user_selected_kb = False
+    # Update request with all processed context results.
+    # knowledge_base_ids / is_user_selected_kb / document_ids / kb_meta_prompt are
+    # computed inside _prepare_kb_tools_from_contexts and surfaced here - no extra
+    # DB queries needed.
+    request.prompt = ctx.final_message
+    request.system_prompt = ctx.kb.enhanced_system_prompt
+    request.table_contexts = ctx.table_contexts
+    request.kb_meta_prompt = ctx.kb.kb_meta_prompt
+    if ctx.kb.knowledge_base_ids:
+        request.knowledge_base_ids = ctx.kb.knowledge_base_ids
+        request.is_user_selected_kb = ctx.kb.is_user_selected_kb
+        if ctx.kb.document_ids:
+            request.document_ids = ctx.kb.document_ids
 
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
         "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d",
         user_subtask_id,
         request.knowledge_base_ids,
-        len(table_contexts),
+        len(ctx.table_contexts),
     )
 
     return request
+
+
+async def _build_kb_meta_prompt(
+    db: "Session",
+    request: "ExecutionRequest",
+    populate_kb_ids: bool = False,
+) -> None:
+    """Build kb_meta_prompt and optionally populate knowledge_base_ids.
+
+    Only called when ``user_subtask_id`` is absent (e.g. group chat where the KB
+    is bound at the task level, not per-message).  In that case ``prepare_contexts_for_chat``
+    is not invoked, so this function handles both responsibilities:
+    - Fills ``request.kb_meta_prompt`` for dynamic_context injection in Chat Shell.
+    - When ``populate_kb_ids=True``, also fills ``request.knowledge_base_ids`` from
+      task-level bound KBs so Chat Shell can create KnowledgeBaseTool for RAG retrieval.
+
+    Attachment / table context processing is intentionally skipped because those
+    are per-message, subtask-scoped operations.
+
+    Args:
+        db: Database session
+        request: ExecutionRequest to mutate in-place
+        populate_kb_ids: When True, also populate knowledge_base_ids from task-level
+            bound KBs (used when there is no user_subtask_id).
+    """
+    import asyncio
+
+    from app.services.chat.preprocessing.kb_meta import build_kb_meta_prompt_for_task
+
+    if not request.task_id:
+        return
+
+    if populate_kb_ids:
+        # Populate task-level bound knowledge base IDs so Chat Shell can create
+        # KnowledgeBaseTool for RAG retrieval (only needed when no user_subtask_id).
+        from app.services.chat.preprocessing.contexts import (
+            _get_bound_knowledge_base_ids,
+        )
+
+        knowledge_base_ids = _get_bound_knowledge_base_ids(db, request.task_id)
+        if knowledge_base_ids:
+            request.knowledge_base_ids = knowledge_base_ids
+            request.is_user_selected_kb = False
+
+    # Build KB meta prompt for dynamic_context injection.
+    request.kb_meta_prompt = ""
+    try:
+        request.kb_meta_prompt = await asyncio.to_thread(
+            build_kb_meta_prompt_for_task, db, request.task_id
+        )
+    except Exception as e:
+        logger.warning(
+            "[ai_trigger_unified] Failed to build kb_meta_prompt "
+            "(task_id=%s, populate_kb_ids=%s): error=%s",
+            request.task_id,
+            populate_kb_ids,
+            e,
+        )
