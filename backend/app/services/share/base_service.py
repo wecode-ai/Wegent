@@ -29,8 +29,8 @@ from app.models.user import User
 from app.schemas.share import (
     JoinByLinkResponse,
     MemberListResponse,
-    MemberRole as SchemaMemberRole,
 )
+from app.schemas.share import MemberRole as SchemaMemberRole
 from app.schemas.share import MemberStatus as SchemaMemberStatus
 from app.schemas.share import (
     PendingRequestListResponse,
@@ -492,11 +492,10 @@ class UnifiedShareService(ABC):
     def _share_link_to_response(self, share_link: ShareLink) -> ShareLinkResponse:
         """Convert ShareLink model to response schema."""
         # Get default_role from the model, fallback to mapping from default_permission_level
-        default_role = getattr(share_link, 'default_role', None)
+        default_role = getattr(share_link, "default_role", None)
         if not default_role:
             default_role = self.PERMISSION_TO_ROLE.get(
-                share_link.default_permission_level.lower(),
-                ResourceRole.REPORTER.value
+                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
             )
 
         return ShareLinkResponse(
@@ -570,11 +569,10 @@ class UnifiedShareService(ABC):
         owner_name = owner.user_name if owner else f"User_{owner_id}"
 
         # Get default_role from the model, fallback to mapping from default_permission_level
-        default_role = getattr(share_link, 'default_role', None)
+        default_role = getattr(share_link, "default_role", None)
         if not default_role:
             default_role = self.PERMISSION_TO_ROLE.get(
-                share_link.default_permission_level.lower(),
-                ResourceRole.REPORTER.value
+                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
             )
 
         return ShareInfoResponse(
@@ -677,18 +675,16 @@ class UnifiedShareService(ABC):
                 else MemberStatus.APPROVED.value
             )
             # Determine role from share link default_role or requested_role
-            default_role = getattr(share_link, 'default_role', None)
+            default_role = getattr(share_link, "default_role", None)
             if not default_role:
                 default_role = self.PERMISSION_TO_ROLE.get(
                     share_link.default_permission_level.lower(),
-                    ResourceRole.REPORTER.value
+                    ResourceRole.REPORTER.value,
                 )
 
             # Use requested role if provided and approval is required, otherwise use default
             role = (
-                requested_role.value
-                if is_pending and requested_role
-                else default_role
+                requested_role.value if is_pending and requested_role else default_role
             )
             existing_member.set_role(role)
             existing_member.share_link_id = share_link.id
@@ -709,18 +705,16 @@ class UnifiedShareService(ABC):
             )
 
             # Determine role from share link default_role or requested_role
-            default_role = getattr(share_link, 'default_role', None)
+            default_role = getattr(share_link, "default_role", None)
             if not default_role:
                 default_role = self.PERMISSION_TO_ROLE.get(
                     share_link.default_permission_level.lower(),
-                    ResourceRole.REPORTER.value
+                    ResourceRole.REPORTER.value,
                 )
 
             # Use requested role if provided and approval is required, otherwise use default
             role = (
-                requested_role.value
-                if is_pending and requested_role
-                else default_role
+                requested_role.value if is_pending and requested_role else default_role
             )
 
             # Create member record
@@ -735,6 +729,7 @@ class UnifiedShareService(ABC):
                 share_link_id=share_link.id,
                 reviewed_by_user_id=0 if is_pending else owner_id,
                 reviewed_at=datetime.utcnow(),
+                requested_at=datetime.utcnow(),
             )
             member.set_role(role)
 
@@ -990,6 +985,7 @@ class UnifiedShareService(ABC):
                 share_link_id=share_link.id,
                 reviewed_by_user_id=current_user_id,
                 reviewed_at=datetime.utcnow(),
+                requested_at=datetime.utcnow(),
             )
             member.set_role(role.value)
             db.add(member)
@@ -1231,7 +1227,9 @@ class UnifiedShareService(ABC):
                         else None
                     ),
                     user_email=(
-                        user_map.get(m.user_id).email if user_map.get(m.user_id) else None
+                        user_map.get(m.user_id).email
+                        if user_map.get(m.user_id)
+                        else None
                     ),
                     requested_role=effective_role,
                     requested_permission_level=m.permission_level,
@@ -1368,7 +1366,9 @@ class UnifiedShareService(ABC):
         effective_role = member.get_effective_role()
         actual_level = self.ROLE_HIERARCHY.get(effective_role, 0)
         # Map required permission level to role hierarchy
-        required_role = self.PERMISSION_TO_ROLE.get(required_level.value, ResourceRole.REPORTER.value)
+        required_role = self.PERMISSION_TO_ROLE.get(
+            required_level.value, ResourceRole.REPORTER.value
+        )
         required = self.ROLE_HIERARCHY.get(required_role, 0)
 
         return actual_level >= required

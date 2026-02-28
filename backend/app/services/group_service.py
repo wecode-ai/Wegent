@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
@@ -153,6 +154,7 @@ def create_group(
         share_link_id=0,
         reviewed_by_user_id=0,
         copied_resource_id=0,
+        requested_at=datetime.now(),
     )
 
     db.add(owner_member)
@@ -640,10 +642,10 @@ def update_member_role(
     # Update role and permission_level
     member.role = new_role.value
     role_to_permission = {
-        GroupRole.OWNER.value: "manage",
-        GroupRole.MAINTAINER.value: "manage",
-        GroupRole.DEVELOPER.value: "edit",
-        GroupRole.REPORTER.value: "view",
+        GroupRole.Owner.value: "manage",
+        GroupRole.Maintainer.value: "manage",
+        GroupRole.Developer.value: "edit",
+        GroupRole.Reporter.value: "view",
     }
     member.permission_level = role_to_permission.get(new_role.value, "view")
 
@@ -799,6 +801,7 @@ def invite_all_users(
                 share_link_id=0,
                 reviewed_by_user_id=0,
                 copied_resource_id=0,
+                requested_at=datetime.now(),
             )
             db.add(new_member)
             new_members.append(new_member)

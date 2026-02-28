@@ -225,10 +225,10 @@ def create_group_member(
 
     # Map role to permission level
     role_to_permission = {
-        GroupRole.OWNER.value: "manage",
-        GroupRole.MAINTAINER.value: "manage",
-        GroupRole.DEVELOPER.value: "edit",
-        GroupRole.REPORTER.value: "view",
+        GroupRole.Owner.value: "manage",
+        GroupRole.Maintainer.value: "manage",
+        GroupRole.Developer.value: "edit",
+        GroupRole.Reporter.value: "view",
     }
     permission_level = role_to_permission.get(role, "view")
 
@@ -244,6 +244,7 @@ def create_group_member(
         reviewed_by_user_id=0,
         reviewed_at=EPOCH_TIME,
         copied_resource_id=0,
+        requested_at=datetime.now(),
     )
 
     db.add(member)
