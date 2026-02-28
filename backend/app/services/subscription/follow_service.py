@@ -23,7 +23,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.subscription_follow import (
     FollowType,
     InvitationStatus,
-    NotificationStatus,
+    NotificationLevel,
     SubscriptionFollow,
     SubscriptionShareNamespace,
 )

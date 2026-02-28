@@ -77,7 +77,9 @@ def upgrade() -> None:
 
     # 2. Migrate namespace_members to resource_members
     # This migrates group membership data to the unified resource_members table
-    if table_exists(conn, "namespace_members") and table_exists(conn, "resource_members"):
+    if table_exists(conn, "namespace_members") and table_exists(
+        conn, "resource_members"
+    ):
         # Get all namespace members with their namespace IDs
         # Use INSERT IGNORE (MySQL) or INSERT OR IGNORE (SQLite) to avoid duplicates
         dialect = conn.dialect.name
@@ -111,7 +113,7 @@ def upgrade() -> None:
                     nm.created_at,
                     nm.updated_at
                 FROM namespace_members nm
-                JOIN namespace n ON nm.group_name = n.name
+                JOIN namespace n ON nm.group_name COLLATE utf8mb4_unicode_ci = n.name COLLATE utf8mb4_unicode_ci
                 """
             )
         else:
@@ -143,7 +145,7 @@ def upgrade() -> None:
                     nm.created_at,
                     nm.updated_at
                 FROM namespace_members nm
-                JOIN namespace n ON nm.group_name = n.name
+                JOIN namespace n ON nm.group_name COLLATE utf8mb4_unicode_ci = n.name COLLATE utf8mb4_unicode_ci
                 """
             )
 

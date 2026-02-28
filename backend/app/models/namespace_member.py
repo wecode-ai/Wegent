@@ -42,9 +42,10 @@ class NamespaceMember(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships (no foreign key constraints as per requirements)
+    # Note: This model is deprecated. Namespace.members now uses ResourceMember.
+    # We don't use back_populates here to avoid conflict with Namespace.members
     namespace = relationship(
         "Namespace",
-        back_populates="members",
         primaryjoin="NamespaceMember.group_name == Namespace.name",
         foreign_keys="[NamespaceMember.group_name]",
     )
