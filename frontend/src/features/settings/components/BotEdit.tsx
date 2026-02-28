@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
+import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import { PromptFineTuneDialog } from './prompt-fine-tune'
 
@@ -312,26 +313,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'Chat'
   }, [agentName, shells])
 
-  // Get current shell type for skill filtering
-  const currentShellType = useMemo(() => {
-    const selectedShell = shells.find(s => s.name === agentName)
-    return selectedShell?.shellType || agentName
-  }, [agentName, shells])
-
   // Filter skills based on current shell type
-  const filterSkillsByShellType = useCallback(
-    (skills: UnifiedSkill[]): UnifiedSkill[] => {
-      return skills.filter(skill => {
-        // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
-        if (!skill.bindShells || skill.bindShells.length === 0) {
-          return false
-        }
-        // Check if current shell type is in the bindShells list
-        return skill.bindShells.includes(currentShellType)
-      })
-    },
-    [currentShellType]
-  )
+  // Note: bindShells filtering is deprecated, skills can be used in any context
+  const filterSkillsByShellType = useCallback((skills: UnifiedSkill[]): UnifiedSkill[] => {
+    return skills
+  }, [])
 
   useEffect(() => {
     // Only fetch skills when agent supports skills (ClaudeCode or Chat)
@@ -1354,29 +1340,19 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <Select
-                          value=""
-                          onValueChange={value => {
+                        <RichSkillSelector
+                          skills={availableSkills}
+                          selectedSkillNames={selectedSkills}
+                          onSelectSkill={(skillName: string) => {
                             if (readOnly) return
-                            if (value && !selectedSkills.includes(value)) {
-                              setSelectedSkills([...selectedSkills, value])
+                            if (skillName && !selectedSkills.includes(skillName)) {
+                              setSelectedSkills([...selectedSkills, skillName])
                             }
                           }}
+                          placeholder={t('common:skills.select_skill_to_add')}
                           disabled={readOnly}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder={t('common:skills.select_skill_to_add')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableSkills
-                              .filter(skill => !selectedSkills.includes(skill.name))
-                              .map(skill => (
-                                <SelectItem key={skill.name} value={skill.name}>
-                                  {skill.displayName || skill.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
+                          readOnly={readOnly}
+                        />
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
