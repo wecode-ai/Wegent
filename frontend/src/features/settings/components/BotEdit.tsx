@@ -312,26 +312,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'Chat'
   }, [agentName, shells])
 
-  // Get current shell type for skill filtering
-  const currentShellType = useMemo(() => {
-    const selectedShell = shells.find(s => s.name === agentName)
-    return selectedShell?.shellType || agentName
-  }, [agentName, shells])
-
   // Filter skills based on current shell type
-  const filterSkillsByShellType = useCallback(
-    (skills: UnifiedSkill[]): UnifiedSkill[] => {
-      return skills.filter(skill => {
-        // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
-        if (!skill.bindShells || skill.bindShells.length === 0) {
-          return false
-        }
-        // Check if current shell type is in the bindShells list
-        return skill.bindShells.includes(currentShellType)
-      })
-    },
-    [currentShellType]
-  )
+  // Note: bindShells filtering is deprecated, skills can be used in any context
+  const filterSkillsByShellType = useCallback((skills: UnifiedSkill[]): UnifiedSkill[] => {
+    return skills
+  }, [])
 
   useEffect(() => {
     // Only fetch skills when agent supports skills (ClaudeCode or Chat)
