@@ -35,6 +35,7 @@ def create_subscription_internal(
         default=None,
         alias="X-Wegent-Subscription-Context",
     ),
+    x_service_name: Optional[str] = Header(default=None, alias="X-Service-Name"),
     db: Session = Depends(get_db),
 ):
     """
@@ -68,6 +69,10 @@ def create_subscription_internal(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="订阅任务中不允许创建订阅任务",
         )
+
+    # Tool-based creation from chat-shell must never enable subscriptions directly.
+    if str(x_service_name).lower() == "chat-shell":
+        subscription_in.enabled = False
 
     try:
         result = subscription_service.create_subscription(

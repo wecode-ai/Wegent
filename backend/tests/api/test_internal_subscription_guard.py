@@ -64,3 +64,26 @@ def test_internal_create_allows_non_subscription_context():
 
     assert result is expected_result
     mock_create.assert_called_once()
+
+
+def test_internal_create_forces_disabled_for_chat_shell_requests():
+    """Internal API should force enabled=False for chat-shell initiated creation."""
+    payload = _build_subscription_create_payload()
+    payload.enabled = True
+    expected_result = MagicMock()
+
+    with patch(
+        "app.api.endpoints.internal.subscriptions.subscription_service.create_subscription",
+        return_value=expected_result,
+    ) as mock_create:
+        result = create_subscription_internal(
+            subscription_in=payload,
+            user_id=123,
+            x_wegent_subscription_context="false",
+            x_service_name="chat-shell",
+            db=MagicMock(),
+        )
+
+    assert result is expected_result
+    sent_subscription = mock_create.call_args.kwargs["subscription_in"]
+    assert sent_subscription.enabled is False
