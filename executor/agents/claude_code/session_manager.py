@@ -314,6 +314,39 @@ class SessionManager:
             return False
 
     @classmethod
+    def cleanup_session_tracking(cls, session_id: str, internal_key: str = None) -> None:
+        """Remove in-memory tracking for a session without touching disk files.
+
+        Removes the client from _clients and the mapping from _session_id_map,
+        but preserves the on-disk .claude_session_id file for future resume.
+
+        Args:
+            session_id: Session ID to remove from _clients
+            internal_key: Internal session key to remove from _session_id_map.
+                          If None, searches _session_id_map for matching session_id.
+        """
+        # Remove client from cache
+        if session_id in cls._clients:
+            del cls._clients[session_id]
+            logger.info(f"Removed client from cache: session_id={session_id}")
+
+        # Remove session_id_map entry
+        if internal_key:
+            cls._session_id_map.pop(internal_key, None)
+            logger.info(
+                f"Removed session_id_map entry: {internal_key} -> {session_id}"
+            )
+        else:
+            # Search for matching entry
+            for key, sid in list(cls._session_id_map.items()):
+                if sid == session_id:
+                    del cls._session_id_map[key]
+                    logger.info(
+                        f"Removed session_id_map entry: {key} -> {session_id}"
+                    )
+                    break
+
+    @classmethod
     async def cleanup_task_clients(cls, task_id: int) -> int:
         """Close all client connections for a specific task_id.
 

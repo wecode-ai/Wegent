@@ -12,6 +12,8 @@ import React, {
 } from 'react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
 import {
   Select,
@@ -22,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
+import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import { PromptFineTuneDialog } from './prompt-fine-tune'
 
@@ -310,26 +313,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'Chat'
   }, [agentName, shells])
 
-  // Get current shell type for skill filtering
-  const currentShellType = useMemo(() => {
-    const selectedShell = shells.find(s => s.name === agentName)
-    return selectedShell?.shellType || agentName
-  }, [agentName, shells])
-
   // Filter skills based on current shell type
-  const filterSkillsByShellType = useCallback(
-    (skills: UnifiedSkill[]): UnifiedSkill[] => {
-      return skills.filter(skill => {
-        // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
-        if (!skill.bindShells || skill.bindShells.length === 0) {
-          return false
-        }
-        // Check if current shell type is in the bindShells list
-        return skill.bindShells.includes(currentShellType)
-      })
-    },
-    [currentShellType]
-  )
+  // Note: bindShells filtering is deprecated, skills can be used in any context
+  const filterSkillsByShellType = useCallback((skills: UnifiedSkill[]): UnifiedSkill[] => {
+    return skills
+  }, [])
 
   useEffect(() => {
     // Only fetch skills when agent supports skills (ClaudeCode or Chat)
@@ -960,13 +948,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   {t('common:bot.name')} <span className="text-red-400">*</span>
                 </label>
               </div>
-              <input
-                type="text"
+              <Input
                 value={botName}
                 onChange={e => setBotName(e.target.value)}
                 placeholder={t('common:bot.name_placeholder')}
                 disabled={readOnly}
-                className={`w-full h-10 px-4 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                className={`text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
               />
             </div>
 
@@ -1161,7 +1148,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   </div>
                 )}
 
-                {/* Protocol selector - only show in advanced mode */}
                 {isCustomModel && (
                   <div className="mb-3">
                     <label className="block text-sm font-medium text-text-primary mb-1">
@@ -1201,7 +1187,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 )}
 
                 {isCustomModel ? (
-                  <textarea
+                  <Textarea
                     value={agentConfig}
                     onChange={e => {
                       if (readOnly) return
@@ -1235,7 +1221,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 }`
                           : ''
                     }
-                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                    className={`font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border-red-400 focus-visible:ring-red-300' : ''} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   />
                 ) : (
                   <Select
@@ -1354,29 +1340,19 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <Select
-                          value=""
-                          onValueChange={value => {
+                        <RichSkillSelector
+                          skills={availableSkills}
+                          selectedSkillNames={selectedSkills}
+                          onSelectSkill={(skillName: string) => {
                             if (readOnly) return
-                            if (value && !selectedSkills.includes(value)) {
-                              setSelectedSkills([...selectedSkills, value])
+                            if (skillName && !selectedSkills.includes(skillName)) {
+                              setSelectedSkills([...selectedSkills, skillName])
                             }
                           }}
+                          placeholder={t('common:skills.select_skill_to_add')}
                           disabled={readOnly}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder={t('common:skills.select_skill_to_add')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableSkills
-                              .filter(skill => !selectedSkills.includes(skill.name))
-                              .map(skill => (
-                                <SelectItem key={skill.name} value={skill.name}>
-                                  {skill.displayName || skill.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
+                          readOnly={readOnly}
+                        />
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
@@ -1531,7 +1507,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             </div>
 
             {/* textarea occupies all space in the second row */}
-            <textarea
+            <Textarea
               value={prompt}
               onChange={e => {
                 if (readOnly) return
@@ -1539,7 +1515,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               }}
               disabled={readOnly}
               placeholder={t('common:bot.prompt_placeholder')}
-              className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-y custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`text-base resize-y custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
         )}

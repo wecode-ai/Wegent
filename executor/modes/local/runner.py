@@ -474,6 +474,12 @@ class LocalRunner:
             )
             await ws_emitter.error(error_msg, "execution_error")
 
+        # Send heartbeat immediately to reflect freed slot after task completion
+        try:
+            await self.websocket_client.send_heartbeat()
+        except Exception as e:
+            logger.warning(f"Failed to send heartbeat after task completion: {e}")
+
     async def _report_task_failure(
         self, task_data: ExecutionRequest, error_message: str
     ) -> None:

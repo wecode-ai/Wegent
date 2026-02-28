@@ -737,6 +737,12 @@ class ClaudeCodeAgent(Agent):
             elif result == TaskStatus.CANCELLED:
                 self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
 
+            # Auto-close CC process after completion to free device slot.
+            # Session ID is preserved on disk for resume on next message.
+            # Skip for CANCELLED — cancel/interrupt flow has its own cleanup.
+            if result in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                await self._auto_close_session()
+
             return result
 
         except Exception as e:
@@ -852,6 +858,65 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.warning(f"Error closing client for retry: {e}")
             # Clear client reference anyway to allow new client creation
+            self.client = None
+
+    async def _auto_close_session(self) -> None:
+        """
+        Auto-close the CC process after message completion (local mode only).
+
+        Terminates the CC process and removes all in-memory tracking, but
+        preserves the on-disk session ID file so the next message can resume.
+        This frees the device slot immediately instead of keeping the process
+        alive between messages.
+        """
+        if config.EXECUTOR_MODE != "local":
+            return
+
+        if self.client is None:
+            logger.debug("No client to auto-close")
+            return
+
+        try:
+            logger.info(
+                f"Auto-closing CC session after completion: "
+                f"session_id={self.session_id}, task_id={self.task_id}"
+            )
+
+            # Terminate the CC process
+            await SessionManager._terminate_client_process(
+                self.client, self.session_id
+            )
+
+            # Remove all in-memory tracking (client cache + session_id_map)
+            # but preserve the on-disk .claude_session_id file for resume
+            internal_key = getattr(self, "_internal_session_key", None)
+            SessionManager.cleanup_session_tracking(
+                self.session_id, internal_key
+            )
+
+            # Clear local client reference
+            self.client = None
+
+            # Trigger heartbeat callback to immediately update slot usage
+            if self.on_client_created_callback:
+                try:
+                    if asyncio.iscoroutinefunction(self.on_client_created_callback):
+                        await self.on_client_created_callback()
+                    else:
+                        result = self.on_client_created_callback()
+                        if asyncio.iscoroutine(result):
+                            await result
+                except Exception as e:
+                    logger.warning(
+                        f"Error in heartbeat callback after auto-close: {e}"
+                    )
+
+            logger.info(
+                f"Auto-closed CC session: session_id={self.session_id}, "
+                f"task_id={self.task_id}. Session ID preserved on disk for resume."
+            )
+        except Exception as e:
+            logger.warning(f"Error auto-closing CC session: {e}")
             self.client = None
 
     def _handle_execution_result(

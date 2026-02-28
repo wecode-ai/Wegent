@@ -681,6 +681,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 knowledge_base_id=payload.knowledge_base_id,
                 additional_skills=additional_skills_dicts,
                 pipeline_bot_ids=pipeline_bot_ids,
+                device_id=payload.device_id,
             )
 
             result = await create_chat_task(
