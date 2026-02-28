@@ -156,8 +156,8 @@ class ChatSendPayload(BaseModel):
     git_repo_id: Optional[int] = Field(None, description="Git repository ID")
     git_domain: Optional[str] = Field(None, description="Git domain")
     branch_name: Optional[str] = Field(None, description="Git branch name")
-    task_type: Optional[Literal["chat", "code", "knowledge", "task"]] = Field(
-        None, description="Task type: chat, code, knowledge, or task"
+    task_type: Optional[Literal["chat", "code", "knowledge", "task", "video"]] = Field(
+        None, description="Task type: chat, code, knowledge, task, or video"
     )
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
@@ -266,6 +266,9 @@ class ChatChunkPayload(BaseModel):
     task_id: Optional[int] = None  # Add task_id for page refresh recovery
     sources: Optional[List[SourceReference]] = Field(
         None, description="Knowledge base source references (for RAG citations)"
+    )
+    progress: Optional[int] = Field(
+        None, description="Progress percentage (0-100) for long-running operations"
     )
 
 

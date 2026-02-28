@@ -36,6 +36,7 @@ class ModelCategoryType(str, Enum):
     - STT: Speech-to-Text models
     - EMBEDDING: Vector embedding models
     - RERANK: Reranking models
+    - VIDEO: Video generation models
     """
 
     LLM = "llm"
@@ -43,6 +44,7 @@ class ModelCategoryType(str, Enum):
     STT = "stt"
     EMBEDDING = "embedding"
     RERANK = "rerank"
+    VIDEO = "video"
 
 
 # Type-specific configurations
@@ -86,6 +88,16 @@ class RerankConfig(BaseModel):
     top_n: Optional[int] = Field(None, description="Number of top results to return")
     return_documents: Optional[bool] = Field(
         True, description="Whether to return document texts"
+    )
+
+
+class VideoGenerationConfig(BaseModel):
+    """Video generation specific configuration"""
+
+    resolution: Optional[str] = Field("1080p", description="Video resolution")
+    fps: Optional[int] = Field(24, description="Frames per second")
+    max_duration: Optional[int] = Field(
+        None, description="Maximum duration in seconds"
     )
 
 
@@ -195,6 +207,9 @@ class ModelSpec(BaseModel):
     rerankConfig: Optional[RerankConfig] = Field(
         None, description="Rerank-specific configuration (when modelType='rerank')"
     )
+    videoConfig: Optional[VideoGenerationConfig] = Field(
+        None, description="Video generation configuration (when modelType='video')"
+    )
     isAdvanced: Optional[bool] = Field(
         None,
         description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
@@ -295,6 +310,12 @@ class BotSpec(BaseModel):
     ghostRef: GhostRef
     shellRef: ShellRef
     modelRef: Optional[ModelRef] = None
+    secondaryModelRef: Optional[ModelRef] = Field(
+        None,
+        description="Secondary LLM model for auxiliary tasks. "
+        "Effective when primary modelRef.modelType is 'video'. "
+        "Used for intent recognition and prompt merging.",
+    )
 
 
 class BotStatus(Status):
