@@ -249,7 +249,8 @@ function CloudDeviceCard({
   t,
 }: CloudDeviceCardProps) {
   const isOnline = device.status === 'online' || device.status === 'busy'
-  const canStartTask = isOnline && device.slot_used < device.slot_max
+  const slotsAvailable = device.slot_max === 0 || device.slot_used < device.slot_max
+  const canStartTask = isOnline && slotsAvailable
   const [vncUrl, setVncUrl] = useState<string | null>(null)
 
   // Fetch VNC URL for online cloud devices
@@ -360,13 +361,11 @@ function CloudDeviceCard({
                     className="flex items-center gap-2"
                   >
                     <Play className="w-4 h-4" />
-                    {device.slot_used >= device.slot_max
-                      ? t('devices:slots_full')
-                      : t('devices:start_task')}
+                    {!slotsAvailable ? t('devices:slots_full') : t('devices:start_task')}
                   </Button>
                 </div>
               </TooltipTrigger>
-              {device.slot_used >= device.slot_max && isOnline && (
+              {!slotsAvailable && isOnline && (
                 <TooltipContent>
                   <p className="text-sm">{t('devices:slots_full_hint')}</p>
                 </TooltipContent>
