@@ -921,7 +921,8 @@
     "video_duration_hint": "Seedance 1.5 supports 4-12 seconds",
     "video_generate_audio": "Generate Audio",
     "video_generate_audio_hint": "Only supported by Seedance 1.5 Pro",
-    "video_advanced_options": "Advanced Options",
+    "video_feature_toggles": "Feature Toggles",
+    "video_advanced_options": "Advanced Parameters",
     "video_draft_mode": "Draft Mode",
     "video_draft_mode_hint": "Quick preview, uses fewer tokens",
     "video_camera_fixed": "Fixed Camera",
@@ -929,6 +930,12 @@
     "video_watermark": "Add Watermark",
     "video_seed": "Random Seed",
     "video_seed_hint": "-1 means random, same seed produces similar results",
+    "video_capabilities_title": "Model Capabilities",
+    "video_capabilities_hint": "Select the generation parameters this model supports",
+    "video_capabilities_ratios": "Supported Ratios",
+    "video_capabilities_resolutions": "Supported Resolutions",
+    "video_capabilities_durations": "Supported Durations (sec)",
+    "video_capabilities_custom_add": "Custom Add",
     "select_model_category_type": "Select Model Type",
     "filter_by_category_type": "Filter by Type",
     "all_category_types": "All Types",
@@ -1322,6 +1329,11 @@
     "failed": "Video generation failed",
     "download": "Download Video",
     "reference_image": "Reference Image (Optional)",
-    "no_models": "No video models available"
+    "no_models": "No video models available",
+    "settings": "Video Settings",
+    "ratio_section": "Aspect Ratio",
+    "duration_section": "Duration",
+    "resolution_section": "Resolution",
+    "duration_seconds": "{{value}}S"
   }
 }

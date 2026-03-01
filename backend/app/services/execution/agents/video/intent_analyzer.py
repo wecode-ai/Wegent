@@ -59,6 +59,7 @@ class VideoIntentAnalyzer:
         task_id: int,
         current_prompt: str,
         secondary_model_config: Optional[dict],
+        exclude_subtask_ids: Optional[list] = None,
     ) -> VideoIntentResult:
         """
         Analyze intent for follow-up message.
@@ -67,6 +68,7 @@ class VideoIntentAnalyzer:
             task_id: Task ID
             current_prompt: Current user prompt
             secondary_model_config: LLM config for intent analysis
+            exclude_subtask_ids: Subtask IDs to exclude from history (current user + assistant)
 
         Returns:
             VideoIntentResult with merged prompt and image info
@@ -76,13 +78,11 @@ class VideoIntentAnalyzer:
 
         db = SessionLocal()
         try:
-            # Get previous messages
-            subtasks = (
-                db.query(Subtask)
-                .filter(Subtask.task_id == task_id)
-                .order_by(Subtask.message_id.asc())
-                .all()
-            )
+            # Get previous messages (exclude current subtask pair to avoid self-duplication)
+            query = db.query(Subtask).filter(Subtask.task_id == task_id)
+            if exclude_subtask_ids:
+                query = query.filter(Subtask.id.notin_(exclude_subtask_ids))
+            subtasks = query.order_by(Subtask.message_id.asc()).all()
 
             if len(subtasks) < 2:
                 return VideoIntentResult(

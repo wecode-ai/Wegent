@@ -91,12 +91,51 @@ class RerankConfig(BaseModel):
     )
 
 
+class AspectRatioOption(BaseModel):
+    """Aspect ratio option for video generation capabilities"""
+
+    label: str = Field(..., description="Display label (e.g., '16:9 (横屏)')")
+    value: str = Field(..., description="Value (e.g., '16:9')")
+
+
+class ResolutionOption(BaseModel):
+    """Resolution option for video generation capabilities"""
+
+    width: Optional[int] = Field(None, description="Width in pixels")
+    height: Optional[int] = Field(None, description="Height in pixels")
+    label: str = Field(..., description="Display label (e.g., '720p')")
+
+
+class VideoCapabilities(BaseModel):
+    """Declares what a video model supports"""
+
+    aspect_ratios: Optional[List[AspectRatioOption]] = Field(
+        None, description="Supported aspect ratios"
+    )
+    resolutions: Optional[List[ResolutionOption]] = Field(
+        None, description="Supported resolutions"
+    )
+    durations_sec: Optional[List[int]] = Field(
+        None, description="Supported durations in seconds (e.g., [5, 10])"
+    )
+
+
 class VideoGenerationConfig(BaseModel):
     """Video generation specific configuration"""
 
-    resolution: Optional[str] = Field("1080p", description="Video resolution")
+    resolution: Optional[str] = Field("1080p", description="Default video resolution")
     fps: Optional[int] = Field(24, description="Frames per second")
     max_duration: Optional[int] = Field(None, description="Maximum duration in seconds")
+    ratio: Optional[str] = Field(None, description="Default aspect ratio")
+    duration: Optional[int] = Field(None, description="Default duration in seconds")
+    generate_audio: Optional[bool] = Field(None, description="Generate audio")
+    draft: Optional[bool] = Field(None, description="Draft mode")
+    seed: Optional[int] = Field(None, description="Random seed")
+    camera_fixed: Optional[bool] = Field(None, description="Fixed camera")
+    watermark: Optional[bool] = Field(None, description="Include watermark")
+    capabilities: Optional[VideoCapabilities] = Field(
+        None, description="Declared capabilities for this video model"
+    )
 
 
 class ObjectMeta(BaseModel):

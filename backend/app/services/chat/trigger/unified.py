@@ -222,6 +222,54 @@ async def build_execution_request(
             force_override=force_override,
         )
 
+        # Merge user-selected generate_params into videoConfig for video models
+        # Validates params against model capabilities to reject invalid values
+        if payload is not None:
+            generate_params = getattr(payload, "generate_params", None)
+            if generate_params and request.model_config.get("modelType") == "video":
+                video_config = request.model_config.get("videoConfig") or {}
+                capabilities = video_config.get("capabilities") or {}
+
+                if generate_params.resolution:
+                    allowed_resolutions = [
+                        r.get("label") for r in (capabilities.get("resolutions") or [])
+                    ]
+                    if (
+                        allowed_resolutions
+                        and generate_params.resolution not in allowed_resolutions
+                    ):
+                        raise ValueError(
+                            f"Unsupported resolution '{generate_params.resolution}', "
+                            f"allowed: {allowed_resolutions}"
+                        )
+                    video_config["resolution"] = generate_params.resolution
+
+                if generate_params.ratio:
+                    allowed_ratios = [
+                        r.get("value")
+                        for r in (capabilities.get("aspect_ratios") or [])
+                    ]
+                    if allowed_ratios and generate_params.ratio not in allowed_ratios:
+                        raise ValueError(
+                            f"Unsupported aspect ratio '{generate_params.ratio}', "
+                            f"allowed: {allowed_ratios}"
+                        )
+                    video_config["ratio"] = generate_params.ratio
+
+                if generate_params.duration:
+                    allowed_durations = capabilities.get("durations_sec") or []
+                    if (
+                        allowed_durations
+                        and generate_params.duration not in allowed_durations
+                    ):
+                        raise ValueError(
+                            f"Unsupported duration {generate_params.duration}s, "
+                            f"allowed: {allowed_durations}"
+                        )
+                    video_config["duration"] = generate_params.duration
+
+                request.model_config["videoConfig"] = video_config
+
         # Always propagate user_subtask_id for downstream persistence (e.g., KB tool results).
         # Note: This is different from request.subtask_id which is the assistant subtask.
         request.user_subtask_id = user_subtask_id

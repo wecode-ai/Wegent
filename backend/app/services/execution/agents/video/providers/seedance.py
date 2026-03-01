@@ -17,6 +17,24 @@ from .progress_simulator import ProgressSimulator
 logger = logging.getLogger(__name__)
 
 
+def _extract_api_error(response: httpx.Response) -> str:
+    """Extract a user-friendly error message from an API response without exposing internal URLs."""
+    try:
+        data = response.json()
+        # Try common error response formats
+        if isinstance(data, dict):
+            for key in ("error", "message", "detail", "msg"):
+                if key in data:
+                    err = data[key]
+                    if isinstance(err, dict) and "message" in err:
+                        return err["message"]
+                    return str(err)
+        return str(data)
+    except Exception:
+        text = response.text[:200] if response.text else "Unknown error"
+        return text
+
+
 class SeedanceProvider(VideoProvider):
     """Seedance 1.5 video generation provider."""
 
@@ -69,13 +87,14 @@ class SeedanceProvider(VideoProvider):
             "model": self.video_config.get("model", "doubao-seedance-1-5-pro-251215"),
             "content": content,
             "resolution": self.video_config.get("resolution", "480p"),
-            "duration": self.video_config.get("duration", 4),
+            "ratio": self.video_config.get("ratio", "16:9"),
+            "duration": self.video_config.get("duration", 5),
             "watermark": self.video_config.get("watermark", False),
         }
 
         if image_mode:
             payload["image_mode"] = image_mode
-
+        logger.info(f"[Seedance] Creating job with payload: {payload}")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/contents/generations/tasks",
@@ -85,7 +104,11 @@ class SeedanceProvider(VideoProvider):
                     "Content-Type": "application/json",
                 },
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                error_detail = _extract_api_error(response)
+                raise Exception(
+                    f"Seedance API error ({response.status_code}): {error_detail}"
+                )
             data = response.json()
             job_id = data["id"]
             # Start tracking job for simulated progress
@@ -113,7 +136,11 @@ class SeedanceProvider(VideoProvider):
                     "Content-Type": "application/json",
                 },
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                error_detail = _extract_api_error(response)
+                raise Exception(
+                    f"Seedance API error ({response.status_code}): {error_detail}"
+                )
             data = response.json()
 
             logger.info(
