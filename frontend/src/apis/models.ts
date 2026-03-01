@@ -29,6 +29,23 @@ export interface RerankConfig {
   return_documents?: boolean
 }
 
+export interface AspectRatioOption {
+  label: string
+  value: string
+}
+
+export interface ResolutionOption {
+  width?: number
+  height?: number
+  label: string
+}
+
+export interface VideoCapabilities {
+  aspect_ratios?: AspectRatioOption[]
+  resolutions?: ResolutionOption[]
+  durations_sec?: number[]
+}
+
 export interface VideoGenerationConfig {
   resolution?: '480p' | '720p' | '1080p'
   ratio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
@@ -38,6 +55,7 @@ export interface VideoGenerationConfig {
   seed?: number // Random seed
   camera_fixed?: boolean // Fixed camera
   watermark?: boolean // Whether to include watermark
+  capabilities?: VideoCapabilities // Model-declared capabilities
 }
 
 // Image generation specific configuration

@@ -9,7 +9,7 @@ import { Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import ModelSelector from '../selector/ModelSelector'
-import { ResolutionSelector, RatioSelector } from '../selector'
+import { VideoSettingsPopover } from '../selector'
 import SendButton from './SendButton'
 import type { Model } from '../../hooks/useModelSelection'
 
@@ -31,6 +31,11 @@ export interface VideoInputControlsProps {
   onRatioChange: (ratio: string) => void
   availableRatios?: string[]
 
+  // Duration
+  selectedDuration: number
+  onDurationChange: (duration: number) => void
+  availableDurations?: number[]
+
   // State
   isLoading: boolean
   isStreaming: boolean
@@ -47,12 +52,8 @@ export interface VideoInputControlsProps {
  *
  * Renders the bottom control bar for video generation mode, including:
  * - Video model selector (using unified ModelSelector with modelCategoryType="video")
- * - Resolution selector
- * - Aspect ratio selector
+ * - Unified video settings popover (ratio + duration + resolution)
  * - Send/Stop button
- *
- * This component is designed for video generation tasks and provides
- * a streamlined interface for configuring video generation parameters.
  */
 export function VideoInputControls({
   videoModels: _videoModels,
@@ -61,10 +62,13 @@ export function VideoInputControls({
   isModelsLoading = false,
   selectedResolution,
   onResolutionChange,
-  availableResolutions,
+  availableResolutions = ['480p', '720p', '1080p'],
   selectedRatio,
   onRatioChange,
-  availableRatios,
+  availableRatios = ['16:9', '9:16', '1:1'],
+  selectedDuration,
+  onDurationChange,
+  availableDurations = [5, 10],
   isLoading,
   isStreaming,
   disabled = false,
@@ -90,19 +94,17 @@ export function VideoInputControls({
           modelCategoryType="video"
         />
 
-        {/* Resolution Selector */}
-        <ResolutionSelector
-          selectedResolution={selectedResolution}
-          onResolutionChange={onResolutionChange}
-          availableResolutions={availableResolutions}
-          disabled={isDisabled}
-        />
-
-        {/* Aspect Ratio Selector */}
-        <RatioSelector
+        {/* Unified Video Settings Popover */}
+        <VideoSettingsPopover
           selectedRatio={selectedRatio}
           onRatioChange={onRatioChange}
           availableRatios={availableRatios}
+          selectedDuration={selectedDuration}
+          onDurationChange={onDurationChange}
+          availableDurations={availableDurations}
+          selectedResolution={selectedResolution}
+          onResolutionChange={onResolutionChange}
+          availableResolutions={availableResolutions}
           disabled={isDisabled}
         />
       </div>

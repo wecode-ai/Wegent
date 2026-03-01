@@ -140,6 +140,8 @@ export interface ChatSendPayload {
     resolution?: string
     /** Aspect ratio for generation (e.g., '16:9', '9:16', '1:1') */
     ratio?: string
+    /** Duration in seconds for video generation */
+    duration?: number
   }
 }
 

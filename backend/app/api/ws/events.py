@@ -113,6 +113,16 @@ class SkillRef(BaseModel):
     is_public: bool = Field(..., description="Whether the skill is public")
 
 
+class GenerateParams(BaseModel):
+    """Generation parameters for video/image tasks (user-selected at generation time)."""
+
+    resolution: Optional[str] = Field(
+        None, description="Video resolution (e.g., '720p')"
+    )
+    ratio: Optional[str] = Field(None, description="Aspect ratio (e.g., '16:9')")
+    duration: Optional[int] = Field(None, description="Duration in seconds")
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -172,6 +182,10 @@ class ChatSendPayload(BaseModel):
     device_id: Optional[str] = Field(
         None,
         description="Local device ID for task execution (if None, use cloud executor)",
+    )
+    # Video generation parameters (user-selected at generation time)
+    generate_params: Optional[GenerateParams] = Field(
+        None, description="Video generation params from user selection"
     )
 
 

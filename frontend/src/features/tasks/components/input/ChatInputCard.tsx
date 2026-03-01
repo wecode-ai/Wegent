@@ -170,6 +170,9 @@ export function ChatInputCard({
   selectedRatio,
   onRatioChange,
   availableRatios,
+  selectedDuration,
+  onDurationChange,
+  availableDurations,
   // Image mode props
   selectedImageModel,
   onImageModelChange,
@@ -365,6 +368,9 @@ export function ChatInputCard({
             selectedRatio={selectedRatio}
             onRatioChange={onRatioChange}
             availableRatios={availableRatios}
+            selectedDuration={selectedDuration}
+            onDurationChange={onDurationChange}
+            availableDurations={availableDurations}
             // Image mode props
             selectedImageModel={selectedImageModel}
             onImageModelChange={onImageModelChange}

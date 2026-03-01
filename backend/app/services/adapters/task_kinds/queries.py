@@ -702,6 +702,7 @@ class TaskQueryMixin:
             agent_config = {}
 
             # Get Model data for agent_config
+            # Only return model binding info, not sensitive env (api_key etc.)
             if bot_crd.spec.modelRef:
                 model = kindReader.get_by_name_and_namespace(
                     db,
@@ -710,9 +711,11 @@ class TaskQueryMixin:
                     bot_crd.spec.modelRef.namespace,
                     bot_crd.spec.modelRef.name,
                 )
-                if model and model.json:
-                    model_crd = Model.model_validate(model.json)
-                    agent_config = model_crd.spec.modelConfig
+                model_type = "public" if model and model.user_id == 0 else "user"
+                agent_config = {
+                    "bind_model": bot_crd.spec.modelRef.name,
+                    "bind_model_type": model_type,
+                }
 
             # Get Shell data for shell_type
             shell = kindReader.get_by_name_and_namespace(

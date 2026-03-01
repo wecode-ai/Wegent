@@ -27,6 +27,7 @@ from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
+    ChatErrorPayload,
     ChatResumePayload,
     ChatRetryPayload,
     ChatSendAck,
@@ -35,6 +36,7 @@ from app.api.ws.events import (
     GenericAck,
     HistorySyncAck,
     HistorySyncPayload,
+    ServerEvents,
     TaskJoinAck,
     TaskJoinPayload,
     TaskLeavePayload,
@@ -848,6 +850,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                     except Exception as e:
                         logger.exception(
                             f"[WS] chat:send AI trigger failed: task_id={task.id}, error={e}"
+                        )
+                        # Emit error to frontend so user sees the failure
+                        await self.emit(
+                            ServerEvents.CHAT_ERROR,
+                            ChatErrorPayload(
+                                subtask_id=assistant_subtask.id,
+                                error=str(e),
+                            ).model_dump(),
+                            room=task_room,
                         )
 
                 asyncio.create_task(_trigger_ai())

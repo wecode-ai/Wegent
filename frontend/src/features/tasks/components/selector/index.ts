@@ -25,6 +25,8 @@ export { default as ResolutionSelector } from './ResolutionSelector'
 export type { ResolutionSelectorProps } from './ResolutionSelector'
 export { default as RatioSelector } from './RatioSelector'
 export type { RatioSelectorProps } from './RatioSelector'
+export { default as VideoSettingsPopover } from './VideoSettingsPopover'
+export type { VideoSettingsPopoverProps } from './VideoSettingsPopover'
 
 // Image generation selector
 export { default as ImageSizeSelector } from './ImageSizeSelector'

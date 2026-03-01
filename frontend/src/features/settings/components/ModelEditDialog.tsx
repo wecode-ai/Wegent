@@ -310,9 +310,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [rerankTopN, setRerankTopN] = useState<number | undefined>(undefined)
   const [rerankReturnDocuments, setRerankReturnDocuments] = useState(true)
   // Video
-  const [videoResolution, setVideoResolution] = useState<string>('1080p')
-  const [videoRatio, setVideoRatio] = useState<string>('16:9')
-  const [videoDuration, setVideoDuration] = useState<number>(5)
   const [videoGenerateAudio, setVideoGenerateAudio] = useState<boolean>(true)
   const [videoDraft, setVideoDraft] = useState<boolean>(false)
   const [videoSeed, setVideoSeed] = useState<number>(-1)
@@ -320,6 +317,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [videoWatermark, setVideoWatermark] = useState<boolean>(false)
   // Image - use ImageConfigState from extracted component
   const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
+
+  // Video capabilities state
+  const [capRatios, setCapRatios] = useState<string[]>([])
+  const [capResolutions, setCapResolutions] = useState<string[]>([])
+  const [capDurations, setCapDurations] = useState<number[]>([])
+  const [customDuration, setCustomDuration] = useState<string>('')
 
   // Fetch models state
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -405,14 +408,22 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         }
         // Load video-specific configs
         if (effectiveInitialData.videoConfig) {
-          setVideoResolution(effectiveInitialData.videoConfig.resolution || '1080p')
-          setVideoRatio(effectiveInitialData.videoConfig.ratio || '16:9')
-          setVideoDuration(effectiveInitialData.videoConfig.duration || 5)
           setVideoGenerateAudio(effectiveInitialData.videoConfig.generate_audio ?? true)
           setVideoDraft(effectiveInitialData.videoConfig.draft ?? false)
           setVideoSeed(effectiveInitialData.videoConfig.seed ?? -1)
           setVideoCameraFixed(effectiveInitialData.videoConfig.camera_fixed ?? false)
           setVideoWatermark(effectiveInitialData.videoConfig.watermark ?? false)
+          // Load capabilities
+          const caps = effectiveInitialData.videoConfig.capabilities
+          if (caps) {
+            setCapRatios(caps.aspect_ratios?.map(r => r.value) ?? [])
+            setCapResolutions(caps.resolutions?.map(r => r.label) ?? [])
+            setCapDurations(caps.durations_sec ?? [])
+          } else {
+            setCapRatios([])
+            setCapResolutions([])
+            setCapDurations([])
+          }
         }
         // Load image-specific configs
         if (effectiveInitialData.imageConfig) {
@@ -443,9 +454,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setRerankTopN(undefined)
         setRerankReturnDocuments(true)
         // Reset video-specific configs
-        setVideoResolution('1080p')
-        setVideoRatio('16:9')
-        setVideoDuration(5)
         setVideoGenerateAudio(true)
         setVideoDraft(false)
         setVideoSeed(-1)
@@ -453,6 +461,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setVideoWatermark(false)
         // Reset image-specific configs
         setImageConfig(getDefaultImageConfig())
+        // Reset video capabilities
+        setCapRatios([])
+        setCapResolutions([])
+        setCapDurations([])
+        setCustomDuration('')
         // Reset LLM-specific configs
         setContextWindow(undefined)
         setMaxOutputTokens(undefined)
@@ -541,14 +554,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       setModelId('')
       setCustomModelId('')
       // Reset video-specific configs to defaults
-      setVideoResolution('1080p')
-      setVideoRatio('16:9')
-      setVideoDuration(5)
       setVideoGenerateAudio(true)
       setVideoDraft(false)
       setVideoSeed(-1)
       setVideoCameraFixed(false)
       setVideoWatermark(false)
+      setCapRatios([])
+      setCapResolutions([])
+      setCapDurations([])
+      setCustomDuration('')
     } else {
       setModelId('')
       setCustomModelId('')
@@ -894,17 +908,41 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined
 
+      // Build video capabilities if any are configured
+      const hasCapabilities =
+        capRatios.length > 0 || capResolutions.length > 0 || capDurations.length > 0
+      const capabilities = hasCapabilities
+        ? {
+            ...(capRatios.length > 0 && {
+              aspect_ratios: capRatios.map(v => ({ label: v, value: v })),
+            }),
+            ...(capResolutions.length > 0 && {
+              resolutions: capResolutions.map(v => ({ label: v })),
+            }),
+            ...(capDurations.length > 0 && { durations_sec: capDurations }),
+          }
+        : undefined
+
       const videoConfig: VideoGenerationConfig | undefined =
         modelCategoryType === 'video'
           ? {
-              resolution: videoResolution as '480p' | '720p' | '1080p',
-              ratio: videoRatio as '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive',
-              duration: videoDuration,
+              // Derive defaults from capabilities (first item = default)
+              resolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
+              ratio: (capRatios[0] || '16:9') as
+                | '16:9'
+                | '4:3'
+                | '1:1'
+                | '3:4'
+                | '9:16'
+                | '21:9'
+                | 'adaptive',
+              duration: capDurations[0] || 5,
               generate_audio: videoGenerateAudio,
               draft: videoDraft,
               seed: videoSeed,
               camera_fixed: videoCameraFixed,
               watermark: videoWatermark,
+              ...(capabilities && { capabilities }),
             }
           : undefined
 
@@ -992,10 +1030,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         embeddingEncodingFormat,
         rerankTopN,
         rerankReturnDocuments,
-        // Video-specific configs
-        videoResolution: videoResolution as '480p' | '720p' | '1080p',
-        videoRatio: videoRatio as '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive',
-        videoDuration,
+        // Video-specific configs (derive defaults from capabilities)
+        videoResolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
+        videoRatio: (capRatios[0] || '16:9') as
+          | '16:9'
+          | '4:3'
+          | '1:1'
+          | '3:4'
+          | '9:16'
+          | '21:9'
+          | 'adaptive',
+        videoDuration: capDurations[0] || 5,
         videoGenerateAudio,
         videoDraft,
         videoSeed,
@@ -1535,91 +1580,176 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 {t('common:models.video_config_title')}
               </h4>
 
-              {/* Basic video settings */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="video_resolution" className="text-sm font-medium">
-                    {t('common:models.video_resolution')}
-                  </Label>
-                  <Select value={videoResolution} onValueChange={setVideoResolution}>
-                    <SelectTrigger className="bg-base">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="480p">480p</SelectItem>
-                      <SelectItem value="720p">720p</SelectItem>
-                      <SelectItem value="1080p">1080p</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="video_ratio" className="text-sm font-medium">
-                    {t('common:models.video_ratio')}
-                  </Label>
-                  <Select value={videoRatio} onValueChange={setVideoRatio}>
-                    <SelectTrigger className="bg-base">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="16:9">16:9 (横屏)</SelectItem>
-                      <SelectItem value="9:16">9:16 (竖屏)</SelectItem>
-                      <SelectItem value="1:1">1:1 (方形)</SelectItem>
-                      <SelectItem value="4:3">4:3</SelectItem>
-                      <SelectItem value="3:4">3:4</SelectItem>
-                      <SelectItem value="21:9">21:9 (超宽)</SelectItem>
-                      <SelectItem value="adaptive">自适应</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="video_duration" className="text-sm font-medium">
-                    {t('common:models.video_duration')}
-                  </Label>
-                  <Input
-                    id="video_duration"
-                    type="number"
-                    min={4}
-                    max={12}
-                    value={videoDuration}
-                    onChange={e => setVideoDuration(parseInt(e.target.value) || 5)}
-                    className="bg-base"
-                  />
-                  <p className="text-xs text-text-muted">
-                    {t('common:models.video_duration_hint')}
-                  </p>
-                </div>
-              </div>
+              {/* Model capabilities configuration */}
+              <div>
+                <p className="text-xs text-text-muted mb-3">
+                  {t('common:models.video_capabilities_hint')}
+                </p>
 
-              {/* Generate audio toggle */}
-              <div className="flex items-center justify-between py-2">
-                <div>
+                {/* Supported aspect ratios */}
+                <div className="space-y-2 mb-4">
                   <Label className="text-sm font-medium">
-                    {t('common:models.video_generate_audio')}
+                    {t('common:models.video_capabilities_ratios')}
                   </Label>
-                  <p className="text-xs text-text-muted">
-                    {t('common:models.video_generate_audio_hint')}
-                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
+                      <button
+                        key={ratio}
+                        type="button"
+                        onClick={() =>
+                          setCapRatios(prev =>
+                            prev.includes(ratio) ? prev.filter(r => r !== ratio) : [...prev, ratio]
+                          )
+                        }
+                        className={cn(
+                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                          capRatios.includes(ratio)
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                        )}
+                      >
+                        {ratio}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <Select
-                  value={videoGenerateAudio ? 'true' : 'false'}
-                  onValueChange={v => setVideoGenerateAudio(v === 'true')}
-                >
-                  <SelectTrigger className="w-24 bg-base">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="true">是</SelectItem>
-                    <SelectItem value="false">否</SelectItem>
-                  </SelectContent>
-                </Select>
+
+                {/* Supported resolutions */}
+                <div className="space-y-2 mb-4">
+                  <Label className="text-sm font-medium">
+                    {t('common:models.video_capabilities_resolutions')}
+                  </Label>
+                  <div className="flex flex-wrap gap-2">
+                    {['480p', '720p', '1080p'].map(res => (
+                      <button
+                        key={res}
+                        type="button"
+                        onClick={() =>
+                          setCapResolutions(prev =>
+                            prev.includes(res) ? prev.filter(r => r !== res) : [...prev, res]
+                          )
+                        }
+                        className={cn(
+                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                          capResolutions.includes(res)
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                        )}
+                      >
+                        {res}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Supported durations */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">
+                    {t('common:models.video_capabilities_durations')}
+                  </Label>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {[5, 10].map(dur => (
+                      <button
+                        key={dur}
+                        type="button"
+                        onClick={() =>
+                          setCapDurations(prev =>
+                            prev.includes(dur)
+                              ? prev.filter(d => d !== dur)
+                              : [...prev, dur].sort((a, b) => a - b)
+                          )
+                        }
+                        className={cn(
+                          'px-3 py-1.5 text-xs rounded-md border transition-colors',
+                          capDurations.includes(dur)
+                            ? 'bg-primary/10 border-primary text-primary'
+                            : 'bg-base border-border text-text-secondary hover:border-text-muted'
+                        )}
+                      >
+                        {dur}s
+                      </button>
+                    ))}
+                    {/* Show custom durations that aren't predefined */}
+                    {capDurations
+                      .filter(d => d !== 5 && d !== 10)
+                      .map(dur => (
+                        <button
+                          key={dur}
+                          type="button"
+                          onClick={() => setCapDurations(prev => prev.filter(d => d !== dur))}
+                          className="px-3 py-1.5 text-xs rounded-md border bg-primary/10 border-primary text-primary transition-colors"
+                        >
+                          {dur}s ×
+                        </button>
+                      ))}
+                    {/* Custom duration input */}
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={300}
+                        placeholder={t('common:models.video_capabilities_custom_add')}
+                        value={customDuration}
+                        onChange={e => setCustomDuration(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            const val = parseInt(customDuration)
+                            if (val > 0 && !capDurations.includes(val)) {
+                              setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
+                              setCustomDuration('')
+                            }
+                          }
+                        }}
+                        className="w-20 h-8 text-xs bg-base"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 px-2"
+                        onClick={() => {
+                          const val = parseInt(customDuration)
+                          if (val > 0 && !capDurations.includes(val)) {
+                            setCapDurations(prev => [...prev, val].sort((a, b) => a - b))
+                            setCustomDuration('')
+                          }
+                        }}
+                      >
+                        +
+                      </Button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Advanced options */}
+              {/* Feature toggles */}
               <div className="border-t pt-4 mt-4">
                 <h5 className="text-sm font-medium text-text-secondary mb-3">
-                  {t('common:models.video_advanced_options')}
+                  {t('common:models.video_feature_toggles')}
                 </h5>
                 <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-medium">
+                        {t('common:models.video_generate_audio')}
+                      </Label>
+                      <p className="text-xs text-text-muted">
+                        {t('common:models.video_generate_audio_hint')}
+                      </p>
+                    </div>
+                    <Select
+                      value={videoGenerateAudio ? 'true' : 'false'}
+                      onValueChange={v => setVideoGenerateAudio(v === 'true')}
+                    >
+                      <SelectTrigger className="w-20 bg-base">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">是</SelectItem>
+                        <SelectItem value="false">否</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label className="text-sm font-medium">
@@ -1683,20 +1813,27 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="video_seed" className="text-sm font-medium">
-                      {t('common:models.video_seed')}
-                    </Label>
-                    <Input
-                      id="video_seed"
-                      type="number"
-                      value={videoSeed}
-                      onChange={e => setVideoSeed(parseInt(e.target.value) || -1)}
-                      placeholder="-1"
-                      className="bg-base"
-                    />
-                    <p className="text-xs text-text-muted">{t('common:models.video_seed_hint')}</p>
-                  </div>
+                </div>
+              </div>
+
+              {/* Advanced parameters */}
+              <div className="border-t pt-4 mt-4">
+                <h5 className="text-sm font-medium text-text-secondary mb-3">
+                  {t('common:models.video_advanced_options')}
+                </h5>
+                <div className="space-y-2">
+                  <Label htmlFor="video_seed" className="text-sm font-medium">
+                    {t('common:models.video_seed')}
+                  </Label>
+                  <Input
+                    id="video_seed"
+                    type="number"
+                    value={videoSeed}
+                    onChange={e => setVideoSeed(parseInt(e.target.value) || -1)}
+                    placeholder="-1"
+                    className="bg-base w-40"
+                  />
+                  <p className="text-xs text-text-muted">{t('common:models.video_seed_hint')}</p>
                 </div>
               </div>
             </div>

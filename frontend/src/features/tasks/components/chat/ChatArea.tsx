@@ -135,12 +135,14 @@ function ChatAreaContent({
     modelCategoryType: 'image',
   })
 
-  // Video mode specific state - resolution and aspect ratio
+  // Video mode specific state - resolution, aspect ratio, and duration
   // These are kept separate from useModelSelection as they are video-specific parameters
   const [selectedResolution, setSelectedResolution] = useState('1080p')
   const [selectedRatio, setSelectedRatio] = useState('16:9')
+  const [selectedDuration, setSelectedDuration] = useState(5)
   const availableResolutions = useMemo(() => ['720p', '1080p', '2K', '4K'], [])
   const availableRatios = useMemo(() => ['16:9', '9:16', '1:1', '4:3', '3:4'], [])
+  const availableDurations = useMemo(() => [5, 10], [])
 
   // Image mode specific state - image size
   const [selectedImageSize, setSelectedImageSize] = useState('2048x2048')
@@ -345,6 +347,7 @@ function ChatAreaContent({
       return {
         resolution: selectedResolution,
         ratio: selectedRatio,
+        duration: selectedDuration,
       }
     }
     if (taskType === 'image') {
@@ -353,7 +356,7 @@ function ChatAreaContent({
       }
     }
     return undefined
-  }, [taskType, selectedResolution, selectedRatio, selectedImageSize])
+  }, [taskType, selectedResolution, selectedRatio, selectedDuration, selectedImageSize])
 
   // Stream handlers (send message, retry, cancel, stop)
   const streamHandlers = useChatStreamHandlers({
@@ -726,6 +729,9 @@ function ChatAreaContent({
     selectedRatio,
     onRatioChange: setSelectedRatio,
     availableRatios,
+    selectedDuration,
+    onDurationChange: setSelectedDuration,
+    availableDurations,
     // Image mode props - only passed when taskType is 'image'
     // Note: imageModels is no longer passed - ModelSelector fetches models internally via useModelSelection
     selectedImageModel: imageModelSelection.selectedModel,
