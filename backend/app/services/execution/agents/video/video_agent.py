@@ -300,11 +300,17 @@ class VideoAgent(PollingAgent):
         # The secondary_model_config should be injected by request_builder
         secondary_model_config = request.model_config.get("secondary_model_config")
 
+        # Build list of subtask IDs to exclude (current user + assistant subtasks)
+        exclude_ids = [
+            sid for sid in [request.subtask_id, request.user_subtask_id] if sid
+        ]
+
         analyzer = VideoIntentAnalyzer()
         return await analyzer.analyze(
             task_id=request.task_id,
             current_prompt=current_prompt,
             secondary_model_config=secondary_model_config,
+            exclude_subtask_ids=exclude_ids,
         )
 
     async def _emit_video_block(

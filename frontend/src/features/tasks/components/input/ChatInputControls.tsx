@@ -31,7 +31,7 @@ import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
 import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
-import { VideoModelSelector, ResolutionSelector, RatioSelector } from '../selector'
+import { VideoModelSelector, VideoSettingsPopover } from '../selector'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -125,6 +125,9 @@ export interface ChatInputControlsProps {
   selectedRatio?: string
   onRatioChange?: (ratio: string) => void
   availableRatios?: string[]
+  selectedDuration?: number
+  onDurationChange?: (duration: number) => void
+  availableDurations?: number[]
 }
 
 /**
@@ -198,12 +201,15 @@ export function ChatInputControls({
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading = false,
-  selectedResolution = '1080p',
+  selectedResolution = '720p',
   onResolutionChange,
   availableResolutions,
   selectedRatio = '16:9',
   onRatioChange,
   availableRatios,
+  selectedDuration = 5,
+  onDurationChange,
+  availableDurations,
 }: ChatInputControlsProps) {
   // Check if we're in video mode
   const isVideoMode = taskType === 'video'
@@ -352,22 +358,18 @@ export function ChatInputControls({
               />
             )}
 
-            {/* Resolution Selector */}
-            {onResolutionChange && (
-              <ResolutionSelector
-                selectedResolution={selectedResolution}
-                onResolutionChange={onResolutionChange}
-                availableResolutions={availableResolutions}
-                disabled={isLoading || isStreaming}
-              />
-            )}
-
-            {/* Aspect Ratio Selector */}
-            {onRatioChange && (
-              <RatioSelector
+            {/* Unified Video Settings Popover (ratio + duration + resolution) */}
+            {onResolutionChange && onRatioChange && onDurationChange && (
+              <VideoSettingsPopover
                 selectedRatio={selectedRatio}
                 onRatioChange={onRatioChange}
-                availableRatios={availableRatios}
+                availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
+                selectedDuration={selectedDuration}
+                onDurationChange={onDurationChange}
+                availableDurations={availableDurations ?? [5, 10]}
+                selectedResolution={selectedResolution}
+                onResolutionChange={onResolutionChange}
+                availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
                 disabled={isLoading || isStreaming}
               />
             )}

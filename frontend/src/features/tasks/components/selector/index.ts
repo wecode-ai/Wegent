@@ -21,6 +21,8 @@ export { default as ResolutionSelector } from './ResolutionSelector'
 export type { ResolutionSelectorProps } from './ResolutionSelector'
 export { default as RatioSelector } from './RatioSelector'
 export type { RatioSelectorProps } from './RatioSelector'
+export { default as VideoSettingsPopover } from './VideoSettingsPopover'
+export type { VideoSettingsPopoverProps } from './VideoSettingsPopover'
 
 // Re-export useModelSelection hook for convenience
 export { useModelSelection } from '@/features/tasks/hooks/useModelSelection'

@@ -306,6 +306,7 @@ function ChatAreaContent({
       ? {
           resolution: videoModelSelection.selectedResolution,
           ratio: videoModelSelection.selectedRatio,
+          duration: videoModelSelection.selectedDuration,
         }
       : undefined
 
@@ -668,6 +669,9 @@ function ChatAreaContent({
     selectedRatio: videoModelSelection.selectedRatio,
     onRatioChange: videoModelSelection.setSelectedRatio,
     availableRatios: videoModelSelection.availableRatios,
+    selectedDuration: videoModelSelection.selectedDuration,
+    onDurationChange: videoModelSelection.setSelectedDuration,
+    availableDurations: videoModelSelection.availableDurations,
   }
 
   return (

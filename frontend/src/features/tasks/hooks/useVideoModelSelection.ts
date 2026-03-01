@@ -7,7 +7,7 @@
  *
  * A hook for managing video model selection state.
  * Fetches video models from the API and provides selection functionality.
- * Uses the same Model type as regular model selection for consistency.
+ * Dynamically derives available options from model capabilities.
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
@@ -26,12 +26,20 @@ export interface UseVideoModelSelectionReturn {
   setSelectedResolution: (resolution: string) => void
   selectedRatio: string
   setSelectedRatio: (ratio: string) => void
+  selectedDuration: number
+  setSelectedDuration: (duration: number) => void
   availableResolutions: string[]
   availableRatios: string[]
+  availableDurations: number[]
   isLoading: boolean
   error: string | null
   refresh: () => Promise<void>
 }
+
+// Default capabilities when model has none defined
+const DEFAULT_RESOLUTIONS = ['480p', '720p', '1080p']
+const DEFAULT_RATIOS = ['16:9', '9:16', '1:1']
+const DEFAULT_DURATIONS = [5, 10]
 
 // Store video config separately since Model type doesn't have it
 const videoConfigMap = new Map<string, VideoGenerationConfig>()
@@ -43,10 +51,40 @@ export function useVideoModelSelection(
 
   const [videoModels, setVideoModels] = useState<Model[]>([])
   const [selectedModel, setSelectedModelState] = useState<Model | null>(null)
-  const [selectedResolution, setSelectedResolution] = useState<string>('1080p')
+  const [selectedResolution, setSelectedResolution] = useState<string>('720p')
   const [selectedRatio, setSelectedRatio] = useState<string>('16:9')
+  const [selectedDuration, setSelectedDuration] = useState<number>(5)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Apply default values from model config when model changes
+  const applyModelDefaults = useCallback((model: Model) => {
+    const videoConfig = videoConfigMap.get(model.name)
+    const caps = videoConfig?.capabilities
+
+    // Get available options from capabilities
+    const resolutions = caps?.resolutions?.map(r => r.label) ?? DEFAULT_RESOLUTIONS
+    const ratios = caps?.aspect_ratios?.map(r => r.value) ?? DEFAULT_RATIOS
+    const durations = caps?.durations_sec ?? DEFAULT_DURATIONS
+
+    // Reset resolution if not in new model's options
+    setSelectedResolution(prev => {
+      if (resolutions.includes(prev)) return prev
+      return videoConfig?.resolution ?? resolutions[0] ?? '720p'
+    })
+
+    // Reset ratio if not in new model's options
+    setSelectedRatio(prev => {
+      if (ratios.includes(prev)) return prev
+      return videoConfig?.ratio ?? ratios[0] ?? '16:9'
+    })
+
+    // Reset duration if not in new model's options
+    setSelectedDuration(prev => {
+      if (durations.includes(prev)) return prev
+      return videoConfig?.duration ?? durations[0] ?? 5
+    })
+  }, [])
 
   // Load video models from API
   const loadVideoModels = useCallback(async () => {
@@ -56,8 +94,7 @@ export function useVideoModelSelection(
     setError(null)
 
     try {
-      // Fetch models with modelCategoryType = 'video'
-      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'video')
+      const response = await modelApis.getUnifiedModels(undefined, true, 'all', undefined, 'video')
 
       const models: Model[] = response.data.map(item => {
         // Store video config in map for later retrieval
@@ -81,20 +118,12 @@ export function useVideoModelSelection(
       setVideoModels(models)
 
       // Auto-select first model if none selected
-      // Use functional update to avoid dependency on selectedModel
       setSelectedModelState(prev => {
-        if (prev) return prev // Keep existing selection
+        if (prev) return prev
         if (models.length === 0) return null
 
         const firstModel = models[0]
-        // Apply model's default config from map
-        const videoConfig = videoConfigMap.get(firstModel.name)
-        if (videoConfig?.resolution) {
-          setSelectedResolution(videoConfig.resolution)
-        }
-        if (videoConfig?.ratio) {
-          setSelectedRatio(videoConfig.ratio)
-        }
+        applyModelDefaults(firstModel)
         return firstModel
       })
     } catch (err) {
@@ -102,36 +131,51 @@ export function useVideoModelSelection(
     } finally {
       setIsLoading(false)
     }
-  }, [enabled])
+  }, [enabled, applyModelDefaults])
 
   // Load models on mount
   useEffect(() => {
     loadVideoModels()
   }, [loadVideoModels])
 
-  // Available resolution options
+  // Available resolution options from selected model's capabilities
   const availableResolutions = useMemo(() => {
-    return ['480p', '720p', '1080p']
-  }, [])
+    if (!selectedModel) return DEFAULT_RESOLUTIONS
+    const videoConfig = videoConfigMap.get(selectedModel.name)
+    if (videoConfig?.capabilities?.resolutions) {
+      return videoConfig.capabilities.resolutions.map(r => r.label)
+    }
+    return DEFAULT_RESOLUTIONS
+  }, [selectedModel])
 
-  // Available aspect ratio options
+  // Available aspect ratio options from selected model's capabilities
   const availableRatios = useMemo(() => {
-    return ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive']
-  }, [])
+    if (!selectedModel) return DEFAULT_RATIOS
+    const videoConfig = videoConfigMap.get(selectedModel.name)
+    if (videoConfig?.capabilities?.aspect_ratios) {
+      return videoConfig.capabilities.aspect_ratios.map(r => r.value)
+    }
+    return DEFAULT_RATIOS
+  }, [selectedModel])
+
+  // Available duration options from selected model's capabilities
+  const availableDurations = useMemo(() => {
+    if (!selectedModel) return DEFAULT_DURATIONS
+    const videoConfig = videoConfigMap.get(selectedModel.name)
+    if (videoConfig?.capabilities?.durations_sec) {
+      return videoConfig.capabilities.durations_sec
+    }
+    return DEFAULT_DURATIONS
+  }, [selectedModel])
 
   // Handle model selection
-  const handleModelSelect = useCallback((model: Model) => {
-    setSelectedModelState(model)
-
-    // Apply model's default config if available from map
-    const videoConfig = videoConfigMap.get(model.name)
-    if (videoConfig?.resolution) {
-      setSelectedResolution(videoConfig.resolution)
-    }
-    if (videoConfig?.ratio) {
-      setSelectedRatio(videoConfig.ratio)
-    }
-  }, [])
+  const handleModelSelect = useCallback(
+    (model: Model) => {
+      setSelectedModelState(model)
+      applyModelDefaults(model)
+    },
+    [applyModelDefaults]
+  )
 
   return {
     videoModels,
@@ -141,8 +185,11 @@ export function useVideoModelSelection(
     setSelectedResolution,
     selectedRatio,
     setSelectedRatio,
+    selectedDuration,
+    setSelectedDuration,
     availableResolutions,
     availableRatios,
+    availableDurations,
     isLoading,
     error,
     refresh: loadVideoModels,

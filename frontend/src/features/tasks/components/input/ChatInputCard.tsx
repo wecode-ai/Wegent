@@ -170,6 +170,9 @@ export function ChatInputCard({
   selectedRatio,
   onRatioChange,
   availableRatios,
+  selectedDuration,
+  onDurationChange,
+  availableDurations,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
 
@@ -357,6 +360,9 @@ export function ChatInputCard({
             selectedRatio={selectedRatio}
             onRatioChange={onRatioChange}
             availableRatios={availableRatios}
+            selectedDuration={selectedDuration}
+            onDurationChange={onDurationChange}
+            availableDurations={availableDurations}
           />
         </div>
       </div>
