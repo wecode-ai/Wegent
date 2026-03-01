@@ -4,10 +4,11 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolRendererProps } from '../../types'
 import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
+import { useIsInDetailPanel } from '../../contexts/ToolDetailContext'
 
 /**
  * Bash tool renderer
@@ -15,7 +16,15 @@ import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
  */
 export function BashToolRenderer({ tool }: ToolRendererProps) {
   const { t } = useTranslation('chat')
-  const [isOutputExpanded, setIsOutputExpanded] = useState(false)
+  const isInDetailPanel = useIsInDetailPanel()
+  const [isOutputExpanded, setIsOutputExpanded] = useState(isInDetailPanel)
+
+  // Auto-expand when in detail panel
+  useEffect(() => {
+    if (isInDetailPanel) {
+      setIsOutputExpanded(true)
+    }
+  }, [isInDetailPanel])
 
   const input = tool.toolUse.details?.input as Record<string, unknown> | undefined
   const command = input?.command as string | undefined
@@ -60,7 +69,7 @@ export function BashToolRenderer({ tool }: ToolRendererProps) {
                 ? t('thinking.tool_error') || 'Error'
                 : t('thinking.tool_output') || 'Output'}
             </div>
-            {isOutputCollapsible && (
+            {isOutputCollapsible && !isInDetailPanel && (
               <button
                 onClick={() => setIsOutputExpanded(!isOutputExpanded)}
                 className="text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
@@ -77,10 +86,12 @@ export function BashToolRenderer({ tool }: ToolRendererProps) {
                 ? 'text-yellow-700 bg-yellow-50 border border-yellow-200'
                 : 'text-text-tertiary bg-fill-tert'
             }`}
-            style={{ maxHeight: isOutputExpanded ? 'none' : '300px' }}
+            style={{ maxHeight: isOutputExpanded || isInDetailPanel ? 'none' : '300px' }}
           >
             {displayOutput}
-            {isOutputCollapsible && !isOutputExpanded && <span className="text-blue-400">...</span>}
+            {isOutputCollapsible && !isOutputExpanded && !isInDetailPanel && (
+              <span className="text-blue-400">...</span>
+            )}
           </pre>
         </div>
       )}

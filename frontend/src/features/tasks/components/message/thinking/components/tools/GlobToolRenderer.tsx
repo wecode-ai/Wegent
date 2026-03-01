@@ -4,10 +4,11 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolRendererProps } from '../../types'
 import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
+import { useIsInDetailPanel } from '../../contexts/ToolDetailContext'
 
 /**
  * Glob tool renderer
@@ -15,7 +16,14 @@ import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
  */
 export function GlobToolRenderer({ tool }: ToolRendererProps) {
   const { t } = useTranslation('chat')
-  const [isResultsExpanded, setIsResultsExpanded] = useState(false)
+  const isInDetailPanel = useIsInDetailPanel()
+  const [isResultsExpanded, setIsResultsExpanded] = useState(isInDetailPanel)
+
+  useEffect(() => {
+    if (isInDetailPanel) {
+      setIsResultsExpanded(true)
+    }
+  }, [isInDetailPanel])
 
   const input = tool.toolUse.details?.input as Record<string, unknown> | undefined
   const pattern = input?.pattern as string | undefined
@@ -95,7 +103,7 @@ export function GlobToolRenderer({ tool }: ToolRendererProps) {
                   ? `Files (${fileCount})`
                   : 'Files'}
             </div>
-            {isResultsCollapsible && (
+            {isResultsCollapsible && !isInDetailPanel && (
               <button
                 onClick={() => setIsResultsExpanded(!isResultsExpanded)}
                 className="text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
@@ -112,10 +120,10 @@ export function GlobToolRenderer({ tool }: ToolRendererProps) {
                 ? 'text-yellow-700 bg-yellow-50 border border-yellow-200'
                 : 'text-text-tertiary bg-fill-tert'
             }`}
-            style={{ maxHeight: isResultsExpanded ? 'none' : '300px' }}
+            style={{ maxHeight: isResultsExpanded || isInDetailPanel ? 'none' : '300px' }}
           >
             {displayResults}
-            {isResultsCollapsible && !isResultsExpanded && (
+            {isResultsCollapsible && !isResultsExpanded && !isInDetailPanel && (
               <span className="text-blue-400">...</span>
             )}
           </pre>

@@ -17,6 +17,7 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
+import { ToolDetailProvider } from '@/features/tasks/components/message/thinking/contexts/ToolDetailContext'
 
 /**
  * Mobile-specific implementation of Code Page
@@ -32,6 +33,14 @@ import { ChatArea } from '@/features/tasks/components/chat'
  * @see CodePageDesktop.tsx for desktop implementation
  */
 export function CodePageMobile() {
+  return (
+    <ToolDetailProvider>
+      <CodePageMobileContent />
+    </ToolDetailProvider>
+  )
+}
+
+function CodePageMobileContent() {
   // Get search params to check for taskId
   const searchParams = useSearchParams()
   const _hasTaskId = !!searchParams.get('taskId')

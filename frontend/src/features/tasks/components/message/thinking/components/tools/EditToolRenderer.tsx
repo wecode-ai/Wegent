@@ -4,10 +4,11 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolRendererProps } from '../../types'
 import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
+import { useIsInDetailPanel } from '../../contexts/ToolDetailContext'
 
 /**
  * Edit tool renderer
@@ -15,8 +16,16 @@ import { shouldCollapse, getContentPreview } from '../../utils/thinkingUtils'
  */
 export function EditToolRenderer({ tool }: ToolRendererProps) {
   const { t } = useTranslation('chat')
-  const [isOldExpanded, setIsOldExpanded] = useState(false)
-  const [isNewExpanded, setIsNewExpanded] = useState(false)
+  const isInDetailPanel = useIsInDetailPanel()
+  const [isOldExpanded, setIsOldExpanded] = useState(isInDetailPanel)
+  const [isNewExpanded, setIsNewExpanded] = useState(isInDetailPanel)
+
+  useEffect(() => {
+    if (isInDetailPanel) {
+      setIsOldExpanded(true)
+      setIsNewExpanded(true)
+    }
+  }, [isInDetailPanel])
 
   const input = tool.toolUse.details?.input as Record<string, unknown> | undefined
   const filePath = input?.file_path as string | undefined
@@ -61,7 +70,7 @@ export function EditToolRenderer({ tool }: ToolRendererProps) {
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-medium text-red-600">Old String</div>
-            {isOldCollapsible && (
+            {isOldCollapsible && !isInDetailPanel && (
               <button
                 onClick={() => setIsOldExpanded(!isOldExpanded)}
                 className="text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
@@ -84,7 +93,7 @@ export function EditToolRenderer({ tool }: ToolRendererProps) {
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-medium text-green-600">New String</div>
-            {isNewCollapsible && (
+            {isNewCollapsible && !isInDetailPanel && (
               <button
                 onClick={() => setIsNewExpanded(!isNewExpanded)}
                 className="text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
