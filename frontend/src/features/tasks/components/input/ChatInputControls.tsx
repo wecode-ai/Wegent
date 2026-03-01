@@ -31,7 +31,14 @@ import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
 import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
-import { VideoModelSelector, ResolutionSelector, RatioSelector } from '../selector'
+import {
+  ResolutionSelector,
+  RatioSelector,
+  ImageSizeSelector,
+  GenerateModeSelector,
+  isGenerateMode,
+} from '../selector'
+import type { GenerateMode } from '../selector'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -125,6 +132,17 @@ export interface ChatInputControlsProps {
   selectedRatio?: string
   onRatioChange?: (ratio: string) => void
   availableRatios?: string[]
+
+  // Image mode props (only used when taskType === 'image')
+  selectedImageModel?: Model | null
+  onImageModelChange?: (model: Model) => void
+  isImageModelsLoading?: boolean
+  selectedImageSize?: string
+  onImageSizeChange?: (size: string) => void
+
+  // Generate mode switch props (only used when taskType is 'video' or 'image')
+  /** Callback when user switches between video and image mode */
+  onGenerateModeChange?: (mode: GenerateMode) => void
 }
 
 /**
@@ -194,7 +212,7 @@ export function ChatInputControls({
   onToggleSkill,
   skillSelectorRef,
   // Video mode props
-  videoModels = [],
+  videoModels: _videoModels = [],
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading = false,
@@ -204,9 +222,20 @@ export function ChatInputControls({
   selectedRatio = '16:9',
   onRatioChange,
   availableRatios,
+  // Image mode props
+  selectedImageModel,
+  onImageModelChange,
+  isImageModelsLoading = false,
+  selectedImageSize = '1024x1024',
+  onImageSizeChange,
+  // Generate mode switch props
+  onGenerateModeChange,
 }: ChatInputControlsProps) {
-  // Check if we're in video mode
+  // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
+  const isImageMode = taskType === 'image'
+  // Check if we're in generation mode (video or image)
+  const isGenerationMode = isVideoMode || isImageMode
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
   const isMobile = useIsMobile()
@@ -338,17 +367,29 @@ export function ChatInputControls({
         className="flex-1 min-w-0 overflow-visible flex items-center gap-3 flex-wrap"
         data-tour="input-controls"
       >
+        {/* Generate Mode Selector - show when in video or image mode */}
+        {isGenerateMode(taskType) && onGenerateModeChange && (
+          <GenerateModeSelector
+            selectedMode={taskType as GenerateMode}
+            onModeChange={onGenerateModeChange}
+            disabled={isLoading || isStreaming || hasMessages}
+          />
+        )}
+
         {/* Video Mode Controls - show when taskType is 'video' */}
         {isVideoMode && (
           <>
-            {/* Video Model Selector */}
+            {/* Video Model Selector - using unified ModelSelector with video category */}
             {onVideoModelChange && (
-              <VideoModelSelector
-                models={videoModels}
+              <ModelSelector
                 selectedModel={selectedVideoModel ?? null}
-                onModelChange={onVideoModelChange}
+                setSelectedModel={model => model && onVideoModelChange(model)}
+                forceOverride={false}
+                setForceOverride={() => {}}
+                selectedTeam={null}
                 disabled={isLoading || isStreaming}
                 isLoading={isVideoModelsLoading}
+                modelCategoryType="video"
               />
             )}
 
@@ -374,8 +415,36 @@ export function ChatInputControls({
           </>
         )}
 
-        {/* Non-video mode controls */}
-        {!isVideoMode && (
+        {/* Image Mode Controls - show when taskType is 'image' */}
+        {isImageMode && (
+          <>
+            {/* Image Model Selector - using unified ModelSelector with image category */}
+            {onImageModelChange && (
+              <ModelSelector
+                selectedModel={selectedImageModel ?? null}
+                setSelectedModel={model => model && onImageModelChange(model)}
+                forceOverride={false}
+                setForceOverride={() => {}}
+                selectedTeam={null}
+                disabled={isLoading || isStreaming}
+                isLoading={isImageModelsLoading}
+                modelCategoryType="image"
+              />
+            )}
+
+            {/* Image Size Selector */}
+            {onImageSizeChange && (
+              <ImageSizeSelector
+                selectedSize={selectedImageSize}
+                onSizeChange={onImageSizeChange}
+                disabled={isLoading || isStreaming}
+              />
+            )}
+          </>
+        )}
+
+        {/* Non-generation mode controls (chat, code, etc.) */}
+        {!isGenerationMode && (
           <>
             {/* Context Selection - only show for chat shell */}
             {isChatShell(selectedTeam) && (

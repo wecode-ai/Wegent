@@ -31,13 +31,16 @@ import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
-import { useVideoModelSelection } from '../../hooks/useVideoModelSelection'
+import { useModelSelection } from '../../hooks/useModelSelection'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
  * When the controls container width is less than this value, selectors will collapse.
  */
 const COLLAPSE_SELECTORS_THRESHOLD = 420
+
+/** Generation mode type - video or image */
+type GenerateMode = 'video' | 'image'
 
 interface ChatAreaProps {
   teams: Team[]
@@ -62,6 +65,8 @@ interface ChatAreaProps {
   selectedDocumentIds?: number[]
   /** Reason why input is disabled (e.g., device offline). If set, input will be disabled and show this message. */
   disabledReason?: string
+  /** Callback when user switches between video and image mode (only used in generate page) */
+  onGenerateModeChange?: (mode: GenerateMode) => void
 }
 
 /**
@@ -81,6 +86,7 @@ function ChatAreaContent({
   knowledgeBaseId,
   selectedDocumentIds,
   disabledReason,
+  onGenerateModeChange,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -110,9 +116,34 @@ function ChatAreaContent({
   })
 
   // Video model selection state - only enabled for video mode
-  const videoModelSelection = useVideoModelSelection({
-    enabled: taskType === 'video',
+  // Uses unified useModelSelection hook with modelCategoryType='video'
+  const videoModelSelection = useModelSelection({
+    teamId: null,
+    taskId: null,
+    selectedTeam: null,
+    disabled: taskType !== 'video',
+    modelCategoryType: 'video',
   })
+
+  // Image model selection state - only enabled for image mode
+  // Uses unified useModelSelection hook with modelCategoryType='image'
+  const imageModelSelection = useModelSelection({
+    teamId: null,
+    taskId: null,
+    selectedTeam: null,
+    disabled: taskType !== 'image',
+    modelCategoryType: 'image',
+  })
+
+  // Video mode specific state - resolution and aspect ratio
+  // These are kept separate from useModelSelection as they are video-specific parameters
+  const [selectedResolution, setSelectedResolution] = useState('1080p')
+  const [selectedRatio, setSelectedRatio] = useState('16:9')
+  const availableResolutions = useMemo(() => ['720p', '1080p', '2K', '4K'], [])
+  const availableRatios = useMemo(() => ['16:9', '9:16', '1:1', '4:3', '3:4'], [])
+
+  // Image mode specific state - image size
+  const [selectedImageSize, setSelectedImageSize] = useState('2048x2048')
 
   // Compute subtask info for scroll management
   // Note: Now using taskState from state machine instead of selectedTaskDetail.subtasks
@@ -295,19 +326,34 @@ function ChatAreaContent({
     hasMessages: hasMessagesForHooks,
   })
 
-  // For video mode, use video model selection; otherwise use regular model selection
+  // For video/image mode, use respective model selection; otherwise use regular model selection
   // This ensures the correct model is passed to the backend for routing
-  const effectiveSelectedModel =
-    taskType === 'video' ? videoModelSelection.selectedModel : chatState.selectedModel
+  const effectiveSelectedModel = useMemo(() => {
+    if (taskType === 'video') return videoModelSelection.selectedModel
+    if (taskType === 'image') return imageModelSelection.selectedModel
+    return chatState.selectedModel
+  }, [
+    taskType,
+    videoModelSelection.selectedModel,
+    imageModelSelection.selectedModel,
+    chatState.selectedModel,
+  ])
 
   // Build generate params for video/image generation tasks
-  const generateParams =
-    taskType === 'video'
-      ? {
-          resolution: videoModelSelection.selectedResolution,
-          ratio: videoModelSelection.selectedRatio,
-        }
-      : undefined
+  const generateParams = useMemo(() => {
+    if (taskType === 'video') {
+      return {
+        resolution: selectedResolution,
+        ratio: selectedRatio,
+      }
+    }
+    if (taskType === 'image') {
+      return {
+        size: selectedImageSize,
+      }
+    }
+    return undefined
+  }, [taskType, selectedResolution, selectedRatio, selectedImageSize])
 
   // Stream handlers (send message, retry, cancel, stop)
   const streamHandlers = useChatStreamHandlers({
@@ -399,11 +445,22 @@ function ChatAreaContent({
       // In video mode, we need a video model selected
       return !videoModelSelection.selectedModel
     }
+    // Image mode uses image model selection
+    if (taskType === 'image') {
+      // In image mode, we need an image model selected
+      return !imageModelSelection.selectedModel
+    }
     if (!chatState.selectedTeam || chatState.selectedTeam.agent_type === 'dify') return false
     const hasDefaultOption = allBotsHavePredefinedModel(chatState.selectedTeam)
     if (hasDefaultOption) return false
     return !chatState.selectedModel
-  }, [chatState.selectedTeam, chatState.selectedModel, taskType, videoModelSelection.selectedModel])
+  }, [
+    chatState.selectedTeam,
+    chatState.selectedModel,
+    taskType,
+    videoModelSelection.selectedModel,
+    imageModelSelection.selectedModel,
+  ])
 
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
@@ -658,16 +715,27 @@ function ChatAreaContent({
     selectedSkillNames: skillSelector.selectedSkillNames,
     onToggleSkill: skillSelector.toggleSkill,
     // Video mode props - only passed when taskType is 'video'
-    videoModels: videoModelSelection.videoModels,
+    // Note: videoModels is no longer passed - ModelSelector fetches models internally via useModelSelection
     selectedVideoModel: videoModelSelection.selectedModel,
-    onVideoModelChange: videoModelSelection.setSelectedModel,
+    onVideoModelChange: (model: Model) =>
+      videoModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`),
     isVideoModelsLoading: videoModelSelection.isLoading,
-    selectedResolution: videoModelSelection.selectedResolution,
-    onResolutionChange: videoModelSelection.setSelectedResolution,
-    availableResolutions: videoModelSelection.availableResolutions,
-    selectedRatio: videoModelSelection.selectedRatio,
-    onRatioChange: videoModelSelection.setSelectedRatio,
-    availableRatios: videoModelSelection.availableRatios,
+    selectedResolution,
+    onResolutionChange: setSelectedResolution,
+    availableResolutions,
+    selectedRatio,
+    onRatioChange: setSelectedRatio,
+    availableRatios,
+    // Image mode props - only passed when taskType is 'image'
+    // Note: imageModels is no longer passed - ModelSelector fetches models internally via useModelSelection
+    selectedImageModel: imageModelSelection.selectedModel,
+    onImageModelChange: (model: Model) =>
+      imageModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`),
+    isImageModelsLoading: imageModelSelection.isLoading,
+    selectedImageSize,
+    onImageSizeChange: setSelectedImageSize,
+    // Generate mode switch props - only passed when in generate page
+    onGenerateModeChange,
   }
 
   return (

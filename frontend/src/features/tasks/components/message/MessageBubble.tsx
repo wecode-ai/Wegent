@@ -1344,8 +1344,37 @@ const MessageBubble = memo(
                 </div>
               )}
               {/* Show contexts (attachments, knowledge bases, etc.) for both user and AI messages */}
+              {/* For AI messages with image/video blocks, filter out attachments to avoid duplicate display */}
               <ContextBadgeList
-                contexts={msg.contexts || undefined}
+                contexts={(() => {
+                  if (!msg.contexts) return undefined
+                  // For AI messages, check if there are image/video blocks in result.blocks
+                  // If so, filter out attachments that are already displayed in ImageGallery/VideoPlayer
+                  if (!isUserTypeMessage && msg.result?.blocks) {
+                    // Get all attachment IDs from image and video blocks
+                    const attachmentIdsInBlocks = new Set<number>()
+                    for (const block of msg.result.blocks) {
+                      // Handle image blocks
+                      if (block.type === 'image' && block.image_attachment_ids) {
+                        for (const id of block.image_attachment_ids) {
+                          if (id) attachmentIdsInBlocks.add(id)
+                        }
+                      }
+                      // Handle video blocks
+                      if (block.type === 'video' && block.video_attachment_id) {
+                        attachmentIdsInBlocks.add(block.video_attachment_id)
+                      }
+                    }
+                    // If there are attachment IDs in blocks, filter them out from contexts
+                    if (attachmentIdsInBlocks.size > 0) {
+                      const filteredContexts = msg.contexts.filter(
+                        ctx => !attachmentIdsInBlocks.has(ctx.id)
+                      )
+                      return filteredContexts.length > 0 ? filteredContexts : undefined
+                    }
+                  }
+                  return msg.contexts
+                })()}
                 onContextReselect={isUserTypeMessage ? onContextReselect : undefined}
                 shareToken={shareToken}
               />

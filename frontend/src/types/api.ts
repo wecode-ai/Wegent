@@ -174,7 +174,7 @@ export type TaskStatus =
   | 'CANCELLING'
   | 'DELETE'
   | 'PENDING_CONFIRMATION' // Pipeline stage completed, waiting for user confirmation
-export type TaskType = 'chat' | 'code' | 'knowledge' | 'task' | 'video'
+export type TaskType = 'chat' | 'code' | 'knowledge' | 'task' | 'video' | 'image'
 
 // Video result type (corresponds to VideoAgent's result.video from backend)
 export interface VideoResult {

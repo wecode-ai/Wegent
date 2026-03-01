@@ -170,6 +170,14 @@ export function ChatInputCard({
   selectedRatio,
   onRatioChange,
   availableRatios,
+  // Image mode props
+  selectedImageModel,
+  onImageModelChange,
+  isImageModelsLoading,
+  selectedImageSize,
+  onImageSizeChange,
+  // Generate mode switch props
+  onGenerateModeChange,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
 
@@ -357,6 +365,14 @@ export function ChatInputCard({
             selectedRatio={selectedRatio}
             onRatioChange={onRatioChange}
             availableRatios={availableRatios}
+            // Image mode props
+            selectedImageModel={selectedImageModel}
+            onImageModelChange={onImageModelChange}
+            isImageModelsLoading={isImageModelsLoading}
+            selectedImageSize={selectedImageSize}
+            onImageSizeChange={onImageSizeChange}
+            // Generate mode switch props
+            onGenerateModeChange={onGenerateModeChange}
           />
         </div>
       </div>

@@ -26,7 +26,7 @@ export interface VideoProgressProps {
  * Shows an animated video icon, progress message, and optional cancel button.
  */
 export function VideoProgress({ progress, message, onCancel, className }: VideoProgressProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('chat')
 
   return (
     <div className={cn('flex flex-col gap-3 p-4 rounded-lg bg-surface', className)}>
@@ -39,7 +39,7 @@ export function VideoProgress({ progress, message, onCancel, className }: VideoP
           <button
             onClick={onCancel}
             className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-hover transition-colors"
-            title={t('actions.cancel')}
+            title={t('common:actions.cancel')}
           >
             <X className="h-4 w-4 text-text-muted" />
           </button>

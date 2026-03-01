@@ -37,6 +37,7 @@ class ModelCategoryType(str, Enum):
     - EMBEDDING: Vector embedding models
     - RERANK: Reranking models
     - VIDEO: Video generation models
+    - IMAGE: Image generation models
     """
 
     LLM = "llm"
@@ -45,6 +46,7 @@ class ModelCategoryType(str, Enum):
     EMBEDDING = "embedding"
     RERANK = "rerank"
     VIDEO = "video"
+    IMAGE = "image"
 
 
 # Type-specific configurations
@@ -91,12 +93,8 @@ class RerankConfig(BaseModel):
     )
 
 
-class VideoGenerationConfig(BaseModel):
-    """Video generation specific configuration"""
-
-    resolution: Optional[str] = Field("1080p", description="Video resolution")
-    fps: Optional[int] = Field(24, description="Frames per second")
-    max_duration: Optional[int] = Field(None, description="Maximum duration in seconds")
+# Import generation configs from separate module
+from .generation import ImageGenerationConfig, VideoGenerationConfig
 
 
 class ObjectMeta(BaseModel):
@@ -207,6 +205,9 @@ class ModelSpec(BaseModel):
     )
     videoConfig: Optional[VideoGenerationConfig] = Field(
         None, description="Video generation configuration (when modelType='video')"
+    )
+    imageConfig: Optional[ImageGenerationConfig] = Field(
+        None, description="Image generation configuration (when modelType='image')"
     )
     isAdvanced: Optional[bool] = Field(
         None,

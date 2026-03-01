@@ -3,62 +3,68 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * ResolutionSelector Component
+ * ImageSizeSelector Component
  *
- * A component for selecting video resolution.
+ * A component for selecting image generation size/resolution.
  * Uses Popover for dropdown selection with i18n support.
  */
 
 'use client'
 
 import React, { useState } from 'react'
-import { Monitor, ChevronDown, Check } from 'lucide-react'
+import { ImageIcon, ChevronDown, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
-export interface ResolutionSelectorProps {
-  selectedResolution: string
-  onResolutionChange: (resolution: string) => void
-  availableResolutions?: string[]
+export interface ImageSizeOption {
+  value: string
+  label: string
+}
+
+export interface ImageSizeSelectorProps {
+  selectedSize: string
+  onSizeChange: (size: string) => void
+  availableSizes?: ImageSizeOption[]
   disabled?: boolean
   compact?: boolean
 }
 
-// Resolution labels with i18n keys
-const RESOLUTION_LABELS: Record<string, { zhKey: string; enKey: string }> = {
-  '480p': { zhKey: 'video.resolution.480p', enKey: 'video.resolution.480p' },
-  '720p': { zhKey: 'video.resolution.720p', enKey: 'video.resolution.720p' },
-  '1080p': { zhKey: 'video.resolution.1080p', enKey: 'video.resolution.1080p' },
-  '4k': { zhKey: 'video.resolution.4k', enKey: 'video.resolution.4k' },
-}
+// Default available sizes for image generation
+const DEFAULT_IMAGE_SIZES: ImageSizeOption[] = [
+  { value: '1024x1024', label: '1K (1024×1024)' },
+  { value: '2048x2048', label: '2K (2048×2048)' },
+  { value: '2K', label: '2K (自适应)' },
+  { value: '3K', label: '3K (自适应)' },
+  { value: '2304x1728', label: '2K 4:3 横屏' },
+  { value: '1728x2304', label: '2K 3:4 竖屏' },
+  { value: '2848x1600', label: '2K 16:9 横屏' },
+  { value: '1600x2848', label: '2K 9:16 竖屏' },
+]
 
-export function ResolutionSelector({
-  selectedResolution,
-  onResolutionChange,
-  availableResolutions = ['480p', '720p', '1080p'],
+export function ImageSizeSelector({
+  selectedSize,
+  onSizeChange,
+  availableSizes = DEFAULT_IMAGE_SIZES,
   disabled = false,
   compact = false,
-}: ResolutionSelectorProps) {
-  const { t } = useTranslation('chat')
+}: ImageSizeSelectorProps) {
+  const { t } = useTranslation('common')
   const [isOpen, setIsOpen] = useState(false)
 
-  // Get display text for resolution
-  const getResolutionLabel = (resolution: string): string => {
-    const labelConfig = RESOLUTION_LABELS[resolution]
-    if (labelConfig) {
-      return t(labelConfig.zhKey)
-    }
-    return resolution
+  // Get display text for selected size
+  const getDisplayText = (): string => {
+    const sizeOption = availableSizes.find(s => s.value === selectedSize)
+    return sizeOption?.label || selectedSize
   }
 
-  const displayText = getResolutionLabel(selectedResolution)
+  const displayText = getDisplayText()
 
   // Tooltip content
   const tooltipContent = compact
-    ? `${t('video.resolution_selector')}: ${displayText}`
-    : t('video.resolution_selector')
+    ? `${t('image.size_selector')}: ${displayText}`
+    : t('image.size_selector')
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -76,7 +82,7 @@ export function ResolutionSelector({
                   'disabled:cursor-not-allowed disabled:opacity-50'
                 )}
               >
-                <Monitor className="h-4 w-4 flex-shrink-0" />
+                <ImageIcon className="h-4 w-4 flex-shrink-0" />
                 {!compact && <span className="truncate text-xs min-w-0">{displayText}</span>}
                 <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
               </button>
@@ -90,29 +96,29 @@ export function ResolutionSelector({
 
       <PopoverContent
         className={cn(
-          'p-1 w-auto min-w-[160px] border border-border bg-base',
+          'p-1 w-auto min-w-[200px] border border-border bg-base',
           'shadow-xl rounded-xl overflow-hidden'
         )}
         align="start"
         sideOffset={4}
       >
-        <div className="flex flex-col">
-          {availableResolutions.map(resolution => (
+        <div className="flex flex-col max-h-[300px] overflow-y-auto">
+          {availableSizes.map(size => (
             <button
-              key={resolution}
+              key={size.value}
               type="button"
               onClick={() => {
-                onResolutionChange(resolution)
+                onSizeChange(size.value)
                 setIsOpen(false)
               }}
               className={cn(
                 'flex items-center justify-between px-3 py-2 text-sm rounded-md',
                 'hover:bg-hover transition-colors',
-                selectedResolution === resolution && 'bg-primary/10'
+                selectedSize === size.value && 'bg-primary/10'
               )}
             >
-              <span className="text-text-primary">{getResolutionLabel(resolution)}</span>
-              {selectedResolution === resolution && <Check className="h-3.5 w-3.5 text-primary" />}
+              <span className="text-text-primary">{size.label}</span>
+              {selectedSize === size.value && <Check className="h-3.5 w-3.5 text-primary" />}
             </button>
           ))}
         </div>
@@ -121,4 +127,4 @@ export function ResolutionSelector({
   )
 }
 
-export default ResolutionSelector
+export default ImageSizeSelector

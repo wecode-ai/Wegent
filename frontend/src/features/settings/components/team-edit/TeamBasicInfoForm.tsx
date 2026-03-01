@@ -68,7 +68,7 @@ export default function TeamBasicInfoForm({
         <div className="space-y-2">
           <Label className="text-sm font-medium">{t('common:team.bind_mode')}</Label>
           <div className="flex gap-2 flex-wrap">
-            {(['chat', 'code', 'task', 'video'] as const).map(opt => {
+            {(['chat', 'code', 'task', 'video', 'image'] as const).map(opt => {
               const isSelected = bindMode.includes(opt)
               return (
                 <button

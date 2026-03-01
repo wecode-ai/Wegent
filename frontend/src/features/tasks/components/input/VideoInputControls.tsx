@@ -8,13 +8,15 @@ import React from 'react'
 import { Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
-import { VideoModelSelector, ResolutionSelector, RatioSelector } from '../selector'
+import ModelSelector from '../selector/ModelSelector'
+import { ResolutionSelector, RatioSelector } from '../selector'
 import SendButton from './SendButton'
 import type { Model } from '../../hooks/useModelSelection'
 
 export interface VideoInputControlsProps {
-  // Video model
-  videoModels: Model[]
+  // Video model - videoModels is kept for backward compatibility but not used
+  // ModelSelector fetches models internally via useModelSelection hook
+  videoModels?: Model[]
   selectedModel: Model | null
   onModelChange: (model: Model) => void
   isModelsLoading?: boolean
@@ -44,7 +46,7 @@ export interface VideoInputControlsProps {
  * VideoInputControls Component
  *
  * Renders the bottom control bar for video generation mode, including:
- * - Video model selector
+ * - Video model selector (using unified ModelSelector with modelCategoryType="video")
  * - Resolution selector
  * - Aspect ratio selector
  * - Send/Stop button
@@ -53,7 +55,7 @@ export interface VideoInputControlsProps {
  * a streamlined interface for configuring video generation parameters.
  */
 export function VideoInputControls({
-  videoModels,
+  videoModels: _videoModels,
   selectedModel,
   onModelChange,
   isModelsLoading = false,
@@ -76,13 +78,16 @@ export function VideoInputControls({
   return (
     <div className="flex items-center justify-between px-3 pb-2 pt-1 gap-2">
       <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-        {/* Video Model Selector */}
-        <VideoModelSelector
-          models={videoModels}
+        {/* Video Model Selector - using unified ModelSelector with video category */}
+        <ModelSelector
           selectedModel={selectedModel}
-          onModelChange={onModelChange}
+          setSelectedModel={model => model && onModelChange(model)}
+          forceOverride={false}
+          setForceOverride={() => {}}
+          selectedTeam={null}
           disabled={isDisabled}
           isLoading={isModelsLoading}
+          modelCategoryType="video"
         />
 
         {/* Resolution Selector */}

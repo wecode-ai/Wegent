@@ -38,7 +38,7 @@ import {
   SkillRequestPayload,
   SkillResponsePayload,
 } from '@/types/socket'
-import type { TaskDetailSubtask, Team } from '@/types/api'
+import type { TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { taskStateManager, generateMessageId, UnifiedMessage } from '../state'
 import DOMPurify from 'dompurify'
@@ -99,7 +99,7 @@ export interface ChatMessageRequest {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code' | 'knowledge' | 'task' | 'video'
+  task_type?: TaskType
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
   // Local device ID for task execution (optional, when undefined use cloud executor)

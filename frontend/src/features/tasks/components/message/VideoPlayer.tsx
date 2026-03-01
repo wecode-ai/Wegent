@@ -46,7 +46,7 @@ export function VideoPlayer({
   isPlaceholder = false,
   progress = 0,
 }: VideoPlayerProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('chat')
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [showControls, setShowControls] = useState(false)
@@ -165,7 +165,7 @@ export function VideoPlayer({
         <button
           onClick={togglePlay}
           className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/40 transition-colors"
-          aria-label={t('actions.start')}
+          aria-label={t('common:actions.start')}
         >
           <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
             <Play className="h-8 w-8 text-black ml-1" />
@@ -186,7 +186,7 @@ export function VideoPlayer({
           <button
             onClick={togglePlay}
             className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-white/20 transition-colors"
-            aria-label={isPlaying ? t('actions.cancel') : t('actions.start')}
+            aria-label={isPlaying ? t('common:actions.cancel') : t('common:actions.start')}
           >
             {isPlaying ? (
               <Pause className="h-5 w-5 text-white" />
@@ -212,8 +212,8 @@ export function VideoPlayer({
           <button
             onClick={handleFullscreen}
             className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-white/20 transition-colors"
-            title={t('actions.view')}
-            aria-label={t('actions.view')}
+            title={t('common:actions.view')}
+            aria-label={t('common:actions.view')}
           >
             <Maximize2 className="h-5 w-5 text-white" />
           </button>

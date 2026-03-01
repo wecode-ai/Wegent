@@ -456,6 +456,19 @@ class ExecutionDispatcher:
             return request.bot[0].get("shell_type", "Chat")
         return "Chat"
 
+    @staticmethod
+    def _get_model_type(request: ExecutionRequest) -> str:
+        """Get model type from request's model_config.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            Model type string (e.g., "llm", "image")
+        """
+        model_config = request.model_config or {}
+        return model_config.get("modelType", "llm")
+
     async def dispatch_with_composite(
         self,
         request: ExecutionRequest,
@@ -485,7 +498,11 @@ class ExecutionDispatcher:
         target: ExecutionTarget,
         emitter: ResultEmitter,
     ) -> None:
-        """Dispatch task via SSE using OpenAI client.
+        """Dispatch task via SSE.
+
+        Routes based on modelType:
+        - modelType == "image" -> ImageAgent (direct API call)
+        - modelType == "llm" or default -> chat_shell via OpenAI client
 
         Uses AsyncOpenAI client to consume OpenAI Responses API compatible endpoint.
         Converts ExecutionRequest to OpenAI format, sends request, and processes
@@ -499,6 +516,15 @@ class ExecutionDispatcher:
             target: Execution target configuration
             emitter: Result emitter for event emission
         """
+        # Check if this is an image generation request
+        model_type = self._get_model_type(request)
+
+        if model_type == "image":
+            # Route to ImageAgent for direct image generation
+            await self._dispatch_image_generation(request, emitter)
+            return
+
+        # Default: route to chat_shell via OpenAI client
         from app.services.chat.storage.session import session_manager
 
         # OpenAI client appends /responses to base_url, so we need to include /v1
@@ -662,6 +688,32 @@ class ExecutionDispatcher:
         finally:
             # Unregister stream to clean up
             await session_manager.unregister_stream(request.subtask_id)
+
+    async def _dispatch_image_generation(
+        self,
+        request: ExecutionRequest,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Dispatch image generation task to ImageAgent.
+
+        ImageAgent handles:
+        1. Calling Seedream API directly
+        2. Uploading result as attachment
+        3. Emitting events via emitter
+
+        Args:
+            request: Execution request
+            emitter: Result emitter for event emission
+        """
+        from .agents.image.image_agent import ImageAgent
+
+        logger.info(
+            f"[ExecutionDispatcher] Dispatching to ImageAgent: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
+
+        agent = ImageAgent()
+        await agent.execute(request, emitter)
 
     async def _dispatch_polling(
         self,

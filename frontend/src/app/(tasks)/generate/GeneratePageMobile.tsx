@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -26,19 +26,29 @@ import { ChatArea } from '@/features/tasks/components/chat'
  * - Mobile-optimized spacing
  *
  * This page supports video and image generation modes.
- * Teams are filtered to show only those that support video mode.
+ * Teams are filtered based on the current generation mode.
  *
  * @see GeneratePageDesktop.tsx for desktop implementation
  */
+
+/** Generation mode type - video or image */
+type GenerateMode = 'video' | 'image'
+
 export function GeneratePageMobile() {
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
-  // Filter teams that support video mode (bind_mode includes 'video' or is empty)
-  const videoTeams = teams.filter((team: Team) => {
-    if (!team.bind_mode || team.bind_mode.length === 0) return true
-    return (team.bind_mode as string[]).includes('video')
-  })
+  // Generation mode state - video or image
+  const [generateMode, setGenerateMode] = useState<GenerateMode>('video')
+
+  // Filter teams based on current generation mode
+  // Teams with empty bind_mode support all modes
+  const filteredTeams = useMemo(() => {
+    return teams.filter((team: Team) => {
+      if (!team.bind_mode || team.bind_mode.length === 0) return true
+      return (team.bind_mode as string[]).includes(generateMode)
+    })
+  }, [teams, generateMode])
 
   // Task context for refreshing task list
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
@@ -71,9 +81,6 @@ export function GeneratePageMobile() {
   // Selected team state for sharing
   const [_selectedTeamForNewTask, _setSelectedTeamForNewTask] = useState<Team | null>(null)
 
-  // Share button state
-  const [shareButton, setShareButton] = useState<React.ReactNode>(null)
-
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
@@ -86,10 +93,6 @@ export function GeneratePageMobile() {
   const { shortcutDisplayText } = useSearchShortcut({
     onToggle: toggleSearchDialog,
   })
-
-  const handleShareButtonRender = (button: React.ReactNode) => {
-    setShareButton(button)
-  }
 
   // Note: saveLastTab not called for generate page as it's a specialized mode
 
@@ -122,20 +125,19 @@ export function GeneratePageMobile() {
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
-          isSidebarCollapsed={false}
+          hideGroupChatOptions={true}
         >
-          {shareButton}
           <ThemeToggle />
         </TopNavigation>
-        {/* Chat area with video mode */}
+        {/* Chat area with current generation mode */}
         <ChatArea
-          teams={videoTeams}
+          teams={filteredTeams}
           isTeamsLoading={isTeamsLoading}
           selectedTeamForNewTask={_selectedTeamForNewTask}
           showRepositorySelector={false}
-          taskType="video"
-          onShareButtonRender={handleShareButtonRender}
+          taskType={generateMode}
           onRefreshTeams={handleRefreshTeams}
+          onGenerateModeChange={setGenerateMode}
         />
       </div>
       {/* Search Dialog - rendered at page level for global shortcut support */}

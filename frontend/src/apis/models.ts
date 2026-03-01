@@ -5,7 +5,7 @@
 import { apiClient } from './client'
 
 // Model Category Type (different from resource type public/user/group)
-export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank' | 'video'
+export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank' | 'video' | 'image'
 
 // Type-specific configurations
 export interface TTSConfig {
@@ -40,6 +40,17 @@ export interface VideoGenerationConfig {
   watermark?: boolean // Whether to include watermark
 }
 
+// Image generation specific configuration
+export interface ImageGenerationConfig {
+  size?: string // '2K', '3K', '2048x2048', etc.
+  sequential_image_generation?: 'auto' | 'disabled'
+  max_images?: number
+  response_format?: 'url' | 'b64_json'
+  output_format?: 'jpeg' | 'png'
+  watermark?: boolean
+  optimize_prompt_mode?: 'standard' | 'fast'
+}
+
 // Model CRD Types
 export interface ModelCRD {
   apiVersion?: string
@@ -71,6 +82,7 @@ export interface ModelCRD {
     embeddingConfig?: EmbeddingConfig
     rerankConfig?: RerankConfig
     videoConfig?: VideoGenerationConfig
+    imageConfig?: ImageGenerationConfig
   }
   status?: {
     state: string

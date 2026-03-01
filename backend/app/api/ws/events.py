@@ -156,8 +156,10 @@ class ChatSendPayload(BaseModel):
     git_repo_id: Optional[int] = Field(None, description="Git repository ID")
     git_domain: Optional[str] = Field(None, description="Git domain")
     branch_name: Optional[str] = Field(None, description="Git branch name")
-    task_type: Optional[Literal["chat", "code", "knowledge", "task", "video"]] = Field(
-        None, description="Task type: chat, code, knowledge, task, or video"
+    task_type: Optional[
+        Literal["chat", "code", "knowledge", "task", "video", "image"]
+    ] = Field(
+        None, description="Task type: chat, code, knowledge, task, video, or image"
     )
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"

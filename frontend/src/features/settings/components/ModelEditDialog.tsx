@@ -39,6 +39,13 @@ import {
   VideoGenerationConfig,
   AvailableModel,
 } from '@/apis/models'
+import {
+  ImageConfigSection,
+  ImageConfigState,
+  getDefaultImageConfig,
+  toImageGenerationConfig,
+  fromImageGenerationConfig,
+} from './model-config'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -93,6 +100,7 @@ export interface ModelInitialData {
   embeddingConfig?: EmbeddingConfig
   rerankConfig?: RerankConfig
   videoConfig?: VideoGenerationConfig
+  imageConfig?: import('@/apis/models').ImageGenerationConfig
 }
 
 interface ModelEditDialogProps {
@@ -131,6 +139,7 @@ const MODEL_CATEGORY_OPTIONS: { value: ModelCategoryType; labelKey: string }[] =
   { value: 'embedding', labelKey: 'models.model_category_type_embedding' },
   { value: 'rerank', labelKey: 'models.model_category_type_rerank' },
   { value: 'video', labelKey: 'models.model_category_type_video' },
+  { value: 'image', labelKey: 'models.model_category_type_image' },
 ]
 
 // Protocol options by model category type
@@ -172,6 +181,13 @@ const PROTOCOL_BY_CATEGORY: Record<
     { value: 'seedance', label: 'Seedance', hint: '火山引擎视频生成' },
     { value: 'runway', label: 'Runway', hint: 'Runway Gen-3' },
     { value: 'pika', label: 'Pika', hint: 'Pika Labs' },
+    { value: 'custom', label: 'Custom API' },
+  ],
+  image: [
+    { value: 'openai', label: 'OpenAI DALL-E', hint: 'DALL-E 3' },
+    { value: 'doubao', label: 'Doubao', hint: '豆包图像生成' },
+    { value: 'stability', label: 'Stability AI', hint: 'Stable Diffusion' },
+    { value: 'midjourney', label: 'Midjourney', hint: 'Midjourney API' },
     { value: 'custom', label: 'Custom API' },
   ],
 }
@@ -302,6 +318,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [videoSeed, setVideoSeed] = useState<number>(-1)
   const [videoCameraFixed, setVideoCameraFixed] = useState<boolean>(false)
   const [videoWatermark, setVideoWatermark] = useState<boolean>(false)
+  // Image - use ImageConfigState from extracted component
+  const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
 
   // Fetch models state
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -396,6 +414,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setVideoCameraFixed(effectiveInitialData.videoConfig.camera_fixed ?? false)
           setVideoWatermark(effectiveInitialData.videoConfig.watermark ?? false)
         }
+        // Load image-specific configs
+        if (effectiveInitialData.imageConfig) {
+          setImageConfig(fromImageGenerationConfig(effectiveInitialData.imageConfig))
+        }
         // Load LLM-specific configs
         setContextWindow(effectiveInitialData.contextWindow)
         setMaxOutputTokens(effectiveInitialData.maxOutputTokens)
@@ -429,6 +451,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setVideoSeed(-1)
         setVideoCameraFixed(false)
         setVideoWatermark(false)
+        // Reset image-specific configs
+        setImageConfig(getDefaultImageConfig())
         // Reset LLM-specific configs
         setContextWindow(undefined)
         setMaxOutputTokens(undefined)
@@ -440,11 +464,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   }, [open, effectiveInitialData])
 
   // Determine model options based on model category type and provider
-  // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
+  // For embedding/rerank/image, only show "Custom..." option since they don't use preset LLM models
   // For openai-responses, use the same model options as openai
   // For video models, use provider-specific options
   const baseModelOptions =
-    modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
+    modelCategoryType === 'embedding' ||
+    modelCategoryType === 'rerank' ||
+    modelCategoryType === 'image'
       ? [{ value: 'custom', label: 'Custom...' }]
       : modelCategoryType === 'video'
         ? providerType === 'seedance'
@@ -502,11 +528,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (protocols && protocols.length > 0) {
       setProviderType(protocols[0].value)
     }
-    // For embedding/rerank, automatically set to custom mode
+    // For embedding/rerank/image, automatically set to custom mode
     // For video, reset model selection
-    if (value === 'embedding' || value === 'rerank') {
+    if (value === 'embedding' || value === 'rerank' || value === 'image') {
       setModelId('custom')
       setCustomModelId('')
+      // Reset image-specific configs to defaults when switching to image
+      if (value === 'image') {
+        setImageConfig(getDefaultImageConfig())
+      }
     } else if (value === 'video') {
       setModelId('')
       setCustomModelId('')
@@ -565,6 +595,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     } else if (modelCategoryType === 'video') {
       // Set default base URL for video providers
       if (value === 'seedance') {
+        setBaseUrl('https://ark.cn-beijing.volces.com/api/v3')
+      } else {
+        setBaseUrl('')
+      }
+    } else if (modelCategoryType === 'image') {
+      // Set default base URL for image providers
+      if (value === 'openai') {
+        setBaseUrl('https://api.openai.com/v1')
+      } else if (value === 'doubao') {
         setBaseUrl('https://ark.cn-beijing.volces.com/api/v3')
       } else {
         setBaseUrl('')
@@ -869,6 +908,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined
 
+      // Build image config from state
+      const imageGenerationConfig =
+        modelCategoryType === 'image' ? toImageGenerationConfig(imageConfig) : undefined
+
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
       // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
@@ -910,6 +953,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
           // Save protocol for video models to specify the provider (seedance, runway, pika, etc.)
           ...(modelCategoryType === 'video' && { protocol: providerType }),
+          // Save protocol for image models to specify the provider (openai, doubao, stability, etc.)
+          ...(modelCategoryType === 'image' && { protocol: providerType }),
           // LLM-specific fields
           ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
           ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
@@ -918,6 +963,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ...(embeddingConfig && { embeddingConfig }),
           ...(rerankConfig && { rerankConfig }),
           ...(videoConfig && { videoConfig }),
+          ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
         },
         status: {
           state: 'Available',
@@ -1654,6 +1700,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Image-specific fields */}
+          {modelCategoryType === 'image' && (
+            <ImageConfigSection
+              config={imageConfig}
+              onChange={changes => setImageConfig(prev => ({ ...prev, ...changes }))}
+            />
           )}
         </div>
 

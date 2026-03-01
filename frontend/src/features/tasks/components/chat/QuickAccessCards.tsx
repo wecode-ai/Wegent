@@ -34,7 +34,7 @@ interface QuickAccessCardsProps {
   teams: Team[]
   selectedTeam: Team | null
   onTeamSelect: (team: Team) => void
-  currentMode: 'chat' | 'code' | 'knowledge' | 'task' | 'video'
+  currentMode: 'chat' | 'code' | 'knowledge' | 'task' | 'video' | 'image'
   isLoading?: boolean
   isTeamsLoading?: boolean
   hideSelected?: boolean // Whether to hide the selected team from the cards
