@@ -249,6 +249,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
             rerankConfig: model.spec.rerankConfig,
+            videoConfig: model.spec.videoConfig,
           }
         : null)
     )

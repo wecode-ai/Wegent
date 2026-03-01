@@ -158,11 +158,24 @@ class ModelAggregationService:
             if model_crd.spec.modelType:
                 model_category_type = model_crd.spec.modelType.value
 
+            # Build config - start with modelConfig, then merge type-specific configs
+            config = model_crd.spec.modelConfig
+            if model_category_type == "video":
+                if model_crd.spec.videoConfig:
+                    config = {
+                        **config,
+                        "videoConfig": model_crd.spec.videoConfig.model_dump(
+                            exclude_none=True
+                        ),
+                    }
+                if model_crd.spec.protocol:
+                    config = {**config, "protocol": model_crd.spec.protocol}
+
             return {
                 "provider": env.get("model"),
                 "model_id": env.get("model_id"),
                 "display_name": model_crd.metadata.displayName,
-                "config": model_crd.spec.modelConfig,
+                "config": config,
                 "model_category_type": model_category_type,
                 "is_advanced": (
                     bool(model_crd.spec.isAdvanced)

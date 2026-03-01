@@ -239,8 +239,7 @@ async def build_execution_request(
                         and generate_params.resolution not in allowed_resolutions
                     ):
                         raise ValueError(
-                            f"Unsupported resolution '{generate_params.resolution}', "
-                            f"allowed: {allowed_resolutions}"
+                            f"Unsupported resolution '{generate_params.resolution}'"
                         )
                     video_config["resolution"] = generate_params.resolution
 
@@ -251,8 +250,7 @@ async def build_execution_request(
                     ]
                     if allowed_ratios and generate_params.ratio not in allowed_ratios:
                         raise ValueError(
-                            f"Unsupported aspect ratio '{generate_params.ratio}', "
-                            f"allowed: {allowed_ratios}"
+                            f"Unsupported aspect ratio '{generate_params.ratio}'"
                         )
                     video_config["ratio"] = generate_params.ratio
 
@@ -263,8 +261,7 @@ async def build_execution_request(
                         and generate_params.duration not in allowed_durations
                     ):
                         raise ValueError(
-                            f"Unsupported duration {generate_params.duration}s, "
-                            f"allowed: {allowed_durations}"
+                            f"Unsupported duration {generate_params.duration}s"
                         )
                     video_config["duration"] = generate_params.duration
 

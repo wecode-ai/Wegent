@@ -851,12 +851,37 @@ class ChatNamespace(socketio.AsyncNamespace):
                         logger.exception(
                             f"[WS] chat:send AI trigger failed: task_id={task.id}, error={e}"
                         )
-                        # Emit error to frontend so user sees the failure
+                        # Update subtask status to FAILED in database
+                        try:
+                            from app.services.chat.storage.db import DatabaseHandler
+
+                            db_handler = DatabaseHandler()
+                            await db_handler.update_subtask_status(
+                                assistant_subtask.id,
+                                "FAILED",
+                                error=str(e),
+                            )
+                        except Exception as db_err:
+                            logger.error(
+                                f"[WS] Failed to update subtask status: {db_err}"
+                            )
+                        # Emit chat:start first so frontend creates the AI message bubble
+                        await self.emit(
+                            ServerEvents.CHAT_START,
+                            {
+                                "task_id": task.id,
+                                "subtask_id": assistant_subtask.id,
+                                "shell_type": "Chat",
+                            },
+                            room=task_room,
+                        )
+                        # Then emit chat:error to mark the message as failed
                         await self.emit(
                             ServerEvents.CHAT_ERROR,
                             ChatErrorPayload(
                                 subtask_id=assistant_subtask.id,
                                 error=str(e),
+                                task_id=task.id,
                             ).model_dump(),
                             room=task_room,
                         )

@@ -304,6 +304,7 @@ class ChatErrorPayload(BaseModel):
 
     subtask_id: int
     error: str
+    task_id: Optional[int] = None
     type: Optional[str] = None
 
 
