@@ -37,7 +37,11 @@ class ModelAdapter:
                     model_crd = Model.model_validate(kind.json)
                     config = model_crd.spec.modelConfig
                     display_name = model_crd.metadata.displayName
-                    is_advanced = bool(model_crd.spec.isAdvanced) if model_crd.spec.isAdvanced else False
+                    is_advanced = (
+                        bool(model_crd.spec.isAdvanced)
+                        if model_crd.spec.isAdvanced
+                        else False
+                    )
                 except Exception:
                     # Fallback for invalid CRD structure
                     config = kind.json

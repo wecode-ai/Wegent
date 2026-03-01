@@ -12,6 +12,7 @@ from typing import Any, Dict, Literal, Optional
 import httpx
 
 from .base import VideoJobResult, VideoJobStatus, VideoProvider
+from .progress_simulator import ProgressSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class SeedanceProvider(VideoProvider):
         self.base_url = base_url.rstrip("/") if base_url else ""
         self.api_key = api_key or ""
         self.video_config = video_config or {}
+        # Use progress simulator for simulated progress when API returns 0
+        self._progress_simulator = ProgressSimulator()
 
     @property
     def name(self) -> str:
@@ -56,19 +59,26 @@ class SeedanceProvider(VideoProvider):
         Returns:
             Job ID
         """
-        payload = {
-            "prompt": prompt,
-            "resolution": self.video_config.get("resolution", "1080p"),
-            "fps": self.video_config.get("fps", 24),
-        }
+        # Build content array
+        content = [{"type": "text", "text": prompt}]
 
         if reference_image and image_mode:
-            payload["reference_image"] = reference_image
+            content.append({"type": "image_url", "image_url": {"url": reference_image}})
+
+        payload = {
+            "model": self.video_config.get("model", "doubao-seedance-1-5-pro-251215"),
+            "content": content,
+            "resolution": self.video_config.get("resolution", "480p"),
+            "duration": self.video_config.get("duration", 4),
+            "watermark": self.video_config.get("watermark", False),
+        }
+
+        if image_mode:
             payload["image_mode"] = image_mode
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{self.base_url}/v1/videos/generate",
+                f"{self.base_url}/contents/generations/tasks",
                 json=payload,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -77,7 +87,40 @@ class SeedanceProvider(VideoProvider):
             )
             response.raise_for_status()
             data = response.json()
-            return data["id"]
+            job_id = data["id"]
+            # Start tracking job for simulated progress
+            self._progress_simulator.start_job(job_id)
+            return job_id
+
+    async def _get_task(self, job_id: str, timeout: float = 10.0) -> Dict[str, Any]:
+        """Get Seedance task details.
+
+        Args:
+            job_id: Job ID
+            timeout: Request timeout in seconds
+
+        Returns:
+            Task data from API
+        """
+        url = f"{self.base_url}/contents/generations/tasks/{job_id}"
+        logger.info(f"[Seedance] Getting task: job_id={job_id}, url={url}")
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            logger.info(
+                f"[Seedance] Task response: job_id={job_id}, "
+                f"status={data.get('status')}, data={data}"
+            )
+            return data
 
     async def get_status(self, job_id: str) -> VideoJobStatus:
         """Get Seedance job status.
@@ -88,21 +131,28 @@ class SeedanceProvider(VideoProvider):
         Returns:
             VideoJobStatus with progress and completion state
         """
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{self.base_url}/v1/videos/{job_id}/status",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            response.raise_for_status()
-            data = response.json()
+        data = await self._get_task(job_id)
 
-            status = data.get("status", "processing")
-            return VideoJobStatus(
-                progress=data.get("progress", 0),
-                is_completed=(status == "completed"),
-                is_failed=(status == "failed"),
-                error=data.get("error"),
-            )
+        # Status values: queued, running, succeeded, failed
+        status = data.get("status", "running")
+        api_progress = data.get("progress", 0)
+        is_running = status in ("queued", "running")
+
+        # Get progress (simulated if API returns 0)
+        progress = self._progress_simulator.get_progress(
+            job_id, api_progress, is_running
+        )
+
+        # Clean up job tracking when completed or failed
+        if not is_running:
+            self._progress_simulator.end_job(job_id)
+
+        return VideoJobStatus(
+            progress=progress,
+            is_completed=(status == "succeeded"),
+            is_failed=(status == "failed"),
+            error=data.get("error"),
+        )
 
     async def get_result(self, job_id: str) -> VideoJobResult:
         """Get Seedance job result.
@@ -113,17 +163,13 @@ class SeedanceProvider(VideoProvider):
         Returns:
             VideoJobResult with video URL and metadata
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"{self.base_url}/v1/videos/{job_id}/result",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            response.raise_for_status()
-            data = response.json()
+        data = await self._get_task(job_id, timeout=30.0)
 
-            return VideoJobResult(
-                video_url=data["video_url"],
-                thumbnail=data.get("thumbnail"),
-                duration=data.get("duration"),
-                image=data.get("image"),  # For follow-up reference
-            )
+        # Video URL is in content.video_url
+        content = data.get("content", {})
+        return VideoJobResult(
+            video_url=content.get("video_url", ""),
+            thumbnail=None,
+            duration=data.get("duration"),
+            image=None,
+        )

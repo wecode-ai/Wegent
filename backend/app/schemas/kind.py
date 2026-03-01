@@ -96,9 +96,7 @@ class VideoGenerationConfig(BaseModel):
 
     resolution: Optional[str] = Field("1080p", description="Video resolution")
     fps: Optional[int] = Field(24, description="Frames per second")
-    max_duration: Optional[int] = Field(
-        None, description="Maximum duration in seconds"
-    )
+    max_duration: Optional[int] = Field(None, description="Maximum duration in seconds")
 
 
 class ObjectMeta(BaseModel):

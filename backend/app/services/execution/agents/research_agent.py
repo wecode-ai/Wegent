@@ -115,7 +115,9 @@ class ResearchAgent(PollingAgent):
             if not job_id:
                 raise Exception(f"No interaction id returned: {result}")
 
-            logger.info(f"[{self.name}] Job created: job_id={job_id}, task_id={task_id}")
+            logger.info(
+                f"[{self.name}] Job created: job_id={job_id}, task_id={task_id}"
+            )
 
             # Step 2: Poll for completion, emit thinking progress
             for poll_num in range(1, MAX_POLL_COUNT + 1):

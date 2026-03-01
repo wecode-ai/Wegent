@@ -70,7 +70,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge' | 'task')[]>([
+  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge' | 'task' | 'video')[]>([
     'chat',
     'code',
   ])

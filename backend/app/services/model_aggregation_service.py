@@ -164,7 +164,11 @@ class ModelAggregationService:
                 "display_name": model_crd.metadata.displayName,
                 "config": model_crd.spec.modelConfig,
                 "model_category_type": model_category_type,
-                "is_advanced": bool(model_crd.spec.isAdvanced) if model_crd.spec.isAdvanced else False,
+                "is_advanced": (
+                    bool(model_crd.spec.isAdvanced)
+                    if model_crd.spec.isAdvanced
+                    else False
+                ),
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)

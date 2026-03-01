@@ -14,6 +14,7 @@ Handles video generation workflow:
 
 import asyncio
 import logging
+import uuid
 from typing import Optional
 
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
@@ -72,7 +73,10 @@ class VideoAgent(PollingAgent):
         message_id = request.message_id
         model_config = request.model_config or {}
 
-        # Emit START
+        # Generate a unique block ID for the video block
+        video_block_id = f"video-{uuid.uuid4().hex[:8]}"
+
+        # Emit START event
         await emitter.emit_start(
             task_id=task_id,
             subtask_id=subtask_id,
@@ -80,20 +84,43 @@ class VideoAgent(PollingAgent):
             data={"shell_type": "Chat"},
         )
 
+        # Emit placeholder video block immediately after START
+        # This tells the frontend to show a video placeholder frame
+        await self._emit_video_block(
+            emitter=emitter,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            message_id=message_id,
+            block_id=video_block_id,
+            is_placeholder=True,
+            progress=0,
+            status="streaming",
+        )
+
         try:
             # Step 1: Intent analysis for follow-ups
             intent_result = await self._analyze_intent(
                 request=request,
                 emitter=emitter,
+                video_block_id=video_block_id,
             )
 
             # Step 2: Get video provider based on protocol
-            protocol = model_config.get("protocol", "seedance")
+            # Use 'or' to handle both missing key and None value
+            protocol = model_config.get("protocol") or "seedance"
             provider = get_video_provider(protocol, model_config)
 
             # Step 3: Create video job
-            await self._emit_progress(
-                emitter, task_id, subtask_id, message_id, 5, "Starting video generation..."
+            await self._emit_video_block(
+                emitter=emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block_id=video_block_id,
+                is_placeholder=True,
+                progress=5,
+                status="streaming",
+                message="Starting video generation...",
             )
 
             job_id = await provider.create_job(
@@ -130,12 +157,15 @@ class VideoAgent(PollingAgent):
                 elif status.is_failed:
                     raise Exception(status.error or "Video generation failed")
 
-                await self._emit_progress(
-                    emitter,
-                    task_id,
-                    subtask_id,
-                    message_id,
+                await self._emit_video_block(
+                    emitter=emitter,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    message_id=message_id,
+                    block_id=video_block_id,
+                    is_placeholder=True,
                     progress=min(status.progress, 90),
+                    status="streaming",
                     message=f"Generating video... {status.progress}%",
                 )
 
@@ -144,14 +174,30 @@ class VideoAgent(PollingAgent):
                 raise Exception("Video generation timed out")
 
             # Step 5: Get result and upload
-            await self._emit_progress(
-                emitter, task_id, subtask_id, message_id, 92, "Fetching video result..."
+            await self._emit_video_block(
+                emitter=emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block_id=video_block_id,
+                is_placeholder=True,
+                progress=92,
+                status="streaming",
+                message="Fetching video result...",
             )
 
             result = await provider.get_result(job_id)
 
-            await self._emit_progress(
-                emitter, task_id, subtask_id, message_id, 95, "Uploading video file..."
+            await self._emit_video_block(
+                emitter=emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block_id=video_block_id,
+                is_placeholder=True,
+                progress=95,
+                status="streaming",
+                message="Uploading video file...",
             )
 
             user_id = request.user.get("id") if request.user else None
@@ -162,16 +208,24 @@ class VideoAgent(PollingAgent):
                 subtask_id=subtask_id,
             )
 
-            # Step 6: Emit DONE
+            # Step 6: Emit final video block with actual video data
+            final_video_block = {
+                "id": video_block_id,
+                "type": "video",
+                "status": "done",
+                "is_placeholder": False,
+                "video_url": result.video_url,
+                "video_thumbnail": result.thumbnail,
+                "video_duration": result.duration,
+                "video_attachment_id": attachment_id,
+                "video_progress": 100,
+                "timestamp": int(asyncio.get_event_loop().time() * 1000),
+            }
+
             result_data = {
                 "value": "Video generation completed",
                 "image": result.thumbnail,  # For follow-up reference
-                "video": {
-                    "attachment_id": attachment_id,
-                    "video_url": result.video_url,
-                    "thumbnail": result.thumbnail,
-                    "duration": result.duration,
-                },
+                "blocks": [final_video_block],
             }
 
             await emitter.emit(
@@ -207,33 +261,38 @@ class VideoAgent(PollingAgent):
         self,
         request: ExecutionRequest,
         emitter: ResultEmitter,
+        video_block_id: str,
     ) -> VideoIntentResult:
         """Analyze intent for follow-up messages.
 
         Args:
             request: Execution request
             emitter: Result emitter for progress updates
+            video_block_id: Video block ID for progress updates
 
         Returns:
             VideoIntentResult with merged prompt and image info
         """
         current_prompt = (
-            request.prompt
-            if isinstance(request.prompt, str)
-            else str(request.prompt)
+            request.prompt if isinstance(request.prompt, str) else str(request.prompt)
         )
 
         # Check if this is a follow-up
         if not request.task_id:
-            return VideoIntentResult(merged_prompt=current_prompt, should_use_image=False)
+            return VideoIntentResult(
+                merged_prompt=current_prompt, should_use_image=False
+            )
 
-        # Emit progress
-        await self._emit_progress(
-            emitter,
-            request.task_id,
-            request.subtask_id,
-            request.message_id,
+        # Emit progress via video block
+        await self._emit_video_block(
+            emitter=emitter,
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            message_id=request.message_id,
+            block_id=video_block_id,
+            is_placeholder=True,
             progress=2,
+            status="streaming",
             message="Analyzing user intent...",
         )
 
@@ -248,33 +307,67 @@ class VideoAgent(PollingAgent):
             secondary_model_config=secondary_model_config,
         )
 
-    async def _emit_progress(
+    async def _emit_video_block(
         self,
         emitter: ResultEmitter,
         task_id: int,
         subtask_id: int,
         message_id: Optional[int],
+        block_id: str,
+        is_placeholder: bool,
         progress: int,
-        message: str,
+        status: str,
+        message: str = "",
+        video_url: str = "",
+        thumbnail: Optional[str] = None,
+        duration: Optional[float] = None,
+        attachment_id: Optional[int] = None,
     ) -> None:
-        """Emit progress update.
+        """Emit video block update.
 
         Args:
             emitter: Result emitter
             task_id: Task ID
             subtask_id: Subtask ID
             message_id: Optional message ID
+            block_id: Unique block ID for the video
+            is_placeholder: Whether this is a placeholder (still generating)
             progress: Progress percentage (0-100)
+            status: Block status (streaming, done, error)
             message: Progress message
+            video_url: Video URL (empty for placeholder)
+            thumbnail: Base64 encoded thumbnail
+            duration: Video duration in seconds
+            attachment_id: Attachment ID for download
         """
+        video_block = {
+            "id": block_id,
+            "type": "video",
+            "status": status,
+            "is_placeholder": is_placeholder,
+            "video_url": video_url,
+            "video_thumbnail": thumbnail,
+            "video_duration": duration,
+            "video_attachment_id": attachment_id,
+            "video_progress": progress,
+            "content": message,  # Progress message as content
+            "timestamp": int(asyncio.get_event_loop().time() * 1000),
+        }
+
         await emitter.emit(
             ExecutionEvent(
                 type=EventType.CHUNK,
                 task_id=task_id,
                 subtask_id=subtask_id,
-                content=message,
+                # CRITICAL: Do NOT set content here for video blocks
+                # The frontend appends content to message.content on each chunk
+                # For video progress updates, we only want to update the video block
+                # not accumulate progress messages in the main content
+                content="",
                 offset=0,
-                result={"progress": progress},
+                result={
+                    "blocks": [video_block],
+                },
                 message_id=message_id,
             )
         )

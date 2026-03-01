@@ -13,6 +13,7 @@ import { normalizeToolName } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
 import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
+import VideoPlayer from '../VideoPlayer'
 
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
@@ -82,6 +83,20 @@ const MixedContentView = memo(function MixedContentView({
               type: 'content' as const,
               content: textContent,
               blockId: block.id,
+            }
+          } else if (block.type === 'video') {
+            // Video block - render VideoPlayer component
+            return {
+              type: 'video' as const,
+              blockId: block.id,
+              isPlaceholder: block.is_placeholder ?? false,
+              videoUrl: block.video_url || '',
+              thumbnail: block.video_thumbnail,
+              duration: block.video_duration,
+              attachmentId: block.video_attachment_id,
+              progress: block.video_progress ?? 0,
+              status: block.status,
+              message: block.content, // Progress message
             }
           } else if (block.type === 'tool') {
             // Convert MessageBlock to ToolPair format for ToolBlock component
@@ -230,12 +245,31 @@ const MixedContentView = memo(function MixedContentView({
             return null
           }
           const key = 'blockId' in item ? item.blockId : `content-${index}`
-          const textContent = annotations && annotations.length > 0
-            ? processCitePatterns(item.content, annotations)
-            : item.content
+          const textContent =
+            annotations && annotations.length > 0
+              ? processCitePatterns(item.content, annotations)
+              : item.content
           return (
             <div key={key} className="text-sm">
               <EnhancedMarkdown source={textContent} theme={theme} />
+            </div>
+          )
+        } else if (item.type === 'video') {
+          // Render video block using VideoPlayer component
+          return (
+            <div key={item.blockId} className="space-y-2">
+              <VideoPlayer
+                videoUrl={item.videoUrl}
+                thumbnail={item.thumbnail ?? undefined}
+                duration={item.duration ?? undefined}
+                attachmentId={item.attachmentId ?? undefined}
+                isPlaceholder={item.isPlaceholder}
+                progress={item.progress}
+              />
+              {/* Show progress message if available */}
+              {item.isPlaceholder && item.message && (
+                <div className="text-xs text-text-muted">{item.message}</div>
+              )}
             </div>
           )
         } else if (item.type === 'tool') {

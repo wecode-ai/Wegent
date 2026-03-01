@@ -359,6 +359,7 @@
     "bind_mode_chat": "Chat",
     "bind_mode_code": "Code",
     "bind_mode_task": "Task",
+    "bind_mode_video": "Video",
     "bind_mode_required": "Please select at least one bind mode",
     "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage",
     "requires_workspace": "Requires Repository",
@@ -912,6 +913,22 @@
     "model_category_type_stt": "Speech-to-Text (STT)",
     "model_category_type_embedding": "Embedding",
     "model_category_type_rerank": "Rerank",
+    "model_category_type_video": "Video Generation",
+    "video_config_title": "Video Generation Configuration",
+    "video_resolution": "Default Resolution",
+    "video_ratio": "Default Aspect Ratio",
+    "video_duration": "Default Duration (seconds)",
+    "video_duration_hint": "Seedance 1.5 supports 4-12 seconds",
+    "video_generate_audio": "Generate Audio",
+    "video_generate_audio_hint": "Only supported by Seedance 1.5 Pro",
+    "video_advanced_options": "Advanced Options",
+    "video_draft_mode": "Draft Mode",
+    "video_draft_mode_hint": "Quick preview, uses fewer tokens",
+    "video_camera_fixed": "Fixed Camera",
+    "video_camera_fixed_hint": "Keep camera position unchanged",
+    "video_watermark": "Add Watermark",
+    "video_seed": "Random Seed",
+    "video_seed_hint": "-1 means random, same seed produces similar results",
     "select_model_category_type": "Select Model Type",
     "filter_by_category_type": "Filter by Type",
     "all_category_types": "All Types",
@@ -1277,5 +1294,34 @@
       "save_api_key_failed": "Failed to save API key",
       "sync_failed": "Failed to sync servers"
     }
+  },
+  "video": {
+    "title": "Video Generation",
+    "model_selector": "Select Video Model",
+    "search_model": "Search video models...",
+    "resolution_selector": "Select Resolution",
+    "resolution": {
+      "480p": "480p (SD)",
+      "720p": "720p (HD)",
+      "1080p": "1080p (Full HD)",
+      "4k": "4K (Ultra HD)"
+    },
+    "ratio": {
+      "16_9": "16:9 (Landscape)",
+      "9_16": "9:16 (Portrait)",
+      "1_1": "1:1 (Square)",
+      "4_3": "4:3",
+      "3_4": "3:4",
+      "21_9": "21:9 (Ultra Wide)",
+      "adaptive": "Adaptive"
+    },
+    "generating": "Generating video...",
+    "preparing": "Preparing...",
+    "progress": "Progress: {{progress}}%",
+    "completed": "Video generation completed",
+    "failed": "Video generation failed",
+    "download": "Download Video",
+    "reference_image": "Reference Image (Optional)",
+    "no_models": "No video models available"
   }
 }

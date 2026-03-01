@@ -359,6 +359,7 @@
     "bind_mode_chat": "聊天",
     "bind_mode_code": "编码",
     "bind_mode_task": "任务",
+    "bind_mode_video": "视频",
     "bind_mode_required": "请至少选择一个绑定模式",
     "require_confirmation_tooltip": "启用后，该阶段完成时任务将暂停，等待用户确认后再继续执行下一阶段",
     "requires_workspace": "需要仓库",
@@ -912,6 +913,22 @@
     "model_category_type_stt": "语音转文本 (STT)",
     "model_category_type_embedding": "向量嵌入 (Embedding)",
     "model_category_type_rerank": "重排序 (Rerank)",
+    "model_category_type_video": "视频生成",
+    "video_config_title": "视频生成配置",
+    "video_resolution": "默认分辨率",
+    "video_ratio": "默认宽高比",
+    "video_duration": "默认时长（秒）",
+    "video_duration_hint": "Seedance 1.5 支持 4-12 秒",
+    "video_generate_audio": "生成音频",
+    "video_generate_audio_hint": "仅 Seedance 1.5 Pro 支持",
+    "video_advanced_options": "高级选项",
+    "video_draft_mode": "样片模式",
+    "video_draft_mode_hint": "快速预览，消耗更少 token",
+    "video_camera_fixed": "固定摄像头",
+    "video_camera_fixed_hint": "保持摄像头位置不变",
+    "video_watermark": "添加水印",
+    "video_seed": "随机种子",
+    "video_seed_hint": "-1 表示随机，相同种子生成相似结果",
     "select_model_category_type": "选择模型类型",
     "filter_by_category_type": "按类型筛选",
     "all_category_types": "全部类型",
@@ -1271,5 +1288,34 @@
       "save_api_key_failed": "保存 API 密钥失败",
       "sync_failed": "同步服务器失败"
     }
+  },
+  "video": {
+    "title": "视频生成",
+    "model_selector": "选择视频模型",
+    "search_model": "搜索视频模型...",
+    "resolution_selector": "选择分辨率",
+    "resolution": {
+      "480p": "480p (标清)",
+      "720p": "720p (高清)",
+      "1080p": "1080p (全高清)",
+      "4k": "4K (超高清)"
+    },
+    "ratio": {
+      "16_9": "16:9 (横屏)",
+      "9_16": "9:16 (竖屏)",
+      "1_1": "1:1 (方形)",
+      "4_3": "4:3",
+      "3_4": "3:4",
+      "21_9": "21:9 (超宽)",
+      "adaptive": "自适应"
+    },
+    "generating": "正在生成视频...",
+    "preparing": "准备中...",
+    "progress": "生成进度: {{progress}}%",
+    "completed": "视频生成完成",
+    "failed": "视频生成失败",
+    "download": "下载视频",
+    "reference_image": "参考图片（可选）",
+    "no_models": "暂无可用的视频模型"
   }
 }

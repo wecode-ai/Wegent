@@ -44,6 +44,7 @@ export interface Model {
   type?: ModelTypeEnum
   region?: ModelRegion
   isAdvanced?: boolean
+  namespace?: string
 }
 
 /** Special constant for default model option */

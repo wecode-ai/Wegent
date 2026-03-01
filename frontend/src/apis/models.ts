@@ -5,7 +5,7 @@
 import { apiClient } from './client'
 
 // Model Category Type (different from resource type public/user/group)
-export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank'
+export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank' | 'video'
 
 // Type-specific configurations
 export interface TTSConfig {
@@ -27,6 +27,17 @@ export interface EmbeddingConfig {
 export interface RerankConfig {
   top_n?: number
   return_documents?: boolean
+}
+
+export interface VideoGenerationConfig {
+  resolution?: '480p' | '720p' | '1080p'
+  ratio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
+  duration?: number // 4-12 seconds
+  generate_audio?: boolean // Only Seedance 1.5 pro
+  draft?: boolean // Draft mode
+  seed?: number // Random seed
+  camera_fixed?: boolean // Fixed camera
+  watermark?: boolean // Whether to include watermark
 }
 
 // Model CRD Types
@@ -59,6 +70,7 @@ export interface ModelCRD {
     sttConfig?: STTConfig
     embeddingConfig?: EmbeddingConfig
     rerankConfig?: RerankConfig
+    videoConfig?: VideoGenerationConfig
   }
   status?: {
     state: string

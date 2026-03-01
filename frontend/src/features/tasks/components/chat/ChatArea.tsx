@@ -18,7 +18,7 @@ import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { Team, SubtaskContextBrief } from '@/types/api'
+import type { Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -31,6 +31,7 @@ import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
+import { useVideoModelSelection } from '../../hooks/useVideoModelSelection'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -43,7 +44,7 @@ interface ChatAreaProps {
   isTeamsLoading: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
-  taskType?: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType?: TaskType
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
   /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
@@ -108,6 +109,11 @@ function ChatAreaContent({
     enabled: true,
   })
 
+  // Video model selection state - only enabled for video mode
+  const videoModelSelection = useVideoModelSelection({
+    enabled: taskType === 'video',
+  })
+
   // Compute subtask info for scroll management
   // Note: Now using taskState from state machine instead of selectedTaskDetail.subtasks
   // The state machine messages are the single source of truth
@@ -148,7 +154,7 @@ function ChatAreaContent({
     })
     const result = teamsWithValidBindMode.filter(team => {
       if (!team.bind_mode) return true
-      const included = team.bind_mode.includes(taskType as 'chat' | 'code' | 'knowledge' | 'task')
+      const included = team.bind_mode.includes(taskType)
       return included
     })
 
@@ -289,10 +295,24 @@ function ChatAreaContent({
     hasMessages: hasMessagesForHooks,
   })
 
+  // For video mode, use video model selection; otherwise use regular model selection
+  // This ensures the correct model is passed to the backend for routing
+  const effectiveSelectedModel =
+    taskType === 'video' ? videoModelSelection.selectedModel : chatState.selectedModel
+
+  // Build generate params for video/image generation tasks
+  const generateParams =
+    taskType === 'video'
+      ? {
+          resolution: videoModelSelection.selectedResolution,
+          ratio: videoModelSelection.selectedRatio,
+        }
+      : undefined
+
   // Stream handlers (send message, retry, cancel, stop)
   const streamHandlers = useChatStreamHandlers({
     selectedTeam: chatState.selectedTeam,
-    selectedModel: chatState.selectedModel,
+    selectedModel: effectiveSelectedModel,
     forceOverride: chatState.forceOverride,
     selectedRepo: chatState.selectedRepo,
     selectedBranch: chatState.selectedBranch,
@@ -318,6 +338,8 @@ function ChatAreaContent({
     // Skill selection - pass user-selected skills to backend
     // Uses full skill info (name, namespace, is_public) for backend to determine preload vs download
     additionalSkills: skillSelector.selectedSkills,
+    // Generation parameters for video/image generation tasks
+    generateParams,
   })
 
   // Scheme URL action bridge - handles wegent://action/send-message and wegent://action/prefill-message
@@ -372,11 +394,16 @@ function ChatAreaContent({
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
+    // Video mode uses video model selection, not regular model selection
+    if (taskType === 'video') {
+      // In video mode, we need a video model selected
+      return !videoModelSelection.selectedModel
+    }
     if (!chatState.selectedTeam || chatState.selectedTeam.agent_type === 'dify') return false
     const hasDefaultOption = allBotsHavePredefinedModel(chatState.selectedTeam)
     if (hasDefaultOption) return false
     return !chatState.selectedModel
-  }, [chatState.selectedTeam, chatState.selectedModel])
+  }, [chatState.selectedTeam, chatState.selectedModel, taskType, videoModelSelection.selectedModel])
 
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
@@ -630,6 +657,17 @@ function ChatAreaContent({
     preloadedSkillNames: skillSelector.preloadedSkillNames,
     selectedSkillNames: skillSelector.selectedSkillNames,
     onToggleSkill: skillSelector.toggleSkill,
+    // Video mode props - only passed when taskType is 'video'
+    videoModels: videoModelSelection.videoModels,
+    selectedVideoModel: videoModelSelection.selectedModel,
+    onVideoModelChange: videoModelSelection.setSelectedModel,
+    isVideoModelsLoading: videoModelSelection.isLoading,
+    selectedResolution: videoModelSelection.selectedResolution,
+    onResolutionChange: videoModelSelection.setSelectedResolution,
+    availableResolutions: videoModelSelection.availableResolutions,
+    selectedRatio: videoModelSelection.selectedRatio,
+    onRatioChange: videoModelSelection.setSelectedRatio,
+    availableRatios: videoModelSelection.availableRatios,
   }
 
   return (

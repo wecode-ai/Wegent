@@ -94,7 +94,7 @@ export type ToolStatus = 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
  */
 export interface MessageBlock {
   id: string // Unique block identifier
-  type: 'text' | 'tool' | 'thinking' | 'error' // Block type
+  type: 'text' | 'tool' | 'thinking' | 'error' | 'video' // Block type
   content?: string // Text content for text blocks
   tool_use_id?: string // Tool call ID for tool blocks
   tool_name?: string // Tool name
@@ -104,6 +104,13 @@ export interface MessageBlock {
   status?: 'pending' | 'streaming' | 'done' | 'error' // Block status
   timestamp?: number // Block creation timestamp
   metadata?: Record<string, unknown> // Additional metadata
+  // Video block fields
+  video_url?: string // Video URL for video blocks
+  video_thumbnail?: string | null // Base64 encoded thumbnail
+  video_duration?: number | null // Video duration in seconds
+  video_attachment_id?: number | null // Attachment ID for download
+  video_progress?: number // Video generation progress (0-100)
+  is_placeholder?: boolean // True when video is still being generated
 }
 
 /**

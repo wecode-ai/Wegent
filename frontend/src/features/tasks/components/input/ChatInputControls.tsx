@@ -22,6 +22,7 @@ import type {
   GitBranch,
   TaskDetail,
   MultiAttachmentUploadState,
+  TaskType,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
@@ -30,8 +31,11 @@ import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
 import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+import { VideoModelSelector, ResolutionSelector, RatioSelector } from '../selector'
 
 export interface ChatInputControlsProps {
+  /** Task type to determine which controls to show */
+  taskType?: TaskType
   // Team and Model
   selectedTeam: Team | null
   onTeamChange?: (team: Team) => void
@@ -109,6 +113,18 @@ export interface ChatInputControlsProps {
 
   // Ref for skill selector button (for fly animation)
   skillSelectorRef?: React.RefObject<SkillSelectorPopoverRef | null>
+
+  // Video mode props (only used when taskType === 'video')
+  videoModels?: Model[]
+  selectedVideoModel?: Model | null
+  onVideoModelChange?: (model: Model) => void
+  isVideoModelsLoading?: boolean
+  selectedResolution?: string
+  onResolutionChange?: (resolution: string) => void
+  availableResolutions?: string[]
+  selectedRatio?: string
+  onRatioChange?: (ratio: string) => void
+  availableRatios?: string[]
 }
 
 /**
@@ -128,6 +144,7 @@ export interface ChatInputControlsProps {
  * the messages state (floating input) of ChatArea.
  */
 export function ChatInputControls({
+  taskType,
   selectedTeam,
   onTeamChange: _onTeamChange,
   selectedModel,
@@ -176,7 +193,20 @@ export function ChatInputControls({
   selectedSkillNames = [],
   onToggleSkill,
   skillSelectorRef,
+  // Video mode props
+  videoModels = [],
+  selectedVideoModel,
+  onVideoModelChange,
+  isVideoModelsLoading = false,
+  selectedResolution = '1080p',
+  onResolutionChange,
+  availableResolutions,
+  selectedRatio = '16:9',
+  onRatioChange,
+  availableRatios,
 }: ChatInputControlsProps) {
+  // Check if we're in video mode
+  const isVideoMode = taskType === 'video'
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
   const isMobile = useIsMobile()
@@ -305,89 +335,130 @@ export function ChatInputControls({
       className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       <div
-        className="flex-1 min-w-0 overflow-visible flex items-center gap-3"
+        className="flex-1 min-w-0 overflow-visible flex items-center gap-3 flex-wrap"
         data-tour="input-controls"
       >
-        {/* Context Selection - only show for chat shell */}
-        {isChatShell(selectedTeam) && (
-          <ChatContextInput
-            selectedContexts={selectedContexts}
-            onContextsChange={setSelectedContexts}
-            excludeKnowledgeBaseId={knowledgeBaseId}
-          />
+        {/* Video Mode Controls - show when taskType is 'video' */}
+        {isVideoMode && (
+          <>
+            {/* Video Model Selector */}
+            {onVideoModelChange && (
+              <VideoModelSelector
+                models={videoModels}
+                selectedModel={selectedVideoModel ?? null}
+                onModelChange={onVideoModelChange}
+                disabled={isLoading || isStreaming}
+                isLoading={isVideoModelsLoading}
+              />
+            )}
+
+            {/* Resolution Selector */}
+            {onResolutionChange && (
+              <ResolutionSelector
+                selectedResolution={selectedResolution}
+                onResolutionChange={onResolutionChange}
+                availableResolutions={availableResolutions}
+                disabled={isLoading || isStreaming}
+              />
+            )}
+
+            {/* Aspect Ratio Selector */}
+            {onRatioChange && (
+              <RatioSelector
+                selectedRatio={selectedRatio}
+                onRatioChange={onRatioChange}
+                availableRatios={availableRatios}
+                disabled={isLoading || isStreaming}
+              />
+            )}
+          </>
         )}
 
-        {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
-        {supportsAttachments(selectedTeam) && (
-          <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
-        )}
+        {/* Non-video mode controls */}
+        {!isVideoMode && (
+          <>
+            {/* Context Selection - only show for chat shell */}
+            {isChatShell(selectedTeam) && (
+              <ChatContextInput
+                selectedContexts={selectedContexts}
+                onContextsChange={setSelectedContexts}
+                excludeKnowledgeBaseId={knowledgeBaseId}
+              />
+            )}
 
-        {/* Skill Selector - show when skills are available */}
-        {/* Skill selection is read-only after task creation (hasMessages) */}
-        {availableSkills.length > 0 && onToggleSkill && (
-          <SkillSelectorPopover
-            ref={skillSelectorRef}
-            skills={availableSkills}
-            teamSkillNames={teamSkillNames}
-            preloadedSkillNames={preloadedSkillNames}
-            selectedSkillNames={selectedSkillNames}
-            onToggleSkill={onToggleSkill}
-            isChatShell={isChatShell(selectedTeam)}
-            disabled={isLoading || isStreaming}
-            readOnly={hasMessages}
-          />
-        )}
+            {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
+            {supportsAttachments(selectedTeam) && (
+              <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
+            )}
 
-        {/* Clarification Toggle Button - only show for chat shell */}
-        {isChatShell(selectedTeam) && (
-          <ClarificationToggle
-            enabled={enableClarification}
-            onToggle={setEnableClarification}
-            disabled={isLoading || isStreaming}
-          />
-        )}
+            {/* Skill Selector - show when skills are available */}
+            {/* Skill selection is read-only after task creation (hasMessages) */}
+            {availableSkills.length > 0 && onToggleSkill && (
+              <SkillSelectorPopover
+                ref={skillSelectorRef}
+                skills={availableSkills}
+                teamSkillNames={teamSkillNames}
+                preloadedSkillNames={preloadedSkillNames}
+                selectedSkillNames={selectedSkillNames}
+                onToggleSkill={onToggleSkill}
+                isChatShell={isChatShell(selectedTeam)}
+                disabled={isLoading || isStreaming}
+                readOnly={hasMessages}
+              />
+            )}
 
-        {/* Correction Mode Toggle Button - only show for chat shell */}
-        {isChatShell(selectedTeam) && onCorrectionModeToggle && (
-          <CorrectionModeToggle
-            enabled={enableCorrectionMode}
-            onToggle={onCorrectionModeToggle}
-            disabled={isLoading || isStreaming}
-            correctionModelName={correctionModelName}
-            taskId={selectedTaskDetail?.id ?? null}
-          />
-        )}
+            {/* Clarification Toggle Button - only show for chat shell */}
+            {isChatShell(selectedTeam) && (
+              <ClarificationToggle
+                enabled={enableClarification}
+                onToggle={setEnableClarification}
+                disabled={isLoading || isStreaming}
+              />
+            )}
 
-        {/* Repository and Branch Unified Selector - show when repository selector is enabled */}
-        {/* Always show when showRepositorySelector is true, let component handle the display */}
-        {showRepositorySelector && (
-          <UnifiedRepositorySelector
-            selectedRepo={selectedRepo}
-            selectedBranch={selectedBranch}
-            onRepoChange={setSelectedRepo}
-            onBranchChange={setSelectedBranch}
-            disabled={hasMessages}
-            taskDetail={selectedTaskDetail}
-            compact={shouldCollapseSelectors}
-            requiresWorkspace={effectiveRequiresWorkspace}
-            onRequiresWorkspaceChange={hasMessages ? undefined : onRequiresWorkspaceChange}
-          />
-        )}
+            {/* Correction Mode Toggle Button - only show for chat shell */}
+            {isChatShell(selectedTeam) && onCorrectionModeToggle && (
+              <CorrectionModeToggle
+                enabled={enableCorrectionMode}
+                onToggle={onCorrectionModeToggle}
+                disabled={isLoading || isStreaming}
+                correctionModelName={correctionModelName}
+                taskId={selectedTaskDetail?.id ?? null}
+              />
+            )}
 
-        {/* Model Selector */}
-        {selectedTeam && (
-          <ModelSelector
-            selectedModel={selectedModel}
-            setSelectedModel={setSelectedModel}
-            forceOverride={forceOverride}
-            setForceOverride={setForceOverride}
-            selectedTeam={selectedTeam}
-            disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
-            compact={shouldCollapseSelectors}
-            teamId={teamId}
-            taskId={taskId}
-            taskModelId={taskModelId}
-          />
+            {/* Repository and Branch Unified Selector - show when repository selector is enabled */}
+            {/* Always show when showRepositorySelector is true, let component handle the display */}
+            {showRepositorySelector && (
+              <UnifiedRepositorySelector
+                selectedRepo={selectedRepo}
+                selectedBranch={selectedBranch}
+                onRepoChange={setSelectedRepo}
+                onBranchChange={setSelectedBranch}
+                disabled={hasMessages}
+                taskDetail={selectedTaskDetail}
+                compact={shouldCollapseSelectors}
+                requiresWorkspace={effectiveRequiresWorkspace}
+                onRequiresWorkspaceChange={hasMessages ? undefined : onRequiresWorkspaceChange}
+              />
+            )}
+
+            {/* Model Selector */}
+            {selectedTeam && (
+              <ModelSelector
+                selectedModel={selectedModel}
+                setSelectedModel={setSelectedModel}
+                forceOverride={forceOverride}
+                setForceOverride={setForceOverride}
+                selectedTeam={selectedTeam}
+                disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+                compact={shouldCollapseSelectors}
+                teamId={teamId}
+                taskId={taskId}
+                taskModelId={taskModelId}
+              />
+            )}
+          </>
         )}
       </div>
 
