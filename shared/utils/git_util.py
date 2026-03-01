@@ -191,6 +191,56 @@ def get_git_token_from_url(git_url):
         raise Exception(f"get domain from file failed: {git_url}, file: {token_file}")
 
 
+def save_git_token_to_ssh(git_domain: str, git_token: str) -> bool:
+    """
+    Save git token to ~/.ssh/{git_domain} file.
+
+    Args:
+        git_domain: The git domain (e.g., github.com, gitlab.com)
+        git_token: The git token to save (will be decrypted if encrypted)
+
+    Returns:
+        True if saved successfully or file already exists, False otherwise
+    """
+    import os
+
+    if not git_domain or not git_token:
+        logger.warning("git_domain or git_token is empty, skip saving")
+        return False
+
+    # Normalize the domain to remove any protocol (http://, https://) or path
+    git_domain = get_domain_from_url(git_domain)
+    if not git_domain:
+        logger.warning("Invalid git_domain extracted, skip saving")
+        return False
+
+    try:
+        ssh_dir = os.path.expanduser("~/.ssh")
+        os.makedirs(ssh_dir, exist_ok=True)
+        token_file_path = os.path.join(ssh_dir, git_domain)
+
+        # Skip if file already exists
+        if os.path.exists(token_file_path):
+            logger.info(
+                f"Git token file already exists for domain {git_domain}, skipping"
+            )
+            return True
+
+        # Handle encrypted tokens
+        if is_token_encrypted(git_token):
+            logger.debug(f"Decrypting git token for domain: {git_domain}")
+            git_token = decrypt_git_token(git_token)
+
+        with open(token_file_path, "w", encoding="utf-8") as f:
+            f.write(git_token)
+
+        logger.info(f"Saved git_token to {token_file_path} for domain {git_domain}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save git_token to ~/.ssh/{git_domain}: {e}")
+        return False
+
+
 def get_project_path_from_url(url):
 
     # Handle special path formats containing '/-/'

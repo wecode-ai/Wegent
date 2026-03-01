@@ -386,6 +386,19 @@ class ClaudeCodeAgent(Agent):
         self._claude_config_dir = config_dir
         self._claude_env_config = env_config
 
+    def _save_git_token_to_ssh(self) -> None:
+        """
+        Save git token to ~/.ssh/{git_domain} file.
+        Extracts git_token and git_domain from task_data.user and saves the token.
+        """
+        user_config = self.task_data.user if self.task_data.user else {}
+        git_token = user_config.get("git_token")
+        git_domain = user_config.get("git_domain")
+        if git_token and git_token != "***" and git_domain:
+            from shared.utils.git_util import save_git_token_to_ssh
+
+            save_git_token_to_ssh(git_domain, git_token)
+
     async def pre_execute(self) -> TaskStatus:
         """
         Pre-execution setup for Claude Code Agent
@@ -398,6 +411,8 @@ class ClaudeCodeAgent(Agent):
             # Download code if git_url is provided
             if git_url and git_url != "":
                 await self.download_code()
+
+                self._save_git_token_to_ssh()
 
                 # Update cwd in options if not already set
                 if (
