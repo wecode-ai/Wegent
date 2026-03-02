@@ -24,10 +24,10 @@ import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { teamService } from '@/features/tasks/service/teamService'
-import { Monitor, WifiOff } from 'lucide-react'
+import { Monitor, WifiOff, X } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
-import { CloudDeviceVncPanel } from '@wecode/components/cloud-device'
+import { CloudDeviceVncPanel, VncViewer } from '@wecode/components/cloud-device'
 import { cloudDeviceApis } from '@wecode/apis'
 
 export default function DeviceChatPage() {
@@ -53,8 +53,9 @@ export default function DeviceChatPage() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
-  // VNC URL state for cloud devices (used for link button)
-  const [vncUrl, setVncUrl] = useState<string | null>(null)
+  // VNC panel state
+  const [isVncOpen, setIsVncOpen] = useState(false)
+  const [sandboxId, setSandboxId] = useState<string | null>(null)
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -81,10 +82,11 @@ export default function DeviceChatPage() {
   // Determine if current device is a cloud device
   const isCloudDevice = selectedDevice?.device_type === 'cloud'
 
-  // Fetch VNC URL when a cloud device is selected
+  // Fetch sandbox_id when a cloud device is selected
   useEffect(() => {
     if (!isCloudDevice || !selectedDeviceId || selectedDevice?.status === 'offline') {
-      setVncUrl(null)
+      setSandboxId(null)
+      setIsVncOpen(false)
       return
     }
 
@@ -92,12 +94,12 @@ export default function DeviceChatPage() {
     cloudDeviceApis
       .getCloudDeviceStatus(selectedDeviceId)
       .then(status => {
-        if (!cancelled && status.vnc_url) {
-          setVncUrl(status.vnc_url)
+        if (!cancelled && status.sandbox_id) {
+          setSandboxId(status.sandbox_id)
         }
       })
       .catch(() => {
-        // Silently handle - VNC panel won't show if URL fetch fails
+        // Silently handle - VNC toggle won't show if fetch fails
       })
 
     return () => {
@@ -143,10 +145,19 @@ export default function DeviceChatPage() {
     // Clear any existing task when selecting a new device
     setSelectedTask(null)
     clearAllStreams()
+    // Close VNC panel when switching devices
+    setIsVncOpen(false)
+  }
+
+  const handleToggleVnc = () => {
+    setIsVncOpen(prev => !prev)
   }
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
+
+  // Show VNC panel only when open and sandboxId is available
+  const showVncPanel = isVncOpen && sandboxId && !isMobile
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -207,18 +218,20 @@ export default function DeviceChatPage() {
               ))}
             </select>
           </div>
-          {isCloudDevice && vncUrl && (
-            <CloudDeviceVncPanel vncUrl={vncUrl} deviceName={selectedDevice?.name} />
+          {isCloudDevice && sandboxId && (
+            <CloudDeviceVncPanel isVncOpen={isVncOpen} onToggleVnc={handleToggleVnc} />
           )}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
         {/* Chat area or placeholder */}
-        {/* Show ChatArea when device is selected OR when viewing an existing task */}
         {selectedDeviceId || selectedTaskDetail ? (
           <div className="flex flex-1 min-h-0">
-            {/* Chat area - full width */}
-            <div className="flex-1 flex flex-col min-h-0">
+            {/* Chat area - width adjusts based on VNC panel */}
+            <div
+              className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
+              style={{ width: showVncPanel ? '50%' : '100%' }}
+            >
               <ChatArea
                 teams={teams}
                 isTeamsLoading={isTeamsLoading}
@@ -232,6 +245,25 @@ export default function DeviceChatPage() {
                 }
               />
             </div>
+
+            {/* VNC Panel */}
+            {showVncPanel && (
+              <div className="w-1/2 flex flex-col min-h-0 border-l border-border">
+                {/* VNC panel header */}
+                <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface">
+                  <h3 className="text-sm font-medium text-text-primary">{t('vnc_panel_title')}</h3>
+                  <button
+                    onClick={() => setIsVncOpen(false)}
+                    className="w-6 h-6 flex items-center justify-center rounded hover:bg-hover text-text-muted hover:text-text-primary transition-colors"
+                    title={t('vnc_close')}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                {/* VNC viewer */}
+                <VncViewer sandboxId={sandboxId} />
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">

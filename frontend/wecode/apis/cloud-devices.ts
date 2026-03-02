@@ -52,6 +52,15 @@ export interface CreateCloudDeviceRequest {
 }
 
 /**
+ * VNC WebSocket connection configuration
+ */
+export interface VncConfig {
+  wss_url: string
+  signature: string
+  sandbox_id: string
+}
+
+/**
  * Cloud device API services
  */
 export const cloudDeviceApis = {
@@ -91,5 +100,16 @@ export const cloudDeviceApis = {
    */
   async getCloudDeviceConfig(): Promise<CloudDeviceConfig> {
     return apiClient.get('/cloud-devices/config')
+  },
+
+  /**
+   * Get VNC WebSocket connection configuration for a cloud device.
+   * Returns the upstream WSS URL and authentication signature needed
+   * to proxy VNC connections through server.cjs.
+   *
+   * @param deviceId - Cloud device ID (sandbox ID)
+   */
+  async getVncConfig(deviceId: string): Promise<VncConfig> {
+    return apiClient.get(`/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`)
   },
 }

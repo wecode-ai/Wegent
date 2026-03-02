@@ -23,9 +23,10 @@ from wecode.schemas.cloud_device import (
     CloudDeviceResponse,
     CreateCloudDeviceRequest,
     NevisSandboxStatus,
+    VncConfigResponse,
 )
 from wecode.service.cloud_device_provider import cloud_device_provider
-from wecode.service.nevis_client import NevisClientError
+from wecode.service.nevis_client import NevisClient, NevisClientError
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +255,73 @@ async def get_cloud_device_nevis_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get cloud device status",
         )
+
+
+@router.get("/{device_id}/vnc-config", response_model=VncConfigResponse)
+async def get_vnc_config(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get VNC WebSocket connection configuration for a cloud device.
+
+    Returns the upstream WSS URL and authentication signature needed
+    by server.cjs to proxy VNC WebSocket connections to Nevis.
+
+    Args:
+        device_id: Cloud device ID (UUID or sandbox ID)
+
+    Returns:
+        VncConfigResponse with wss_url, signature, and sandbox_id
+
+    Raises:
+        HTTPException 404: If device not found
+        HTTPException 503: If Nevis is not configured
+    """
+    if not cloud_device_provider.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud device provider is not configured",
+        )
+
+    # Verify device exists and belongs to user
+    device_status = await cloud_device_provider.get_status(
+        db=db,
+        user_id=current_user.id,
+        device_id=device_id,
+    )
+
+    if not device_status:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Cloud device '{device_id}' not found",
+        )
+
+    # Resolve sandbox ID from cloud_config
+    cloud_config = device_status.get("cloud_config") or {}
+    sandbox_id = cloud_config.get("sandboxId", device_id)
+
+    # Build upstream VNC WebSocket URL from Nevis settings
+    base_url = nevis_settings.NEVIS_BASE_URL.rstrip("/")
+    # Convert http(s):// to ws(s)://
+    if base_url.startswith("https://"):
+        wss_base = "wss://" + base_url[len("https://") :]
+    elif base_url.startswith("http://"):
+        wss_base = "ws://" + base_url[len("http://") :]
+    else:
+        wss_base = "wss://" + base_url
+
+    manager_id = nevis_settings.NEVIS_MANAGER_ID
+    wss_url = (
+        f"{wss_base}/apis/sandboxes/v1/managers/{manager_id}"
+        f"/sandboxes/{sandbox_id}/vnc"
+    )
+
+    return VncConfigResponse(
+        wss_url=wss_url,
+        signature=nevis_settings.NEVIS_SIGNATURE,
+        sandbox_id=sandbox_id,
+    )
 
 
 @router.get("/config")

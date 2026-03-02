@@ -46,9 +46,12 @@
   "plugin_browser_description": "Enable Agent to control browsers for web automation",
   "vnc_title": "Desktop",
   "vnc_open_desktop": "Open Desktop",
-  "vnc_loading": "Loading desktop...",
-  "vnc_error": "Failed to load desktop viewer",
+  "vnc_loading": "Connecting to desktop...",
+  "vnc_error": "Failed to connect to desktop",
   "vnc_close": "Close desktop panel",
+  "vnc_disconnected": "Desktop connection closed",
+  "vnc_reconnect": "Reconnect",
+  "vnc_panel_title": "Remote Desktop",
   "slots_full": "Slots Full",
   "slots_full_hint": "All task slots are occupied. Please wait for current tasks to finish."
 }

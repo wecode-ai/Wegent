@@ -17,6 +17,9 @@ const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
 const httpProxy = require('http-proxy');
+const WebSocket = require('ws');
+const https = require('https');
+const http = require('http');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || 'localhost';
@@ -86,18 +89,142 @@ app.prepare().then(() => {
     handle(req, res, parsedUrl);
   });
 
+  // WebSocket server for VNC proxy (noServer mode - no listening port)
+  const vncWss = new WebSocket.Server({ noServer: true });
+
+  /**
+   * Fetch VNC config from backend API for a given device.
+   * Returns { wss_url, signature, sandbox_id } or throws on error.
+   */
+  function fetchVncConfig(deviceId, token) {
+    return new Promise((resolve, reject) => {
+      const url = `${BACKEND_URL}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`;
+      const mod = url.startsWith('https') ? https : http;
+      const req = mod.get(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`Backend returned ${res.statusCode}: ${body}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(body));
+          } catch (e) {
+            reject(new Error(`Invalid JSON from backend: ${body}`));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Backend request timeout')); });
+    });
+  }
+
   // Handle WebSocket upgrade requests
   server.on('upgrade', (req, socket, head) => {
-    const { pathname } = parse(req.url, true);
+    const { pathname, query } = parse(req.url, true);
 
     // Proxy Socket.IO WebSocket connections
     if (pathname.startsWith('/socket.io')) {
       console.log(`[Proxy WS Upgrade] ${req.url}`);
       proxy.ws(req, socket, head);
-    } else {
-      // Close non-Socket.IO WebSocket connections
-      socket.destroy();
+      return;
     }
+
+    // VNC WebSocket proxy: /vnc-proxy/{deviceId}?token=jwt
+    const vncMatch = pathname.match(/^\/vnc-proxy\/([^/]+)$/);
+    if (vncMatch) {
+      const deviceId = decodeURIComponent(vncMatch[1]);
+      const token = query.token;
+
+      if (!token) {
+        console.error('[VNC Proxy] Missing token parameter');
+        socket.destroy();
+        return;
+      }
+
+      console.log(`[VNC Proxy] Upgrade request for device: ${deviceId}`);
+
+      fetchVncConfig(deviceId, token)
+        .then((config) => {
+          console.log(`[VNC Proxy] Connecting to upstream: ${config.wss_url}`);
+
+          // Open upstream WebSocket to Nevis VNC
+          const upstream = new WebSocket(config.wss_url, {
+            headers: {
+              'X-Signature': config.signature,
+            },
+            // Reduce buffering for real-time VNC
+            perMessageDeflate: false,
+          });
+
+          upstream.on('open', () => {
+            console.log(`[VNC Proxy] Upstream connected for device: ${deviceId}`);
+
+            // Accept the client upgrade
+            vncWss.handleUpgrade(req, socket, head, (client) => {
+              // Bidirectional binary forwarding
+              client.on('message', (data) => {
+                if (upstream.readyState === WebSocket.OPEN) {
+                  upstream.send(data);
+                }
+              });
+
+              upstream.on('message', (data) => {
+                if (client.readyState === WebSocket.OPEN) {
+                  client.send(data);
+                }
+              });
+
+              // Clean close propagation
+              client.on('close', (code, reason) => {
+                console.log(`[VNC Proxy] Client closed (device: ${deviceId})`);
+                if (upstream.readyState === WebSocket.OPEN) {
+                  upstream.close(1000, 'Client disconnected');
+                }
+              });
+
+              upstream.on('close', (code, reason) => {
+                console.log(`[VNC Proxy] Upstream closed (device: ${deviceId})`);
+                if (client.readyState === WebSocket.OPEN) {
+                  client.close(1000, 'Upstream disconnected');
+                }
+              });
+
+              // Error handling
+              client.on('error', (err) => {
+                console.error(`[VNC Proxy] Client error (device: ${deviceId}):`, err.message);
+                if (upstream.readyState === WebSocket.OPEN) upstream.close();
+              });
+
+              upstream.on('error', (err) => {
+                console.error(`[VNC Proxy] Upstream error (device: ${deviceId}):`, err.message);
+                if (client.readyState === WebSocket.OPEN) client.close();
+              });
+            });
+          });
+
+          upstream.on('error', (err) => {
+            console.error(`[VNC Proxy] Failed to connect upstream (device: ${deviceId}):`, err.message);
+            socket.destroy();
+          });
+        })
+        .catch((err) => {
+          console.error(`[VNC Proxy] Config fetch failed (device: ${deviceId}):`, err.message);
+          socket.destroy();
+        });
+
+      return;
+    }
+
+    // Close unhandled WebSocket connections
+    socket.destroy();
   });
 
   // Handle server errors
@@ -110,5 +237,6 @@ app.prepare().then(() => {
     console.log(`[Server] Ready on http://${hostname}:${port}`);
     console.log(`[Server] Socket.IO proxy: /socket.io/* -> ${BACKEND_URL}/socket.io/*`);
     console.log(`[Server] API proxy: /api/* -> ${BACKEND_URL}/api/*`);
+    console.log(`[Server] VNC proxy: /vnc-proxy/{deviceId} -> Nevis VNC (via backend config)`);
   });
 });

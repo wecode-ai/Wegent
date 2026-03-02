@@ -3,3 +3,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export { CloudDeviceVncPanel } from './CloudDeviceVncPanel'
+export { VncViewer } from './VncViewer'
+export { VncToggle } from './VncToggle'
