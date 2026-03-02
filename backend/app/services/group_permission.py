@@ -7,12 +7,12 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.namespace import Namespace
+from app.schemas.namespace import GroupRole
 from app.services.group_member_helper import (
     NAMESPACE_RESOURCE_TYPE,
     get_user_groups_with_roles,
     get_user_role_in_group,
 )
-from app.schemas.namespace import GroupRole
 
 
 def get_user_role_in_group(
@@ -29,7 +29,9 @@ def get_user_role_in_group(
     Returns:
         GroupRole if user is a member, None otherwise
     """
-    from app.services.group_member_helper import get_user_role_in_group as helper_get_role
+    from app.services.group_member_helper import (
+        get_user_role_in_group as helper_get_role,
+    )
 
     role_str = helper_get_role(db, user_id, group_name)
     if role_str:

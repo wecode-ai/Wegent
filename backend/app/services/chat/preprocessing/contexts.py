@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
-from shared.models.knowledge import KnowledgeBaseToolsResult
+from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
 from shared.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
 
 logger = logging.getLogger(__name__)
@@ -808,7 +808,7 @@ async def prepare_contexts_for_chat(
     base_system_prompt: str,
     task_id: Optional[int] = None,
     context_window: Optional[int] = None,
-) -> Tuple[str, str, List[BaseTool], bool, List[dict]]:
+) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
 
@@ -826,41 +826,18 @@ async def prepare_contexts_for_chat(
         user_id: User ID for access control
         message: Original user message
         base_system_prompt: Base system prompt to enhance
-        task_id: Optional task ID for fetching historical KB meta
+        task_id: Optional task ID for resolving task-level bound KBs (group chat)
         context_window: Optional model context window size from Model spec.
             Used for selected_documents injection threshold calculation.
             If None, uses default value (128000).
 
     Returns:
-        Tuple of (final_message, enhanced_system_prompt, extra_tools, has_table_context, table_contexts)
+        ChatContextsResult with processed message, table info, and KB results.
     """
     from .tables import parse_table_url
 
     # Get all contexts for this subtask
-    contexts = context_service.get_by_subtask(db, user_subtask_id)
-
-    if not contexts:
-        logger.info(
-            f"[prepare_contexts_for_chat] No subtask contexts for subtask={user_subtask_id}, "
-            f"checking task-level bound KBs for task_id={task_id}"
-        )
-        # Even without subtask contexts, check for task-level bound knowledge bases
-        # This is important for group chat where KBs are bound to the task, not subtask
-        kb_result = _prepare_kb_tools_from_contexts(
-            kb_contexts=[],  # No subtask-level KB contexts
-            user_id=user_id,
-            db=db,
-            base_system_prompt=base_system_prompt,
-            task_id=task_id,
-            user_subtask_id=user_subtask_id,
-        )
-        return (
-            message,
-            kb_result.enhanced_system_prompt,
-            kb_result.extra_tools,
-            False,
-            [],
-        )
+    contexts = context_service.get_by_subtask(db, user_subtask_id) or []
 
     # Separate contexts by type
     attachment_contexts = [
@@ -911,6 +888,7 @@ async def prepare_contexts_for_chat(
 
     extra_tools = kb_result.extra_tools
     enhanced_system_prompt = kb_result.enhanced_system_prompt
+    kb_meta_prompt = kb_result.kb_meta_prompt
 
     # 3. Process table contexts - create DataTableTool and build dynamic prompt
     parsed_tables = []
@@ -987,13 +965,26 @@ async def prepare_contexts_for_chat(
             process_selected_documents_contexts(**kwargs)
         )
 
-    has_table_context = len(table_contexts) > 0
-    return (
-        final_message,
-        enhanced_system_prompt,
-        extra_tools,
-        has_table_context,
-        parsed_tables,
+    # Derive flag from parsed_tables (not raw table_contexts) to stay consistent
+    # with the returned table payload — if parsing fails, the flag stays False.
+    has_table_context = len(parsed_tables) > 0
+
+    # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
+    # and extra_tools (table prompt and selected_documents processing may have modified
+    # them after kb_result was computed).
+    final_kb = KnowledgeBaseToolsResult(
+        extra_tools=extra_tools,
+        enhanced_system_prompt=enhanced_system_prompt,
+        kb_meta_prompt=kb_meta_prompt,
+        knowledge_base_ids=kb_result.knowledge_base_ids,
+        is_user_selected_kb=kb_result.is_user_selected_kb,
+        document_ids=kb_result.document_ids,
+    )
+    return ChatContextsResult(
+        final_message=final_message,
+        has_table_context=has_table_context,
+        table_contexts=parsed_tables,
+        kb=final_kb,
     )
 
 
@@ -1064,6 +1055,8 @@ def _prepare_kb_tools_from_contexts(
     NOTE:
     - Knowledge base metadata (kb_meta_prompt) is returned separately and should be injected
       via the `dynamic_context` mechanism to keep system prompts static for better caching.
+    - knowledge_base_ids, is_user_selected_kb, and document_ids are returned so callers
+      can populate ExecutionRequest fields without extra DB queries.
     """
 
     extra_tools: List[BaseTool] = []
@@ -1095,14 +1088,38 @@ def _prepare_kb_tools_from_contexts(
     else:
         knowledge_base_ids = []
 
+    # Extract document_ids from subtask KB contexts (no extra DB query needed).
+    # Normalize to int, skip invalid values, and deduplicate while preserving order.
+    document_ids: List[int] = []
+    if is_user_selected_kb:
+        seen_doc_ids: set[int] = set()
+        for c in kb_contexts:
+            if c.type_data and isinstance(c.type_data, dict):
+                raw_doc_ids = c.type_data.get("document_ids", [])
+                if isinstance(raw_doc_ids, list):
+                    for doc_id in raw_doc_ids:
+                        try:
+                            normalized = int(doc_id)
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "[_prepare_kb_tools_from_contexts] Ignore invalid "
+                                "document_id=%s in context_id=%s",
+                                doc_id,
+                                getattr(c, "id", None),
+                            )
+                            continue
+                        if normalized not in seen_doc_ids:
+                            seen_doc_ids.add(normalized)
+                            document_ids.append(normalized)
+
     if not knowledge_base_ids:
-        # Even without current knowledge bases, check for historical KB meta
-        if task_id:
-            kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
         return KnowledgeBaseToolsResult(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
-            kb_meta_prompt=kb_meta_prompt,
+            kb_meta_prompt="",
+            knowledge_base_ids=[],
+            is_user_selected_kb=False,
+            document_ids=[],
         )
 
     logger.info(
@@ -1123,9 +1140,9 @@ def _prepare_kb_tools_from_contexts(
     )
     extra_tools.append(kb_tool)
 
-    # Get historical knowledge base meta info if available
-    if task_id:
-        kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
+    # Build KB meta prompt for dynamic_context injection.
+    # This is based on the resolved KB IDs of the CURRENT request (no DB scanning by task).
+    kb_meta_prompt = _build_kb_meta_prompt(db, knowledge_base_ids)
 
     # Choose prompt template based on whether KB is user-selected or inherited from task.
     # Keep KB prompt templates fully static (no kb_meta_list placeholder).
@@ -1150,6 +1167,9 @@ def _prepare_kb_tools_from_contexts(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt=kb_meta_prompt,
+        knowledge_base_ids=knowledge_base_ids,
+        is_user_selected_kb=is_user_selected_kb,
+        document_ids=document_ids,
     )
 
 
@@ -1191,27 +1211,92 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
         return []
 
 
-def _build_historical_kb_meta_prompt(
-    db: Session,
-    task_id: int,
-) -> str:
-    """Build knowledge base meta information from historical contexts.
+def _build_kb_meta_prompt(db: Session, knowledge_base_ids: List[int]) -> str:
+    """Build KB meta prompt for dynamic_context injection.
 
-    NOTE:
-    - Backend MUST NOT depend on chat_shell. The KB meta prompt builder lives in Backend.
+    IMPORTANT:
+    - The formatter lives in `kb_meta.py` and MUST NOT query DB.
+    - This function assembles KB meta from resolved KB IDs of the current request.
+
+    Args:
+        db: Database session
+        knowledge_base_ids: Resolved KB IDs for the current request
 
     Returns:
-        Formatted prompt string with KB meta info, or empty string.
+        Formatted prompt string, or empty string.
     """
+
+    if not knowledge_base_ids:
+        return ""
 
     try:
         from app.services.chat.preprocessing.kb_meta import (
-            build_kb_meta_prompt_for_task,
+            format_kb_meta_prompt,
+            select_kb_summary_text,
+        )
+        from app.services.knowledge.task_knowledge_base_service import (
+            task_knowledge_base_service,
         )
 
-        return build_kb_meta_prompt_for_task(db, task_id)
+        kb_map = task_knowledge_base_service.get_knowledge_bases_by_ids(
+            db, knowledge_base_ids
+        )
+
+        kb_meta_list: list[dict[str, Any]] = []
+        for kb_id in knowledge_base_ids:
+            kb_kind = kb_map.get(kb_id)
+            if not kb_kind:
+                kb_meta_list.append(
+                    {
+                        "kb_id": kb_id,
+                        "kb_name": "Unknown",
+                        "summary_text": "",
+                        "topics": [],
+                    }
+                )
+                continue
+
+            kb_spec = kb_kind.json.get("spec", {}) if kb_kind.json else {}
+            # Prefer spec-level name, then model-level Kind.name, then "Unknown".
+            kb_name = kb_spec.get("name") or getattr(kb_kind, "name", None) or "Unknown"
+
+            summary_text = ""
+            topics: list[str] = []
+            try:
+                summary_data = kb_spec.get("summary", {})
+                if (
+                    kb_spec.get("summaryEnabled")
+                    and summary_data.get("status") == "completed"
+                ):
+                    summary_text = select_kb_summary_text(
+                        summary_data, len(knowledge_base_ids)
+                    )
+                    topics = summary_data.get("topics", []) or []
+            except Exception as e:
+                logger.warning(
+                    "[kb_meta] Failed to extract summary for KB %s: %s",
+                    kb_id,
+                    e,
+                    exc_info=True,
+                )
+
+            kb_meta_list.append(
+                {
+                    "kb_id": kb_id,
+                    "kb_name": kb_name,
+                    "summary_text": summary_text,
+                    "topics": topics,
+                }
+            )
+
+        return format_kb_meta_prompt(kb_meta_list)
     except Exception as e:
-        logger.warning(f"Failed to build KB meta prompt for task {task_id}: {e}")
+        logger.warning(
+            "Failed to build KB meta prompt for knowledge_base_ids=%s: %s",
+            knowledge_base_ids,
+            e,
+            exc_info=True,
+        )
         return ""
 
 
