@@ -8,11 +8,11 @@ import { useState, useEffect, useMemo } from 'react'
 import { Lightbulb } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { WelcomeConfigResponse, ChatTipItem, ChatSloganItem } from '@/types/api'
+import type { WelcomeConfigResponse, ChatTipItem, ChatSloganItem, TaskType } from '@/types/api'
 
 interface WelcomeMessageProps {
   className?: string
-  taskType?: 'chat' | 'code'
+  taskType?: TaskType
 }
 
 export function WelcomeMessage({ className = '', taskType = 'chat' }: WelcomeMessageProps) {

@@ -12,6 +12,7 @@ import type {
   ChatTipItem,
   MultiAttachmentUploadState,
   DefaultTeamsResponse,
+  TaskType,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
@@ -27,7 +28,7 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
 export interface UseChatAreaStateOptions {
   teams: Team[]
-  taskType: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType: TaskType
   selectedTeamForNewTask?: Team | null
   /**
    * Initial knowledge base to pre-select when starting a new chat from knowledge page.

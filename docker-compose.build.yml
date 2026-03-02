@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Override file for building images from source code
+# Usage: docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+
+services:
+  backend:
+    build:
+      dockerfile: docker/backend/Dockerfile
+    pull_policy: build
+
+  frontend:
+    build:
+      dockerfile: docker/frontend/Dockerfile
+    pull_policy: build
+
+  chat_shell:
+    build:
+      dockerfile: docker/chat_shell/Dockerfile
+    pull_policy: build
+
+  executor_manager:
+    build:
+      dockerfile: docker/executor_manager/Dockerfile
+    pull_policy: build

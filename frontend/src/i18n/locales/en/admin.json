@@ -129,7 +129,9 @@
     "namespace_label": "Namespace",
     "status": {
       "active": "Active",
-      "inactive": "Inactive"
+      "inactive": "Inactive",
+      "advanced": "Advanced",
+      "standard": "Standard"
     },
     "columns": {
       "id": "ID",
@@ -145,7 +147,8 @@
       "namespace": "Namespace",
       "namespace_placeholder": "default",
       "config": "Model Configuration",
-      "config_placeholder": "Enter model configuration as JSON"
+      "config_placeholder": "Enter model configuration as JSON",
+      "is_advanced": "Advanced Model"
     },
     "confirm": {
       "delete_title": "Delete Model",

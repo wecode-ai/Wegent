@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { Loader2 } from 'lucide-react'
 
-import { Bot, Team } from '@/types/api'
+import { Bot, Team, TaskType } from '@/types/api'
 import { TeamMode, getFilteredBotsForMode, AgentType, getActualShellType } from './team-modes'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
@@ -70,10 +70,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge' | 'task')[]>([
-    'chat',
-    'code',
-  ])
+  const [bindMode, setBindMode] = useState<TaskType[]>(['chat', 'code'])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(null)
 

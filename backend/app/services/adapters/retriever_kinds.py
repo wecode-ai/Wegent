@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.namespace import Namespace
-from app.models.namespace_member import NamespaceMember
 from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.base import BaseService

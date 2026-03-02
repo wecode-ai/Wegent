@@ -113,6 +113,16 @@ class SkillRef(BaseModel):
     is_public: bool = Field(..., description="Whether the skill is public")
 
 
+class GenerateParams(BaseModel):
+    """Generation parameters for video/image tasks (user-selected at generation time)."""
+
+    resolution: Optional[str] = Field(
+        None, description="Video resolution (e.g., '720p')"
+    )
+    ratio: Optional[str] = Field(None, description="Aspect ratio (e.g., '16:9')")
+    duration: Optional[int] = Field(None, description="Duration in seconds")
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -156,8 +166,10 @@ class ChatSendPayload(BaseModel):
     git_repo_id: Optional[int] = Field(None, description="Git repository ID")
     git_domain: Optional[str] = Field(None, description="Git domain")
     branch_name: Optional[str] = Field(None, description="Git branch name")
-    task_type: Optional[Literal["chat", "code", "knowledge", "task"]] = Field(
-        None, description="Task type: chat, code, knowledge, or task"
+    task_type: Optional[
+        Literal["chat", "code", "knowledge", "task", "video", "image"]
+    ] = Field(
+        None, description="Task type: chat, code, knowledge, task, video, or image"
     )
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
@@ -170,6 +182,10 @@ class ChatSendPayload(BaseModel):
     device_id: Optional[str] = Field(
         None,
         description="Local device ID for task execution (if None, use cloud executor)",
+    )
+    # Video generation parameters (user-selected at generation time)
+    generate_params: Optional[GenerateParams] = Field(
+        None, description="Video generation params from user selection"
     )
 
 
@@ -266,6 +282,9 @@ class ChatChunkPayload(BaseModel):
     task_id: Optional[int] = None  # Add task_id for page refresh recovery
     sources: Optional[List[SourceReference]] = Field(
         None, description="Knowledge base source references (for RAG citations)"
+    )
+    progress: Optional[int] = Field(
+        None, description="Progress percentage (0-100) for long-running operations"
     )
 
 

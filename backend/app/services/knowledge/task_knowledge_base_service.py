@@ -117,7 +117,11 @@ class TaskKnowledgeBaseService:
 
         # For personal knowledge base (default namespace)
         if kb.namespace == "default":
-            return kb.user_id == user_id
+            # Creator always has access
+            if kb.user_id == user_id:
+                return True
+            # Check if KB is bound to any group chat that the user is a member of
+            return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
 
         # For organization knowledge base, all authenticated users have access
         if _is_organization_namespace(db, kb.namespace):
@@ -126,6 +130,84 @@ class TaskKnowledgeBaseService:
         # For team knowledge base, check group membership
         role = get_effective_role_in_group(db, user_id, kb.namespace)
         return role is not None
+
+    def _is_kb_bound_to_user_group_chat(
+        self, db: Session, kb_id: int, user_id: int
+    ) -> bool:
+        """Check if a knowledge base is bound to any group chat that the user is a member of.
+
+        When a knowledge base is bound to a group chat, all members of that group chat
+        should have access to the knowledge base (reporter permission level).
+
+        Args:
+            db: Database session
+            kb_id: Knowledge base Kind.id
+            user_id: User ID to check
+
+        Returns:
+            True if KB is bound to at least one group chat where user is a member
+        """
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+        from app.models.task import TaskResource
+
+        # Query all group chat tasks where this KB is bound and user is a member
+        # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
+        # First, get tasks where user is the owner
+        owned_tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+                TaskResource.user_id == user_id,
+            )
+            .all()
+        )
+
+        # Then, get tasks where user is an approved member via ResourceMember
+        member_tasks = (
+            db.query(TaskResource)
+            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .all()
+        )
+
+        # Combine owned and member tasks
+        tasks_with_kb = list(owned_tasks) + list(member_tasks)
+
+        for task in tasks_with_kb:
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+
+            for ref in kb_refs:
+                # Check if this KB is bound (match by ID or by name+namespace)
+                ref_id = ref.get("id")
+                ref_name = ref.get("name")
+                ref_namespace = ref.get("namespace", "default")
+
+                if ref_id == kb_id:
+                    return True
+
+                # Fallback: check by name+namespace if ID not available (legacy data)
+                if ref_id is None and ref_name and ref_namespace:
+                    kb = self.get_knowledge_base_by_id(db, kb_id)
+                    if kb:
+                        kb_spec = kb.json.get("spec", {}) if kb.json else {}
+                        kb_display_name = kb_spec.get("name")
+                        if (
+                            kb_display_name == ref_name
+                            and kb.namespace == ref_namespace
+                        ):
+                            return True
+
+        return False
 
     def get_knowledge_base_by_name(
         self, db: Session, name: str, namespace: str

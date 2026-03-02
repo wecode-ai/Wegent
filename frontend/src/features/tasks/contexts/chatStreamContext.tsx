@@ -38,7 +38,7 @@ import {
   SkillRequestPayload,
   SkillResponsePayload,
 } from '@/types/socket'
-import type { TaskDetailSubtask, Team } from '@/types/api'
+import type { TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { taskStateManager, generateMessageId, UnifiedMessage } from '../state'
 import DOMPurify from 'dompurify'
@@ -99,7 +99,7 @@ export interface ChatMessageRequest {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code' | 'knowledge' | 'task'
+  task_type?: TaskType
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
   // Local device ID for task execution (optional, when undefined use cloud executor)
@@ -118,6 +118,13 @@ export interface ChatMessageRequest {
   }>
   /** Action type. 'pipeline:confirm' for pipeline stage confirmation */
   action?: 'pipeline:confirm' | string
+  /** Generation parameters for video/image generation tasks */
+  generate_params?: {
+    /** Resolution for generation (e.g., '1080p', '720p', '480p') */
+    resolution?: string
+    /** Aspect ratio for generation (e.g., '16:9', '9:16', '1:1') */
+    ratio?: string
+  }
 }
 
 /**
@@ -706,6 +713,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         device_id: request.device_id,
         additional_skills: request.additional_skills,
         action: request.action,
+        generate_params: request.generate_params,
       }
 
       try {

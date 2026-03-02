@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.namespace import Namespace
-from app.models.namespace_member import NamespaceMember
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.subscription_follow import (
     FollowType,
     InvitationStatus,
@@ -592,10 +592,14 @@ class SubscriptionFollowService:
             )
             db.add(share)
 
-        # Get namespace members
+        # Get namespace members using ResourceMember
         members = (
-            db.query(NamespaceMember)
-            .filter(NamespaceMember.namespace_id == namespace_id)
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == namespace_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
             .all()
         )
 
@@ -761,10 +765,14 @@ class SubscriptionFollowService:
         if share:
             db.delete(share)
 
-        # Get namespace members and delete their pending invitations
+        # Get namespace members using ResourceMember and delete their pending invitations
         members = (
-            db.query(NamespaceMember)
-            .filter(NamespaceMember.namespace_id == namespace_id)
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == namespace_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
             .all()
         )
 

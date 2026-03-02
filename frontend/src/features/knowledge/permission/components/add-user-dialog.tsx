@@ -18,7 +18,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserForm } from './add-user-form'
-import type { PermissionLevel } from '@/types/knowledge'
+import type { MemberRole } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
 
 interface AddUserDialogProps {
@@ -31,7 +31,7 @@ interface AddUserDialogProps {
 export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDialogProps) {
   const { t } = useTranslation('knowledge')
   const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
-  const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>('view')
+  const [role, setRole] = useState<MemberRole>('Reporter')
   const [localError, setLocalError] = useState<string | null>(null)
 
   const { addPermission, loading, error } = useKnowledgePermissions({ kbId })
@@ -52,12 +52,12 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
     }
 
     try {
-      await addPermission(userName, permissionLevel)
+      await addPermission(userName, role)
       onSuccess?.()
       onOpenChange(false)
       // Reset form
       setSelectedUsers([])
-      setPermissionLevel('view')
+      setRole('Reporter')
     } catch (_err) {
       // Error is displayed from hook
     }
@@ -65,7 +65,7 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
 
   const handleClose = () => {
     setSelectedUsers([])
-    setPermissionLevel('view')
+    setRole('Reporter')
     setLocalError(null)
     onOpenChange(false)
   }
@@ -87,9 +87,9 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
         </DialogHeader>
         <AddUserForm
           selectedUsers={selectedUsers}
-          permissionLevel={permissionLevel}
+          role={role}
           onSelectedUsersChange={setSelectedUsers}
-          onPermissionLevelChange={setPermissionLevel}
+          onRoleChange={setRole}
           onSubmit={handleSubmit}
           error={displayError}
         />

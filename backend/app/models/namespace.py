@@ -41,11 +41,12 @@ class Namespace(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships
+    # Note: Namespace members are now stored in resource_members table
+    # This relationship is kept for backward compatibility but delegates to ResourceMember
     members = relationship(
-        "NamespaceMember",
-        back_populates="namespace",
+        "ResourceMember",
+        primaryjoin="and_(Namespace.id == foreign(ResourceMember.resource_id), ResourceMember.resource_type == 'Namespace')",
         cascade="all, delete-orphan",
-        primaryjoin="Namespace.name == foreign(NamespaceMember.group_name)",
     )
 
     __table_args__ = (

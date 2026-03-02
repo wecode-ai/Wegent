@@ -97,7 +97,7 @@ def create_share_link(
 
     - **resource_type**: Resource type (Team, Task, KnowledgeBase)
     - **resource_id**: Resource ID
-    - **body**: Share link configuration (require_approval, default_permission_level, expires_in_hours)
+    - **body**: Share link configuration (require_approval, default_role, expires_in_hours)
     """
     service = _get_share_service(resource_type)
     return service.create_share_link(
@@ -270,7 +270,7 @@ def join_by_link(
     Otherwise, access is granted immediately.
 
     - **share_token**: Share token from URL
-    - **requested_permission_level**: Optional requested permission level
+    - **requested_role**: Optional requested role
     """
     # Try each service to find the matching one
     for service in [team_share_service, task_share_service, knowledge_share_service]:
@@ -279,7 +279,7 @@ def join_by_link(
                 db=db,
                 share_token=body.share_token,
                 user_id=current_user.id,
-                requested_permission_level=body.requested_permission_level,
+                requested_role=body.requested_role,
             )
         except HTTPException as e:
             if e.status_code == 400 and "Invalid resource type" in str(e.detail):
@@ -341,7 +341,7 @@ def add_member(
 
     - **resource_type**: Resource type (Team, Task, KnowledgeBase)
     - **resource_id**: Resource ID
-    - **body**: Member info (user_id, permission_level)
+    - **body**: Member info (user_id, role)
     """
     service = _get_share_service(resource_type)
     return service.add_member(
@@ -349,7 +349,7 @@ def add_member(
         resource_id=resource_id,
         current_user_id=current_user.id,
         target_user_id=body.user_id,
-        permission_level=body.permission_level,
+        role=body.role,
     )
 
 
@@ -367,17 +367,17 @@ def update_member(
     current_user: User = Depends(security.get_current_user),
 ) -> ResourceMemberResponse:
     """
-    Update a member's permission level.
+    Update a member's role.
 
     Requires owner or manage permission.
 
     - **resource_type**: Resource type (Team, Task, KnowledgeBase)
     - **resource_id**: Resource ID
     - **member_id**: Member record ID
-    - **body**: Update info (permission_level)
+    - **body**: Update info (role)
     """
-    if not body.permission_level:
-        raise HTTPException(status_code=400, detail="permission_level is required")
+    if not body.role:
+        raise HTTPException(status_code=400, detail="role is required")
 
     service = _get_share_service(resource_type)
     return service.update_member(
@@ -385,7 +385,7 @@ def update_member(
         resource_id=resource_id,
         member_id=member_id,
         current_user_id=current_user.id,
-        permission_level=body.permission_level,
+        role=body.role,
     )
 
 
@@ -472,7 +472,7 @@ def review_request(
     - **resource_type**: Resource type (Team, Task, KnowledgeBase)
     - **resource_id**: Resource ID
     - **request_id**: Pending request (member) ID
-    - **body**: Review decision (approved, optional permission_level)
+    - **body**: Review decision (approved, optional role)
     """
     service = _get_share_service(resource_type)
     return service.review_request(
@@ -481,7 +481,7 @@ def review_request(
         request_id=request_id,
         reviewer_id=current_user.id,
         approved=body.approved,
-        permission_level=body.permission_level,
+        role=body.role,
     )
 
 

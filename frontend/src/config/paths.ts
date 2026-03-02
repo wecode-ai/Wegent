@@ -49,6 +49,9 @@ export const paths = {
   feedInvitations: {
     getHref: () => '/feed/invitations',
   },
+  generate: {
+    getHref: () => '/generate',
+  },
   settings: {
     root: {
       getHref: () => '/settings',
