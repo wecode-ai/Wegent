@@ -634,11 +634,22 @@ class CreateSubscriptionTool(BaseTool):
 
         trigger_summary = self._format_trigger_summary(trigger_type, trigger_config)
 
-        # Build message based on trigger type
+        # Build message with subscription:// link for inline editing
+        message = (
+            f"✅ 订阅任务创建成功！\n"
+            f"\n"
+            f"请在下方卡片中启用并配置订阅：\n"
+            f"\n"
+            f"[subscription://{subscription_id}]\n"
+            f"\n"
+            "当前状态：默认禁用。\n"
+            "- 点击开关启用订阅\n"
+            "- 点击「编辑」修改执行时间\n"
+            "- 点击「查看详情」进入完整管理页面"
+        )
+
         if next_time_str:
-            message = f"订阅任务创建成功！当前默认未启用，启用后将于 {next_time_str.replace('T', ' ')} 首次执行。"
-        else:
-            message = "订阅任务创建成功！当前默认未启用。"
+            message += f"\n\n首次执行时间：{next_time_str.replace('T', ' ')}"
 
         return json.dumps(
             {
