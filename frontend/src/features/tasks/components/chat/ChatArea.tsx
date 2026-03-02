@@ -97,7 +97,7 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
+  const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
