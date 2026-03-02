@@ -733,11 +733,10 @@ def create_socketio_asgi_app():
             path = scope.get("path", "")
             if scope["type"] == "websocket":
                 _logger.info(f"[CombinedApp] WebSocket path={path}")
-            if not path.endswith("/"):
-                path_slash = path + "/"
-            else:
-                path_slash = path
-            if path_slash.startswith("/socket.io/"):
+
+            # Route Socket.IO traffic (both HTTP polling and WebSocket)
+            # Socket.IO paths start with /socket.io/ or are exactly /socket.io
+            if path.startswith("/socket.io/") or path == "/socket.io":
                 await sio_asgi(scope, receive, send)
             elif scope["type"] == "websocket" and _vnc_ws_pattern.match(path):
                 _logger.info(f"[CombinedApp] -> VNC handler")
