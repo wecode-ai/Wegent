@@ -150,6 +150,8 @@ def _get_topic_ids_with_grader_access(
     Get all topic IDs where user has grader access.
 
     Returns topic IDs where user is creator OR has grader permission.
+    Grader permission includes both 'grader' and 'question_creator' roles,
+    consistent with PermissionService.has_permission() logic.
     """
     from wecode.models.evaluation import EvalPermission, PermissionRole
 
@@ -164,11 +166,13 @@ def _get_topic_ids_with_grader_access(
     )
 
     # Topics where user has grader permission
+    # This aligns with PermissionService.has_permission() logic where
+    # GRADER role check includes both GRADER and QUESTION_CREATOR roles
     grader_topics = (
         db.query(EvalPermission.topic_id)
         .filter(
             EvalPermission.user_id == user_id,
-            EvalPermission.role == PermissionRole.GRADER,
+            EvalPermission.role.in_([PermissionRole.GRADER, PermissionRole.QUESTION_CREATOR]),
         )
         .all()
     )
