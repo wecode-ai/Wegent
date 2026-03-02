@@ -118,14 +118,26 @@ export async function uploadEvaluationFile(
 // ============================================================================
 
 /**
- * Download a file through backend proxy.
+ * Download progress callback type.
+ */
+export type DownloadProgressCallback = (loaded: number, total: number) => void
+
+/**
+ * Download a file through backend proxy with streaming support.
  * The file is fetched from the backend, which proxies it from S3.
  * This avoids exposing S3 URLs to the frontend (prevents Mixed Content issues).
  *
+ * Uses ReadableStream for better performance with large files.
+ *
  * @param s3Path - S3 storage path
  * @param filename - Optional filename for download
+ * @param onProgress - Optional callback for download progress
  */
-export async function downloadEvaluationFile(s3Path: string, filename?: string): Promise<void> {
+export async function downloadEvaluationFile(
+  s3Path: string,
+  filename?: string,
+  onProgress?: DownloadProgressCallback
+): Promise<void> {
   const token = getToken()
   const params = new URLSearchParams({ s3_path: s3Path })
   const url = getEvaluationUrl(`/shared/files/download?${params}`)
@@ -141,16 +153,15 @@ export async function downloadEvaluationFile(s3Path: string, filename?: string):
       throw new Error(errorData.detail || `Download failed: ${response.status}`)
     }
 
-    // Get the blob from response
-    const blob = await response.blob()
-    const blobUrl = URL.createObjectURL(blob)
+    // Get content length for progress tracking
+    const contentLength = response.headers.get('Content-Length')
+    const total = contentLength ? parseInt(contentLength, 10) : 0
 
     // Extract filename from Content-Disposition header or use provided filename
     let downloadFilename = filename
     if (!downloadFilename) {
       const contentDisposition = response.headers.get('Content-Disposition')
       if (contentDisposition) {
-        // Try to extract filename from Content-Disposition
         const match = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\s]+)["']?/i)
         if (match) {
           downloadFilename = decodeURIComponent(match[1])
@@ -162,6 +173,41 @@ export async function downloadEvaluationFile(s3Path: string, filename?: string):
     if (!downloadFilename) {
       downloadFilename = s3Path.split('/').pop() || 'download'
     }
+
+    // Use ReadableStream for better performance with large files
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('Response body is not readable')
+    }
+
+    // Read the stream in chunks
+    const chunks: Uint8Array[] = []
+    let received = 0
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      chunks.push(value)
+      received += value.length
+
+      // Report progress
+      if (onProgress && total > 0) {
+        onProgress(received, total)
+      }
+    }
+
+    // Combine chunks into a single Uint8Array
+    const allChunks = new Uint8Array(received)
+    let position = 0
+    for (const chunk of chunks) {
+      allChunks.set(chunk, position)
+      position += chunk.length
+    }
+
+    // Create blob and download
+    const blob = new Blob([allChunks])
+    const blobUrl = URL.createObjectURL(blob)
 
     // Create a temporary link to trigger download
     const link = document.createElement('a')

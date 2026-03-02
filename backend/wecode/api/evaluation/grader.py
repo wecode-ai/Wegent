@@ -885,10 +885,22 @@ def update_grader_task_report(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.COMPLETED:
+    # Allow updating report in PENDING, FAILED, or COMPLETED status (before publishing)
+    if task.status not in [
+        GradingTaskStatus.PENDING,
+        GradingTaskStatus.FAILED,
+        GradingTaskStatus.COMPLETED,
+    ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only update completed tasks before publishing",
+            detail="Can only update tasks that are pending, failed, or completed before publishing",
+        )
+
+    # Cannot update if already published
+    if task.status == GradingTaskStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot update published tasks",
         )
 
     question = question_service.get(db, task.question_id)
@@ -1025,10 +1037,22 @@ async def upload_report_file(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.COMPLETED:
+    # Allow uploading report in PENDING, FAILED, or COMPLETED status (before publishing)
+    if task.status not in [
+        GradingTaskStatus.PENDING,
+        GradingTaskStatus.FAILED,
+        GradingTaskStatus.COMPLETED,
+    ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only upload report for completed tasks",
+            detail="Can only upload report for tasks that are pending, failed, or completed",
+        )
+
+    # Cannot upload if already published
+    if task.status == GradingTaskStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot upload report for published tasks",
         )
 
     question = question_service.get(db, task.question_id)

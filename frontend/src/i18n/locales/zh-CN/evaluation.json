@@ -187,6 +187,14 @@
     "latest": "最新",
     "history": "作答历史",
     "no_answers": "暂无任何作答",
+    "exam_slots": {
+      "main": "主报告",
+      "interaction": "交互记录",
+      "bonus_agent": "附加题 - Agent/工作流",
+      "bonus_multimodal": "附加题 - 多模态交付物"
+    },
+    "supplementary_notes": "补充说明",
+    "supplementary_notes_files": "补充说明文件",
     "submit_success": "答案提交成功",
     "view": "查看答案",
     "new_version_available": "此题目有新版本可用，您可能需要重新作答。",
@@ -249,6 +257,19 @@
     },
     "no_tasks": "暂无评分任务",
     "no_report_data": "暂无报告数据",
+    "final_report": "已发布报告",
+    "human_report": "人工修订报告",
+    "ai_report": "AI 生成报告",
+    "report_content_placeholder": "在此输入评分报告内容（支持 Markdown 格式）...",
+    "preview": "预览",
+    "real_time_preview": "实时",
+    "preview_empty": "开始输入以查看预览...",
+    "markdown_hint": "支持 Markdown 格式：**粗体**、*斜体*、`代码`、列表等。",
+    "human_report_published": "已发布",
+    "human_report_draft": "草稿",
+    "no_human_report": "无报告",
+    "publish_error": "无法发布",
+    "publish_error_no_human_report": "请先编辑并保存人工评分报告，然后再发布。",
     "view_execution_task": "查看执行任务",
     "view_execution_task_hint": "查看详细执行日志以进行调试",
     "execute_success": "评分任务已启动",
@@ -436,7 +457,7 @@
       "close": "关闭"
     },
     "exam_method": {
-      "title": "考核方式",
+      "title": "考评方式",
       "dimensions": "评估维度",
       "bonus_title": "加分项说明"
     },

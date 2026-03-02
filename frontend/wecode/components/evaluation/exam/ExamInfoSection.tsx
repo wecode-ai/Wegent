@@ -50,7 +50,7 @@ export function ExamInfoSection({
       </div>
       <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 mb-4">{title}</h2>
       <p className="text-gray-600 mb-8">
-        本考核旨在评估高层管理人员的 AI 应用能力，包括工具使用、问题解决和创新思维等方面。
+        本考核旨在评估高层管理人员的AI应用能力，包括工具使用、问题解决和创新思维、安全意识等方面。
       </p>
 
       {/* Loading state */}
@@ -100,7 +100,7 @@ export function ExamInfoSection({
 
             {/* Exam method */}
             <div className="bg-red-50/50 rounded-2xl p-6 border border-red-100/60 mb-6">
-              <h3 className="text-[1rem] font-bold text-gray-800 mb-3">考核方式</h3>
+              <h3 className="text-[1rem] font-bold text-gray-800 mb-3">考评方式</h3>
               <p className="text-[1rem] text-gray-600 mb-3">{examMethod.scoring}</p>
               <p className="text-[1rem] text-gray-600 mb-3">
                 评估维度：{examMethod.dimensions.join('、')}

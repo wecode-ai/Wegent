@@ -413,8 +413,9 @@ def _get_path_patterns() -> dict:
         "answer": re.compile(rf"^{escaped_prefix}/answers/(\d+)/(\d+)/(\d+)/"),
         # {prefix}/reports/{user_id}/{topic_id}/{question_id}/...
         "report": re.compile(rf"^{escaped_prefix}/reports/(\d+)/(\d+)/(\d+)/"),
-        # {prefix}/exam/{user_id}/{topic_id}/{question_id}/{slot}/...
-        "exam": re.compile(rf"^{escaped_prefix}/exam/(\d+)/(\d+)/(\d+)/"),
+        # {prefix}/exam/{user_id}/{topic_id}/{question_id}/{slot}/... or
+        # {prefix}/exam/{user_id}/{topic_id}/{question_id}/{timestamp}/...
+        "exam": re.compile(rf"^{escaped_prefix}/exam/(\d+)/(\d+)/(\d+)/[^/]+/"),
     }
 
 
