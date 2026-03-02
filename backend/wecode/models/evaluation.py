@@ -713,6 +713,7 @@ class PermissionRole:
 
     RESPONDENT = "respondent"
     GRADER = "grader"
+    QUESTION_CREATOR = "question_creator"
 
 
 class ContentType:

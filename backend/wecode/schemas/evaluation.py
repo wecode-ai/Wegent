@@ -58,6 +58,10 @@ class TopicUpdate(BaseModel):
         max_length=10000,
         description="Exam instructions in Markdown format",
     )
+    extra_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Extra data: {examMode: bool, duration: {exam, qa}, instructions: string}",
+    )
 
 
 class TopicInDB(TopicBase):

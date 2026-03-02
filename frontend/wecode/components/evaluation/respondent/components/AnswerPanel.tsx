@@ -1,15 +1,20 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Upload, Send, File, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { Upload, Send, File, X, ChevronDown, ChevronUp, FileText } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import { SlotBasedFileUpload } from '@wecode/components/evaluation/exam/SlotBasedFileUpload'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatFileSize } from '@/apis/attachments'
 import { MAX_BATCH_FILES } from '@/hooks/useBatchAttachment'
 import type { EvalAttachment } from '@wecode/types/evaluation'
+import type { ExamAttachment } from '@wecode/types/evaluation-exam'
 
 interface AnswerPanelProps {
   topicId: number
@@ -47,6 +52,30 @@ export function AnswerPanel({
     e.preventDefault()
     setIsDragging(false)
   }, [])
+
+  // Upload slot configuration for answer attachments
+  const ANSWER_UPLOAD_SLOTS = [
+    {
+      key: 'answer',
+      label: t('answers.upload_title', 'Upload Answer Files'),
+      hint: t('answers.upload_format_hint', 'Support PDF, Word, images, etc.'),
+      maxFiles: MAX_BATCH_FILES,
+      accept: '.pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.html,.json',
+      icon: <FileText className="h-[18px] w-[18px] text-blue-500" />,
+    },
+  ]
+
+  // Convert EvalAttachment[] to ExamAttachment[] for SlotBasedFileUpload
+  const examAttachments = {
+    answer: attachments as unknown as ExamAttachment[],
+  }
+
+  // Handle slot changes
+  const handleSlotChange = (slot: string, newAttachments: ExamAttachment[]) => {
+    if (slot === 'answer') {
+      setAttachments(newAttachments as unknown as EvalAttachment[])
+    }
+  }
 
   const handleRemoveAttachment = (index: number) => {
     const newAttachments = [...attachments]
@@ -89,13 +118,15 @@ export function AnswerPanel({
               </p>
               <p className="mt-1 text-xs text-text-muted">{t('answers.upload_format_hint')}</p>
             </div>
-            <EvaluationFileUpload
+            <SlotBasedFileUpload
               topicId={topicId}
               questionId={questionId}
-              fileType="answer_attachment"
-              attachments={attachments}
-              onChange={setAttachments}
-              maxFiles={MAX_BATCH_FILES}
+              slots={ANSWER_UPLOAD_SLOTS}
+              attachments={examAttachments}
+              onChange={handleSlotChange}
+              disabled={isSubmitting}
+              totalFileLimit={MAX_BATCH_FILES}
+              currentTotalCount={attachments.length}
             />
           </div>
         </CardContent>

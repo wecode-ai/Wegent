@@ -6,7 +6,15 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, FileCheck, BookOpen, BarChart3 } from 'lucide-react'
+import {
+  ArrowLeft,
+  FileCheck,
+  BookOpen,
+  BarChart3,
+  Clock,
+  HelpCircle,
+  PlayCircle,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -78,6 +86,100 @@ function RespondentTopicDetailContent() {
 
   if (!topic) {
     return null
+  }
+
+  // Check if topic is in exam mode
+  const isExamMode = topic.extra_data?.examMode === true
+
+  // Render exam mode entry page
+  if (isExamMode) {
+    return (
+      <div className="container mx-auto max-w-6xl px-4 py-8">
+        {/* Header */}
+        <div className="mb-6 flex items-center justify-between">
+          <Button variant="ghost" onClick={() => router.push('/evaluation/respondent')}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            {t('actions.back')}
+          </Button>
+          <Button variant="outline" onClick={() => router.push('/evaluation/respondent/history')}>
+            <BookOpen className="mr-2 h-4 w-4" />
+            {t('answers.history')}
+          </Button>
+        </div>
+
+        {/* Topic Info */}
+        <div className="mb-8">
+          <div className="mb-2 flex items-center gap-3">
+            <h1 className="text-2xl font-semibold text-text-primary">{topic.name}</h1>
+            <Badge variant={topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'}>
+              {getVisibilityLabel(topic.visibility, t)}
+            </Badge>
+            <Badge variant="default">{t('exam.exam_mode')}</Badge>
+          </div>
+          {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
+        </div>
+
+        {/* Exam Info Card */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <PlayCircle className="h-5 w-5" />
+              {t('exam.title')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-6 text-text-secondary">{t('exam.exam_mode_description')}</p>
+
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              <div className="rounded-lg bg-surface p-4 text-center">
+                <HelpCircle className="mx-auto mb-2 h-6 w-6 text-primary" />
+                <div className="text-2xl font-semibold">{questions.length}</div>
+                <div className="text-xs text-text-muted">{t('exam.questions_count')}</div>
+              </div>
+              <div className="rounded-lg bg-surface p-4 text-center">
+                <Clock className="mx-auto mb-2 h-6 w-6 text-primary" />
+                <div className="text-2xl font-semibold">
+                  {topic.extra_data?.timeLimit
+                    ? `${topic.extra_data.timeLimit} min`
+                    : t('exam.no_time_limit')}
+                </div>
+                <div className="text-xs text-text-muted">{t('exam.time_limit')}</div>
+              </div>
+              {progress && (
+                <>
+                  <div className="rounded-lg bg-surface p-4 text-center">
+                    <BarChart3 className="mx-auto mb-2 h-6 w-6 text-primary" />
+                    <div className="text-2xl font-semibold">{progress.answered_questions}</div>
+                    <div className="text-xs text-text-muted">{t('answers.progress.answered')}</div>
+                  </div>
+                  <div className="rounded-lg bg-surface p-4 text-center">
+                    <FileCheck className="mx-auto mb-2 h-6 w-6 text-primary" />
+                    <div className="text-2xl font-semibold">
+                      {Math.round(progress.completion_rate * 100)}%
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      {t('answers.progress.completion')}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mt-8 flex justify-center">
+              <Button
+                variant="default"
+                size="lg"
+                className="min-w-[200px]"
+                onClick={() => router.push(`/evaluation/respondent/topics/${topicId}/exam`)}
+              >
+                <PlayCircle className="mr-2 h-5 w-5" />
+                {t('exam.enter_exam')}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
@@ -184,9 +286,7 @@ function RespondentTopicDetailContent() {
                   size="sm"
                   onClick={e => {
                     e.stopPropagation()
-                    router.push(
-                      `/evaluation/respondent/topics/${topicId}/questions/${question.id}`
-                    )
+                    router.push(`/evaluation/respondent/topics/${topicId}/questions/${question.id}`)
                   }}
                 >
                   {t('answers.submit')}

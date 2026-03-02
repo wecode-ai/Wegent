@@ -16,14 +16,17 @@ This is a business security requirement to ensure evaluation fairness.
 """
 
 import logging
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
+from wecode.exceptions import BusinessException
 from wecode.models.evaluation import (
     QuestionStatus,
     TopicStatus,
@@ -40,6 +43,7 @@ from wecode.schemas.evaluation import (
 )
 from wecode.service.evaluation import (
     get_answer_service,
+    get_exam_session_service,
     get_permission_service,
     get_question_service,
     get_topic_service,
@@ -593,3 +597,613 @@ def get_answer_detail(
 # Respondents cannot view any grading status or results.
 # This is a business security requirement to ensure evaluation fairness.
 # Grading reports are only visible to Authors and Graders.
+
+
+# ============================================================================
+# Exam Endpoints
+# ============================================================================
+
+
+@router.get("/topics/{topic_id}/exam")
+def get_exam_data(
+    topic_id: int,
+    create_session: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get exam data for a topic.
+
+    Returns topic with extra_data, all questions with content_data,
+    any existing answer from the current user, and exam session status.
+
+    Only works for topics with examMode enabled in extra_data.
+
+    Args:
+        create_session: If True, creates a new exam session (for "进入考试" action).
+                       If False, returns existing session or "ready" state.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    permission_service = get_permission_service()
+    answer_service = get_answer_service()
+    exam_session_service = get_exam_session_service()
+
+    # Get topic
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    # Check permission
+    if not permission_service.can_view_topic(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to view this topic",
+        )
+
+    # Check if topic is published
+    if topic.status != TopicStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This topic is not yet available",
+        )
+
+    # Check if topic has examMode enabled
+    extra_data = topic.extra_data or {}
+    if not extra_data.get("examMode"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This topic is not configured for exam mode",
+        )
+
+    # Get all published questions for the topic
+    questions, _ = question_service.list_questions(
+        db=db,
+        topic_id=topic_id,
+        page=1,
+        limit=1000,  # Get all questions
+        status=QuestionStatus.PUBLISHED,
+        include_criteria=False,  # Never include criteria for respondents
+    )
+
+    # Format questions (remove criteria from content_data)
+    formatted_questions = []
+    for q in questions:
+        content_data = {
+            k: v for k, v in (q.content_data or {}).items() if k != "_criteria"
+        }
+        formatted_questions.append(
+            {
+                "id": q.id,
+                "topic_id": q.topic_id,
+                "title": q.title,
+                "content_type": q.content_type,
+                "content_data": content_data,
+                "status": q.status,
+                "current_version": q.current_version,
+                "order_index": q.order_index,
+                "creator_id": q.creator_id,
+                "created_at": q.created_at.isoformat() if q.created_at else None,
+                "updated_at": q.updated_at.isoformat() if q.updated_at else None,
+                "is_active": q.is_active,
+            }
+        )
+
+    # Sort questions by order_index
+    formatted_questions.sort(key=lambda x: x["order_index"])
+
+    # Check for existing answer from current user
+    # For exam mode, we store the answer at topic level (question_id will be the first question or 0)
+    existing_answer = None
+    if formatted_questions:
+
+        first_question_id = formatted_questions[0]["id"]
+        answer = answer_service.get_latest_answer(
+            db=db,
+            question_id=first_question_id,
+            respondent_id=current_user.id,
+        )
+        if answer:
+            existing_answer = {
+                "id": answer.id,
+                "question_id": answer.question_id,
+                "question_version": answer.question_version,
+                "respondent_id": answer.respondent_id,
+                "content_type": answer.content_type,
+                "content_data": answer.content_data,
+                "submitted_at": (
+                    answer.submitted_at.isoformat() if answer.submitted_at else None
+                ),
+                "is_latest": answer.is_latest,
+            }
+
+    # Get or create exam session (three-phase: intro, exam, review)
+    duration = extra_data.get("duration", {})
+    intro_duration = duration.get("intro", 5)
+    exam_duration = duration.get("exam", 50)
+    review_duration = duration.get("review", 5)
+
+    if create_session:
+        # Create session explicitly (user clicked "进入考试")
+        session = exam_session_service.get_or_create_session(
+            db=db,
+            topic_id=topic_id,
+            user_id=current_user.id,
+            intro_duration=intro_duration,
+            exam_duration=exam_duration,
+            review_duration=review_duration,
+        )
+        session_status = exam_session_service.get_session_status(session)
+    else:
+        # Check for existing session only
+        session = exam_session_service.get_active_session(
+            db=db, topic_id=topic_id, user_id=current_user.id
+        )
+        if session:
+            session_status = exam_session_service.get_session_status(session)
+        else:
+            # Return "ready" state - no session yet
+            session_status = {
+                "phase": "ready",
+                "started_at": None,
+                "intro_end_at": None,
+                "exam_end_at": None,
+                "review_end_at": None,
+                "remaining_seconds": 0,
+                "is_overtime": False,
+                "submit_count": 0,
+                "selected_question_id": None,
+            }
+
+    # Format topic
+    formatted_topic = {
+        "id": topic.id,
+        "name": topic.name,
+        "creator_id": topic.creator_id,
+        "visibility": topic.visibility,
+        "status": topic.status,
+        "current_version": topic.current_version,
+        "extra_data": extra_data,
+        "created_at": topic.created_at.isoformat() if topic.created_at else None,
+        "updated_at": topic.updated_at.isoformat() if topic.updated_at else None,
+        "is_active": topic.is_active,
+    }
+
+    return {
+        "topic": formatted_topic,
+        "questions": formatted_questions,
+        "userAnswer": existing_answer,
+        "session": session_status,
+    }
+
+
+class ExamSubmitRequest(BaseModel):
+    """Schema for exam submission request."""
+
+    selectedQuestionId: int = Field(..., description="The selected question ID")
+    participantName: str = Field(..., description="Name of the participant")
+    content_data: Dict[str, Any] = Field(
+        ...,
+        description="Exam content data including examMode, attachments, etc.",
+    )
+
+
+@router.post("/topics/{topic_id}/exam/submit")
+def submit_exam(
+    topic_id: int,
+    request: ExamSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Submit an exam answer for a topic (multiple submissions allowed).
+
+    Creates or updates an answer with content_type='mixed' containing exam-specific data.
+    The answer is associated with the selected question.
+    Records submission in exam session for tracking.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    answer_service = get_answer_service()
+    permission_service = get_permission_service()
+    exam_session_service = get_exam_session_service()
+
+    # Get topic
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    # Check permission
+    if not permission_service.can_answer(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to submit answers for this topic",
+        )
+
+    # Check if topic is published
+    if topic.status != TopicStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot submit answer to unpublished topic",
+        )
+
+    # Check if topic has examMode enabled
+    extra_data = topic.extra_data or {}
+    if not extra_data.get("examMode"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This topic is not configured for exam mode",
+        )
+
+    # Get session and validate timing
+    session = exam_session_service.get_or_create_session(
+        db=db, topic_id=topic_id, user_id=current_user.id
+    )
+
+    # Validate submission is allowed (time not expired)
+    try:
+        exam_session_service.validate_submission_allowed(session)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    # Verify the selected question exists and belongs to this topic
+    question = question_service.get(db, request.selectedQuestionId)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    if question.topic_id != topic_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected question does not belong to this topic",
+        )
+
+    if question.status != QuestionStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot submit answer to unpublished question",
+        )
+
+    # Build content data for exam submission
+    content_data = {
+        **request.content_data,
+        "examMode": True,
+        "participantName": request.participantName,
+        "selectedTopicId": topic_id,
+    }
+
+    # Include supplementaryNotesFiles if supplementaryNotes is provided
+    if request.content_data.get("supplementaryNotes"):
+        content_data["supplementaryNotes"] = request.content_data["supplementaryNotes"]
+
+    # Check for existing answer to allow multiple submissions
+    existing_answer = answer_service.get_latest_answer(
+        db=db,
+        question_id=request.selectedQuestionId,
+        respondent_id=current_user.id,
+    )
+
+    if existing_answer:
+        # Update existing answer (merge content data)
+        existing_content = existing_answer.content_data or {}
+        updated_content = {**existing_content, **content_data}
+        existing_answer.content_data = updated_content
+        existing_answer.submitted_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(existing_answer)
+        answer = existing_answer
+    else:
+        # Submit new answer
+        answer = answer_service.submit(
+            db=db,
+            question_id=request.selectedQuestionId,
+            user_id=current_user.id,
+            content_type="mixed",
+            content_data=content_data,
+            auto_create_grading=True,
+        )
+        db.commit()
+
+    # Record submission in session
+    exam_session_service.record_submission(db, session)
+
+    return {
+        "id": answer.id,
+        "question_id": answer.question_id,
+        "question_version": answer.question_version,
+        "respondent_id": answer.respondent_id,
+        "content_type": answer.content_type,
+        "content_data": answer.content_data,
+        "submitted_at": (
+            answer.submitted_at.isoformat() if answer.submitted_at else None
+        ),
+        "is_latest": answer.is_latest,
+        "submit_count": session.submit_count,
+    }
+
+
+class SelectQuestionRequest(BaseModel):
+    """Schema for selecting a question in exam mode."""
+
+    question_id: int = Field(..., description="The selected question ID")
+
+
+@router.post("/topics/{topic_id}/exam/select-question")
+def select_exam_question(
+    topic_id: int,
+    request: SelectQuestionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Record selected question for exam session.
+
+    This allows tracking which question the user has chosen to answer.
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    permission_service = get_permission_service()
+    exam_session_service = get_exam_session_service()
+
+    # Get topic
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    # Check permission
+    if not permission_service.can_answer(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to answer this topic",
+        )
+
+    # Check if topic has examMode enabled
+    extra_data = topic.extra_data or {}
+    if not extra_data.get("examMode"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This topic is not configured for exam mode",
+        )
+
+    # Verify the question exists and belongs to this topic
+    question = question_service.get(db, request.question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    if question.topic_id != topic_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected question does not belong to this topic",
+        )
+
+    # Get or create session and record question selection
+    session = exam_session_service.get_or_create_session(
+        db=db, topic_id=topic_id, user_id=current_user.id
+    )
+    exam_session_service.select_question(db, session, request.question_id)
+
+    return {"success": True, "selected_question_id": request.question_id}
+
+
+class ExamAttachmentsUpdateRequest(BaseModel):
+    """Schema for updating exam attachments metadata."""
+
+    selectedQuestionId: int = Field(..., description="The selected question ID")
+    content_data: Dict[str, Any] = Field(
+        ...,
+        description="Partial content data with attachments to update",
+    )
+
+
+@router.patch("/topics/{topic_id}/exam/attachments")
+def update_exam_attachments(
+    topic_id: int,
+    request: ExamAttachmentsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update exam attachments metadata in real-time.
+
+    This endpoint allows incremental updates to exam answer attachments
+    without creating a new submission. Used for:
+    - Adding/removing file attachments after upload
+    - Updating supplementary notes file reference
+
+    The answer must already exist (created by initial submit).
+    """
+    topic_service = get_topic_service()
+    question_service = get_question_service()
+    answer_service = get_answer_service()
+    permission_service = get_permission_service()
+
+    # Get topic
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    # Check permission
+    if not permission_service.can_answer(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to update answers for this topic",
+        )
+
+    # Check if topic has examMode enabled
+    extra_data = topic.extra_data or {}
+    if not extra_data.get("examMode"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This topic is not configured for exam mode",
+        )
+
+    # Verify the selected question exists and belongs to this topic
+    question = question_service.get(db, request.selectedQuestionId)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    if question.topic_id != topic_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected question does not belong to this topic",
+        )
+
+    # Find existing answer
+    existing_answer = answer_service.get_latest_answer(
+        db=db,
+        question_id=request.selectedQuestionId,
+        respondent_id=current_user.id,
+    )
+
+    if not existing_answer:
+        # Create initial answer if not exists
+        content_data = {
+            **request.content_data,
+            "examMode": True,
+            "selectedTopicId": request.selectedQuestionId,
+        }
+        answer = answer_service.submit(
+            db=db,
+            question_id=request.selectedQuestionId,
+            user_id=current_user.id,
+            content_type="mixed",
+            content_data=content_data,
+            auto_create_grading=False,
+        )
+    else:
+        # Merge existing content_data with new data
+        existing_content = existing_answer.content_data or {}
+        new_content = request.content_data or {}
+
+        # Deep merge attachments if both exist
+        if "attachments" in existing_content and "attachments" in new_content:
+            merged_attachments = {
+                **existing_content["attachments"],
+                **new_content["attachments"],
+            }
+            new_content["attachments"] = merged_attachments
+
+        # Handle supplementaryNotesFiles - use new value if provided, otherwise keep existing
+        if "supplementaryNotesFiles" in new_content:
+            # Use the new value (for delete operations)
+            pass
+        elif "supplementaryNotesFiles" in existing_content:
+            # Keep existing value if not in new content
+            new_content["supplementaryNotesFiles"] = existing_content[
+                "supplementaryNotesFiles"
+            ]
+
+        # Update content_data
+        updated_content = {**existing_content, **new_content}
+        existing_answer.content_data = updated_content
+        db.commit()
+        db.refresh(existing_answer)
+        answer = existing_answer
+
+    return {
+        "id": answer.id,
+        "question_id": answer.question_id,
+        "question_version": answer.question_version,
+        "respondent_id": answer.respondent_id,
+        "content_type": answer.content_type,
+        "content_data": answer.content_data,
+        "submitted_at": (
+            answer.submitted_at.isoformat() if answer.submitted_at else None
+        ),
+        "is_latest": answer.is_latest,
+    }
+
+
+class AdvancePhaseRequest(BaseModel):
+    """Schema for advancing exam phase."""
+
+    target_phase: str = Field(
+        ..., description="Target phase to advance to (exam, review, completed)"
+    )
+
+
+@router.post("/topics/{topic_id}/exam/advance-phase")
+def advance_exam_phase(
+    topic_id: int,
+    request: AdvancePhaseRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Manually advance exam to the next phase.
+
+    Phase transitions:
+    - intro -> exam: User clicks "Start Exam" button
+    - exam -> review: User clicks "End Exam" button or time expires
+    - review -> completed: User clicks "Finish Exam" button or time expires
+
+    This allows explicit user control over phase transitions rather than
+    automatic time-based transitions.
+    """
+    exam_session_service = get_exam_session_service()
+    topic_service = get_topic_service()
+    permission_service = get_permission_service()
+
+    # Get topic
+    topic = topic_service.get(db, topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    # Check permission
+    if not permission_service.can_answer(db, topic, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to participate in this exam",
+        )
+
+    # Get current session
+    session = exam_session_service.get_or_create_session(
+        db=db, topic_id=topic_id, user_id=current_user.id
+    )
+
+    # Advance phase
+    try:
+        updated_session = exam_session_service.advance_phase(
+            db=db, session=session, target_phase=request.target_phase
+        )
+
+        # Get updated status
+        session_status = exam_session_service.get_session_status(updated_session)
+
+        return {
+            "success": True,
+            "previous_phase": session.current_phase,
+            "current_phase": request.target_phase,
+            "session": session_status,
+        }
+    except BusinessException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )

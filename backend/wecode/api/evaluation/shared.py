@@ -50,6 +50,7 @@ class FileType(str, Enum):
     QUESTION_CONTENT = "question_content"
     QUESTION_CRITERIA = "question_criteria"
     ANSWER_ATTACHMENT = "answer_attachment"
+    EXAM_ATTACHMENT = "exam_attachment"
 
 
 class FileUploadResponse(BaseModel):
@@ -163,6 +164,7 @@ async def upload_file(
     file_type: FileType = Form(..., description="Type of file being uploaded"),
     topic_id: int = Form(..., description="Topic ID for the file"),
     question_id: Optional[int] = Form(None, description="Question ID (required for question files)"),
+    slot: Optional[str] = Form(None, description="Slot identifier for exam attachments"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -213,6 +215,14 @@ async def upload_file(
                 detail="You don't have permission to upload answer attachments",
             )
 
+    elif file_type == FileType.EXAM_ATTACHMENT:
+        # Exam attachment requires respondent permission
+        if not permission_service.can_answer(db, topic, current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to upload exam attachments",
+            )
+
     # Read file content
     try:
         file_content = await file.read()
@@ -233,6 +243,7 @@ async def upload_file(
         user_id=current_user.id,
         topic_id=topic_id,
         question_id=question_id,
+        slot=slot,
         filename=filename,
     )
 
@@ -253,6 +264,124 @@ async def upload_file(
     return FileUploadResponse(
         key=uploaded_key,
         filename=filename,
+        file_size=file_size,
+        content_type=content_type,
+    )
+
+
+# ============================================================================
+# Text-to-file upload endpoint (backend proxy mode)
+# ============================================================================
+
+
+class TextUploadRequest(BaseModel):
+    """Request schema for uploading text as a file."""
+
+    content: str = Field(..., description="Text content to upload as file")
+    filename: str = Field(..., description="Filename for the uploaded file")
+    file_type: FileType = Field(..., description="Type of file")
+    topic_id: int = Field(..., description="Topic ID")
+    question_id: Optional[int] = Field(None, description="Question ID")
+    slot: Optional[str] = Field(None, description="Slot identifier for exam attachments")
+
+
+@router.post("/files/upload-text", response_model=FileUploadResponse)
+async def upload_text_as_file(
+    request: TextUploadRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Upload text content as a file through backend proxy.
+
+    This endpoint converts text content to a file and uploads it to S3.
+    Useful for uploading supplementary notes or other text-based content.
+    """
+    topic_service = get_topic_service()
+    permission_service = get_permission_service()
+    storage_service = get_storage_service()
+
+    # Validate topic exists
+    topic = topic_service.get(db, request.topic_id)
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+
+    # Permission check based on file type
+    if request.file_type in (FileType.QUESTION_CONTENT, FileType.QUESTION_CRITERIA):
+        if not permission_service.can_grade(db, topic, current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to upload question files",
+            )
+        if not request.question_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="question_id is required for question files",
+            )
+
+    elif request.file_type == FileType.ANSWER_ATTACHMENT:
+        if not permission_service.can_answer(db, topic, current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to upload answer attachments",
+            )
+
+    elif request.file_type == FileType.EXAM_ATTACHMENT:
+        # Exam attachment requires respondent permission
+        if not permission_service.can_answer(db, topic, current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to upload exam attachments",
+            )
+
+    # Convert text to bytes
+    try:
+        file_content = request.content.encode("utf-8")
+        file_size = len(file_content)
+    except Exception as e:
+        logger.error(f"[Evaluation] Failed to encode text content: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to encode text content",
+        )
+
+    # Determine content type based on filename extension
+    content_type = "text/plain"
+    if request.filename.endswith(".md"):
+        content_type = "text/markdown"
+    elif request.filename.endswith(".json"):
+        content_type = "application/json"
+
+    # Generate storage key
+    key = storage_service.generate_upload_key(
+        file_type=request.file_type.value,
+        user_id=current_user.id,
+        topic_id=request.topic_id,
+        question_id=request.question_id,
+        slot=request.slot,
+        filename=request.filename,
+    )
+
+    # Upload to S3 via backend
+    uploaded_key = storage_service.upload_file(
+        key=key,
+        data=file_content,
+        content_type=content_type,
+        filename=request.filename,
+    )
+
+    if not uploaded_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload file to storage",
+        )
+
+    return FileUploadResponse(
+        key=uploaded_key,
+        filename=request.filename,
         file_size=file_size,
         content_type=content_type,
     )
@@ -284,6 +413,8 @@ def _get_path_patterns() -> dict:
         "answer": re.compile(rf"^{escaped_prefix}/answers/(\d+)/(\d+)/(\d+)/"),
         # {prefix}/reports/{user_id}/{topic_id}/{question_id}/...
         "report": re.compile(rf"^{escaped_prefix}/reports/(\d+)/(\d+)/(\d+)/"),
+        # {prefix}/exam/{user_id}/{topic_id}/{question_id}/{slot}/...
+        "exam": re.compile(rf"^{escaped_prefix}/exam/(\d+)/(\d+)/(\d+)/"),
     }
 
 
@@ -342,6 +473,20 @@ def _verify_download_permission(
         if topic:
             if respondent_id == current_user.id:
                 return True
+            return permission_service.can_grade(db, topic, current_user.id)
+        return False
+
+    # Check exam attachment pattern
+    match = path_patterns["exam"].match(s3_path)
+    if match:
+        user_id = int(match.group(1))
+        topic_id = int(match.group(2))
+        topic = topic_service.get(db, topic_id)
+        if topic:
+            # User can download their own exam attachments
+            if user_id == current_user.id:
+                return True
+            # Graders can download exam attachments
             return permission_service.can_grade(db, topic, current_user.id)
         return False
 

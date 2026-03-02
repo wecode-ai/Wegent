@@ -52,18 +52,58 @@ class PermissionService:
 
         return self.has_permission(db, topic.id, user_id)
 
-    def can_edit_topic(self, topic: EvalTopic, user_id: int) -> bool:
+    def can_edit_topic(self, db: Session, topic: EvalTopic, user_id: int) -> bool:
         """
         Check if user can edit a topic.
 
-        Only the creator can edit a topic.
+        Creator and question_creator can edit a topic.
+
+        Args:
+            db: Database session
+            topic: Topic to check
+            user_id: User ID to check
+
+        Returns:
+            True if user can edit the topic
+        """
+        if topic.creator_id == user_id:
+            return True
+
+        # Question creator can also edit
+        return self.has_permission(db, topic.id, user_id, PermissionRole.QUESTION_CREATOR)
+
+    def can_manage_permissions(self, db: Session, topic: EvalTopic, user_id: int) -> bool:
+        """
+        Check if user can manage topic permissions.
+
+        Creator and question_creator can manage permissions.
+
+        Args:
+            db: Database session
+            topic: Topic to check
+            user_id: User ID to check
+
+        Returns:
+            True if user can manage permissions
+        """
+        if topic.creator_id == user_id:
+            return True
+
+        # Question creator can also manage permissions
+        return self.has_permission(db, topic.id, user_id, PermissionRole.QUESTION_CREATOR)
+
+    def can_delete_topic(self, topic: EvalTopic, user_id: int) -> bool:
+        """
+        Check if user can delete a topic.
+
+        Only the original creator can delete a topic.
 
         Args:
             topic: Topic to check
             user_id: User ID to check
 
         Returns:
-            True if user can edit the topic
+            True if user can delete the topic
         """
         return topic.creator_id == user_id
 
@@ -179,7 +219,14 @@ class PermissionService:
             if role == PermissionRole.RESPONDENT:
                 query = query.filter(
                     EvalPermission.role.in_(
-                        [PermissionRole.RESPONDENT, PermissionRole.GRADER]
+                        [PermissionRole.RESPONDENT, PermissionRole.GRADER, PermissionRole.QUESTION_CREATOR]
+                    )
+                )
+            # Question creator has all permissions
+            elif role == PermissionRole.GRADER:
+                query = query.filter(
+                    EvalPermission.role.in_(
+                        [PermissionRole.GRADER, PermissionRole.QUESTION_CREATOR]
                     )
                 )
             else:
@@ -360,7 +407,7 @@ class PermissionService:
             user_id: User ID
 
         Returns:
-            'creator', 'grader', 'respondent', or None
+            'creator', 'question_creator', 'grader', 'respondent', or None
         """
         if topic.creator_id == user_id:
             return "creator"

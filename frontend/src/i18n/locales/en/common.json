@@ -44,6 +44,12 @@
     "loadMore": "Load More",
     "configure": "Configure"
   },
+  "common": {
+    "yes": "Yes",
+    "no": "No",
+    "optional": "Optional",
+    "required": "Required"
+  },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
   },

@@ -72,7 +72,18 @@
     "instructions": "Exam Instructions",
     "instructions_placeholder": "Enter exam instructions in Markdown format. These will be shown to respondents before they start answering.",
     "instructions_hint": "Supports Markdown formatting. Leave empty to use no instructions for this topic.",
-    "no_instructions": "No instructions configured"
+    "no_instructions": "No instructions configured",
+    "exam_mode": "Exam Mode",
+    "exam_mode_enabled": "This topic will be displayed as an exam with timer and enhanced UI",
+    "exam_mode_disabled": "Standard Q&A mode",
+    "exam_config": "Exam Config",
+    "exam_config_saved": "Exam configuration saved",
+    "config_title": "Topic Configuration",
+    "basic_info": "Basic Info",
+    "exam_settings": "Exam Settings",
+    "duration": "Duration",
+    "qa_duration": "Q&A Duration",
+    "enable_exam_mode_first": "Enable exam mode first"
   },
   "versions": {
     "current": "Current",
@@ -100,6 +111,7 @@
     "criteria": "Grading Criteria",
     "criteria_type": "Criteria Type",
     "criteria_placeholder": "Enter grading criteria (Markdown supported)",
+    "criteria_section": "Grading Criteria",
     "order": "Order",
     "preview": "Preview",
     "markdown_hint": "Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.",
@@ -126,7 +138,7 @@
       "text": "Text",
       "url": "URL",
       "attachment": "Attachment",
-      "mixed": "Mixed"
+      "mixed": "Standard"
     }
   },
   "permissions": {
@@ -148,7 +160,8 @@
     "roles": {
       "creator": "Creator",
       "respondent": "Respondent",
-      "grader": "Grader"
+      "grader": "Grader",
+      "question_creator": "Question Creator"
     },
     "granted_success": "Permission granted successfully",
     "revoked_success": "Permission revoked successfully"
@@ -165,6 +178,8 @@
     "show_text_input_hint": "If you cannot upload files, you can use the text input (not recommended)",
     "hide_text_input": "Hide text input",
     "upload_recommended": "File upload is the recommended submission method",
+    "upload_drag_hint": "Drag & drop files here or click to browse",
+    "upload_format_hint": "Support multiple files upload",
     "confirm_submit_title": "Confirm Submission",
     "confirm_submit_description": "This will overwrite your previous submission. Are you sure you want to continue?",
     "submitted_at": "Submitted At",
@@ -274,6 +289,7 @@
     "view": "View",
     "view_details": "View Details",
     "edit": "Edit",
+    "config": "Configuration",
     "delete": "Delete",
     "refresh": "Refresh",
     "creating": "Creating...",
@@ -296,6 +312,139 @@
     "resubmit": "Resubmit",
     "submit_answer": "Submit Answer"
   },
+  "exam": {
+    "title": "Assessment",
+    "exam_mode": "Exam Mode",
+    "exam_mode_description": "This topic will be conducted as an exam with time limits and an enhanced interface.",
+    "questions_count": "Questions",
+    "no_time_limit": "No limit",
+    "time_limit": "Time Limit",
+    "enter_exam": "Enter Exam",
+    "loading": "Loading...",
+    "config_incomplete": "Exam configuration incomplete",
+    "config_incomplete_hint": "Please configure exam information (duration) first",
+    "waiting_start": "Exam will start soon, please wait...",
+    "start_exam": "Enter Exam",
+    "start_answering": "Start Answering",
+    "end_exam": "End Answering",
+    "leave_exam": "Leave Exam",
+    "exam_ended": "Exam Ended",
+    "submit_count": "Submitted {{count}} times",
+    "progress": {
+      "select_topic": "Select Topic",
+      "upload_materials": "Upload Materials",
+      "fill_notes": "Fill Notes",
+      "confirm_submit": "Confirm Submit"
+    },
+    "participant": {
+      "title": "Participant Info",
+      "name": "Name",
+      "name_placeholder": "Please enter your name",
+      "username": "Username",
+      "required": "Required"
+    },
+    "topic": {
+      "title": "Select Assessment Topic",
+      "select_one": "Choose 1 of 3",
+      "question_number": "Question {{number}}",
+      "requirements": "Requirements",
+      "deliverables": "Deliverables",
+      "bonus_deliverables": "Bonus Deliverables",
+      "criteria": "Grading Criteria"
+    },
+    "upload": {
+      "title": "Submit Materials",
+      "main_report": "Assessment Report / Solution Document",
+      "main_report_hint": "Supports PDF, Word, TXT formats, up to 20 files",
+      "interaction": "Interaction Records",
+      "interaction_hint": "Supports PDF, images, text formats, up to 20 files",
+      "bonus_agent": "Bonus 1: Agent / Workflow",
+      "bonus_agent_hint": "Supports images, PDF, documents, up to 20 files",
+      "bonus_agent_link": "Agent Share Link",
+      "bonus_agent_link_placeholder": "Paste accessible/runnable Agent share link",
+      "bonus_multimodal": "Bonus 2: Multimodal Deliverables",
+      "bonus_multimodal_hint": "Supports PPTX, PDF, images, MP4 formats, up to 20 files",
+      "share_link": "Share Link",
+      "share_link_placeholder": "Paste accessible link",
+      "click_or_drag": "Click to select or drag files here",
+      "required": "Required",
+      "optional": "Optional",
+      "download": "Download",
+      "delete": "Delete"
+    },
+    "bonus": {
+      "title": "Bonus Questions",
+      "optional": "Optional bonus items",
+      "item": "Bonus {{number}}",
+      "deliverables": "Deliverables reference:"
+    },
+    "supplementary": {
+      "title": "Supplementary Notes",
+      "placeholder": "Please enter your supplementary notes here...",
+      "hint_1": "Please supplement your overall approach to completing the answer with AI, and the models and tools used, for example:",
+      "hint_2": "Which models or platforms were used, whether different models or tools were switched at different stages, which steps they were used for, and whether there were other reference sources or auxiliary tools.",
+      "hint_3": "You can also add other information that you think can demonstrate your AI usage ideas and techniques.",
+      "character_count": "{{count}} characters",
+      "uploaded_files": "Uploaded supplementary files:"
+    },
+    "submit": {
+      "title": "Submit Checklist",
+      "check_item": {
+        "topic_selected": "Topic Selected",
+        "name_filled": "Name Filled",
+        "report_uploaded": "Report Uploaded",
+        "notes_filled": "Notes Filled"
+      },
+      "nth_submit": "(Submit {{count}})",
+      "file_limit": "Total attachments per question cannot exceed 20, currently uploaded {{count}}",
+      "submit_button": "Submit Assessment Materials",
+      "resubmit_button": "Submit Again"
+    },
+    "confirm": {
+      "title": "Confirm Submission",
+      "description": "Please confirm the following submission content is correct",
+      "participant_name": "Participant Name",
+      "selected_topic": "Selected Topic",
+      "not_filled": "Not filled",
+      "not_selected": "Not selected",
+      "main_report": "Main Report",
+      "file_count": "{{count}} files",
+      "interaction_record": "Interaction Record",
+      "bonus_1": "Bonus 1",
+      "bonus_2": "Bonus 2",
+      "provided": "Provided",
+      "not_provided": "Not provided",
+      "supplementary_notes": "Supplementary Notes",
+      "character_count": "{{count}} characters",
+      "cancel": "Go Back",
+      "confirm": "Confirm Submit"
+    },
+    "modal": {
+      "end_title": "Confirm End Answering",
+      "end_description": "After ending answering, you will enter the review phase and will no longer be able to modify your answers.",
+      "end_warning": "This action cannot be undone. Please confirm you have completed all answers.",
+      "end_confirm": "Confirm End",
+      "leave_title": "Confirm Leave Exam",
+      "leave_description": "After leaving the exam, the assessment will end and you will no longer be able to view or modify your answers.",
+      "leave_hint": "Please confirm you have completed all checks and are ready to submit.",
+      "leave_confirm": "Confirm Leave",
+      "cancel": "Cancel"
+    },
+    "success": {
+      "title": "Submission Successful",
+      "description": "Assessment materials have been submitted successfully.",
+      "close": "Close"
+    },
+    "exam_method": {
+      "title": "Assessment Method",
+      "dimensions": "Evaluation Dimensions",
+      "bonus_title": "Bonus Items Description"
+    },
+    "phase": {
+      "qa_title": "Current Phase: Pre-exam Q&A",
+      "qa_description": "Please read the exam instructions carefully and click start when ready"
+    }
+  },
   "common": {
     "all": "All",
     "all_status": "All Status",
@@ -314,6 +463,8 @@
     "download_failed": "Failed to download",
     "permission_denied": "Permission denied",
     "not_found": "Not found",
-    "question_not_found": "Question not found"
+    "question_not_found": "Question not found",
+    "login_required": "Login Required",
+    "please_login": "Please login before accessing this page"
   }
 }

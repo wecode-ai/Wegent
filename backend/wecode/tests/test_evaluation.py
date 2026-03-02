@@ -210,13 +210,61 @@ class TestPermissionService:
         result = permission_service.can_view_topic(mock_db, mock_topic, 1)
         assert result is True
 
-    def test_can_edit_topic_creator_only(self, permission_service):
-        """Test that only creator can edit a topic."""
+    def test_can_edit_topic_creator_only(self, permission_service, mock_db):
+        """Test that creator can edit a topic."""
         mock_topic = MagicMock()
         mock_topic.creator_id = 1
+        mock_topic.id = 1
 
-        assert permission_service.can_edit_topic(mock_topic, 1) is True
-        assert permission_service.can_edit_topic(mock_topic, 2) is False
+        # Creator can edit
+        assert permission_service.can_edit_topic(mock_db, mock_topic, 1) is True
+
+    def test_can_edit_topic_question_creator(self, permission_service, mock_db):
+        """Test that question_creator can edit a topic."""
+        mock_topic = MagicMock()
+        mock_topic.creator_id = 1
+        mock_topic.id = 1
+
+        # Setup mock chain: db.query(EvalPermission).filter(...).filter(...).first()
+        mock_permission = MagicMock()
+        mock_permission.role = PermissionRole.QUESTION_CREATOR
+
+        mock_filter2 = MagicMock()
+        mock_filter2.first.return_value = mock_permission
+
+        mock_filter1 = MagicMock()
+        mock_filter1.filter.return_value = mock_filter2
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_filter1
+
+        mock_db.query.return_value = mock_query
+
+        # Question creator can edit
+        result = permission_service.can_edit_topic(mock_db, mock_topic, 2)
+        assert result is True
+
+    def test_can_edit_topic_non_creator_no_permission(self, permission_service, mock_db):
+        """Test that non-creator without permission cannot edit a topic."""
+        mock_topic = MagicMock()
+        mock_topic.creator_id = 1
+        mock_topic.id = 1
+
+        # Setup mock chain to return None (no permission found)
+        mock_filter2 = MagicMock()
+        mock_filter2.first.return_value = None
+
+        mock_filter1 = MagicMock()
+        mock_filter1.filter.return_value = mock_filter2
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_filter1
+
+        mock_db.query.return_value = mock_query
+
+        # Non-creator without question_creator permission cannot edit
+        result = permission_service.can_edit_topic(mock_db, mock_topic, 2)
+        assert result is False
 
     def test_grant_permission(self, permission_service, mock_db):
         """Test granting permission to a user."""

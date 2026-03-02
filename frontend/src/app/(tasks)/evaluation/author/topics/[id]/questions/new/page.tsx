@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import { QuestionFileUpload } from '@wecode/components/evaluation'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import { createAuthorQuestion, getAuthorTopic } from '@wecode/api/evaluation-author'
 import { ContentType, type Topic, type EvalAttachment } from '@wecode/types/evaluation'
@@ -42,6 +42,10 @@ function NewQuestionContent() {
   const [criteriaText, setCriteriaText] = useState('')
   const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
   const [showCriteriaPreview, setShowCriteriaPreview] = useState(false)
+  // Instructions - support text and attachments
+  const [instructionsText, setInstructionsText] = useState('')
+  const [instructionsAttachments, setInstructionsAttachments] = useState<EvalAttachment[]>([])
+  const [showInstructionsPreview, setShowInstructionsPreview] = useState(false)
   const [activeTab, setActiveTab] = useState('content')
 
   const loadTopic = useCallback(async () => {
@@ -98,6 +102,12 @@ function NewQuestionContent() {
       }
       if (contentAttachments.length > 0) {
         contentData.attachments = contentAttachments
+      }
+      if (instructionsText.trim()) {
+        contentData.instructions = instructionsText.trim()
+      }
+      if (instructionsAttachments.length > 0) {
+        contentData.instructionsAttachments = instructionsAttachments
       }
 
       // Build criteria_data - use MIXED type if has both text and attachments
@@ -175,16 +185,18 @@ function NewQuestionContent() {
                 placeholder={t('questions.title_placeholder', 'Enter question title')}
                 maxLength={500}
               />
-              <p className="text-xs text-text-muted text-right">
-                {title.length}/500
-              </p>
+              <p className="text-xs text-text-muted text-right">{title.length}/500</p>
             </div>
 
             {/* Tabs for editing */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="content">{t('questions.content')}</TabsTrigger>
                 <TabsTrigger value="criteria">{t('questions.criteria')}</TabsTrigger>
+                <TabsTrigger value="instructions">{t('questions.instructions')}</TabsTrigger>
+                <TabsTrigger value="attachments">
+                  {t('questions.attachments', 'Attachments')}
+                </TabsTrigger>
               </TabsList>
 
               {/* Content Tab */}
@@ -233,21 +245,11 @@ function NewQuestionContent() {
                     />
                   )}
                   <p className="text-xs text-text-muted">
-                    {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
+                    {t(
+                      'questions.markdown_hint',
+                      'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.'
+                    )}
                   </p>
-                </div>
-
-                {/* Content Attachments */}
-                <div className="space-y-2">
-                  <Label>{t('questions.content_attachments')}</Label>
-                  <EvaluationFileUpload
-                    topicId={topicId}
-                    questionId={undefined} // Will be set after creation
-                    fileType="question_content"
-                    attachments={contentAttachments}
-                    onChange={setContentAttachments}
-                    maxFiles={10}
-                  />
                 </div>
               </TabsContent>
 
@@ -298,19 +300,70 @@ function NewQuestionContent() {
                   )}
                   <p className="text-xs text-text-muted">{t('questions.criteria_placeholder')}</p>
                 </div>
+              </TabsContent>
 
-                {/* Criteria Attachments */}
+              {/* Instructions Tab */}
+              <TabsContent value="instructions" className="space-y-4">
                 <div className="space-y-2">
-                  <Label>{t('questions.criteria_attachments')}</Label>
-                  <EvaluationFileUpload
-                    topicId={topicId}
-                    questionId={undefined} // Will be set after creation
-                    fileType="question_criteria"
-                    attachments={criteriaAttachments}
-                    onChange={setCriteriaAttachments}
-                    maxFiles={10}
-                  />
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="instructionsText">
+                      {t('questions.instructions')} (Markdown)
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowInstructionsPreview(!showInstructionsPreview)}
+                    >
+                      {showInstructionsPreview ? (
+                        <>
+                          <EyeOff className="mr-1 h-4 w-4" />
+                          {t('actions.edit')}
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="mr-1 h-4 w-4" />
+                          {t('questions.preview', 'Preview')}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  {showInstructionsPreview ? (
+                    <div className="min-h-[150px] rounded-lg border border-border bg-surface p-4">
+                      {instructionsText.trim() ? (
+                        <EnhancedMarkdown
+                          source={instructionsText}
+                          theme={theme === 'dark' ? 'dark' : 'light'}
+                        />
+                      ) : (
+                        <p className="text-text-muted">{t('topics.no_instructions')}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <Textarea
+                      id="instructionsText"
+                      value={instructionsText}
+                      onChange={e => setInstructionsText(e.target.value)}
+                      placeholder={t('questions.instructions_placeholder')}
+                      rows={6}
+                      className="font-mono text-sm"
+                    />
+                  )}
+                  <p className="text-xs text-text-muted">{t('questions.instructions_hint')}</p>
                 </div>
+              </TabsContent>
+
+              {/* Attachments Tab */}
+              <TabsContent value="attachments" className="space-y-4">
+                <QuestionFileUpload
+                  topicId={topicId}
+                  contentAttachments={contentAttachments}
+                  criteriaAttachments={criteriaAttachments}
+                  instructionsAttachments={instructionsAttachments}
+                  onContentAttachmentsChange={setContentAttachments}
+                  onCriteriaAttachmentsChange={setCriteriaAttachments}
+                  onInstructionsAttachmentsChange={setInstructionsAttachments}
+                />
               </TabsContent>
             </Tabs>
 
