@@ -65,6 +65,7 @@ import {
 } from '@wecode/api/evaluation-grader'
 import { GradingTaskStatus, type GradingTask, getStatusLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDateTime } from '@/utils/dateTime'
 
 function GraderTasksContent() {
   const router = useRouter()
@@ -474,6 +475,7 @@ function GraderTasksContent() {
                   <TableHead>{t('questions.question_title')}</TableHead>
                   <TableHead>{t('permissions.user')}</TableHead>
                   <TableHead>{t('common.status')}</TableHead>
+                  <TableHead>{t('answers.submitted_at')}</TableHead>
                   <TableHead className="text-right">{t('actions.view')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -498,6 +500,11 @@ function GraderTasksContent() {
                         {getStatusIcon(task.status)}
                         {getStatusLabel(task.status, 'grading', t)}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {task.submitted_at
+                        ? formatDateTime(new Date(task.submitted_at).getTime())
+                        : '-'}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">

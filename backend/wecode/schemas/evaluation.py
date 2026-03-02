@@ -373,6 +373,11 @@ class GradingTaskInDB(BaseModel):
     topic_id: Optional[int] = Field(None, description="Topic ID")
     topic_name: Optional[str] = Field(None, description="Topic name")
 
+    # Answer submission time
+    submitted_at: Optional[datetime] = Field(
+        None, description="When the answer was submitted by the respondent"
+    )
+
     class Config:
         from_attributes = True
 

@@ -10,6 +10,7 @@ grading tasks, view answers, and publish reports.
 """
 
 import logging
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -187,6 +188,7 @@ def _convert_task_to_schema(
     respondent_name: Optional[str] = None,
     topic_id: Optional[int] = None,
     topic_name: Optional[str] = None,
+    submitted_at: Optional[datetime] = None,
 ) -> GradingTaskInDB:
     """Convert a grading task model to schema."""
     return GradingTaskInDB(
@@ -209,6 +211,7 @@ def _convert_task_to_schema(
         respondent_name=respondent_name,
         topic_id=topic_id,
         topic_name=topic_name,
+        submitted_at=submitted_at,
     )
 
 
@@ -615,58 +618,49 @@ def list_grader_tasks(
         .scalar_subquery()
     )
 
-    # Build query
-    query = db.query(EvalGradingTask).filter(
-        EvalGradingTask.question_id.in_(question_ids_query)
+    # Build base query with joins to fetch all related data in one query
+    base_query = (
+        db.query(
+            EvalGradingTask,
+            EvalQuestion.title.label("question_title"),
+            EvalQuestion.topic_id.label("topic_id"),
+            EvalTopic.name.label("topic_name"),
+            User.user_name.label("respondent_name"),
+            EvalAnswer.submitted_at.label("submitted_at"),
+        )
+        .join(EvalQuestion, EvalGradingTask.question_id == EvalQuestion.id)
+        .join(EvalTopic, EvalQuestion.topic_id == EvalTopic.id)
+        .outerjoin(User, EvalGradingTask.respondent_id == User.id)
+        .outerjoin(EvalAnswer, EvalGradingTask.answer_id == EvalAnswer.id)
+        .filter(EvalGradingTask.question_id.in_(question_ids_query))
     )
 
     if status_filter is not None:
-        query = query.filter(EvalGradingTask.status == status_filter)
+        base_query = base_query.filter(EvalGradingTask.status == status_filter)
 
-    total = query.count()
-    tasks = (
-        query.order_by(EvalGradingTask.created_at.desc())
+    # Get total count
+    total = base_query.count()
+
+    # Get paginated results
+    results = (
+        base_query.order_by(EvalGradingTask.created_at.desc())
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
     )
 
-    # Get question titles, topic info, and respondent names
-    question_ids = list(set(t.question_id for t in tasks))
-    respondent_ids = list(set(t.respondent_id for t in tasks))
-
-    questions_map = {}
-    question_topic_map = {}
-    if question_ids:
-        questions = (
-            db.query(EvalQuestion).filter(EvalQuestion.id.in_(question_ids)).all()
-        )
-        questions_map = {q.id: q.title for q in questions}
-        question_topic_map = {q.id: q.topic_id for q in questions}
-
-    # Get topic names
-    topic_ids = list(set(question_topic_map.values()))
-    topics_map = {}
-    if topic_ids:
-        topics = db.query(EvalTopic).filter(EvalTopic.id.in_(topic_ids)).all()
-        topics_map = {t.id: t.name for t in topics}
-
-    users_map = {}
-    if respondent_ids:
-        users = db.query(User).filter(User.id.in_(respondent_ids)).all()
-        users_map = {u.id: u.user_name for u in users}
-
     return GradingTaskListResponse(
         total=total,
         items=[
             _convert_task_to_schema(
-                t,
-                question_title=questions_map.get(t.question_id),
-                respondent_name=users_map.get(t.respondent_id),
-                topic_id=question_topic_map.get(t.question_id),
-                topic_name=topics_map.get(question_topic_map.get(t.question_id, 0)),
+                task,
+                question_title=question_title,
+                respondent_name=respondent_name,
+                topic_id=topic_id,
+                topic_name=topic_name,
+                submitted_at=submitted_at,
             )
-            for t in tasks
+            for task, question_title, topic_id, topic_name, respondent_name, submitted_at in results
         ],
     )
 
@@ -714,12 +708,17 @@ def get_grader_task(
     respondent = db.query(User).filter(User.id == task.respondent_id).first()
     respondent_name = respondent.user_name if respondent else None
 
+    # Get answer submission time
+    answer = db.query(EvalAnswer).filter(EvalAnswer.id == task.answer_id).first()
+    submitted_at = answer.submitted_at if answer else None
+
     return _convert_task_to_schema(
         task,
         question_title=question.title,
         respondent_name=respondent_name,
         topic_id=topic.id,
         topic_name=topic.name,
+        submitted_at=submitted_at,
     )
 
 
@@ -1233,7 +1232,9 @@ def download_report_file(
             attachment = report_data["final_report"].get("attachment")
             if attachment:
                 filename = attachment.get("filename", "final_report")
-                content_type = attachment.get("content_type", "application/octet-stream")
+                content_type = attachment.get(
+                    "content_type", "application/octet-stream"
+                )
             else:
                 filename = "final_report.md"
         elif report_data.get("human_report", {}).get("s3_path"):
@@ -1268,7 +1269,10 @@ def download_report_file(
         )
 
     # Use stored content type if available
-    if file_info.get("content_type") and file_info["content_type"] != "application/octet-stream":
+    if (
+        file_info.get("content_type")
+        and file_info["content_type"] != "application/octet-stream"
+    ):
         content_type = file_info["content_type"]
 
     # RFC 5987 encoding for non-ASCII filenames
@@ -1656,7 +1660,9 @@ def get_grader_question(
     criteria_data = criteria.get("data", {}) if criteria else {}
 
     # Get content data without criteria
-    content_data = {k: v for k, v in (question.content_data or {}).items() if k != "_criteria"}
+    content_data = {
+        k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
+    }
 
     return QuestionInDB(
         id=question.id,

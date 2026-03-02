@@ -67,6 +67,7 @@ import {
   getStatusLabel,
 } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDateTime } from '@/utils/dateTime'
 
 function TopicGradingContent() {
   const router = useRouter()
@@ -505,6 +506,7 @@ function TopicGradingContent() {
                   <TableHead>{t('questions.question_title')}</TableHead>
                   <TableHead>{t('permissions.user')}</TableHead>
                   <TableHead>{t('common.status')}</TableHead>
+                  <TableHead>{t('answers.submitted_at')}</TableHead>
                   <TableHead className="text-right">{t('actions.view')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -523,6 +525,11 @@ function TopicGradingContent() {
                       <Badge variant={getStatusBadgeVariant(task.status)}>
                         {getStatusLabel(task.status, 'grading', t)}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {task.submitted_at
+                        ? formatDateTime(new Date(task.submitted_at).getTime())
+                        : '-'}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -622,8 +629,7 @@ function TopicGradingContent() {
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data &&
-              Object.keys(selectedTask.report_data).length > 0 ? (
+            ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
               <div className="rounded-lg bg-surface p-4">
                 <EnhancedMarkdown
                   source={
