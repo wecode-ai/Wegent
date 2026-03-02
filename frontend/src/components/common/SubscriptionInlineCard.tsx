@@ -196,7 +196,11 @@ export const SubscriptionInlineCard = memo(function SubscriptionInlineCard({
           {t('edit')}
         </Button>
         <Button variant="ghost" size="sm" asChild>
-          <a href={`/subscriptions/${subscriptionId}`} target="_blank" rel="noopener noreferrer">
+          <a
+            href={`/feed/subscriptions?edit=${subscriptionId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             <ExternalLink className="mr-1 h-3 w-3" />
             {t('feed.view_details')}
           </a>

@@ -137,7 +137,9 @@ class CreateSubscriptionTool(BaseTool):
         "3. AI: Show preview table to user\n"
         "4. AI: Ask for confirmation\n"
         "5. User: '执行' / '确认' / '是的'\n"
-        "6. AI: Call create_subscription with preview_id from preview_subscription\n\n"
+        "6. AI: Call create_subscription with preview_id from preview_subscription\n"
+        "7. AI: Include the 'message' field from the tool result EXACTLY as-is in your response "
+        "(it contains a subscription:// link that the frontend renders as an interactive card)\n\n"
         "DO NOT call this tool directly without preview and confirmation."
     )
     args_schema: type[BaseModel] = CreateSubscriptionInput
@@ -646,7 +648,7 @@ class CreateSubscriptionTool(BaseTool):
             "当前状态：默认禁用。\n"
             "- 点击开关启用订阅\n"
             "- 点击「编辑」修改执行时间\n"
-            "- 点击「查看详情」进入完整管理页面"
+            "- 点击「查看详情」进入订阅编辑页"
         )
 
         if next_time_str:
@@ -665,8 +667,15 @@ class CreateSubscriptionTool(BaseTool):
                     "preserve_history": preserve_history,
                     "enabled": False,
                 },
+                "instruction": (
+                    "IMPORTANT: You MUST include the 'message' field content "
+                    "EXACTLY as-is in your response to the user. "
+                    "The [📋 订阅卡片](subscription://...) link is a special protocol "
+                    "that the frontend renders as an interactive card. "
+                    "Do NOT omit, summarize, or modify it."
+                ),
                 "message": message,
-                "management_url": f"/subscriptions/{subscription_id}",
+                "management_url": f"/feed/subscriptions?edit={subscription_id}",
             },
             ensure_ascii=False,
         )

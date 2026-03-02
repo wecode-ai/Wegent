@@ -554,7 +554,7 @@ class TestCreateSubscriptionToolSuccessResponse:
 
         # Assert
         result = json.loads(response)
-        assert result["management_url"] == "/subscriptions/789"
+        assert result["management_url"] == "/feed/subscriptions?edit=789"
 
 
 class TestCreateSubscriptionToolAsyncExecution:
