@@ -250,6 +250,7 @@ export interface GradingTask {
   question_title?: string
   topic_id?: number
   topic_name?: string
+  submitted_at?: string
 }
 
 export interface GradingTaskExecuteRequest {
