@@ -80,8 +80,21 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
                 query = query.filter(Subtask.id.notin_(exclude_subtask_ids))
             subtasks = query.order_by(Subtask.message_id.asc()).all()
 
+            # Debug: show basic history snapshot for follow-up detection
+            # Note: keep logs minimal and avoid leaking user content.
+            logger.info(
+                "[ImageIntentAnalyzer] History loaded: task_id=%s, total_subtasks=%d, exclude_ids=%s",
+                task_id,
+                len(subtasks),
+                exclude_subtask_ids or [],
+            )
+
             if len(subtasks) < 2:
                 # Not enough history - this is the first message
+                logger.info(
+                    "[ImageIntentAnalyzer] Not enough history for follow-up: task_id=%s",
+                    task_id,
+                )
                 return ImageIntentResult(
                     merged_prompt=current_prompt,
                     should_use_image=False,
@@ -99,26 +112,89 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
                     break
 
             if not prev_user or not prev_ai:
+                logger.info(
+                    "[ImageIntentAnalyzer] Cannot find (prev_user, prev_ai) pair: task_id=%s, prev_user=%s, prev_ai=%s",
+                    task_id,
+                    getattr(prev_user, "id", None),
+                    getattr(prev_ai, "id", None),
+                )
                 return ImageIntentResult(
                     merged_prompt=current_prompt,
                     should_use_image=False,
                     is_followup=False,
                 )
 
+            logger.info(
+                "[ImageIntentAnalyzer] Selected prev pair: task_id=%s, prev_user_id=%s(msg_id=%s), prev_ai_id=%s(msg_id=%s)",
+                task_id,
+                prev_user.id,
+                getattr(prev_user, "message_id", None),
+                prev_ai.id,
+                getattr(prev_ai, "message_id", None),
+            )
+
             prev_prompt = prev_user.prompt or ""
             prev_result = prev_ai.result or {}
+
+            # Debug: summarize previous AI result blocks
+            try:
+                blocks = (
+                    prev_result.get("blocks", [])
+                    if isinstance(prev_result, dict)
+                    else []
+                )
+                block_types = []
+                for b in blocks[:10]:
+                    if isinstance(b, dict):
+                        block_types.append(b.get("type"))
+                logger.info(
+                    "[ImageIntentAnalyzer] Prev AI result summary: task_id=%s, prev_ai_id=%s, blocks_count=%d, block_types=%s",
+                    task_id,
+                    prev_ai.id,
+                    len(blocks),
+                    block_types,
+                )
+            except Exception as e:
+                logger.debug(
+                    "[ImageIntentAnalyzer] Failed to summarize prev_ai.result: task_id=%s, err=%s",
+                    task_id,
+                    e,
+                )
 
             # Check if previous AI result contains image attachment IDs
             reference_image_url = self._extract_reference_image_url(prev_result)
             has_image = reference_image_url is not None
 
+            if has_image and reference_image_url:
+                safe_preview = (
+                    "data_url"
+                    if reference_image_url.startswith("data:")
+                    else reference_image_url[:120]
+                )
+                logger.info(
+                    "[ImageIntentAnalyzer] Resolved reference image for task=%s: %s",
+                    task_id,
+                    safe_preview,
+                )
+
             # No previous image result means this is a brand-new generation
             if not has_image:
+                logger.info(
+                    "[ImageIntentAnalyzer] No usable previous image found: task_id=%s, prev_ai_id=%s (treat as non-followup)",
+                    task_id,
+                    prev_ai.id,
+                )
                 return ImageIntentResult(
                     merged_prompt=current_prompt,
                     should_use_image=False,
                     is_followup=False,
                 )
+
+            logger.info(
+                "[ImageIntentAnalyzer] has_image=true, proceed intent analysis: task_id=%s, prev_ai_id=%s",
+                task_id,
+                prev_ai.id,
+            )
 
             # This is a follow-up (previous turn had an image result)
             # If no secondary model is configured, use simple merge with image
@@ -134,11 +210,22 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
                 )
 
             # Use secondary LLM for intelligent intent analysis
+            logger.info(
+                "[ImageIntentAnalyzer] Calling secondary LLM for intent: task_id=%s, has_image=%s",
+                task_id,
+                has_image,
+            )
             intent = await self._analyze_with_llm(
                 prev_prompt=prev_prompt,
                 current_prompt=current_prompt,
                 has_image=has_image,
                 model_config=secondary_model_config,
+            )
+            logger.info(
+                "[ImageIntentAnalyzer] Secondary LLM result: task_id=%s, should_use_image=%s, merged_prompt_len=%d",
+                task_id,
+                intent.should_use_image,
+                len(intent.merged_prompt or ""),
             )
 
             if intent.should_use_image and has_image:
@@ -151,46 +238,117 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
             db.close()
 
     def _extract_reference_image_url(self, prev_result: dict) -> Optional[str]:
-        """Extract a usable image URL from the previous AI subtask result.
+        """Extract a usable image reference from the previous assistant result.
 
-        Looks for image_attachment_ids inside blocks, then resolves the URL
-        via context_service.
+        Priority:
+        1) Prefer data URL built from stored `image_base64` in SubtaskContext.
+           This is the most compatible format for Seedream (avoids external URL fetch).
+        2) Fallback to relative download URL ("/api/attachments/{id}/download").
+        3) Fallback to `image_urls[0]` in the message block.
 
         Args:
             prev_result: result dict from previous assistant subtask
 
         Returns:
-            Image URL string or None
+            Image reference string (data URL or URL) or None.
         """
         from app.db.session import SessionLocal
         from app.services.context.context_service import context_service
 
         blocks = prev_result.get("blocks", [])
+        if not isinstance(blocks, list):
+            logger.debug(
+                "[ImageIntentAnalyzer] prev_result.blocks is not a list: type=%s",
+                type(blocks),
+            )
+            return None
+
+        image_blocks_found = 0
         for block in blocks:
-            if block.get("type") == "image":
-                attachment_ids = block.get("image_attachment_ids", [])
-                if attachment_ids:
-                    attachment_id = attachment_ids[0]
-                    db = SessionLocal()
-                    try:
-                        context = context_service.get_context_optional(
-                            db=db, context_id=attachment_id
-                        )
-                        if context and context.status == "ready":
-                            return context_service.build_attachment_url(attachment_id)
-                    except Exception as e:
-                        logger.warning(
-                            f"[ImageIntentAnalyzer] Failed to build attachment URL "
-                            f"for id={attachment_id}: {e}"
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "image":
+                continue
+
+            image_blocks_found += 1
+
+            attachment_ids = block.get("image_attachment_ids", [])
+            if attachment_ids:
+                attachment_id = attachment_ids[0]
+                db = SessionLocal()
+                try:
+                    context = context_service.get_context_optional(
+                        db=db, context_id=attachment_id
+                    )
+                    if not context:
+                        logger.info(
+                            "[ImageIntentAnalyzer] Attachment context not found: id=%s",
+                            attachment_id,
                         )
                         continue
-                    finally:
-                        db.close()
 
-                # Fallback: try image_urls list from block
-                image_urls = block.get("image_urls", [])
-                if image_urls:
-                    return image_urls[0]
+                    logger.info(
+                        "[ImageIntentAnalyzer] Attachment context loaded: id=%s, status=%s, mime_type=%s, has_image_base64=%s",
+                        attachment_id,
+                        getattr(context, "status", None),
+                        getattr(context, "mime_type", None),
+                        bool(getattr(context, "image_base64", None)),
+                    )
+
+                    if context.status == "ready":
+                        # Prefer embedding image as data URL.
+                        # NOTE: Do NOT log full base64 string.
+                        if getattr(context, "image_base64", None) and getattr(
+                            context, "mime_type", None
+                        ):
+                            return f"data:{context.mime_type};base64,{context.image_base64}"
+
+                        # Fallback 1: Use stored external URL if available (e.g., TOS signed URL).
+                        # This is typically more compatible for third-party providers than a relative backend URL.
+                        type_data = getattr(context, "type_data", None) or {}
+                        if isinstance(type_data, dict):
+                            image_meta = type_data.get("image_metadata") or {}
+                            if isinstance(image_meta, dict):
+                                image_url = image_meta.get("image_url")
+                                if isinstance(image_url, str) and image_url.startswith(
+                                    ("http://", "https://")
+                                ):
+                                    logger.info(
+                                        "[ImageIntentAnalyzer] Using image_metadata.image_url as reference: %s",
+                                        image_url[:120],
+                                    )
+                                    return image_url
+
+                        # Fallback 2: relative URL (caller may need to make it absolute).
+                        return context_service.build_attachment_url(attachment_id)
+
+                    logger.info(
+                        "[ImageIntentAnalyzer] Attachment context not ready for reference: id=%s, status=%s",
+                        attachment_id,
+                        getattr(context, "status", None),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[ImageIntentAnalyzer] Failed to resolve reference image for id=%s: %s",
+                        attachment_id,
+                        e,
+                    )
+                finally:
+                    db.close()
+
+            # Fallback: try image_urls list from block
+            image_urls = block.get("image_urls", [])
+            if image_urls:
+                return image_urls[0]
+
+        if image_blocks_found == 0:
+            logger.info(
+                "[ImageIntentAnalyzer] No image blocks found in prev_result.blocks"
+            )
+        else:
+            logger.info(
+                "[ImageIntentAnalyzer] Found image blocks but no usable reference image"
+            )
 
         return None
 
