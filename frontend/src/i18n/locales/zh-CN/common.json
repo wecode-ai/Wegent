@@ -44,6 +44,12 @@
     "loadMore": "加载更多",
     "configure": "配置"
   },
+  "common": {
+    "yes": "是",
+    "no": "否",
+    "optional": "可选",
+    "required": "必填"
+  },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"
   },

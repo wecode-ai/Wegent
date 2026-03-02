@@ -214,6 +214,7 @@ function PermissionsContent() {
                   <SelectContent>
                     <SelectItem value="respondent">{t('permissions.roles.respondent')}</SelectItem>
                     <SelectItem value="grader">{t('permissions.roles.grader')}</SelectItem>
+                    <SelectItem value="question_creator">{t('permissions.roles.question_creator')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -272,7 +273,10 @@ function PermissionsContent() {
                     <TableCell>
                       <Badge
                         variant={
-                          permission.role === PermissionRole.GRADER ? 'default' : 'secondary'
+                          permission.role === PermissionRole.GRADER ||
+                          permission.role === PermissionRole.QUESTION_CREATOR
+                            ? 'default'
+                            : 'secondary'
                         }
                       >
                         {t(`permissions.roles.${permission.role}`) || getRoleLabel(permission.role)}

@@ -29,6 +29,7 @@ export const TopicVisibility = {
 export const PermissionRole = {
   RESPONDENT: 'respondent',
   GRADER: 'grader',
+  QUESTION_CREATOR: 'question_creator',
 } as const
 
 export const ContentType = {
@@ -87,6 +88,7 @@ export interface TopicUpdate {
   instructions?: string
   visibility?: string
   grading_team_id?: number
+  extra_data?: Record<string, unknown>
 }
 
 export interface TopicVersion {
@@ -341,6 +343,8 @@ export function getRoleLabel(role: string): string {
       return 'Respondent'
     case PermissionRole.GRADER:
       return 'Grader'
+    case PermissionRole.QUESTION_CREATOR:
+      return 'Question Creator'
     case 'creator':
       return 'Creator'
     default:

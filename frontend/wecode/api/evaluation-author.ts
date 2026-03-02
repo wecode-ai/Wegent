@@ -369,3 +369,66 @@ export async function listAuthorGraders(
     getAuthorUrl(`/topics/${topicId}/graders?${searchParams.toString()}`)
   )
 }
+
+// ============================================================================
+// Exam Session API (Author)
+// ============================================================================
+
+export interface ExamSession {
+  id?: number
+  topic_id?: number
+  user_id: number
+  user_name?: string
+  user_email?: string
+  current_phase: 'intro' | 'exam' | 'review' | 'completed'
+  is_active?: number
+  started_at: string
+  intro_end_at?: string
+  exam_end_at?: string
+  review_end_at?: string
+  remaining_seconds?: number
+  submit_count: number
+  selected_question_id: number | null
+  created_at?: string
+  updated_at?: string
+  // Backend may return these fields
+  phase?: 'intro' | 'exam' | 'review' | 'completed'
+  exam_duration_minutes?: number
+  qa_duration_minutes?: number
+}
+
+export interface ExamSessionListResponse {
+  total?: number
+  items?: ExamSession[]
+  sessions?: ExamSession[] // Backend returns {sessions: []}
+}
+
+export async function getTopicExamSessions(
+  topicId: number,
+  params: {
+    page?: number
+    limit?: number
+    phase?: string
+  }
+): Promise<ExamSessionListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.phase) searchParams.set('phase', params.phase)
+
+  return fetchJson<ExamSessionListResponse>(
+    getAuthorUrl(`/topics/${topicId}/exam-sessions?${searchParams.toString()}`)
+  )
+}
+
+export async function resetUserExamSession(
+  topicId: number,
+  userId: number
+): Promise<{ success: boolean; message: string }> {
+  return fetchJson<{ success: boolean; message: string }>(
+    getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/reset`),
+    {
+      method: 'POST',
+    }
+  )
+}

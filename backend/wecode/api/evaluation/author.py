@@ -42,6 +42,7 @@ from wecode.schemas.evaluation import (
     TopicVersionListResponse,
 )
 from wecode.service.evaluation import (
+    get_exam_session_service,
     get_permission_service,
     get_question_service,
     get_topic_service,
@@ -51,9 +52,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _verify_topic_ownership(topic, user_id: int) -> None:
+def _verify_topic_ownership(db: Session, topic, user_id: int) -> None:
     """
-    Verify that the user is the creator of the topic.
+    Verify that the user can edit/manage the topic.
+
+    Args:
+        db: Database session
+        topic: Topic to verify
+        user_id: User ID to check
+
+    Raises:
+        HTTPException: If user is not authorized
+    """
+    permission_service = get_permission_service()
+    if not permission_service.can_edit_topic(db, topic, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the topic creator or question creator can perform this operation",
+        )
+
+
+def _verify_topic_delete_permission(topic, user_id: int) -> None:
+    """
+    Verify that the user is the original creator of the topic (for delete operations).
 
     Args:
         topic: Topic to verify
@@ -63,10 +84,10 @@ def _verify_topic_ownership(topic, user_id: int) -> None:
         HTTPException: If user is not the topic creator
     """
     permission_service = get_permission_service()
-    if not permission_service.can_edit_topic(topic, user_id):
+    if not permission_service.can_delete_topic(topic, user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the topic creator can perform this operation",
+            detail="Only the topic creator can delete this topic",
         )
 
 
@@ -235,7 +256,7 @@ def get_topic(
     Only the topic creator can access this endpoint.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     return _topic_to_response(topic)
 
@@ -253,7 +274,7 @@ def update_topic(
     Only the topic creator can update.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     topic = topic_service.update(
@@ -264,6 +285,7 @@ def update_topic(
         visibility=topic_update.visibility,
         grading_team_id=topic_update.grading_team_id,
         instructions=topic_update.instructions,
+        extra_data=topic_update.extra_data,
     )
     db.commit()
 
@@ -282,7 +304,7 @@ def delete_topic(
     Only the topic creator can delete.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_delete_permission(topic, current_user.id)
 
     topic_service = get_topic_service()
     topic_service.delete(db, topic)
@@ -299,10 +321,10 @@ def publish_topic(
     Publish a topic.
 
     Creates a new version with question snapshots.
-    Only the topic creator can publish.
+    Only the topic creator or question creator can publish.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     version = topic_service.publish(db, topic, current_user.id)
@@ -329,11 +351,11 @@ def get_topic_versions(
     """
     Get version history for a topic.
 
-    Only the topic creator can access this endpoint.
+    Only the topic creator or question creator can access this endpoint.
     Returns all versions sorted by published date (newest first).
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     versions, total = topic_service.list_versions(db, topic_id, page=page, limit=limit)
@@ -363,10 +385,10 @@ def get_topic_statistics(
     """
     Get statistics for a topic.
 
-    Only the topic creator can access this endpoint.
+    Only the topic creator or question creator can access this endpoint.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     stats = topic_service.get_statistics(db, topic_id)
@@ -396,7 +418,7 @@ def add_question(
     Only the topic creator can add questions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question_service = get_question_service()
     question = question_service.create(
@@ -433,7 +455,7 @@ def list_questions(
     Returns all questions including draft ones, with criteria data.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question_service = get_question_service()
     questions, total = question_service.list_questions(
@@ -472,7 +494,7 @@ def get_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     return _question_to_response(question, include_criteria=True)
 
@@ -537,7 +559,7 @@ def delete_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question_service.delete(db, question)
     db.commit()
@@ -564,7 +586,7 @@ def publish_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     version = question_service.publish(db, question, current_user.id)
     db.commit()
@@ -607,7 +629,7 @@ def list_question_versions(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Query versions
     query = db.query(EvalQuestionVersion).filter(
@@ -657,16 +679,16 @@ def create_permission(
     """
     Create a new permission for a user on a topic.
 
-    Only the topic creator can manage permissions.
+    Only the topic creator or question creator can manage permissions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Validate role
-    if permission_create.role not in ("respondent", "grader"):
+    if permission_create.role not in ("respondent", "grader", "question_creator"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role must be 'respondent' or 'grader'",
+            detail="Role must be 'respondent', 'grader', or 'question_creator'",
         )
 
     permission_service = get_permission_service()
@@ -699,16 +721,16 @@ def update_permission(
     """
     Update permission for a user on a topic.
 
-    Only the topic creator can manage permissions.
+    Only the topic creator or question creator can manage permissions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Validate role
-    if permission_create.role not in ("respondent", "grader"):
+    if permission_create.role not in ("respondent", "grader", "question_creator"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role must be 'respondent' or 'grader'",
+            detail="Role must be 'respondent', 'grader', or 'question_creator'",
         )
 
     permission_service = get_permission_service()
@@ -746,7 +768,7 @@ def get_permissions(
     Only the topic creator can view permissions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     permission_service = get_permission_service()
     permissions, total = permission_service.list_permissions(
@@ -802,7 +824,7 @@ def delete_permission(
     If role is not specified, revoke all permissions for that user.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     permission_service = get_permission_service()
     revoked = permission_service.revoke_permission(
@@ -831,10 +853,10 @@ def get_graders(
     """
     Get list of graders for a topic.
 
-    Only the topic creator can view graders.
+    Only the topic creator or question creator can view graders.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     permission_service = get_permission_service()
     permissions, total = permission_service.list_permissions(
@@ -885,10 +907,10 @@ def get_grading_config(
     """
     Get grading configuration for a topic.
 
-    Only the topic creator can view grading configuration.
+    Only the topic creator or question creator can view grading configuration.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     config = topic.grading_team_config or {}
 
@@ -933,14 +955,14 @@ def update_grading_config(
     """
     Update grading configuration for a topic.
 
-    Only the topic creator can update grading configuration.
+    Only the topic creator or question creator can update grading configuration.
 
     Constraints:
     - Team must be of Chat shell type (for AI grading)
     - Team must belong to the user or be a public team
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Validate team_id if provided
     team_name = None
@@ -1016,10 +1038,10 @@ def rollback_topic(
     Rollback a topic to a specific version.
 
     This updates the current_version to the specified previous version.
-    Only the topic creator can rollback.
+    Only the topic creator or question creator can rollback.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
 
@@ -1036,3 +1058,89 @@ def rollback_topic(
     db.commit()
 
     return _topic_to_response(topic)
+
+
+# ============================================================================
+# Exam Session Management Endpoints
+# ============================================================================
+
+
+@router.get("/topics/{topic_id}/exam-sessions")
+def get_topic_exam_sessions(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get all exam sessions for a topic (author only).
+
+    Returns session information including:
+    - User ID and name
+    - Start time
+    - Current phase (active, qa, completed)
+    - Submit count
+    - Selected question ID
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    # Check if topic has examMode enabled
+    extra_data = topic.extra_data or {}
+    if not extra_data.get("examMode"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This topic is not configured for exam mode",
+        )
+
+    from app.models.user import User
+    from wecode.models.evaluation_exam_session import EvalExamSession
+
+    sessions = (
+        db.query(EvalExamSession, User)
+        .join(User, EvalExamSession.user_id == User.id)
+        .filter(
+            EvalExamSession.topic_id == topic_id,
+            EvalExamSession.is_active == 1,
+        )
+        .all()
+    )
+
+    result = []
+    for session, user in sessions:
+        result.append(
+            {
+                "user_id": session.user_id,
+                "user_name": user.name if user else f"User {session.user_id}",
+                "started_at": (
+                    session.started_at.isoformat() if session.started_at else None
+                ),
+                "phase": session.current_phase,
+                "submit_count": session.submit_count,
+                "selected_question_id": session.selected_question_id or None,
+                "exam_duration_minutes": session.exam_duration_minutes,
+                "qa_duration_minutes": session.qa_duration_minutes,
+            }
+        )
+
+    return {"sessions": result}
+
+
+@router.post("/topics/{topic_id}/exam-sessions/{user_id}/reset")
+def reset_user_exam_session(
+    topic_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Reset exam session for a user (author only).
+
+    Soft deletes the active session, allowing the user to start fresh.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(topic, current_user.id)
+
+    exam_session_service = get_exam_session_service()
+    exam_session_service.reset_session(db, topic_id, user_id)
+
+    return {"success": True, "message": "Exam session reset successfully"}

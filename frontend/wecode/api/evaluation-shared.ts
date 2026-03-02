@@ -14,7 +14,7 @@ import { getToken } from '@/apis/user'
 // Types
 // ============================================================================
 
-export type EvalFileType = 'question_content' | 'question_criteria' | 'answer_attachment'
+export type EvalFileType = 'question_content' | 'question_criteria' | 'answer_attachment' | 'exam_attachment'
 
 export interface FileUploadResponse {
   key: string
@@ -51,6 +51,7 @@ export async function uploadEvaluationFile(
   fileType: EvalFileType,
   topicId: number,
   questionId?: number,
+  slot?: string,
   onProgress?: (progress: number) => void
 ): Promise<FileUploadResponse> {
   return new Promise((resolve, reject) => {
@@ -63,6 +64,9 @@ export async function uploadEvaluationFile(
     formData.append('topic_id', topicId.toString())
     if (questionId !== undefined) {
       formData.append('question_id', questionId.toString())
+    }
+    if (slot !== undefined) {
+      formData.append('slot', slot)
     }
 
     // Track upload progress
@@ -173,6 +177,58 @@ export async function downloadEvaluationFile(s3Path: string, filename?: string):
     console.error('Download failed:', error)
     throw error
   }
+}
+
+// ============================================================================
+// Text-to-File Upload API
+// ============================================================================
+
+/**
+ * Upload text content as a file through backend proxy.
+ * Useful for uploading supplementary notes or other text-based content.
+ *
+ * @param content - Text content to upload
+ * @param filename - Filename for the uploaded file
+ * @param fileType - Type of file
+ * @param topicId - Topic ID
+ * @param questionId - Question ID (optional)
+ * @param slot - Slot identifier for exam attachments (optional)
+ * @returns Upload response with S3 key
+ */
+export async function uploadTextAsFile(
+  content: string,
+  filename: string,
+  fileType: EvalFileType,
+  topicId: number,
+  questionId?: number,
+  slot?: string
+): Promise<FileUploadResponse> {
+  const token = getToken()
+
+  const body = {
+    content,
+    filename,
+    file_type: fileType,
+    topic_id: topicId,
+    question_id: questionId,
+    slot,
+  }
+
+  const response = await fetch(getEvaluationUrl('/shared/files/upload-text'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.detail || `Upload failed: ${response.status}`)
+  }
+
+  return response.json()
 }
 
 // ============================================================================

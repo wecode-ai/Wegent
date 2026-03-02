@@ -15,6 +15,7 @@ This package provides business logic services for the evaluation module:
 """
 
 from wecode.service.evaluation.answer_service import AnswerService
+from wecode.service.evaluation.exam_session_service import ExamSessionService
 from wecode.service.evaluation.grading_service import GradingService
 from wecode.service.evaluation.permission_service import PermissionService
 from wecode.service.evaluation.question_service import QuestionService
@@ -29,6 +30,7 @@ __all__ = [
     "GradingService",
     "PermissionService",
     "EvalStorageService",
+    "ExamSessionService",
     "generate_version",
 ]
 
@@ -39,6 +41,7 @@ _answer_service: AnswerService = None
 _grading_service: GradingService = None
 _permission_service: PermissionService = None
 _storage_service: EvalStorageService = None
+_exam_session_service: ExamSessionService = None
 
 
 def get_topic_service() -> TopicService:
@@ -87,3 +90,11 @@ def get_storage_service() -> EvalStorageService:
     if _storage_service is None:
         _storage_service = EvalStorageService()
     return _storage_service
+
+
+def get_exam_session_service() -> ExamSessionService:
+    """Get singleton exam session service instance."""
+    global _exam_session_service
+    if _exam_session_service is None:
+        _exam_session_service = ExamSessionService()
+    return _exam_session_service

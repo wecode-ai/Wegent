@@ -29,7 +29,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
-import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import { QuestionFileUpload } from '@wecode/components/evaluation'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import {
   getAuthorQuestion,
@@ -37,7 +37,12 @@ import {
   deleteAuthorQuestion,
   publishAuthorQuestion,
 } from '@wecode/api/evaluation-author'
-import { ContentType, QuestionStatus, type Question, type EvalAttachment } from '@wecode/types/evaluation'
+import {
+  ContentType,
+  QuestionStatus,
+  type Question,
+  type EvalAttachment,
+} from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function QuestionDetailContent() {
@@ -57,15 +62,19 @@ function QuestionDetailContent() {
   const [isEditing, setIsEditing] = useState(false)
   const [activeTab, setActiveTab] = useState('content')
 
-  // Form state - support both text and attachments
+  // Unified form state - Markdown fields only
   const [title, setTitle] = useState('')
-  const [contentText, setContentText] = useState('')
+  const [content, setContent] = useState('')
+  const [criteria, setCriteria] = useState('')
+  const [instructions, setInstructions] = useState('')
+  // Separate attachment states for each slot
   const [contentAttachments, setContentAttachments] = useState<EvalAttachment[]>([])
-  const [showContentPreview, setShowContentPreview] = useState(false)
-  const [criteriaText, setCriteriaText] = useState('')
   const [criteriaAttachments, setCriteriaAttachments] = useState<EvalAttachment[]>([])
+  const [instructionsAttachments, setInstructionsAttachments] = useState<EvalAttachment[]>([])
+
+  // Preview states
+  const [showContentPreview, setShowContentPreview] = useState(false)
   const [showCriteriaPreview, setShowCriteriaPreview] = useState(false)
-  const [instructionsText, setInstructionsText] = useState('')
   const [showInstructionsPreview, setShowInstructionsPreview] = useState(false)
 
   const loadQuestion = useCallback(async () => {
@@ -73,13 +82,25 @@ function QuestionDetailContent() {
     try {
       const questionData = await getAuthorQuestion(questionId)
       setQuestion(questionData)
-      // Populate form fields
+      // Populate form fields with unified Markdown fields
       setTitle(questionData.title)
-      setContentText((questionData.content_data?.text as string) || '')
+      setContent(
+        (questionData.content_data?.content as string) ||
+          (questionData.content_data?.text as string) ||
+          ''
+      )
+      setCriteria(
+        (questionData.criteria_data?.criteria as string) ||
+          (questionData.criteria_data?.text as string) ||
+          ''
+      )
+      setInstructions((questionData.content_data?.instructions as string) || '')
+      // Load separate attachment states for each slot
       setContentAttachments((questionData.content_data?.attachments as EvalAttachment[]) || [])
-      setCriteriaText((questionData.criteria_data?.text as string) || '')
       setCriteriaAttachments((questionData.criteria_data?.attachments as EvalAttachment[]) || [])
-      setInstructionsText((questionData.content_data?.instructions as string) || '')
+      setInstructionsAttachments(
+        (questionData.content_data?.instructionsAttachments as EvalAttachment[]) || []
+      )
     } catch (_error) {
       toast({
         title: t('errors.load_failed'),
@@ -102,11 +123,21 @@ function QuestionDetailContent() {
     if (question) {
       // Reset form to original values
       setTitle(question.title)
-      setContentText((question.content_data?.text as string) || '')
+      setContent(
+        (question.content_data?.content as string) || (question.content_data?.text as string) || ''
+      )
+      setCriteria(
+        (question.criteria_data?.criteria as string) ||
+          (question.criteria_data?.text as string) ||
+          ''
+      )
+      setInstructions((question.content_data?.instructions as string) || '')
+      // Reset separate attachment states
       setContentAttachments((question.content_data?.attachments as EvalAttachment[]) || [])
-      setCriteriaText((question.criteria_data?.text as string) || '')
       setCriteriaAttachments((question.criteria_data?.attachments as EvalAttachment[]) || [])
-      setInstructionsText((question.content_data?.instructions as string) || '')
+      setInstructionsAttachments(
+        (question.content_data?.instructionsAttachments as EvalAttachment[]) || []
+      )
     }
     setIsEditing(false)
     setShowContentPreview(false)
@@ -124,7 +155,11 @@ function QuestionDetailContent() {
       return
     }
 
-    const hasContent = contentText.trim().length > 0 || contentAttachments.length > 0
+    const hasContent =
+      content.trim().length > 0 ||
+      contentAttachments.length > 0 ||
+      criteriaAttachments.length > 0 ||
+      instructionsAttachments.length > 0
     if (!hasContent) {
       toast({
         title: t('errors.save_failed'),
@@ -136,23 +171,29 @@ function QuestionDetailContent() {
 
     setSaving(true)
     try {
-      // Build content_data - use MIXED type if has both text and attachments
-      const contentData: Record<string, unknown> = {}
-      if (contentText.trim()) {
-        contentData.text = contentText.trim()
+      // Build simplified content_data with unified Markdown fields
+      const contentData: Record<string, unknown> = {
+        content: content.trim(),
       }
+
+      if (instructions.trim()) {
+        contentData.instructions = instructions.trim()
+      }
+
       if (contentAttachments.length > 0) {
         contentData.attachments = contentAttachments
       }
-      if (instructionsText.trim()) {
-        contentData.instructions = instructionsText.trim()
+
+      if (instructionsAttachments.length > 0) {
+        contentData.instructionsAttachments = instructionsAttachments
       }
 
-      // Build criteria_data - use MIXED type if has both text and attachments
+      // Build criteria_data with unified Markdown field
       const criteriaData: Record<string, unknown> = {}
-      if (criteriaText.trim()) {
-        criteriaData.text = criteriaText.trim()
+      if (criteria.trim()) {
+        criteriaData.criteria = criteria.trim()
       }
+
       if (criteriaAttachments.length > 0) {
         criteriaData.attachments = criteriaAttachments
       }
@@ -293,10 +334,7 @@ function QuestionDetailContent() {
     <div className="container mx-auto max-w-3xl px-4 py-8">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
-        <Button
-          variant="ghost"
-          onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}
-        >
+        <Button variant="ghost" onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           {t('actions.back')}
         </Button>
@@ -378,24 +416,24 @@ function QuestionDetailContent() {
                   placeholder={t('questions.title_placeholder')}
                   maxLength={500}
                 />
-                <p className="text-xs text-text-muted text-right">
-                  {title.length}/500
-                </p>
+                <p className="text-right text-xs text-text-muted">{title.length}/500</p>
               </div>
 
-              {/* Tabs for editing */}
               <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="content">{t('questions.content')}</TabsTrigger>
                   <TabsTrigger value="criteria">{t('questions.criteria')}</TabsTrigger>
                   <TabsTrigger value="instructions">{t('questions.instructions')}</TabsTrigger>
+                  <TabsTrigger value="attachments">
+                    {t('questions.attachments', 'Attachments')}
+                  </TabsTrigger>
                 </TabsList>
 
                 {/* Content Tab */}
                 <TabsContent value="content" className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="contentText">{t('questions.content')} (Markdown)</Label>
+                      <Label htmlFor="content">{t('questions.content')} (Markdown)</Label>
                       <Button
                         type="button"
                         variant="ghost"
@@ -417,9 +455,9 @@ function QuestionDetailContent() {
                     </div>
                     {showContentPreview ? (
                       <div className="min-h-[200px] rounded-lg border border-border bg-surface p-4">
-                        {contentText.trim() ? (
+                        {content.trim() ? (
                           <EnhancedMarkdown
-                            source={contentText}
+                            source={content}
                             theme={theme === 'dark' ? 'dark' : 'light'}
                           />
                         ) : (
@@ -428,30 +466,20 @@ function QuestionDetailContent() {
                       </div>
                     ) : (
                       <Textarea
-                        id="contentText"
-                        value={contentText}
-                        onChange={e => setContentText(e.target.value)}
+                        id="content"
+                        value={content}
+                        onChange={e => setContent(e.target.value)}
                         placeholder={t('questions.content_placeholder')}
                         rows={10}
                         className="font-mono text-sm"
                       />
                     )}
                     <p className="text-xs text-text-muted">
-                      {t('questions.markdown_hint', 'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.')}
+                      {t(
+                        'questions.markdown_hint',
+                        'Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.'
+                      )}
                     </p>
-                  </div>
-
-                  {/* Content Attachments */}
-                  <div className="space-y-2">
-                    <Label>{t('questions.content_attachments')}</Label>
-                    <EvaluationFileUpload
-                      topicId={topicId}
-                      questionId={questionId}
-                      fileType="question_content"
-                      attachments={contentAttachments}
-                      onChange={setContentAttachments}
-                      maxFiles={10}
-                    />
                   </div>
                 </TabsContent>
 
@@ -459,7 +487,7 @@ function QuestionDetailContent() {
                 <TabsContent value="criteria" className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="criteriaText">{t('questions.criteria')} (Markdown)</Label>
+                      <Label htmlFor="criteria">{t('questions.criteria')} (Markdown)</Label>
                       <Button
                         type="button"
                         variant="ghost"
@@ -481,9 +509,9 @@ function QuestionDetailContent() {
                     </div>
                     {showCriteriaPreview ? (
                       <div className="min-h-[150px] rounded-lg border border-primary/20 bg-primary/5 p-4">
-                        {criteriaText.trim() ? (
+                        {criteria.trim() ? (
                           <EnhancedMarkdown
-                            source={criteriaText}
+                            source={criteria}
                             theme={theme === 'dark' ? 'dark' : 'light'}
                           />
                         ) : (
@@ -492,9 +520,9 @@ function QuestionDetailContent() {
                       </div>
                     ) : (
                       <Textarea
-                        id="criteriaText"
-                        value={criteriaText}
-                        onChange={e => setCriteriaText(e.target.value)}
+                        id="criteria"
+                        value={criteria}
+                        onChange={e => setCriteria(e.target.value)}
                         placeholder={t('questions.criteria_placeholder')}
                         rows={6}
                         className="font-mono text-sm"
@@ -502,26 +530,13 @@ function QuestionDetailContent() {
                     )}
                     <p className="text-xs text-text-muted">{t('questions.criteria_placeholder')}</p>
                   </div>
-
-                  {/* Criteria Attachments */}
-                  <div className="space-y-2">
-                    <Label>{t('questions.criteria_attachments')}</Label>
-                    <EvaluationFileUpload
-                      topicId={topicId}
-                      questionId={questionId}
-                      fileType="question_criteria"
-                      attachments={criteriaAttachments}
-                      onChange={setCriteriaAttachments}
-                      maxFiles={10}
-                    />
-                  </div>
                 </TabsContent>
 
                 {/* Instructions Tab */}
                 <TabsContent value="instructions" className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="instructionsText">{t('questions.instructions')} (Markdown)</Label>
+                      <Label htmlFor="instructions">{t('questions.instructions')} (Markdown)</Label>
                       <Button
                         type="button"
                         variant="ghost"
@@ -543,9 +558,9 @@ function QuestionDetailContent() {
                     </div>
                     {showInstructionsPreview ? (
                       <div className="min-h-[150px] rounded-lg border border-border bg-surface p-4">
-                        {instructionsText.trim() ? (
+                        {instructions.trim() ? (
                           <EnhancedMarkdown
-                            source={instructionsText}
+                            source={instructions}
                             theme={theme === 'dark' ? 'dark' : 'light'}
                           />
                         ) : (
@@ -554,18 +569,30 @@ function QuestionDetailContent() {
                       </div>
                     ) : (
                       <Textarea
-                        id="instructionsText"
-                        value={instructionsText}
-                        onChange={e => setInstructionsText(e.target.value)}
+                        id="instructions"
+                        value={instructions}
+                        onChange={e => setInstructions(e.target.value)}
                         placeholder={t('questions.instructions_placeholder')}
                         rows={8}
                         className="font-mono text-sm"
                       />
                     )}
-                    <p className="text-xs text-text-muted">
-                      {t('questions.instructions_hint')}
-                    </p>
+                    <p className="text-xs text-text-muted">{t('questions.instructions_hint')}</p>
                   </div>
+                </TabsContent>
+
+                {/* Attachments Tab */}
+                <TabsContent value="attachments" className="space-y-4">
+                  <QuestionFileUpload
+                    topicId={topicId}
+                    questionId={questionId}
+                    contentAttachments={contentAttachments}
+                    criteriaAttachments={criteriaAttachments}
+                    instructionsAttachments={instructionsAttachments}
+                    onContentAttachmentsChange={setContentAttachments}
+                    onCriteriaAttachmentsChange={setCriteriaAttachments}
+                    onInstructionsAttachmentsChange={setInstructionsAttachments}
+                  />
                 </TabsContent>
               </Tabs>
             </div>
@@ -574,42 +601,56 @@ function QuestionDetailContent() {
               {/* Display mode - Content (Markdown rendered) */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.content')}</Label>
-                {typeof question.content_data?.text === 'string' && question.content_data.text ? (
+                {content || question.content_data?.content || question.content_data?.text ? (
                   <div className="rounded-lg border border-border bg-surface p-4">
                     <EnhancedMarkdown
-                      source={question.content_data.text}
+                      source={
+                        content ||
+                        (question.content_data?.content as string) ||
+                        (question.content_data?.text as string) ||
+                        ''
+                      }
                       theme={theme === 'dark' ? 'dark' : 'light'}
                     />
                   </div>
                 ) : (
                   <p className="text-text-muted">{t('questions.no_content')}</p>
                 )}
-                {renderAttachmentList(question.content_data?.attachments as EvalAttachment[] | undefined, t('questions.content_attachments'))}
+                {renderAttachmentList(
+                  contentAttachments.length > 0
+                    ? contentAttachments
+                    : (question.content_data?.attachments as EvalAttachment[] | undefined),
+                  t('questions.content_attachments')
+                )}
               </div>
 
               {/* Display mode - Criteria (Markdown rendered) */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.criteria')}</Label>
-                {typeof question.criteria_data?.text === 'string' && question.criteria_data.text ? (
+                {criteria || question.criteria_data?.criteria || question.criteria_data?.text ? (
                   <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
                     <EnhancedMarkdown
-                      source={question.criteria_data.text}
+                      source={
+                        criteria ||
+                        (question.criteria_data?.criteria as string) ||
+                        (question.criteria_data?.text as string) ||
+                        ''
+                      }
                       theme={theme === 'dark' ? 'dark' : 'light'}
                     />
                   </div>
                 ) : (
                   <p className="text-text-muted">{t('questions.no_criteria')}</p>
                 )}
-                {renderAttachmentList(question.criteria_data?.attachments as EvalAttachment[] | undefined, t('questions.criteria_attachments'))}
               </div>
 
               {/* Display mode - Instructions */}
               <div className="space-y-2">
                 <Label className="text-text-secondary">{t('questions.instructions')}</Label>
-                {typeof question.content_data?.instructions === 'string' && question.content_data.instructions ? (
+                {instructions || question.content_data?.instructions ? (
                   <div className="rounded-lg border border-border bg-surface p-4">
                     <EnhancedMarkdown
-                      source={question.content_data.instructions as string}
+                      source={instructions || (question.content_data?.instructions as string) || ''}
                       theme={theme === 'dark' ? 'dark' : 'light'}
                     />
                   </div>

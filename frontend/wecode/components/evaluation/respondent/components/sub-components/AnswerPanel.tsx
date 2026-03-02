@@ -1,16 +1,31 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 'use client'
 
-import { Upload, Edit3, History, File, Download, ChevronDown, ChevronUp, Send } from 'lucide-react'
+import {
+  Upload,
+  Edit3,
+  History,
+  File,
+  Download,
+  ChevronDown,
+  ChevronUp,
+  Send,
+  FileText,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { EvaluationFileUpload } from '@wecode/components/evaluation/common/EvaluationFileUpload'
+import { SlotBasedFileUpload } from '@wecode/components/evaluation/exam/SlotBasedFileUpload'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MAX_BATCH_FILES } from '@/hooks/useBatchAttachment'
 import { formatFileSize } from '@/apis/attachments'
 import type { EvalAttachment, Answer } from '@wecode/types/evaluation'
+import type { ExamAttachment } from '@wecode/types/evaluation-exam'
 
 interface AnswerPanelProps {
   answerText: string
@@ -55,6 +70,30 @@ export function AnswerPanel({
   const lastSubmittedAttachments = lastSubmittedAnswer?.content_data?.attachments as
     | Array<{ key: string; filename: string; file_size?: number }>
     | undefined
+
+  // Upload slot configuration for answer attachments
+  const ANSWER_UPLOAD_SLOTS = [
+    {
+      key: 'answer',
+      label: t('answers.upload_title', 'Upload Answer Files'),
+      hint: t('answers.upload_format_hint', 'Support PDF, Word, images, etc.'),
+      maxFiles: MAX_BATCH_FILES,
+      accept: '.pdf,.doc,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.html,.json',
+      icon: <FileText className="h-[18px] w-[18px] text-blue-500" />,
+    },
+  ]
+
+  // Convert EvalAttachment[] to ExamAttachment[] for SlotBasedFileUpload
+  const examAttachments = {
+    answer: attachments as unknown as ExamAttachment[],
+  }
+
+  // Handle slot changes
+  const handleSlotChange = (slot: string, newAttachments: ExamAttachment[]) => {
+    if (slot === 'answer') {
+      onAttachmentsChange(newAttachments as unknown as EvalAttachment[])
+    }
+  }
 
   // Last Submitted Section
   const lastSubmittedSection = lastSubmittedAnswer && (
@@ -201,13 +240,15 @@ export function AnswerPanel({
         <Card className="mb-4 border-dashed">
           <CardContent className="p-4">
             <div className="flex flex-col items-center gap-2 text-center">
-              <EvaluationFileUpload
+              <SlotBasedFileUpload
                 topicId={topicId}
                 questionId={questionId}
-                fileType="answer_attachment"
-                attachments={attachments}
-                onChange={onAttachmentsChange}
-                maxFiles={MAX_BATCH_FILES}
+                slots={ANSWER_UPLOAD_SLOTS}
+                attachments={examAttachments}
+                onChange={handleSlotChange}
+                disabled={isSubmitting}
+                totalFileLimit={MAX_BATCH_FILES}
+                currentTotalCount={attachments.length}
               />
             </div>
           </CardContent>
@@ -245,42 +286,16 @@ export function AnswerPanel({
           <CardContent className="space-y-6">
             {/* File Upload */}
             <div className="space-y-3">
-              {attachments.length === 0 ? (
-                <div className="border-2 border-dashed border-border rounded-xl p-8 text-center hover:border-primary/50 transition-colors bg-white">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Upload className="h-6 w-6 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-text-primary">
-                        {t('answers.upload_drag_hint')}
-                      </p>
-                      <p className="text-xs text-text-muted mt-1">
-                        {t('answers.upload_format_hint')}
-                      </p>
-                    </div>
-                    <EvaluationFileUpload
-                      topicId={topicId}
-                      questionId={questionId}
-                      fileType="answer_attachment"
-                      attachments={attachments}
-                      onChange={onAttachmentsChange}
-                      maxFiles={MAX_BATCH_FILES}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <EvaluationFileUpload
-                    topicId={topicId}
-                    questionId={questionId}
-                    fileType="answer_attachment"
-                    attachments={attachments}
-                    onChange={onAttachmentsChange}
-                    maxFiles={MAX_BATCH_FILES}
-                  />
-                </div>
-              )}
+              <SlotBasedFileUpload
+                topicId={topicId}
+                questionId={questionId}
+                slots={ANSWER_UPLOAD_SLOTS}
+                attachments={examAttachments}
+                onChange={handleSlotChange}
+                disabled={isSubmitting}
+                totalFileLimit={MAX_BATCH_FILES}
+                currentTotalCount={attachments.length}
+              />
             </div>
 
             <div className="h-px bg-border" />

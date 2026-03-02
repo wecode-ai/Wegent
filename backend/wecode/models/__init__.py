@@ -15,6 +15,7 @@ from wecode.models.evaluation import (
     EvalTopic,
     EvalTopicVersion,
 )
+from wecode.models.evaluation_exam_session import EvalExamSession
 
 __all__ = [
     "EvalTopic",
@@ -24,4 +25,5 @@ __all__ = [
     "EvalPermission",
     "EvalAnswer",
     "EvalGradingTask",
+    "EvalExamSession",
 ]
