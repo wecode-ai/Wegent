@@ -1178,6 +1178,8 @@ class GradingService:
         Returns:
             Updated grading task
         """
+        from sqlalchemy.orm.attributes import flag_modified
+
         from wecode.service.evaluation.storage_service import EvalStorageService
 
         storage_service = EvalStorageService()
@@ -1200,8 +1202,9 @@ class GradingService:
         if s3_path:
             logger.info(f"[Evaluation] Uploaded reviewed report to S3: {s3_path}")
 
-        # Update task
-        report_data = task.report_data or {}
+        # Update task - create a copy of report_data to ensure SQLAlchemy detects the change
+        # SQLAlchemy doesn't detect in-place modifications to JSON fields
+        report_data = dict(task.report_data) if task.report_data else {}
         report_data["human_report"] = {
             "content": report_content,
             "s3_path": s3_path,
@@ -1210,6 +1213,8 @@ class GradingService:
         }
         report_data["content"] = report_content  # Update convenience field
         task.report_data = report_data
+        # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+        flag_modified(task, "report_data")
         db.flush()
 
         logger.info(f"[Evaluation] Updated report for grading task {task.id}")
@@ -1235,6 +1240,8 @@ class GradingService:
         Returns:
             Updated grading task
         """
+        from sqlalchemy.orm.attributes import flag_modified
+
         from wecode.service.evaluation.storage_service import EvalStorageService
 
         storage_service = EvalStorageService()
@@ -1245,8 +1252,11 @@ class GradingService:
         )
         topic_id = question.topic_id if question else 0
 
+        # Create a copy of report_data to ensure SQLAlchemy detects the change
+        # SQLAlchemy doesn't detect in-place modifications to JSON fields
+        report_data = dict(task.report_data) if task.report_data else {}
+
         # Determine final content
-        report_data = task.report_data or {}
         if final_content:
             content = final_content
         elif attachment:
@@ -1283,6 +1293,8 @@ class GradingService:
             report_data["content"] = content
 
         task.report_data = report_data
+        # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+        flag_modified(task, "report_data")
         task.status = GradingTaskStatus.PUBLISHED
         task.published_at = datetime.now()
         db.flush()

@@ -209,6 +209,8 @@ class TopicService:
         Returns:
             Updated topic
         """
+        from sqlalchemy.orm.attributes import flag_modified
+
         if name:
             topic.name = name
 
@@ -227,14 +229,22 @@ class TopicService:
             if extra_data is not None:
                 current_extra_data.update(extra_data)
             topic.extra_data = current_extra_data
+            # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+            flag_modified(topic, "extra_data")
 
         if visibility:
             topic.visibility = visibility
 
         if grading_team_id is not None:
-            if not topic.grading_team_config:
-                topic.grading_team_config = {}
-            topic.grading_team_config["team_id"] = grading_team_id
+            # Create a copy of grading_team_config to ensure SQLAlchemy detects the change
+            # SQLAlchemy doesn't detect in-place modifications to JSON fields
+            current_config = (
+                dict(topic.grading_team_config) if topic.grading_team_config else {}
+            )
+            current_config["team_id"] = grading_team_id
+            topic.grading_team_config = current_config
+            # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+            flag_modified(topic, "grading_team_config")
 
         db.flush()
         logger.info(f"[Evaluation] Updated topic {topic.id}")
