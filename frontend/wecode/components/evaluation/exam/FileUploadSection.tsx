@@ -50,7 +50,7 @@ interface FileUploadSectionProps {
 const UPLOAD_SLOTS = [
   {
     key: 'main',
-    label: '考核报告 / 方案文档',
+    label: '产出报告及方案',
     hint: '支持 PDF、Word、TXT 等格式，最多可上传 20 个文件',
     required: true,
     maxFiles: 20,

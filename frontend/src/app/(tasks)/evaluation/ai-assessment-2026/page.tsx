@@ -73,7 +73,7 @@ const EXAM_DATA = {
     { icon: 'shield', label: '公平原则', text: '为确保公平性，现场不得调用过往工作产出' },
   ],
   examMethod: {
-    scoring: '由 AI Agent 评分机器人进行打分，专家组进行校验',
+    scoring: '由 AI Agent 评分机器人打分，专家组复核校验，一周内出具AI考评个人报告',
     dimensions: [
       '提示词与任务拆解',
       '对话交互质量',
@@ -82,7 +82,7 @@ const EXAM_DATA = {
       '结果校验检查',
     ],
     bonus:
-      'Agent搭建或多模态应用（可叠加加分）：可能在考试时间内不能完成Agent建设或多模态输出，在考试中可提供完整思路，酌情加分。',
+      '加分维度：Agent搭建及多模态应用，因考试时间紧张，如果不能完成Agent搭建或多模态输出，提供完整思路也可酌情加分',
   },
   timeNote:
     '在时间有限题目难度大的情况下，本次AI应用考试更多是考量在与AI工具交互过程中驾驭工具的能力，而非对输出质量进行考量，但也需要保证产出结果的完成性。',
@@ -228,7 +228,7 @@ const UPLOAD_SLOTS = [
   },
   {
     key: 'main',
-    label: '考核报告 / 方案文档',
+    label: '产出报告及方案',
     hint: '支持 PDF、Word、TXT 等格式，最多可上传 20 个文件',
     required: true,
     maxFiles: 20,
