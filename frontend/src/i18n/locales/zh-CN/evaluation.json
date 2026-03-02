@@ -375,7 +375,7 @@
     },
     "upload": {
       "title": "提交材料",
-      "main_report": "考核报告 / 方案文档",
+      "main_report": "产出报告及方案",
       "main_report_hint": "支持 PDF、Word、TXT 等格式，最多可上传 20 个文件",
       "interaction": "交互过程记录",
       "interaction_hint": "支持 PDF、图片、文本等格式，最多可上传 20 个文件",
