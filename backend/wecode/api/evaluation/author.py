@@ -1110,24 +1110,33 @@ def get_topic_exam_sessions(
         .all()
     )
 
-    result = []
+    # Build simplified session list without redundant topic data
+    session_list = []
     for session, user in sessions:
-        result.append(
-            {
-                "user_id": session.user_id,
-                "user_name": user.user_name if user else f"User {session.user_id}",
-                "started_at": (
-                    session.started_at.isoformat() if session.started_at else None
-                ),
-                "phase": session.current_phase,
-                "submit_count": session.submit_count,
-                "selected_question_id": session.selected_question_id or None,
-                "exam_duration_minutes": session.exam_duration_minutes,
-                "qa_duration_minutes": session.qa_duration_minutes,
-            }
-        )
+        session_list.append({
+            "user_id": session.user_id,
+            "user_name": user.user_name if user else f"User {session.user_id}",
+            "user_email": user.email if user else None,
+            "current_phase": session.current_phase,
+            "started_at": session.started_at.isoformat() if session.started_at else None,
+            "submit_count": session.submit_count,
+            "selected_question_id": session.selected_question_id or None,
+        })
 
-    return {"sessions": result}
+    # Return topic info at top level + simplified sessions list
+    return {
+        "topic": {
+            "id": topic.id,
+            "name": topic.name,
+            "description": extra_data.get("description"),
+            "exam_mode": True,
+            "intro_duration_minutes": extra_data.get("introDurationMinutes", 5),
+            "exam_duration_minutes": extra_data.get("examDurationMinutes", 50),
+            "review_duration_minutes": extra_data.get("reviewDurationMinutes", 5),
+        },
+        "sessions": session_list,
+        "total": len(session_list),
+    }
 
 
 @router.post("/topics/{topic_id}/exam-sessions/{user_id}/reset")
@@ -1155,7 +1164,10 @@ class UpdateSessionPhaseRequest(BaseModel):
     """Schema for updating exam session phase (author only)."""
 
     target_phase: str = Field(
-        ..., description="Target phase to set (exam, review, completed)"
+        ..., description="Target phase to set (intro, exam, review, completed)"
+    )
+    force: bool = Field(
+        default=False, description="Force transition even if not in valid sequence"
     )
 
 
@@ -1168,14 +1180,15 @@ def update_user_exam_session_phase(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Force update exam session phase for a user (author only).
+    Update exam session phase for a user (author only).
 
     This allows the topic author to manually control a user's exam session state:
-    - exam: Force user into exam phase
-    - review: Force user into review phase
-    - completed: Force user to complete the exam (triggers grading task creation)
+    - intro: Initial phase
+    - exam: Exam answering phase
+    - review: Review phase
+    - completed: Completed (triggers grading task creation)
 
-    Useful for managing exam sessions when users encounter issues or need assistance.
+    By default, only valid transitions are allowed. Set force=true to allow any transition.
     """
     topic = _get_topic_or_404(db, topic_id)
     _verify_topic_ownership(db, topic, current_user.id)
@@ -1198,29 +1211,32 @@ def update_user_exam_session_phase(
             detail=f"Invalid phase. Must be one of: {', '.join(valid_phases)}",
         )
 
-    # Update phase
     previous_phase = session.current_phase
-    session.current_phase = request.target_phase
 
-    # Set phase start times in extra_data
-    extra = session.extra_data or {}
-    now_ts = int(datetime.now().timestamp())
+    # Check if transition is valid (unless force=true)
+    if not request.force:
+        valid_transitions = {
+            "intro": ["exam"],
+            "exam": ["review", "completed"],  # Allow skip to completed
+            "review": ["completed"],
+            "completed": [],
+        }
+        if request.target_phase not in valid_transitions.get(previous_phase, []):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot transition from '{previous_phase}' to '{request.target_phase}'. "
+                f"Use force=true to override.",
+            )
 
-    if request.target_phase == "exam":
-        extra["exam_started_at"] = now_ts
-    elif request.target_phase == "review":
-        extra["review_started_at"] = now_ts
-
-    session.extra_data = extra
-    from sqlalchemy.orm import attributes
-
-    attributes.flag_modified(session, "extra_data")
-    db.commit()
-    db.refresh(session)
+    # Update phase using service method
+    exam_session_service.update_session_phase(
+        db=db,
+        session=session,
+        target_phase=request.target_phase,
+    )
 
     # If transitioning to completed, create grading tasks
     if request.target_phase == "completed":
-        # Import here to avoid circular imports
         from wecode.api.evaluation.respondent import _create_grading_tasks_for_exam_completion
 
         _create_grading_tasks_for_exam_completion(
@@ -1235,5 +1251,67 @@ def update_user_exam_session_phase(
         "message": f"Session phase updated from '{previous_phase}' to '{request.target_phase}'",
         "previous_phase": previous_phase,
         "current_phase": request.target_phase,
+        "user_id": user_id,
+    }
+
+
+@router.post("/topics/{topic_id}/exam-sessions/{user_id}/force-end")
+def force_end_exam_session(
+    topic_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Force end a user's exam session and trigger grading (author only).
+
+    This immediately sets the session to 'completed' and creates grading tasks
+    for all submitted answers. Useful when a user abandons the exam or
+    encounters technical issues.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(db, topic, current_user.id)
+
+    exam_session_service = get_exam_session_service()
+
+    # Get user's active session
+    session = exam_session_service.get_active_session(db, topic_id, user_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active exam session found for this user",
+        )
+
+    # Cannot force-end an already completed session
+    if session.current_phase == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session is already completed",
+        )
+
+    previous_phase = session.current_phase
+
+    # Update to completed phase
+    exam_session_service.update_session_phase(
+        db=db,
+        session=session,
+        target_phase="completed",
+    )
+
+    # Create grading tasks
+    from wecode.api.evaluation.respondent import _create_grading_tasks_for_exam_completion
+
+    _create_grading_tasks_for_exam_completion(
+        db=db,
+        topic_id=topic_id,
+        user_id=user_id,
+        topic=topic,
+    )
+
+    return {
+        "success": True,
+        "message": f"Session force-ended (was: {previous_phase}) and grading tasks created",
+        "previous_phase": previous_phase,
+        "current_phase": "completed",
         "user_id": user_id,
     }

@@ -4,7 +4,8 @@
 
 'use client'
 
-import { FileText, Download, X } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { FileText, Download, X, Save, CheckCircle, Loader2 } from 'lucide-react'
 import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
 import type { ExamAttachment } from '@wecode/types/evaluation-exam'
 
@@ -15,6 +16,8 @@ interface SupplementaryNotesSectionProps {
   onNotesChange: (notes: string) => void
   onFileRemove: (index: number) => void
   required?: boolean
+  onSaveDraft?: () => Promise<void>
+  lastSavedAt?: Date | null
 }
 
 function formatFileSize(bytes: number): string {
@@ -30,7 +33,58 @@ export function SupplementaryNotesSection({
   onNotesChange,
   onFileRemove,
   required,
+  onSaveDraft,
+  lastSavedAt,
 }: SupplementaryNotesSectionProps) {
+  const [isSaving, setIsSaving] = useState(false)
+  const [showSaved, setShowSaved] = useState(false)
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Auto-save after user stops typing for 3 seconds
+  useEffect(() => {
+    if (disabled || !onSaveDraft) return
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+    }
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      if (notes.trim().length > 0) {
+        handleSaveDraft()
+      }
+    }, 3000)
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+      }
+    }
+  }, [notes, disabled, onSaveDraft])
+
+  const handleSaveDraft = useCallback(async () => {
+    if (!onSaveDraft || isSaving) return
+
+    setIsSaving(true)
+    try {
+      await onSaveDraft()
+      setShowSaved(true)
+      setTimeout(() => setShowSaved(false), 2000)
+    } catch (error) {
+      console.error('Failed to save draft:', error)
+    } finally {
+      setIsSaving(false)
+    }
+  }, [onSaveDraft, isSaving])
+
+  const formatLastSaved = () => {
+    if (!lastSavedAt) return ''
+    const now = new Date()
+    const diff = now.getTime() - lastSavedAt.getTime()
+    if (diff < 60000) return '刚刚保存'
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前保存`
+    return lastSavedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  }
+
   return (
     <section className="animate-[slideDown_0.35s_ease-out]">
       <div className="flex items-center gap-3 mb-6">
@@ -39,6 +93,24 @@ export function SupplementaryNotesSection({
           作答补充说明
           {required && <span className="text-[#DF2029] text-sm font-normal">（必传）</span>}
         </h2>
+        {/* Auto-save status indicator */}
+        {!disabled && (
+          <div className="ml-auto flex items-center gap-2">
+            {isSaving ? (
+              <span className="text-sm text-gray-400 flex items-center gap-1">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                保存中...
+              </span>
+            ) : showSaved ? (
+              <span className="text-sm text-emerald-600 flex items-center gap-1">
+                <CheckCircle className="w-4 h-4" />
+                已保存
+              </span>
+            ) : lastSavedAt ? (
+              <span className="text-sm text-gray-400">{formatLastSaved()}</span>
+            ) : null}
+          </div>
+        )}
       </div>
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
         <div className="bg-sky-50 border border-sky-100 rounded-2xl p-5 mb-5">
@@ -59,8 +131,27 @@ export function SupplementaryNotesSection({
           disabled={disabled}
           className="w-full min-h-[200px] px-5 py-4 rounded-2xl border border-gray-200 text-[1rem] leading-[1.8] resize-y focus:border-red-400 focus:ring-2 focus:ring-red-100 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-50"
         />
-        <div className="flex justify-end mt-2">
+        <div className="flex justify-between items-center mt-3">
           <span className="text-sm text-gray-400">{notes.length} 字</span>
+          {!disabled && onSaveDraft && (
+            <button
+              onClick={handleSaveDraft}
+              disabled={isSaving || notes.trim().length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-sky-600 bg-sky-50 hover:bg-sky-100 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  保存中...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  保存草稿
+                </>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Supplementary Notes File Display */}

@@ -346,3 +346,39 @@ class ExamSessionService:
         db.refresh(session)
 
         return session
+
+    @staticmethod
+    def update_session_phase(
+        db: Session, session: EvalExamSession, target_phase: str
+    ) -> EvalExamSession:
+        """Update session phase to any valid phase (for admin use).
+
+        Unlike advance_phase which only allows forward transitions,
+        this method allows setting phase to any valid value.
+
+        Args:
+            db: Database session
+            session: Current exam session
+            target_phase: Target phase to set
+
+        Returns:
+            Updated exam session
+        """
+        extra = session.extra_data or {}
+        now_ts = int(time.time())
+
+        # Set phase-specific start times when transitioning to certain phases
+        if target_phase == "exam" and not extra.get("exam_started_at"):
+            extra["exam_started_at"] = now_ts
+        elif target_phase == "review" and not extra.get("review_started_at"):
+            extra["review_started_at"] = now_ts
+
+        session.current_phase = target_phase
+        session.extra_data = extra
+        from sqlalchemy.orm import attributes
+
+        attributes.flag_modified(session, "extra_data")
+        db.commit()
+        db.refresh(session)
+
+        return session

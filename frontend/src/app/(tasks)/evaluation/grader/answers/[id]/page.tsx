@@ -278,6 +278,17 @@ function GraderAnswerContent() {
       bonusMultimodal: t('answers.exam_slots.bonus_multimodal') || 'Bonus - Multimodal',
     }
 
+    // Handle interaction attachments first (array) - Order: interaction -> main -> bonus
+    const interactionAttachments = attachments.interaction as EvalAttachment[] | undefined
+    if (interactionAttachments && interactionAttachments.length > 0) {
+      elements.push(
+        <div key="interaction">
+          <h4 className="mb-2 text-sm font-medium text-text-secondary">{slotLabels.interaction}</h4>
+          {renderAttachmentList(interactionAttachments, 'interaction')}
+        </div>
+      )
+    }
+
     // Handle main attachments (array)
     const mainAttachments = attachments.main as EvalAttachment[] | undefined
     if (mainAttachments && mainAttachments.length > 0) {
@@ -285,17 +296,6 @@ function GraderAnswerContent() {
         <div key="main">
           <h4 className="mb-2 text-sm font-medium text-text-secondary">{slotLabels.main}</h4>
           {renderAttachmentList(mainAttachments, 'main')}
-        </div>
-      )
-    }
-
-    // Handle interaction attachments (array)
-    const interactionAttachments = attachments.interaction as EvalAttachment[] | undefined
-    if (interactionAttachments && interactionAttachments.length > 0) {
-      elements.push(
-        <div key="interaction">
-          <h4 className="mb-2 text-sm font-medium text-text-secondary">{slotLabels.interaction}</h4>
-          {renderAttachmentList(interactionAttachments, 'interaction')}
         </div>
       )
     }
@@ -366,25 +366,7 @@ function GraderAnswerContent() {
         elements.push(<div key="examAttachments">{examAttachments}</div>)
       }
 
-      // Render supplementary notes if present
-      const supplementaryNotes = contentData.supplementaryNotes as string | undefined
-      if (supplementaryNotes && supplementaryNotes.trim()) {
-        elements.push(
-          <div key="supplementaryNotes">
-            <h4 className="mb-2 text-sm font-medium text-text-secondary">
-              {t('answers.supplementary_notes') || 'Supplementary Notes'}
-            </h4>
-            <div className="markdown-content rounded-lg bg-surface/50 p-3">
-              <EnhancedMarkdown
-                source={supplementaryNotes}
-                theme={theme === 'dark' ? 'dark' : 'light'}
-              />
-            </div>
-          </div>
-        )
-      }
-
-      // Render supplementary notes files
+      // Render supplementary notes files only (no text content for cleaner display)
       const supplementaryNotesFiles = contentData.supplementaryNotesFiles as
         | EvalAttachment[]
         | undefined
@@ -392,7 +374,7 @@ function GraderAnswerContent() {
         elements.push(
           <div key="supplementaryNotesFiles">
             <h4 className="mb-2 text-sm font-medium text-text-secondary">
-              {t('answers.supplementary_notes_files') || 'Supplementary Notes Files'}
+              {t('answers.supplementary_notes') || 'Supplementary Notes'}
             </h4>
             {renderAttachmentList(supplementaryNotesFiles, 'supplementaryNotes')}
           </div>

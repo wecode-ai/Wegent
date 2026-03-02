@@ -375,32 +375,29 @@ export async function listAuthorGraders(
 // ============================================================================
 
 export interface ExamSession {
-  id?: number
-  topic_id?: number
   user_id: number
   user_name?: string
   user_email?: string
   current_phase: 'intro' | 'exam' | 'review' | 'completed'
-  is_active?: number
-  started_at: string
-  intro_end_at?: string
-  exam_end_at?: string
-  review_end_at?: string
-  remaining_seconds?: number
+  started_at: string | null
   submit_count: number
   selected_question_id: number | null
-  created_at?: string
-  updated_at?: string
-  // Backend may return these fields
-  phase?: 'intro' | 'exam' | 'review' | 'completed'
-  exam_duration_minutes?: number
-  qa_duration_minutes?: number
+}
+
+export interface ExamTopicInfo {
+  id: number
+  name: string
+  description?: string
+  exam_mode: boolean
+  intro_duration_minutes: number
+  exam_duration_minutes: number
+  review_duration_minutes: number
 }
 
 export interface ExamSessionListResponse {
-  total?: number
-  items?: ExamSession[]
-  sessions?: ExamSession[] // Backend returns {sessions: []}
+  topic: ExamTopicInfo
+  sessions: ExamSession[]
+  total: number
 }
 
 export async function getTopicExamSessions(
@@ -431,4 +428,49 @@ export async function resetUserExamSession(
       method: 'POST',
     }
   )
+}
+
+export async function updateUserExamSessionPhase(
+  topicId: number,
+  userId: number,
+  targetPhase: 'intro' | 'exam' | 'review' | 'completed',
+  force?: boolean
+): Promise<{
+  success: boolean
+  message: string
+  previous_phase: string
+  current_phase: string
+  user_id: number
+}> {
+  return fetchJson<{
+    success: boolean
+    message: string
+    previous_phase: string
+    current_phase: string
+    user_id: number
+  }>(getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/update-phase`), {
+    method: 'POST',
+    body: JSON.stringify({ target_phase: targetPhase, force }),
+  })
+}
+
+export async function forceEndExamSession(
+  topicId: number,
+  userId: number
+): Promise<{
+  success: boolean
+  message: string
+  previous_phase: string
+  current_phase: string
+  user_id: number
+}> {
+  return fetchJson<{
+    success: boolean
+    message: string
+    previous_phase: string
+    current_phase: string
+    user_id: number
+  }>(getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/force-end`), {
+    method: 'POST',
+  })
 }
