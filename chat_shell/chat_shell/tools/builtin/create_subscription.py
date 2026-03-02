@@ -635,12 +635,13 @@ class CreateSubscriptionTool(BaseTool):
         trigger_summary = self._format_trigger_summary(trigger_type, trigger_config)
 
         # Build message with subscription:// link for inline editing
+        # Use proper markdown link syntax [text](url) so frontend renders it as a link
         message = (
             f"✅ 订阅任务创建成功！\n"
             f"\n"
             f"请在下方卡片中启用并配置订阅：\n"
             f"\n"
-            f"[subscription://{subscription_id}]\n"
+            f"[📋 订阅卡片](subscription://{subscription_id})\n"
             f"\n"
             "当前状态：默认禁用。\n"
             "- 点击开关启用订阅\n"

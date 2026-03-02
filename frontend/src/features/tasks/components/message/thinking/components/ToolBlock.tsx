@@ -302,6 +302,7 @@ function getToolRenderer(
     case 'Upload':
       return UploadToolRenderer
     case 'create_subscription':
+    case '创建订阅任务':
       return CreateSubscriptionToolRenderer
     default:
       return GenericToolRenderer
