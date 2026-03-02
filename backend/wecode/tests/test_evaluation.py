@@ -402,13 +402,13 @@ class TestGradingService:
 
     def test_create_grading_task(self, grading_service, mock_db):
         """Test creating a grading task."""
-        mock_answer = MagicMock()
-        mock_answer.id = 1
-        mock_answer.question_id = 1
-        mock_answer.question_version = "v1"
-        mock_answer.respondent_id = 2
-
-        task = grading_service.create_task(mock_db, mock_answer)
+        task = grading_service.create(
+            db=mock_db,
+            question_id=1,
+            question_version="v1",
+            answer_id=1,
+            respondent_id=2,
+        )
 
         mock_db.add.assert_called_once()
         added_task = mock_db.add.call_args[0][0]
@@ -466,7 +466,7 @@ class TestGradingService:
         result = grading_service.fail(mock_db, mock_task, "Connection timeout")
 
         assert mock_task.status == GradingTaskStatus.FAILED
-        assert mock_task.report_data == {"error": "Connection timeout"}
+        assert mock_task.error_message == "Connection timeout"
 
     def test_publish_grading_report(self, grading_service, mock_db):
         """Test publishing a grading report."""

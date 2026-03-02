@@ -90,7 +90,6 @@ class GradingService:
     def create(
         self,
         db: Session,
-        topic_id: int,
         question_id: int,
         question_version: str,
         answer_id: int,
@@ -101,7 +100,6 @@ class GradingService:
 
         Args:
             db: Database session
-            topic_id: Topic ID
             question_id: Question ID
             question_version: Question version string
             answer_id: Answer ID
@@ -111,7 +109,6 @@ class GradingService:
             Created grading task
         """
         task = EvalGradingTask(
-            topic_id=topic_id,
             question_id=question_id,
             question_version=question_version,
             answer_id=answer_id,
@@ -123,7 +120,7 @@ class GradingService:
 
         logger.info(
             f"[Evaluation] Created grading task {task.id} for "
-            f"topic={topic_id}, question={question_id}, answer={answer_id}"
+            f"question={question_id}, answer={answer_id}"
         )
 
         return task
@@ -147,7 +144,12 @@ class GradingService:
         Returns:
             List of grading tasks
         """
-        query = db.query(EvalGradingTask).filter(EvalGradingTask.topic_id == topic_id)
+        # Join with EvalQuestion to filter by topic_id
+        query = (
+            db.query(EvalGradingTask)
+            .join(EvalQuestion, EvalGradingTask.question_id == EvalQuestion.id)
+            .filter(EvalQuestion.topic_id == topic_id)
+        )
 
         if status:
             query = query.filter(EvalGradingTask.status == status)
