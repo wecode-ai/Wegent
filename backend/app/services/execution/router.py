@@ -103,9 +103,11 @@ class ExecutionRouter:
         """Route task to execution target.
 
         Routing priority:
-        1. If device_id is specified, use WebSocket mode
-        2. Otherwise, look up configuration by shell_type
-        3. Default to HTTP+Callback mode
+        0. Model type based routing (e.g., video models -> POLLING)
+        1. Protocol-based routing (e.g., gemini-deep-research -> POLLING)
+        2. If device_id is specified, use WebSocket mode
+        3. Otherwise, look up configuration by shell_type
+        4. Default to HTTP+Callback mode
 
         Args:
             request: Execution request
@@ -116,7 +118,14 @@ class ExecutionRouter:
         """
         user_id = request.user.get("id") if request.user else None
 
-        # Priority 0: Protocol-based routing (e.g., gemini-deep-research)
+        # Priority 0: Model type based routing for polling agents
+        model_type = self._get_model_type(request)
+        if model_type == "video" and not device_id:
+            return ExecutionTarget(
+                mode=CommunicationMode.POLLING,
+            )
+
+        # Priority 1: Protocol-based routing (e.g., gemini-deep-research)
         protocol = (
             request.model_config.get("protocol") if request.model_config else None
         )
@@ -175,3 +184,16 @@ class ExecutionRouter:
         if request.bot and len(request.bot) > 0:
             return request.bot[0].get("shell_type", "Chat")
         return "Chat"
+
+    def _get_model_type(self, request: ExecutionRequest) -> Optional[str]:
+        """Get model type from request.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            Model type string (e.g., 'video', 'llm') or None
+        """
+        if request.model_config:
+            return request.model_config.get("modelType")
+        return None

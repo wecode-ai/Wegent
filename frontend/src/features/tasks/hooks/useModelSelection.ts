@@ -17,7 +17,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
+import { modelApis, UnifiedModel, ModelTypeEnum, ModelCategoryType } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
@@ -27,13 +27,15 @@ import {
   type ModelPreference,
 } from '@/utils/modelPreferences'
 import type { Team, BotSummary } from '@/types/api'
-
 // ============================================================================
 // Types
 // ============================================================================
 
 /** Region type for model deployment location */
 export type ModelRegion = 'domestic' | 'overseas' | undefined
+
+// Re-export ModelCategoryType from @/apis/models for convenience
+export type { ModelCategoryType } from '@/apis/models'
 
 /** Model type for component props (extended with type information) */
 export interface Model {
@@ -44,6 +46,7 @@ export interface Model {
   type?: ModelTypeEnum
   region?: ModelRegion
   isAdvanced?: boolean
+  namespace?: string
 }
 
 /** Special constant for default model option */
@@ -71,6 +74,8 @@ export interface UseModelSelectionOptions {
   selectedTeam: TeamWithBotDetails | null
   /** Whether the selector is disabled (e.g., viewing existing task) */
   disabled?: boolean
+  /** Model category type to filter models (default: 'llm') */
+  modelCategoryType?: ModelCategoryType
 }
 
 /** Return type for useModelSelection hook */
@@ -151,6 +156,7 @@ export function useModelSelection({
   taskModelId,
   selectedTeam,
   disabled = false,
+  modelCategoryType = 'llm',
 }: UseModelSelectionOptions): UseModelSelectionReturn {
   const { t } = useTranslation()
 
@@ -241,12 +247,17 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   // Model Fetching
   // -------------------------------------------------------------------------
-
   const fetchModels = useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+      const response = await modelApis.getUnifiedModels(
+        undefined,
+        false,
+        'all',
+        undefined,
+        modelCategoryType
+      )
       const modelList = (response.data || []).map(unifiedToModel)
       setModels(modelList)
     } catch (err) {
@@ -255,7 +266,7 @@ export function useModelSelection({
     } finally {
       setIsLoading(false)
     }
-  }, [t])
+  }, [t, modelCategoryType])
 
   // Load models on mount
   useEffect(() => {

@@ -18,9 +18,9 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { Check, Brain, ChevronDown } from 'lucide-react'
+import { Check, Brain, ChevronDown, Video, ImageIcon } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -40,13 +40,18 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useModelSelection } from '@/features/tasks/hooks/useModelSelection'
 import type { Team, BotSummary } from '@/types/api'
+import type { ModelCategoryType } from '@/apis/models'
 
 // Re-export types and constants from useModelSelection for backward compatibility
 export {
   DEFAULT_MODEL_NAME,
   allBotsHavePredefinedModel,
 } from '@/features/tasks/hooks/useModelSelection'
-export type { Model, ModelRegion } from '@/features/tasks/hooks/useModelSelection'
+export type {
+  Model,
+  ModelRegion,
+  ModelCategoryType,
+} from '@/features/tasks/hooks/useModelSelection'
 
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection'
@@ -82,6 +87,8 @@ export interface ModelSelectorProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Model category type for filtering and display (default: 'llm') */
+  modelCategoryType?: ModelCategoryType
 }
 
 // ============================================================================
@@ -114,6 +121,7 @@ export default function ModelSelector({
   teamId,
   taskId,
   taskModelId,
+  modelCategoryType = 'llm',
 }: ModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -126,7 +134,20 @@ export default function ModelSelector({
     taskModelId,
     selectedTeam,
     disabled,
+    modelCategoryType,
   })
+
+  // Get icon based on model category type
+  const IconComponent = useMemo(() => {
+    switch (modelCategoryType) {
+      case 'video':
+        return Video
+      case 'image':
+        return ImageIcon
+      default:
+        return Brain
+    }
+  }, [modelCategoryType])
 
   // Sync external state with internal hook state
   // This allows the component to work with both legacy and new APIs
@@ -234,7 +255,7 @@ export default function ModelSelector({
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
                 >
-                  <Brain className="h-4 w-4 flex-shrink-0" />
+                  <IconComponent className="h-4 w-4 flex-shrink-0" />
                   {!compact && (
                     <span className="truncate text-xs min-w-0">
                       {modelSelection.getDisplayText()}

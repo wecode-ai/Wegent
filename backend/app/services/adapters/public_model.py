@@ -30,6 +30,7 @@ class ModelAdapter:
         config = {}
         display_name = None
         is_advanced = False
+        model_category_type = "llm"
         if isinstance(kind.json, dict):
             # Check if json has proper CRD structure (metadata and spec)
             if "metadata" in kind.json and "spec" in kind.json:
@@ -37,7 +38,24 @@ class ModelAdapter:
                     model_crd = Model.model_validate(kind.json)
                     config = model_crd.spec.modelConfig
                     display_name = model_crd.metadata.displayName
-                    is_advanced = bool(model_crd.spec.isAdvanced) if model_crd.spec.isAdvanced else False
+                    is_advanced = (
+                        bool(model_crd.spec.isAdvanced)
+                        if model_crd.spec.isAdvanced
+                        else False
+                    )
+                    if model_crd.spec.modelType:
+                        model_category_type = model_crd.spec.modelType.value
+                    # Include type-specific config for non-LLM models
+                    if model_category_type == "video":
+                        if model_crd.spec.videoConfig:
+                            config = {
+                                **config,
+                                "videoConfig": model_crd.spec.videoConfig.model_dump(
+                                    exclude_none=True
+                                ),
+                            }
+                        if model_crd.spec.protocol:
+                            config = {**config, "protocol": model_crd.spec.protocol}
                 except Exception:
                     # Fallback for invalid CRD structure
                     config = kind.json
@@ -45,13 +63,25 @@ class ModelAdapter:
                 # Legacy format: json contains config directly
                 config = kind.json
 
+        # Extract provider and model_id from env before stripping
+        env = config.get("env", {}) if isinstance(config, dict) else {}
+        provider = env.get("model") if isinstance(env, dict) else None
+        model_id_value = env.get("model_id") if isinstance(env, dict) else None
+
+        # Strip sensitive env from public model config
+        if isinstance(config, dict) and "env" in config:
+            config = {**config, "env": {}}
+
         return {
             "id": kind.id,
             "name": kind.name,
             "displayName": display_name,
             "config": config,
+            "provider": provider,
+            "model_id": model_id_value,
             "is_active": kind.is_active,
             "is_advanced": is_advanced,
+            "model_category_type": model_category_type,
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,
         }

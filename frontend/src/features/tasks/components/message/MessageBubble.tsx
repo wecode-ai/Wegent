@@ -81,6 +81,16 @@ export interface Message {
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
     blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
     annotations?: GeminiAnnotation[] // Gemini Deep Research grounding annotations
+    /** Video generation progress (0-100) */
+    progress?: number
+    /** Video generation result */
+    video?: {
+      attachment_id?: number | null
+      video_url: string
+      thumbnail?: string | null // Base64 encoded thumbnail
+      duration?: number | null // Video duration in seconds
+      is_placeholder?: boolean // True when video is still being generated
+    }
   }
   /** @deprecated Use contexts instead */
   attachments?: Attachment[]
@@ -1122,6 +1132,10 @@ const MessageBubble = memo(
     const renderAiMessage = (message: Message, messageIndex: number) => {
       const content = message.content ?? ''
 
+      // Video rendering is now handled by MixedContentView via video blocks
+      // The old result.video and result.progress logic has been removed
+      // in favor of the unified block-based rendering system
+
       try {
         let contentToParse = content
 
@@ -1330,8 +1344,37 @@ const MessageBubble = memo(
                 </div>
               )}
               {/* Show contexts (attachments, knowledge bases, etc.) for both user and AI messages */}
+              {/* For AI messages with image/video blocks, filter out attachments to avoid duplicate display */}
               <ContextBadgeList
-                contexts={msg.contexts || undefined}
+                contexts={(() => {
+                  if (!msg.contexts) return undefined
+                  // For AI messages, check if there are image/video blocks in result.blocks
+                  // If so, filter out attachments that are already displayed in ImageGallery/VideoPlayer
+                  if (!isUserTypeMessage && msg.result?.blocks) {
+                    // Get all attachment IDs from image and video blocks
+                    const attachmentIdsInBlocks = new Set<number>()
+                    for (const block of msg.result.blocks) {
+                      // Handle image blocks
+                      if (block.type === 'image' && block.image_attachment_ids) {
+                        for (const id of block.image_attachment_ids) {
+                          if (id) attachmentIdsInBlocks.add(id)
+                        }
+                      }
+                      // Handle video blocks
+                      if (block.type === 'video' && block.video_attachment_id) {
+                        attachmentIdsInBlocks.add(block.video_attachment_id)
+                      }
+                    }
+                    // If there are attachment IDs in blocks, filter them out from contexts
+                    if (attachmentIdsInBlocks.size > 0) {
+                      const filteredContexts = msg.contexts.filter(
+                        ctx => !attachmentIdsInBlocks.has(ctx.id)
+                      )
+                      return filteredContexts.length > 0 ? filteredContexts : undefined
+                    }
+                  }
+                  return msg.contexts
+                })()}
                 onContextReselect={isUserTypeMessage ? onContextReselect : undefined}
                 shareToken={shareToken}
               />

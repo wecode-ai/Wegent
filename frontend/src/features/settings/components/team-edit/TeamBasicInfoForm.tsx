@@ -12,14 +12,15 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import { HelpCircle } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import type { TaskType } from '@/types/api'
 
 interface TeamBasicInfoFormProps {
   name: string
   setName: (name: string) => void
   description: string
   setDescription: (description: string) => void
-  bindMode: ('chat' | 'code' | 'knowledge' | 'task')[]
-  setBindMode: (bindMode: ('chat' | 'code' | 'knowledge' | 'task')[]) => void
+  bindMode: TaskType[]
+  setBindMode: (bindMode: TaskType[]) => void
   icon?: string | null
   setIcon?: (icon: string) => void
   requiresWorkspace?: boolean | null
@@ -66,8 +67,8 @@ export default function TeamBasicInfoForm({
         {/* Bind Mode */}
         <div className="space-y-2">
           <Label className="text-sm font-medium">{t('common:team.bind_mode')}</Label>
-          <div className="flex gap-2">
-            {(['chat', 'code', 'task'] as const).map(opt => {
+          <div className="flex gap-2 flex-wrap">
+            {(['chat', 'code', 'task', 'video', 'image'] as const).map(opt => {
               const isSelected = bindMode.includes(opt)
               return (
                 <button
