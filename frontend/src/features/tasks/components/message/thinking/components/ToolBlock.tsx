@@ -17,6 +17,7 @@ import { GrepToolRenderer } from './tools/GrepToolRenderer'
 import { GlobToolRenderer } from './tools/GlobToolRenderer'
 import { TodoWriteToolRenderer } from './tools/TodoWriteToolRenderer'
 import { UploadToolRenderer } from './tools/UploadToolRenderer'
+import { CreateSubscriptionToolRenderer } from './tools/CreateSubscriptionToolRenderer'
 
 /**
  * Get a short preview of the tool input for display in the header
@@ -300,6 +301,8 @@ function getToolRenderer(
       return TodoWriteToolRenderer
     case 'Upload':
       return UploadToolRenderer
+    case 'create_subscription':
+      return CreateSubscriptionToolRenderer
     default:
       return GenericToolRenderer
   }
