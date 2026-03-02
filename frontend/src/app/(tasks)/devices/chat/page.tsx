@@ -156,8 +156,8 @@ export default function DeviceChatPage() {
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
 
-  // Show VNC panel only when open and sandboxId is available
-  const showVncPanel = isVncOpen && sandboxId && !isMobile
+  // Show VNC panel only when open and device is a cloud device with sandboxId
+  const showVncPanel = isVncOpen && sandboxId && selectedDeviceId && !isMobile
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -261,7 +261,7 @@ export default function DeviceChatPage() {
                   </button>
                 </div>
                 {/* VNC viewer */}
-                <VncViewer sandboxId={sandboxId} />
+                <VncViewer deviceId={selectedDeviceId} />
               </div>
             )}
           </div>

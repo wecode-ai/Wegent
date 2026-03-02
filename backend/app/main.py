@@ -666,10 +666,16 @@ def create_socketio_asgi_app():
 
     Returns a combined app that routes Socket.IO traffic to Socket.IO server
     and everything else to FastAPI.
+
+    Note: We use a custom ASGI router instead of socketio.ASGIApp because
+    socketio.ASGIApp does not properly forward non-Socket.IO WebSocket
+    connections to the other_asgi_app, returning 403 instead.
+    VNC WebSocket connections are handled directly in this router to bypass
+    FastAPI middleware issues with WebSocket upgrade in uvicorn.
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
-    from app.core.socketio import create_socketio_app, get_sio
+    from app.core.socketio import get_sio
 
     sio = get_sio()
 
@@ -682,14 +688,64 @@ def create_socketio_asgi_app():
     register_device_namespace(sio)
     _logger.info("Device namespace registered during ASGI app creation")
 
-    socketio_app = create_socketio_app(sio)
+    # Socket.IO ASGI app handles only /socket.io/* paths
+    sio_asgi = socketio.ASGIApp(sio, socketio_path="/socket.io")
 
-    # Create combined ASGI app
-    return socketio.ASGIApp(
-        sio,
-        other_asgi_app=_fastapi_app,
-        socketio_path="/socket.io",
-    )
+    # VNC WebSocket path pattern: /api/cloud-devices/{device_id}/vnc-ws
+    import re
+
+    _vnc_ws_pattern = re.compile(r"^/api/cloud-devices/([^/]+)/vnc-ws$")
+
+    async def _handle_vnc_ws(scope, receive, send):
+        """Handle VNC WebSocket proxy at the ASGI level."""
+        from wecode.api.cloud_devices import vnc_websocket_proxy
+
+        path = scope.get("path", "")
+        _logger.info(f"[VNC-WS] Handling WebSocket for path={path}")
+        match = _vnc_ws_pattern.match(path)
+        if not match:
+            # Should not happen, but fallback
+            await _fastapi_app(scope, receive, send)
+            return
+
+        device_id = match.group(1)
+
+        # Extract token from query string
+        import urllib.parse
+
+        qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
+        params = urllib.parse.parse_qs(qs)
+        token = params.get("token", [""])[0]
+
+        # Create a FastAPI WebSocket object from the ASGI scope
+        from fastapi import WebSocket
+
+        websocket = WebSocket(scope, receive, send)
+
+        # Call the endpoint handler directly
+        await vnc_websocket_proxy(websocket, device_id, token)
+
+    # Custom ASGI router: explicitly route by path
+    async def combined_app(scope, receive, send):
+        if scope["type"] == "lifespan":
+            await sio_asgi(scope, receive, send)
+        else:
+            path = scope.get("path", "")
+            if scope["type"] == "websocket":
+                _logger.info(f"[CombinedApp] WebSocket path={path}")
+            if not path.endswith("/"):
+                path_slash = path + "/"
+            else:
+                path_slash = path
+            if path_slash.startswith("/socket.io/"):
+                await sio_asgi(scope, receive, send)
+            elif scope["type"] == "websocket" and _vnc_ws_pattern.match(path):
+                _logger.info(f"[CombinedApp] -> VNC handler")
+                await _handle_vnc_ws(scope, receive, send)
+            else:
+                await _fastapi_app(scope, receive, send)
+
+    return combined_app
 
 
 # Combined ASGI app (Socket.IO + FastAPI)

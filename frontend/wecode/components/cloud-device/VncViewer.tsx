@@ -4,16 +4,17 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Loader2, RefreshCw, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getToken } from '@/apis/user'
+import { getSocketUrl } from '@/lib/runtime-config'
 import '@wecode/i18n'
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 interface VncViewerProps {
-  readonly sandboxId: string
+  readonly deviceId: string
   readonly className?: string
 }
 
-export function VncViewer({ sandboxId, className = '' }: VncViewerProps) {
+export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
   const { t } = useTranslation('devices')
   const containerRef = useRef<HTMLDivElement>(null)
   const rfbRef = useRef<InstanceType<typeof import('@novnc/novnc/lib/rfb').default> | null>(null)
@@ -51,8 +52,22 @@ export function VncViewer({ sandboxId, className = '' }: VncViewerProps) {
       }
 
       // Build WebSocket URL for VNC proxy
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const wsUrl = `${protocol}//${window.location.host}/vnc-proxy/${encodeURIComponent(sandboxId)}?token=${encodeURIComponent(token)}`
+      // Two modes:
+      // 1. Direct backend (npm run dev): getSocketUrl() returns backend URL like http://localhost:8000
+      //    -> connect to ws://localhost:8000/api/cloud-devices/{deviceId}/vnc-ws?token=jwt
+      // 2. Proxy mode (npm run dev:proxy / production): getSocketUrl() is empty
+      //    -> connect to ws://current-host/vnc-proxy/{deviceId}?token=jwt (handled by server.cjs)
+      const backendUrl = getSocketUrl()
+      let wsUrl: string
+      if (backendUrl) {
+        // Direct backend mode
+        const wsBase = backendUrl.replace(/^http/, 'ws')
+        wsUrl = `${wsBase}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-ws?token=${encodeURIComponent(token)}`
+      } else {
+        // Proxy mode (server.cjs)
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        wsUrl = `${protocol}//${window.location.host}/vnc-proxy/${encodeURIComponent(deviceId)}?token=${encodeURIComponent(token)}`
+      }
 
       const rfb = new RFB(containerRef.current, wsUrl)
       rfb.scaleViewport = true
@@ -87,7 +102,7 @@ export function VncViewer({ sandboxId, className = '' }: VncViewerProps) {
       setStatus('error')
       setErrorMessage(err instanceof Error ? err.message : t('vnc_error'))
     }
-  }, [sandboxId, t])
+  }, [deviceId, t])
 
   useEffect(() => {
     connect()
