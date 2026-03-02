@@ -688,9 +688,6 @@ def create_socketio_asgi_app():
     register_device_namespace(sio)
     _logger.info("Device namespace registered during ASGI app creation")
 
-    # Socket.IO ASGI app handles only /socket.io/* paths
-    sio_asgi = socketio.ASGIApp(sio, socketio_path="/socket.io")
-
     # VNC WebSocket path pattern: /api/cloud-devices/{device_id}/vnc-ws
     import re
 
@@ -725,26 +722,25 @@ def create_socketio_asgi_app():
         # Call the endpoint handler directly
         await vnc_websocket_proxy(websocket, device_id, token)
 
-    # Custom ASGI router: explicitly route by path
-    async def combined_app(scope, receive, send):
-        if scope["type"] == "lifespan":
-            await sio_asgi(scope, receive, send)
-        else:
+    # Wrapper ASGI app that intercepts VNC WebSocket before Socket.IO
+    async def vnc_interceptor_app(scope, receive, send):
+        """Intercept VNC WebSocket connections before they reach Socket.IO."""
+        if scope["type"] == "websocket":
             path = scope.get("path", "")
-            if scope["type"] == "websocket":
-                _logger.info(f"[CombinedApp] WebSocket path={path}")
-
-            # Route Socket.IO traffic (both HTTP polling and WebSocket)
-            # Socket.IO paths start with /socket.io/ or are exactly /socket.io
-            if path.startswith("/socket.io/") or path == "/socket.io":
-                await sio_asgi(scope, receive, send)
-            elif scope["type"] == "websocket" and _vnc_ws_pattern.match(path):
-                _logger.info(f"[CombinedApp] -> VNC handler")
+            if _vnc_ws_pattern.match(path):
+                _logger.info(f"[VNC Interceptor] Handling VNC WebSocket: {path}")
                 await _handle_vnc_ws(scope, receive, send)
-            else:
-                await _fastapi_app(scope, receive, send)
+                return
+        # For all other requests, forward to FastAPI
+        await _fastapi_app(scope, receive, send)
 
-    return combined_app
+    # Create Socket.IO ASGI app with the VNC interceptor as other_asgi_app
+    # This ensures Socket.IO handles /socket.io/* and everything else goes to vnc_interceptor_app
+    return socketio.ASGIApp(
+        sio,
+        other_asgi_app=vnc_interceptor_app,
+        socketio_path="/socket.io",
+    )
 
 
 # Combined ASGI app (Socket.IO + FastAPI)
