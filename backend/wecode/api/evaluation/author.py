@@ -521,7 +521,7 @@ def update_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question = question_service.update(
         db=db,
@@ -1082,7 +1082,7 @@ def get_topic_exam_sessions(
     - Selected question ID
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Check if topic has examMode enabled
     extra_data = topic.extra_data or {}
@@ -1138,7 +1138,7 @@ def reset_user_exam_session(
     Soft deletes the active session, allowing the user to start fresh.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     exam_session_service = get_exam_session_service()
     exam_session_service.reset_session(db, topic_id, user_id)
