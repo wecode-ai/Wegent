@@ -587,6 +587,7 @@
     "failed": "Image generation failed",
     "download": "Download image",
     "expand": "View full size",
+    "use_as_reference": "Use as reference",
     "generated_image": "Generated image",
     "lightbox": "Image preview",
     "no_models": "No image models available"

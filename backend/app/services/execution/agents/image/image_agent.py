@@ -7,12 +7,12 @@ Image generation agent.
 
 Handles image generation workflow:
 1. Parse request and extract image config
-2. Call image generation provider
-3. Upload result as attachment
-4. Emit events via emitter
+2. Analyze intent for follow-up messages (using secondary LLM)
+3. Call image generation provider (with optional reference image)
+4. Upload result as attachment
+5. Emit events via emitter
 """
 
-import asyncio
 import logging
 import time
 import uuid
@@ -22,6 +22,7 @@ from shared.models import EventType, ExecutionEvent, ExecutionRequest
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
+from .intent_analyzer import ImageIntentAnalyzer
 from .providers import get_image_provider
 
 logger = logging.getLogger(__name__)
@@ -49,9 +50,10 @@ class ImageAgent(PollingAgent):
 
         Workflow:
         1. Emit START event
-        2. Call image generation provider
-        3. Upload result as attachment
-        4. Emit DONE event with image result
+        2. Analyze intent for follow-ups (using secondary model)
+        3. Call image generation provider (with reference image if follow-up)
+        4. Upload result as attachment
+        5. Emit DONE event with image result
         """
         from app.services.chat.storage.session import session_manager
 
@@ -110,17 +112,38 @@ class ImageAgent(PollingAgent):
                 else str(request.prompt)
             )
 
-            # Extract reference images from attachments if any
-            reference_images = self._extract_reference_images(request)
+            # Step 1: Extract reference images explicitly provided by user (highest priority)
+            user_reference_images = self._extract_reference_images(request)
+
+            # Step 2: Run intent analysis for follow-up if no explicit user reference images
+            # and there is prior task history to analyze.
+            if not user_reference_images and request.task_id:
+                intent_result = await self._analyze_intent(request)
+                final_prompt = (
+                    intent_result.merged_prompt
+                    if intent_result.is_followup
+                    else prompt
+                )
+                # Use reference image from intent analysis when user didn't specify one
+                reference_images = (
+                    [intent_result.reference_image]
+                    if intent_result.should_use_image and intent_result.reference_image
+                    else []
+                )
+            else:
+                # User explicitly provided attachments - skip intent analysis
+                final_prompt = prompt
+                reference_images = user_reference_images
 
             # Generate images
             logger.info(
                 f"[{self.name}] Generating image: task_id={task_id}, "
-                f"provider={provider.name}"
+                f"provider={provider.name}, "
+                f"reference_images={len(reference_images)}"
             )
 
             result = await provider.generate(
-                prompt=prompt,
+                prompt=final_prompt,
                 reference_images=reference_images,
             )
 
@@ -215,6 +238,36 @@ class ImageAgent(PollingAgent):
                         reference_images.append(url)
 
         return reference_images
+
+    async def _analyze_intent(self, request: ExecutionRequest):
+        """Run ImageIntentAnalyzer for multi-turn follow-up detection.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            ImageIntentResult with merged_prompt, should_use_image, reference_image, is_followup
+        """
+        model_config = request.model_config or {}
+        secondary_model_config = model_config.get("secondary_model_config")
+        current_prompt = (
+            request.prompt
+            if isinstance(request.prompt, str)
+            else str(request.prompt)
+        )
+
+        # Build exclusion list: current assistant subtask + user subtask
+        exclude_ids = [
+            sid for sid in [request.subtask_id, request.user_subtask_id] if sid
+        ]
+
+        analyzer = ImageIntentAnalyzer()
+        return await analyzer.analyze(
+            task_id=request.task_id,
+            current_prompt=current_prompt,
+            secondary_model_config=secondary_model_config,
+            exclude_subtask_ids=exclude_ids,
+        )
 
     async def _emit_image_block(
         self,

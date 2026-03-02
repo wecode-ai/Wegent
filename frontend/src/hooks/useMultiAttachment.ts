@@ -24,6 +24,8 @@ interface UseMultiAttachmentReturn {
   state: MultiAttachmentUploadState
   /** Handle file selection and upload */
   handleFileSelect: (files: File | File[]) => Promise<void>
+  /** Add an already-uploaded attachment directly (e.g., reference image from history) */
+  addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   /** Remove specific attachment */
   handleRemove: (attachmentId: number) => Promise<void>
   /** Reset state */
@@ -203,6 +205,22 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
     [state.attachments, t]
   )
 
+  const addExistingAttachment = useCallback(
+    (attachment: import('@/types/api').Attachment) => {
+      // Skip if already in the list
+      setState(prev => {
+        if (prev.attachments.some(a => a.id === attachment.id)) {
+          return prev
+        }
+        return {
+          ...prev,
+          attachments: [...prev.attachments, attachment],
+        }
+      })
+    },
+    []
+  )
+
   const handleRemove = useCallback(
     async (attachmentId: number) => {
       const attachment = state.attachments.find(a => a.id === attachmentId)
@@ -250,6 +268,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
   return {
     state,
     handleFileSelect,
+    addExistingAttachment,
     handleRemove,
     reset,
     isReadyToSend,

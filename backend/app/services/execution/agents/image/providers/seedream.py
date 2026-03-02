@@ -79,8 +79,11 @@ class SeedreamProvider(ImageProvider):
             "watermark": self.image_config.get("watermark", False),
         }
 
-        # Add reference images if provided
-        if reference_images:
+        # Add reference images if provided.
+        # Note: doubao-seedream-3.0-t2i does NOT support the image parameter.
+        # Other Seedream variants (5.0-lite, 4.5, 4.0, seededit-3.0-i2i) support it.
+        model_supports_reference_image = "3.0-t2i" not in self.model
+        if reference_images and model_supports_reference_image:
             if len(reference_images) == 1:
                 extra_body["image"] = reference_images[0]
             else:

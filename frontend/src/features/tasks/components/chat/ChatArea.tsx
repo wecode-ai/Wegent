@@ -28,6 +28,7 @@ import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
+import { getAttachment } from '@/apis/attachments'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
@@ -583,10 +584,36 @@ function ChatAreaContent({
     [chatState]
   )
 
+  // Callback when user wants to use a previously generated image as reference
+  // Fetches the attachment metadata and adds it to the current input attachments
+  const handleUseAsReference = useCallback(
+    async (item: import('../message/ImageGallery').ImageItem) => {
+      if (!item.attachmentId) return
+      try {
+        const detail = await getAttachment(item.attachmentId)
+        chatState.addExistingAttachment({
+          id: detail.id,
+          filename: detail.filename,
+          file_size: detail.file_size,
+          mime_type: detail.mime_type,
+          status: detail.status,
+          text_length: detail.text_length ?? null,
+          error_message: detail.error_message ?? null,
+          error_code: detail.error_code ?? null,
+          subtask_id: detail.subtask_id ?? null,
+          file_extension: detail.file_extension,
+          created_at: detail.created_at,
+        })
+      } catch {
+        // Silently ignore fetch errors - the system will use auto intent analysis
+      }
+    },
+    [chatState]
+  )
+
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      clearAccessDenied()
       setSelectedTask(null)
       router.push('/chat')
     }
@@ -804,6 +831,7 @@ function ChatAreaContent({
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
               onContextReselect={handleContextReselect}
               hideGroupChatOptions={taskType === 'knowledge'}
+              onUseAsReference={handleUseAsReference}
             />
           </div>
         </div>
