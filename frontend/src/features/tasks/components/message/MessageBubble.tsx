@@ -1652,7 +1652,8 @@ const MessageBubble = memo(
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
-      prevProps.isRegenerating === nextProps.isRegenerating
+      prevProps.isRegenerating === nextProps.isRegenerating &&
+      prevProps.onUseAsReference === nextProps.onUseAsReference
 
     return shouldSkipRender
   }

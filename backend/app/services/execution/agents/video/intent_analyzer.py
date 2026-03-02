@@ -173,5 +173,7 @@ class VideoIntentAnalyzer(BaseIntentAnalyzer):
         return VideoIntentResult(
             merged_prompt=result.get("merged_prompt", current_prompt),
             should_use_image=result.get("should_use_image", False),
-            image_mode=result.get("image_mode"),
+            image_mode=result.get("image_mode")
+            if result.get("image_mode") in ("first_frame", "last_frame", "reference")
+            else None,
         )

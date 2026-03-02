@@ -22,7 +22,7 @@ from shared.models import EventType, ExecutionEvent, ExecutionRequest
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
-from .intent_analyzer import ImageIntentAnalyzer
+from .intent_analyzer import ImageIntentAnalyzer, ImageIntentResult
 from .providers import get_image_provider
 
 logger = logging.getLogger(__name__)
@@ -239,7 +239,7 @@ class ImageAgent(PollingAgent):
 
         return reference_images
 
-    async def _analyze_intent(self, request: ExecutionRequest):
+    async def _analyze_intent(self, request: ExecutionRequest) -> ImageIntentResult:
         """Run ImageIntentAnalyzer for multi-turn follow-up detection.
 
         Args:

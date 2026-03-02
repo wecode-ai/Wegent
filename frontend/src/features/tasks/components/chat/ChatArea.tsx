@@ -604,8 +604,9 @@ function ChatAreaContent({
           file_extension: detail.file_extension,
           created_at: detail.created_at,
         })
-      } catch {
-        // Silently ignore fetch errors - the system will use auto intent analysis
+      } catch (error) {
+        // Log error; system will fall back to auto intent analysis
+        console.error('Failed to use image as reference:', error)
       }
     },
     [chatState]

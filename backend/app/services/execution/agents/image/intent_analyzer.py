@@ -183,7 +183,7 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
                             f"[ImageIntentAnalyzer] Failed to build attachment URL "
                             f"for id={attachment_id}: {e}"
                         )
-                        return None
+                        continue
                     finally:
                         db.close()
 

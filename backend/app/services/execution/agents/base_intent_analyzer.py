@@ -49,5 +49,5 @@ class BaseIntentAnalyzer:
             )
             return json.loads(response.choices[0].message.content)
         except Exception as e:
-            logger.error(f"[{self.__class__.__name__}] LLM call failed: {e}")
+            logger.exception(f"[{self.__class__.__name__}] LLM call failed: {e}")
             return None

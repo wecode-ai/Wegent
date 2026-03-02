@@ -155,7 +155,7 @@ export function ImageGallery({ images, className, onUseAsReference }: ImageGalle
               </button>
 
               {/* Use as reference button (shown only when callback provided) - 44px touch target */}
-              {onUseAsReference && (
+              {onUseAsReference && image.attachmentId && (
                 <button
                   type="button"
                   onClick={e => {
