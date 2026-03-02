@@ -22,6 +22,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Threshold above which short summaries are preferred over long summaries to
+# reduce token usage when many KBs are included in the meta prompt.
+SHORT_SUMMARY_THRESHOLD = 3
+
 
 def select_kb_summary_text(summary_data: dict[str, Any], kb_count: int) -> str:
     """Select summary text based on KB count.
@@ -37,7 +41,7 @@ def select_kb_summary_text(summary_data: dict[str, Any], kb_count: int) -> str:
         Summary text or empty string.
     """
 
-    use_short = kb_count >= 3
+    use_short = kb_count >= SHORT_SUMMARY_THRESHOLD
 
     if use_short:
         summary_text = summary_data.get("short_summary") or summary_data.get(

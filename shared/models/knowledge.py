@@ -53,10 +53,10 @@ class ChatContextsResult:
     """
 
     # Processed user message (may be str or OpenAI Responses API vision list).
-    final_message: Union[str, list]
+    final_message: Union[str, list[dict[str, Any]]]
     # Whether any table contexts were found for this subtask.
     has_table_context: bool
     # Parsed table descriptors forwarded to chat_shell for DataTableTool creation.
-    table_contexts: list[dict]
+    table_contexts: list[dict[str, Any]]
     # All knowledge-base related results (tools, prompts, resolved IDs).
     kb: KnowledgeBaseToolsResult

@@ -307,6 +307,10 @@ class TestKBPriorityLogic:
             assert kb_result.extra_tools == []
             assert kb_result.enhanced_system_prompt == "Base prompt"
             assert kb_result.kb_meta_prompt == ""
+            # New KB fields must also default to empty/False
+            assert kb_result.knowledge_base_ids == []
+            assert kb_result.is_user_selected_kb is False
+            assert kb_result.document_ids == []
 
 
 @pytest.mark.unit

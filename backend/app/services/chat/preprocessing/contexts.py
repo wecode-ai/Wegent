@@ -965,7 +965,9 @@ async def prepare_contexts_for_chat(
             process_selected_documents_contexts(**kwargs)
         )
 
-    has_table_context = len(table_contexts) > 0
+    # Derive flag from parsed_tables (not raw table_contexts) to stay consistent
+    # with the returned table payload — if parsing fails, the flag stays False.
+    has_table_context = len(parsed_tables) > 0
 
     # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
     # and extra_tools (table prompt and selected_documents processing may have modified
@@ -1087,13 +1089,28 @@ def _prepare_kb_tools_from_contexts(
         knowledge_base_ids = []
 
     # Extract document_ids from subtask KB contexts (no extra DB query needed).
+    # Normalize to int, skip invalid values, and deduplicate while preserving order.
     document_ids: List[int] = []
     if is_user_selected_kb:
+        seen_doc_ids: set[int] = set()
         for c in kb_contexts:
             if c.type_data and isinstance(c.type_data, dict):
-                doc_ids = c.type_data.get("document_ids", [])
-                if doc_ids:
-                    document_ids.extend(doc_ids)
+                raw_doc_ids = c.type_data.get("document_ids", [])
+                if isinstance(raw_doc_ids, list):
+                    for doc_id in raw_doc_ids:
+                        try:
+                            normalized = int(doc_id)
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "[_prepare_kb_tools_from_contexts] Ignore invalid "
+                                "document_id=%s in context_id=%s",
+                                doc_id,
+                                getattr(c, "id", None),
+                            )
+                            continue
+                        if normalized not in seen_doc_ids:
+                            seen_doc_ids.add(normalized)
+                            document_ids.append(normalized)
 
     if not knowledge_base_ids:
         return KnowledgeBaseToolsResult(
@@ -1240,7 +1257,8 @@ def _build_kb_meta_prompt(db: Session, knowledge_base_ids: List[int]) -> str:
                 continue
 
             kb_spec = kb_kind.json.get("spec", {}) if kb_kind.json else {}
-            kb_name = kb_spec.get("name") or "Unknown"
+            # Prefer spec-level name, then model-level Kind.name, then "Unknown".
+            kb_name = kb_spec.get("name") or getattr(kb_kind, "name", None) or "Unknown"
 
             summary_text = ""
             topics: list[str] = []
