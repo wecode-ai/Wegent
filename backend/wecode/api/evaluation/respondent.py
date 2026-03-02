@@ -28,6 +28,9 @@ from app.core import security
 from app.models.user import User
 from wecode.exceptions import BusinessException
 from wecode.models.evaluation import (
+    EvalAnswer,
+    EvalGradingTask,
+    GradingTaskStatus,
     QuestionStatus,
     TopicStatus,
 )
@@ -904,14 +907,15 @@ def submit_exam(
         db.refresh(existing_answer)
         answer = existing_answer
     else:
-        # Submit new answer
+        # Submit new answer - don't create grading task yet
+        # Grading task will be created when user ends the exam (phase -> completed)
         answer = answer_service.submit(
             db=db,
             question_id=request.selectedQuestionId,
             user_id=current_user.id,
             content_type="mixed",
             content_data=content_data,
-            auto_create_grading=True,
+            auto_create_grading=False,
         )
         db.commit()
 
@@ -1193,6 +1197,15 @@ def advance_exam_phase(
             db=db, session=session, target_phase=request.target_phase
         )
 
+        # Create grading tasks when exam is completed
+        if request.target_phase == "completed":
+            _create_grading_tasks_for_exam_completion(
+                db=db,
+                topic_id=topic_id,
+                user_id=current_user.id,
+                topic=topic,
+            )
+
         # Get updated status
         session_status = exam_session_service.get_session_status(updated_session)
 
@@ -1207,3 +1220,101 @@ def advance_exam_phase(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+def _create_grading_tasks_for_exam_completion(
+    db: Session,
+    topic_id: int,
+    user_id: int,
+    topic: Any,
+) -> None:
+    """
+    Create grading tasks for all answers submitted by the user in the exam.
+
+    This is called when the user completes the exam (phase -> completed).
+    Creates grading tasks for all answers that don't already have one.
+    """
+    answer_service = get_answer_service()
+    question_service = get_question_service()
+
+    # Get all questions for this topic
+    questions, _ = question_service.list_questions(
+        db=db,
+        topic_id=topic_id,
+        page=1,
+        limit=1000,
+        status=QuestionStatus.PUBLISHED,
+    )
+
+    for question in questions:
+        # Get the latest answer for this question by the user
+        answer = answer_service.get_latest_answer(
+            db=db,
+            question_id=question.id,
+            respondent_id=user_id,
+        )
+
+        if not answer:
+            continue
+
+        # Check if grading task already exists
+        existing_task = (
+            db.query(EvalGradingTask)
+            .filter(
+                EvalGradingTask.answer_id == answer.id,
+                EvalGradingTask.question_id == question.id,
+            )
+            .first()
+        )
+
+        if existing_task:
+            logger.info(
+                f"[Evaluation] Grading task already exists for answer {answer.id}, skipping"
+            )
+            continue
+
+        # Create grading task
+        grading_task = EvalGradingTask(
+            answer_id=answer.id,
+            question_id=question.id,
+            question_version=question.current_version,
+            respondent_id=user_id,
+            status=GradingTaskStatus.PENDING,
+            report_data={},
+        )
+        db.add(grading_task)
+        db.flush()
+
+        logger.info(
+            f"[Evaluation] Created grading task {grading_task.id} for answer {answer.id} "
+            f"(exam completed by user {user_id})"
+        )
+
+        # Check if auto_trigger is enabled for this topic
+        if topic and topic.grading_team_config:
+            grading_config = topic.grading_team_config
+            auto_trigger = grading_config.get("auto_trigger", False)
+            trigger_condition = grading_config.get("trigger_condition", "manual")
+            team_id = grading_config.get("team_id")
+
+            if auto_trigger and trigger_condition == "on_submit" and team_id:
+                try:
+                    from wecode.service.evaluation.grading_service import GradingService
+
+                    grading_service = GradingService()
+                    grading_service.execute(
+                        db=db,
+                        task=grading_task,
+                        team_id=team_id,
+                        user_id=topic.creator_id,
+                    )
+                    logger.info(
+                        f"[Evaluation] Auto-triggered grading task {grading_task.id} "
+                        f"for exam completion by user {user_id}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[Evaluation] Failed to auto-trigger grading task {grading_task.id}: {e}"
+                    )
+
+    db.commit()

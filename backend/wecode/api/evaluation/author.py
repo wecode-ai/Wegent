@@ -1114,7 +1114,7 @@ def get_topic_exam_sessions(
         result.append(
             {
                 "user_id": session.user_id,
-                "user_name": user.name if user else f"User {session.user_id}",
+                "user_name": user.user_name if user else f"User {session.user_id}",
                 "started_at": (
                     session.started_at.isoformat() if session.started_at else None
                 ),
@@ -1148,3 +1148,91 @@ def reset_user_exam_session(
     exam_session_service.reset_session(db, topic_id, user_id)
 
     return {"success": True, "message": "Exam session reset successfully"}
+
+
+class UpdateSessionPhaseRequest(BaseModel):
+    """Schema for updating exam session phase (author only)."""
+
+    target_phase: str = Field(
+        ..., description="Target phase to set (exam, review, completed)"
+    )
+
+
+@router.post("/topics/{topic_id}/exam-sessions/{user_id}/update-phase")
+def update_user_exam_session_phase(
+    topic_id: int,
+    user_id: int,
+    request: UpdateSessionPhaseRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Force update exam session phase for a user (author only).
+
+    This allows the topic author to manually control a user's exam session state:
+    - exam: Force user into exam phase
+    - review: Force user into review phase
+    - completed: Force user to complete the exam (triggers grading task creation)
+
+    Useful for managing exam sessions when users encounter issues or need assistance.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(db, topic, current_user.id)
+
+    exam_session_service = get_exam_session_service()
+
+    # Get user's active session
+    session = exam_session_service.get_active_session(db, topic_id, user_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active exam session found for this user",
+        )
+
+    # Validate target phase
+    valid_phases = ["intro", "exam", "review", "completed"]
+    if request.target_phase not in valid_phases:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid phase. Must be one of: {', '.join(valid_phases)}",
+        )
+
+    # Update phase
+    previous_phase = session.current_phase
+    session.current_phase = request.target_phase
+
+    # Set phase start times in extra_data
+    extra = session.extra_data or {}
+    now_ts = int(datetime.now().timestamp())
+
+    if request.target_phase == "exam":
+        extra["exam_started_at"] = now_ts
+    elif request.target_phase == "review":
+        extra["review_started_at"] = now_ts
+
+    session.extra_data = extra
+    from sqlalchemy.orm import attributes
+
+    attributes.flag_modified(session, "extra_data")
+    db.commit()
+    db.refresh(session)
+
+    # If transitioning to completed, create grading tasks
+    if request.target_phase == "completed":
+        # Import here to avoid circular imports
+        from wecode.api.evaluation.respondent import _create_grading_tasks_for_exam_completion
+
+        _create_grading_tasks_for_exam_completion(
+            db=db,
+            topic_id=topic_id,
+            user_id=user_id,
+            topic=topic,
+        )
+
+    return {
+        "success": True,
+        "message": f"Session phase updated from '{previous_phase}' to '{request.target_phase}'",
+        "previous_phase": previous_phase,
+        "current_phase": request.target_phase,
+        "user_id": user_id,
+    }
