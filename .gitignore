@@ -99,3 +99,4 @@ coverage/
 *.spec
 executor/build/
 executor/dist/
+.worktrees/

@@ -517,8 +517,11 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return plugins
   }, [hasMath])
 
-  // URL transform to allow wegent:// and attachment:// scheme URLs
-  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])
+  // URL transform to allow wegent://, attachment://, and subscription:// scheme URLs
+  const urlTransform = useMemo(
+    () => createSchemeAwareUrlTransform(['wegent:', 'attachment:', 'subscription:']),
+    []
+  )
 
   // Render markdown content
   const renderMarkdown = (content: string) => (

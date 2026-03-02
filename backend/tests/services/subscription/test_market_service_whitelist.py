@@ -178,3 +178,37 @@ def test_rent_subscription_returns_403_for_non_whitelist_user(
         )
 
     assert exc_info.value.status_code == 403
+
+
+def test_rent_subscription_rejects_interval_below_30_minutes(
+    test_db: Session, test_user: User
+):
+    """Rent should reject trigger intervals below 30 minutes."""
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    allowed_user = _create_user(
+        test_db,
+        username=f"allowed-{uuid.uuid4().hex[:6]}",
+        email=f"allowed-{uuid.uuid4().hex[:6]}@example.com",
+    )
+    subscription_id = _create_market_subscription(
+        test_db,
+        owner_user_id=test_user.id,
+        team_id=team.id,
+        whitelist_user_ids=[allowed_user.id],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        subscription_market_service.rent_subscription(
+            test_db,
+            source_subscription_id=subscription_id,
+            renter_user_id=allowed_user.id,
+            request=RentSubscriptionRequest(
+                name=f"rental-{uuid.uuid4().hex[:8]}",
+                display_name="Rental",
+                trigger_type="interval",
+                trigger_config={"value": 5, "unit": "minutes"},
+            ),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Minimum execution interval is 30 minutes"

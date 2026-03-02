@@ -17,6 +17,7 @@ import { GrepToolRenderer } from './tools/GrepToolRenderer'
 import { GlobToolRenderer } from './tools/GlobToolRenderer'
 import { TodoWriteToolRenderer } from './tools/TodoWriteToolRenderer'
 import { UploadToolRenderer } from './tools/UploadToolRenderer'
+import { CreateSubscriptionToolRenderer } from './tools/CreateSubscriptionToolRenderer'
 
 /**
  * Get a short preview of the tool input for display in the header
@@ -130,7 +131,10 @@ export const ToolBlock = memo(function ToolBlock({
   defaultExpanded = false,
 }: ToolBlockProps) {
   const { t } = useTranslation('chat')
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+  // Auto-expand subscription creation tools so the inline card is visible
+  const isSubscriptionTool =
+    tool.toolName === 'create_subscription' || tool.toolName === '创建订阅任务'
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded || isSubscriptionTool)
 
   // Get status icon component
   const StatusIcon = getStatusIcon(tool.status)
@@ -300,6 +304,9 @@ function getToolRenderer(
       return TodoWriteToolRenderer
     case 'Upload':
       return UploadToolRenderer
+    case 'create_subscription':
+    case '创建订阅任务':
+      return CreateSubscriptionToolRenderer
     default:
       return GenericToolRenderer
   }

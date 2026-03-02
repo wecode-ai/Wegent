@@ -18,6 +18,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from chat_shell.tools.builtin.create_subscription import (
     CreateSubscriptionInput,
@@ -111,6 +112,28 @@ class TestCreateSubscriptionInput:
             timeout_seconds=3600,
         )
         assert input_data.timeout_seconds == 3600
+
+    def test_enabled_true_is_rejected(self):
+        """Tool input must not allow enabling subscription via model call."""
+        with pytest.raises(ValidationError):
+            CreateSubscriptionInput(
+                display_name="Test",
+                trigger_type="cron",
+                cron_expression="0 9 * * *",
+                prompt_template="Test",
+                enabled=True,
+            )
+
+    def test_enabled_false_is_rejected(self):
+        """Tool input must not allow passing enabled even when false."""
+        with pytest.raises(ValidationError):
+            CreateSubscriptionInput(
+                display_name="Test",
+                trigger_type="cron",
+                cron_expression="0 9 * * *",
+                prompt_template="Test",
+                enabled=False,
+            )
 
 
 class TestCreateSubscriptionToolValidation:
@@ -531,7 +554,7 @@ class TestCreateSubscriptionToolSuccessResponse:
 
         # Assert
         result = json.loads(response)
-        assert result["management_url"] == "/subscriptions/789"
+        assert result["management_url"] == "/feed/subscriptions?edit=789"
 
 
 class TestCreateSubscriptionToolAsyncExecution:
@@ -590,6 +613,29 @@ class TestCreateSubscriptionToolAsyncExecution:
         assert response["success"] is False
         assert "interval_value is required" in response["error"]
 
+    @pytest.mark.asyncio
+    async def test_arun_rejects_in_subscription_context(self):
+        """Test that _arun rejects creating subscription in subscription context."""
+        tool = CreateSubscriptionTool(
+            user_id=1,
+            team_id=10,
+            team_name="test-team",
+            team_namespace="default",
+            timezone="Asia/Shanghai",
+            is_subscription_context=True,
+        )
+
+        result = await tool._arun(
+            display_name="Test",
+            trigger_type="cron",
+            prompt_template="Test",
+            cron_expression="0 9 * * *",
+        )
+
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "订阅任务中不允许创建订阅任务" in response["error"]
+
 
 class TestCreateSubscriptionToolBackendMode:
     """Tests for CreateSubscriptionTool backend (package) mode."""
@@ -619,6 +665,7 @@ class TestCreateSubscriptionToolBackendMode:
 
         mock_db = MagicMock()
         mock_session_local = MagicMock(return_value=mock_db)
+        mock_subscription_create = MagicMock(return_value=MagicMock())
 
         # Mock imports at the module level where they're imported
         with patch.dict(
@@ -626,7 +673,7 @@ class TestCreateSubscriptionToolBackendMode:
             {
                 "app.db.session": MagicMock(SessionLocal=mock_session_local),
                 "app.schemas.subscription": MagicMock(
-                    SubscriptionCreate=MagicMock(return_value=MagicMock()),
+                    SubscriptionCreate=mock_subscription_create,
                     SubscriptionTaskType=MagicMock(COLLECTION="collection"),
                 ),
                 "app.services.subscription.service": MagicMock(
@@ -652,6 +699,8 @@ class TestCreateSubscriptionToolBackendMode:
         response = json.loads(result)
         assert response["success"] is True
         assert response["subscription"]["id"] == 123
+        assert response["subscription"]["enabled"] is False
+        assert mock_subscription_create.call_args.kwargs["enabled"] is False
 
     @pytest.mark.asyncio
     async def test_create_via_backend_error_handling(self):
@@ -779,6 +828,13 @@ class TestCreateSubscriptionToolHttpMode:
         response = json.loads(result)
         assert response["success"] is True
         assert response["subscription"]["id"] == 456
+        assert response["subscription"]["enabled"] is False
+
+        post_call_kwargs = (
+            mock_client.return_value.__aenter__.return_value.post.call_args.kwargs
+        )
+        assert post_call_kwargs["headers"]["X-Wegent-Subscription-Context"] == "false"
+        assert post_call_kwargs["json"]["enabled"] is False
 
     @pytest.mark.asyncio
     async def test_create_via_http_api_error(self):

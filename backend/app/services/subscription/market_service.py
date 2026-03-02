@@ -35,6 +35,7 @@ from app.services.subscription.helpers import (
     build_trigger_config,
     calculate_next_execution_time,
     extract_trigger_config,
+    validate_min_trigger_interval,
 )
 from app.services.subscription.market_access import (
     can_view_market_subscription,
@@ -370,6 +371,11 @@ class SubscriptionMarketService:
         source_owner_username = source_owner.user_name if source_owner else "Unknown"
 
         # Build trigger config
+        try:
+            validate_min_trigger_interval(request.trigger_type, request.trigger_config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         trigger = build_trigger_config(request.trigger_type, request.trigger_config)
 
         # Calculate next execution time

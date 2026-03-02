@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Plus } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -29,6 +29,7 @@ import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
+import { subscriptionApis } from '@/apis/subscription'
 import type { Subscription } from '@/types/subscription'
 
 /**
@@ -48,6 +49,7 @@ type SubscriptionTabValue = 'my_created' | 'my_following' | 'shared_to_me' | 'my
 function SubscriptionsPageContent() {
   const { t } = useTranslation('feed')
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { refreshSubscriptions, refreshExecutions } = useSubscriptionContext()
 
   // Tab state
@@ -56,6 +58,24 @@ function SubscriptionsPageContent() {
   // Form state
   const [formOpen, setFormOpen] = useState(false)
   const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null)
+
+  // Auto-open edit dialog when ?edit={id} is present
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId) return
+    const id = parseInt(editId, 10)
+    if (isNaN(id)) return
+
+    subscriptionApis
+      .getSubscription(id)
+      .then(subscription => {
+        setEditingSubscription(subscription)
+        setFormOpen(true)
+      })
+      .catch(err => {
+        console.error('Failed to load subscription for editing:', err)
+      })
+  }, [searchParams])
 
   const handleCreateSubscription = useCallback(() => {
     setEditingSubscription(null)

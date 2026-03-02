@@ -48,6 +48,7 @@ import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { MessageBlock } from './thinking/types'
+import SubscriptionInlineCard from '@/components/common/SubscriptionInlineCard'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { ShareTokenProvider } from '@/contexts/ShareTokenContext'
@@ -279,6 +280,31 @@ const ParagraphWithAction = ({
       </div>
     </div>
   )
+}
+
+/**
+ * Extract subscription IDs from message blocks that contain successful create_subscription tool results.
+ * Used to auto-inject SubscriptionInlineCard after the AI message text.
+ */
+function extractSubscriptionIdsFromBlocks(blocks?: MessageBlock[]): number[] {
+  if (!blocks) return []
+  const ids: number[] = []
+  for (const block of blocks) {
+    if (block.type !== 'tool') continue
+    if (block.tool_name !== 'create_subscription') continue
+    if (block.status === 'error') continue
+    const output = block.tool_output
+    if (!output) continue
+    try {
+      const parsed = typeof output === 'string' ? JSON.parse(output) : output
+      if (parsed?.success && parsed?.subscription?.id) {
+        ids.push(parsed.subscription.id)
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return ids
 }
 
 const MessageBubble = memo(
@@ -1485,6 +1511,15 @@ const MessageBubble = memo(
                   )}
                 </>
               )}
+              {/* Auto-inject subscription cards from create_subscription tool results */}
+              {!isUserTypeMessage &&
+                (() => {
+                  const subIds = extractSubscriptionIdsFromBlocks(msg.result?.blocks)
+                  if (subIds.length === 0) return null
+                  return subIds.map(id => (
+                    <SubscriptionInlineCard key={`sub-card-${id}`} subscriptionId={id} />
+                  ))
+                })()}
               {/* Show incomplete notice for completed but incomplete messages */}
               {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
 
