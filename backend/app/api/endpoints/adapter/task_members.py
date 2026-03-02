@@ -42,18 +42,18 @@ def _map_db_status_to_schema(db_status: str) -> SchemaMemberStatus:
     """
     Map database MemberStatus to schema MemberStatus.
 
-    Database uses: pending, approved, rejected
-    Schema uses: ACTIVE, REMOVED
+    Database uses: pending, approved, rejected (lowercase)
+    Schema uses: ACTIVE, REMOVED (uppercase)
+
+    Uses case-insensitive comparison for robustness against
+    potential case variations in database values.
     """
-    if (
-        db_status == DBMemberStatus.APPROVED.value
-        or db_status == DBMemberStatus.APPROVED
-    ):
+    # Normalize to lowercase for case-insensitive comparison
+    normalized_status = str(db_status).lower() if db_status else ""
+
+    if normalized_status == DBMemberStatus.APPROVED.value.lower():
         return SchemaMemberStatus.ACTIVE
-    elif (
-        db_status == DBMemberStatus.REJECTED.value
-        or db_status == DBMemberStatus.REJECTED
-    ):
+    elif normalized_status == DBMemberStatus.REJECTED.value.lower():
         return SchemaMemberStatus.REMOVED
     else:
         # Default to ACTIVE for pending or unknown status
