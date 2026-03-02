@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { SubscriptionInlineCard } from '@/components/common/SubscriptionInlineCard'
 import { subscriptionApis } from '@/apis/subscription'
 
@@ -17,6 +17,7 @@ jest.mock('@/apis/subscription', () => ({
 }))
 
 const mockGetSubscription = subscriptionApis.getSubscription as jest.Mock
+const mockUpdateSubscription = subscriptionApis.updateSubscription as jest.Mock
 
 describe('SubscriptionInlineCard', () => {
   beforeEach(() => {
@@ -66,6 +67,41 @@ describe('SubscriptionInlineCard data fetching', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/failed to load/i)).toBeInTheDocument()
+    })
+  })
+})
+
+describe('SubscriptionInlineCard enable toggle', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('should toggle enabled state', async () => {
+    const mockSubscription = {
+      id: 123,
+      display_name: 'Daily Report',
+      enabled: false,
+      trigger_type: 'cron',
+      trigger_config: { expression: '0 9 * * *' },
+    }
+
+    mockGetSubscription.mockResolvedValueOnce(mockSubscription)
+    mockUpdateSubscription.mockResolvedValueOnce({
+      ...mockSubscription,
+      enabled: true,
+    })
+
+    render(<SubscriptionInlineCard subscriptionId={123} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Daily Report')).toBeInTheDocument()
+    })
+
+    const toggle = screen.getByRole('switch')
+    fireEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(mockUpdateSubscription).toHaveBeenCalledWith(123, { enabled: true })
     })
   })
 })
