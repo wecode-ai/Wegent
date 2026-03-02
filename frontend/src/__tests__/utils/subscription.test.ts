@@ -1,5 +1,4 @@
-import { describe, it, expect } from 'vitest'
-import { parseSubscriptionSchemeUrl, SUBSCRIPTION_SCHEME } from '../subscription'
+import { parseSubscriptionSchemeUrl, SUBSCRIPTION_SCHEME } from '@/utils/subscription'
 
 describe('parseSubscriptionSchemeUrl', () => {
   it('should return subscription ID for valid subscription:// URL', () => {
