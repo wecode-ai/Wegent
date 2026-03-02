@@ -1097,6 +1097,9 @@ def update_exam_attachments(
             content_data=content_data,
             auto_create_grading=False,
         )
+        # Commit the transaction to persist the new answer
+        db.commit()
+        db.refresh(answer)
     else:
         # Merge existing content_data with new data
         existing_content = existing_answer.content_data or {}
@@ -1119,6 +1122,13 @@ def update_exam_attachments(
             new_content["supplementaryNotesFiles"] = existing_content[
                 "supplementaryNotesFiles"
             ]
+
+        # Handle supplementaryNotes text - preserve if not in new content
+        if (
+            "supplementaryNotes" not in new_content
+            and "supplementaryNotes" in existing_content
+        ):
+            new_content["supplementaryNotes"] = existing_content["supplementaryNotes"]
 
         # Update content_data
         updated_content = {**existing_content, **new_content}
@@ -1222,6 +1232,71 @@ def advance_exam_phase(
         )
 
 
+def _has_valid_answer_content(answer: Any) -> bool:
+    """
+    Check if an answer has valid content for grading.
+
+    For exam mode answers, checks if there are any attachments
+    (main, interaction, bonusAgent files, bonusMultimodal) or
+    supplementary notes/files.
+    """
+    if not answer or not answer.content_data:
+        return False
+
+    content_data = answer.content_data
+
+    # Check for exam mode content
+    if content_data.get("examMode"):
+        attachments = content_data.get("attachments", {})
+
+        # Check main attachments
+        if attachments.get("main") and len(attachments["main"]) > 0:
+            return True
+
+        # Check interaction attachments
+        if attachments.get("interaction") and len(attachments["interaction"]) > 0:
+            return True
+
+        # Check bonusAgent files
+        bonus_agent = attachments.get("bonusAgent", {})
+        if bonus_agent.get("files") and len(bonus_agent["files"]) > 0:
+            return True
+        if bonus_agent.get("link") and bonus_agent["link"].strip():
+            return True
+
+        # Check bonusMultimodal attachments
+        if (
+            attachments.get("bonusMultimodal")
+            and len(attachments["bonusMultimodal"]) > 0
+        ):
+            return True
+
+        # Check supplementary notes files
+        if (
+            content_data.get("supplementaryNotesFiles")
+            and len(content_data["supplementaryNotesFiles"]) > 0
+        ):
+            return True
+
+        # Check supplementary notes text
+        if (
+            content_data.get("supplementaryNotes")
+            and content_data["supplementaryNotes"].strip()
+        ):
+            return True
+
+        return False
+
+    # For non-exam mode, check for text content or attachments
+    if content_data.get("text") and content_data["text"].strip():
+        return True
+
+    if content_data.get("attachments") and len(content_data["attachments"]) > 0:
+        return True
+
+    return False
+
+
 def _create_grading_tasks_for_exam_completion(
     db: Session,
     topic_id: int,
@@ -1229,15 +1304,17 @@ def _create_grading_tasks_for_exam_completion(
     topic: Any,
 ) -> None:
     """
-    Create grading tasks for all answers submitted by the user in the exam.
+    Create grading tasks for all valid answers submitted by the user in the exam.
 
     This is called when the user completes the exam (phase -> completed).
-    Creates grading tasks for all answers that don't already have one.
+    Creates grading tasks for all answers that have valid content and don't already have one.
+    Supports multiple question answers - creates grading tasks for all questions
+    that the user has submitted answers for.
     """
     answer_service = get_answer_service()
     question_service = get_question_service()
 
-    # Get all questions for this topic
+    # Get all published questions for this topic
     questions, _ = question_service.list_questions(
         db=db,
         topic_id=topic_id,
@@ -1245,6 +1322,9 @@ def _create_grading_tasks_for_exam_completion(
         limit=1000,
         status=QuestionStatus.PUBLISHED,
     )
+
+    created_count = 0
+    skipped_count = 0
 
     for question in questions:
         # Get the latest answer for this question by the user
@@ -1255,6 +1335,14 @@ def _create_grading_tasks_for_exam_completion(
         )
 
         if not answer:
+            continue
+
+        # Check if answer has valid content for grading
+        if not _has_valid_answer_content(answer):
+            logger.info(
+                f"[Evaluation] Answer {answer.id} for question {question.id} has no valid content, skipping"
+            )
+            skipped_count += 1
             continue
 
         # Check if grading task already exists
@@ -1271,6 +1359,7 @@ def _create_grading_tasks_for_exam_completion(
             logger.info(
                 f"[Evaluation] Grading task already exists for answer {answer.id}, skipping"
             )
+            skipped_count += 1
             continue
 
         # Create grading task
@@ -1285,9 +1374,10 @@ def _create_grading_tasks_for_exam_completion(
         db.add(grading_task)
         db.flush()
 
+        created_count += 1
         logger.info(
             f"[Evaluation] Created grading task {grading_task.id} for answer {answer.id} "
-            f"(exam completed by user {user_id})"
+            f"(question {question.id}, exam completed by user {user_id})"
         )
 
         # Check if auto_trigger is enabled for this topic
@@ -1318,3 +1408,7 @@ def _create_grading_tasks_for_exam_completion(
                     )
 
     db.commit()
+    logger.info(
+        f"[Evaluation] Exam completion grading tasks summary for user {user_id}: "
+        f"created={created_count}, skipped={skipped_count}"
+    )

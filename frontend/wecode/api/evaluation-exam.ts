@@ -127,6 +127,7 @@ export async function updateExamAttachments(
         }
         bonusMultimodal?: { key: string; filename: string; size: number; content_type?: string }[]
       }
+      supplementaryNotes?: string
       supplementaryNotesFiles?: {
         key: string
         filename: string

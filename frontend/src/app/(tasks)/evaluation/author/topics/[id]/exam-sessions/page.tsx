@@ -6,16 +6,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import {
-  ArrowLeft,
-  Users,
-  Clock,
-  RotateCcw,
-  CheckCircle,
-  AlertCircle,
-  PlayCircle,
-  Timer,
-} from 'lucide-react'
+import { ArrowLeft, Users, RotateCcw, AlertCircle, Power, MoreVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -26,7 +17,10 @@ import { EvaluationPageLayout } from '@wecode/components/evaluation/common/Evalu
 import {
   getTopicExamSessions,
   resetUserExamSession,
+  updateUserExamSessionPhase,
+  forceEndExamSession,
   type ExamSession,
+  type ExamTopicInfo,
 } from '@wecode/api/evaluation-author'
 import {
   AlertDialog,
@@ -38,117 +32,106 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 
-// Helper function to get phase from session
-const getSessionPhase = (s: ExamSession): string => {
-  return s.current_phase || s.phase || 'intro'
-}
+const PHASE_OPTIONS = [
+  { value: 'intro', label: '介绍中', color: 'blue' },
+  { value: 'exam', label: '考试中', color: 'emerald' },
+  { value: 'review', label: '检查中', color: 'orange' },
+  { value: 'completed', label: '已完成', color: 'gray' },
+]
 
 interface SessionCardProps {
   session: ExamSession
   onReset: (session: ExamSession) => void
+  onPhaseChange: (session: ExamSession, phase: string) => void
+  onForceEnd: (session: ExamSession) => void
 }
 
-function SessionCard({ session, onReset }: SessionCardProps) {
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-  }
-
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString('zh-CN', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
-
+function SessionCard({ session, onReset, onPhaseChange, onForceEnd }: SessionCardProps) {
   const getPhaseBadge = (phase: string) => {
-    switch (phase) {
-      case 'intro':
-        return (
-          <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
-            <PlayCircle className="w-3 h-3 mr-1" />
-            介绍中
-          </Badge>
-        )
-      case 'exam':
-        return (
-          <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
-            <PlayCircle className="w-3 h-3 mr-1" />
-            考试中
-          </Badge>
-        )
-      case 'review':
-        return (
-          <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">
-            <Clock className="w-3 h-3 mr-1" />
-            检查中
-          </Badge>
-        )
-      case 'completed':
-        return (
-          <Badge className="bg-gray-100 text-gray-700 hover:bg-gray-100">
-            <CheckCircle className="w-3 h-3 mr-1" />
-            已完成
-          </Badge>
-        )
-      default:
-        return <Badge variant="secondary">{phase}</Badge>
+    const option = PHASE_OPTIONS.find(p => p.value === phase) || PHASE_OPTIONS[0]
+    const colorClasses: Record<string, string> = {
+      blue: 'bg-blue-100 text-blue-700',
+      emerald: 'bg-emerald-100 text-emerald-700',
+      orange: 'bg-orange-100 text-orange-700',
+      gray: 'bg-gray-100 text-gray-700',
     }
+
+    return (
+      <Badge className={`${colorClasses[option.color]} hover:${colorClasses[option.color]}`}>
+        {option.label}
+      </Badge>
+    )
   }
 
   return (
     <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-gray-400" />
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Users className="w-4 h-4 text-gray-400" />
+            <div>
               <span className="font-medium text-gray-900">
                 {session.user_name || `用户 #${session.user_id}`}
               </span>
               {session.user_email && (
-                <span className="text-sm text-gray-400">({session.user_email})</span>
+                <span className="text-sm text-gray-400 ml-2">({session.user_email})</span>
               )}
-            </div>
-            <div className="flex items-center gap-4 text-sm text-gray-500">
-              <span>开始时间: {formatDate(session.started_at)}</span>
-              <span>提交次数: {session.submit_count}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {getPhaseBadge(getSessionPhase(session))}
-            {getSessionPhase(session) !== 'completed' &&
-              session.remaining_seconds !== undefined && (
-                <div
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono ${
-                    (session.remaining_seconds || 0) <= 300
-                      ? 'bg-red-100 text-red-700'
-                      : 'bg-blue-50 text-blue-700'
-                  }`}
-                >
-                  <Timer className="w-3 h-3" />
-                  {formatTime(session.remaining_seconds || 0)}
-                </div>
-              )}
+            {getPhaseBadge(session.current_phase)}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  <MoreVertical className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled className="text-xs text-gray-500">
+                  更改状态
+                </DropdownMenuItem>
+                {PHASE_OPTIONS.map(option => (
+                  <DropdownMenuItem
+                    key={option.value}
+                    disabled={session.current_phase === option.value}
+                    onClick={() => onPhaseChange(session, option.value)}
+                  >
+                    设为{option.label}
+                    {session.current_phase === option.value && ' (当前)'}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuItem disabled className="text-xs text-gray-500 mt-2">
+                  操作
+                </DropdownMenuItem>
+                {session.current_phase !== 'completed' && (
+                  <DropdownMenuItem onClick={() => onForceEnd(session)} className="text-orange-600">
+                    <Power className="w-4 h-4 mr-2" />
+                    强制结束
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => onReset(session)} className="text-red-600">
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  重置会话
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
-        <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between">
-          <div className="text-sm text-gray-500">
-            {session.selected_question_id ? (
-              <span>已选题目: ID {session.selected_question_id}</span>
-            ) : (
-              <span className="text-orange-500">未选择题目</span>
-            )}
-          </div>
-          <Button variant="outline" size="sm" onClick={() => onReset(session)}>
-            <RotateCcw className="w-4 h-4 mr-1" />
-            重置会话
-          </Button>
+        <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-6 text-sm text-gray-500">
+          <span>提交次数: {session.submit_count}</span>
+          {session.selected_question_id ? (
+            <span>已选题目: ID {session.selected_question_id}</span>
+          ) : (
+            <span className="text-orange-500">未选择题目</span>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -161,24 +144,27 @@ export default function ExamSessionsPage() {
   const topicId = Number(params.id)
   const { toast } = useToast()
 
+  const [topic, setTopic] = useState<ExamTopicInfo | null>(null)
   const [sessions, setSessions] = useState<ExamSession[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('all')
+
+  // Dialog states
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
+  const [forceEndDialogOpen, setForceEndDialogOpen] = useState(false)
+  const [phaseDialogOpen, setPhaseDialogOpen] = useState(false)
   const [selectedSession, setSelectedSession] = useState<ExamSession | null>(null)
+  const [targetPhase, setTargetPhase] = useState<string>('')
 
   const loadSessions = useCallback(async () => {
     setLoading(true)
     try {
-      const phase = activeTab === 'all' ? undefined : activeTab
       const response = await getTopicExamSessions(topicId, {
         page: 1,
         limit: 100,
-        phase,
       })
-      // Handle both {sessions: []} and {items: []} response formats
-      const sessionList = response?.sessions || response?.items || response || []
-      setSessions(Array.isArray(sessionList) ? sessionList : [])
+      setTopic(response.topic)
+      setSessions(response.sessions || [])
     } catch (_error) {
       toast({
         title: '加载失败',
@@ -189,7 +175,7 @@ export default function ExamSessionsPage() {
     } finally {
       setLoading(false)
     }
-  }, [topicId, activeTab, toast])
+  }, [topicId, toast])
 
   useEffect(() => {
     loadSessions()
@@ -222,18 +208,84 @@ export default function ExamSessionsPage() {
     }
   }
 
+  const handlePhaseChangeClick = (session: ExamSession, phase: string) => {
+    setSelectedSession(session)
+    setTargetPhase(phase)
+    setPhaseDialogOpen(true)
+  }
+
+  const handlePhaseChangeConfirm = async () => {
+    if (!selectedSession || !targetPhase) return
+
+    try {
+      const result = await updateUserExamSessionPhase(
+        topicId,
+        selectedSession.user_id,
+        targetPhase as 'intro' | 'exam' | 'review' | 'completed',
+        true
+      )
+      toast({
+        title: '状态更新成功',
+        description: result.message,
+      })
+      loadSessions()
+    } catch (_error) {
+      toast({
+        title: '状态更新失败',
+        description: '无法更新会话状态',
+        variant: 'destructive',
+      })
+    } finally {
+      setPhaseDialogOpen(false)
+      setSelectedSession(null)
+      setTargetPhase('')
+    }
+  }
+
+  const handleForceEndClick = (session: ExamSession) => {
+    setSelectedSession(session)
+    setForceEndDialogOpen(true)
+  }
+
+  const handleForceEndConfirm = async () => {
+    if (!selectedSession) return
+
+    try {
+      const result = await forceEndExamSession(topicId, selectedSession.user_id)
+      toast({
+        title: '强制结束成功',
+        description: result.message,
+      })
+      loadSessions()
+    } catch (_error) {
+      toast({
+        title: '操作失败',
+        description: '无法强制结束会话',
+        variant: 'destructive',
+      })
+    } finally {
+      setForceEndDialogOpen(false)
+      setSelectedSession(null)
+    }
+  }
+
+  const filteredSessions = sessions.filter(session => {
+    if (activeTab === 'all') return true
+    return session.current_phase === activeTab
+  })
+
   const stats = {
     total: sessions.length,
-    intro: sessions.filter(s => getSessionPhase(s) === 'intro').length,
-    exam: sessions.filter(s => getSessionPhase(s) === 'exam').length,
-    review: sessions.filter(s => getSessionPhase(s) === 'review').length,
-    completed: sessions.filter(s => getSessionPhase(s) === 'completed').length,
+    intro: sessions.filter(s => s.current_phase === 'intro').length,
+    exam: sessions.filter(s => s.current_phase === 'exam').length,
+    review: sessions.filter(s => s.current_phase === 'review').length,
+    completed: sessions.filter(s => s.current_phase === 'completed').length,
   }
 
   return (
     <EvaluationPageLayout>
       <div className="max-w-5xl mx-auto">
-        {/* Header */}
+        {/* Header with back button */}
         <div className="flex items-center gap-4 mb-6">
           <Button variant="ghost" size="icon" onClick={() => router.back()}>
             <ArrowLeft className="w-5 h-5" />
@@ -243,6 +295,30 @@ export default function ExamSessionsPage() {
             <p className="text-sm text-gray-500">查看和管理考生的考试会话状态</p>
           </div>
         </div>
+
+        {/* Topic Info Card */}
+        {topic && (
+          <Card className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-100">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">{topic.name}</h2>
+                  {topic.description && (
+                    <p className="text-sm text-gray-600 mt-1">{topic.description}</p>
+                  )}
+                </div>
+                <Badge variant="info" className="border-blue-200 text-blue-700">
+                  考试模式
+                </Badge>
+              </div>
+              <div className="mt-4 flex items-center gap-6 text-sm text-gray-600">
+                <span>介绍: {topic.intro_duration_minutes}分钟</span>
+                <span>考试: {topic.exam_duration_minutes}分钟</span>
+                <span>检查: {topic.review_duration_minutes}分钟</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-5 gap-4 mb-6">
@@ -293,15 +369,12 @@ export default function ExamSessionsPage() {
               // Loading skeletons
               Array.from({ length: 3 }).map((_, i) => (
                 <Card key={i}>
-                  <CardContent className="p-5">
-                    <div className="space-y-3">
-                      <Skeleton className="h-5 w-48" />
-                      <Skeleton className="h-4 w-32" />
-                    </div>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-5 w-48" />
                   </CardContent>
                 </Card>
               ))
-            ) : sessions.length === 0 ? (
+            ) : filteredSessions.length === 0 ? (
               <Card>
                 <CardContent className="p-8 text-center">
                   <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
@@ -310,8 +383,14 @@ export default function ExamSessionsPage() {
                 </CardContent>
               </Card>
             ) : (
-              sessions.map(session => (
-                <SessionCard key={session.id} session={session} onReset={handleResetClick} />
+              filteredSessions.map(session => (
+                <SessionCard
+                  key={session.user_id}
+                  session={session}
+                  onReset={handleResetClick}
+                  onPhaseChange={handlePhaseChangeClick}
+                  onForceEnd={handleForceEndClick}
+                />
               ))
             )}
           </TabsContent>
@@ -325,13 +404,8 @@ export default function ExamSessionsPage() {
               <AlertDialogDescription>
                 这将重置{' '}
                 <strong>{selectedSession?.user_name || `用户 #${selectedSession?.user_id}`}</strong>{' '}
-                的考试会话，包括:
-                <ul className="list-disc list-inside mt-2 space-y-1">
-                  <li>考试计时器将重新开始</li>
-                  <li>已提交答案将被保留但可重新提交</li>
-                  <li>考生需要重新进入考试</li>
-                </ul>
-                此操作不可撤销。
+                的考试会话，考生需要重新开始考试。
+                <span className="mt-2 block text-sm text-gray-500">此操作不可撤销。</span>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -341,6 +415,56 @@ export default function ExamSessionsPage() {
                 className="bg-red-600 hover:bg-red-700"
               >
                 确认重置
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Phase Change Confirmation Dialog */}
+        <AlertDialog open={phaseDialogOpen} onOpenChange={setPhaseDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认更改会话状态?</AlertDialogTitle>
+              <AlertDialogDescription>
+                将{' '}
+                <strong>{selectedSession?.user_name || `用户 #${selectedSession?.user_id}`}</strong>{' '}
+                的会话状态更改为{' '}
+                <strong>{PHASE_OPTIONS.find(p => p.value === targetPhase)?.label}</strong>。
+                {targetPhase === 'completed' && (
+                  <span className="mt-2 block text-orange-600">
+                    注意：设为完成后将自动创建评分任务。
+                  </span>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={handlePhaseChangeConfirm}>确认更改</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Force End Confirmation Dialog */}
+        <AlertDialog open={forceEndDialogOpen} onOpenChange={setForceEndDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认强制结束会话?</AlertDialogTitle>
+              <AlertDialogDescription>
+                这将立即结束{' '}
+                <strong>{selectedSession?.user_name || `用户 #${selectedSession?.user_id}`}</strong>{' '}
+                的考试，并创建评分任务。
+                <span className="mt-2 block text-sm text-gray-500">
+                  此操作不可撤销，仅在考生放弃考试或遇到技术问题时使用。
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleForceEndConfirm}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
+                强制结束
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

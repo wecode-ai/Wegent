@@ -281,6 +281,13 @@ export default function AIAssessment2026Page() {
     session: examSession,
   })
 
+  // Track last saved time for each question
+  const [lastSavedMap, setLastSavedMap] = useState<Record<number, Date | null>>({
+    1: null,
+    2: null,
+    3: null,
+  })
+
   // Per-question state
   const [questionData, setQuestionData] = useState<
     Record<
@@ -445,15 +452,26 @@ export default function AIAssessment2026Page() {
   // Computed values
   const progressSteps = useMemo(() => {
     const anyQuestionSelected = selectedTopic !== null
-    const anyQuestionHasFiles = Object.values(questionData).some(q => q.attachments.main.length > 0)
-    const anyQuestionHasNotes = Object.values(questionData).some(
-      q => q.supplementaryNotes.trim().length > 0 || (q.supplementaryNotesFiles?.length ?? 0) > 0
-    )
+    // Upload materials and notes status depend on the CURRENTLY SELECTED question
+    // If no question is selected, these should be false (not done)
+    const currentQuestionId = selectedTopic !== null ? selectedTopic + 1 : null
+    const currentData = currentQuestionId !== null ? questionData[currentQuestionId] : null
+
+    // Required uploads: interaction record AND main report must both be present
+    const hasRequiredFiles = currentData
+      ? currentData.attachments.interaction.length > 0 && currentData.attachments.main.length > 0
+      : false
+
+    // Notes: either text notes or uploaded files
+    const hasNotes = currentData
+      ? currentData.supplementaryNotes.trim().length > 0 ||
+        (currentData.supplementaryNotesFiles?.length ?? 0) > 0
+      : false
 
     return [
       { label: '选择题目', done: anyQuestionSelected },
-      { label: '上传材料', done: anyQuestionHasFiles },
-      { label: '填写说明', done: anyQuestionHasNotes },
+      { label: '上传材料', done: anyQuestionSelected && hasRequiredFiles },
+      { label: '填写说明', done: anyQuestionSelected && hasNotes },
       { label: '确认提交', done: submitCount > 0 },
     ]
   }, [selectedTopic, questionData, submitCount])
@@ -557,6 +575,84 @@ export default function AIAssessment2026Page() {
       }
     } finally {
       setIsTransitioning(false)
+    }
+  }
+
+  // Save draft for current question (without creating grading task)
+  const saveDraft = async (): Promise<void> => {
+    if (selectedTopic === null) return
+
+    const currentData = questionData[selectedTopic + 1]
+    if (!currentData) return
+
+    const questionId = selectedTopic + 1
+
+    try {
+      // If there are supplementary notes text, convert to file first
+      let updatedSupplementaryNotesFiles = currentData.supplementaryNotesFiles || []
+      let notesToSave = currentData.supplementaryNotes
+
+      if (notesToSave.trim()) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+        const randomStr = Math.random().toString(36).substring(2, 6)
+        const filename = `补充说明_${timestamp}_${randomStr}.txt`
+
+        const textResponse = await uploadTextAsFile(
+          notesToSave,
+          filename,
+          'exam_attachment',
+          1,
+          questionId,
+          'supplementaryNotes'
+        )
+        updatedSupplementaryNotesFiles = [
+          ...updatedSupplementaryNotesFiles,
+          {
+            key: textResponse.key,
+            filename: textResponse.filename,
+            size: textResponse.file_size,
+            content_type: textResponse.content_type,
+          },
+        ]
+        // Clear the text area after converting to file
+        setQuestionData(prev => ({
+          ...prev,
+          [questionId]: {
+            ...prev[questionId],
+            supplementaryNotesFiles: updatedSupplementaryNotesFiles,
+            supplementaryNotes: '',
+          },
+        }))
+        notesToSave = ''
+      }
+
+      // Call updateExamAttachments to create/update answer record
+      await updateExamAttachments(1, {
+        selectedQuestionId: questionId,
+        content_data: {
+          attachments: {
+            main: currentData?.attachments?.main || [],
+            interaction: currentData?.attachments?.interaction || [],
+            bonusAgent: {
+              link: currentData?.linkValues?.bonusAgent || '',
+              files: currentData?.attachments?.bonusAgent || [],
+            },
+            bonusMultimodal: currentData?.attachments?.bonusMultimodal || [],
+          },
+          supplementaryNotesFiles: updatedSupplementaryNotesFiles,
+          // Include the text notes if not yet converted to file
+          supplementaryNotes: notesToSave,
+        },
+      })
+
+      // Update last saved time
+      setLastSavedMap(prev => ({
+        ...prev,
+        [questionId]: new Date(),
+      }))
+    } catch (error) {
+      console.error('Failed to save draft:', error)
+      throw error
     }
   }
 
@@ -949,6 +1045,8 @@ export default function AIAssessment2026Page() {
               }))
             }
             onFileRemove={handleSupplementaryFileRemove}
+            onSaveDraft={saveDraft}
+            lastSavedAt={selectedTopic !== null ? lastSavedMap[selectedTopic + 1] : null}
           />
         )}
 
