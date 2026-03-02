@@ -128,52 +128,56 @@ function GraderAnswerContent() {
   const [showReportPreview, setShowReportPreview] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    try {
-      const answerData = await getGraderAnswer(answerId)
-      setAnswer(answerData)
+  const loadData = useCallback(
+    async (options?: { skipEditedReportUpdate?: boolean }) => {
+      const { skipEditedReportUpdate = false } = options || {}
+      setLoading(true)
+      try {
+        const answerData = await getGraderAnswer(answerId)
+        setAnswer(answerData)
 
-      // Load question
-      const questionData = await getGraderQuestion(answerData.question_id)
-      setQuestion(questionData)
+        // Load question
+        const questionData = await getGraderQuestion(answerData.question_id)
+        setQuestion(questionData)
 
-      // Load grading task for this answer
-      if (answerData.grading_task_id) {
-        const taskData = await getGraderTask(answerData.grading_task_id)
-        setGradingTask(taskData)
-        // Initialize report content for editing
-        // Priority: human_report > ai_report > empty
-        if (taskData.report_data) {
-          const humanContent = getHumanReportContent(taskData.report_data)
-          const aiContent = getAIReportContent(taskData.report_data)
-          setEditedReport(humanContent || aiContent || '')
-        }
-      } else {
-        // Try to find grading task by answer_id
-        const tasksData = await listGraderTasks({ limit: 100 })
-        const task = tasksData.items.find(t => t.answer_id === answerId)
-        if (task) {
-          const fullTask = await getGraderTask(task.id)
-          setGradingTask(fullTask)
-          if (fullTask.report_data) {
-            const humanContent = getHumanReportContent(fullTask.report_data)
-            const aiContent = getAIReportContent(fullTask.report_data)
+        // Load grading task for this answer
+        if (answerData.grading_task_id) {
+          const taskData = await getGraderTask(answerData.grading_task_id)
+          setGradingTask(taskData)
+          // Initialize report content for editing only when not skipped
+          // Priority: human_report > ai_report > empty
+          if (taskData.report_data && !skipEditedReportUpdate) {
+            const humanContent = getHumanReportContent(taskData.report_data)
+            const aiContent = getAIReportContent(taskData.report_data)
             setEditedReport(humanContent || aiContent || '')
           }
+        } else {
+          // Try to find grading task by answer_id
+          const tasksData = await listGraderTasks({ limit: 100 })
+          const task = tasksData.items.find(t => t.answer_id === answerId)
+          if (task) {
+            const fullTask = await getGraderTask(task.id)
+            setGradingTask(fullTask)
+            if (fullTask.report_data && !skipEditedReportUpdate) {
+              const humanContent = getHumanReportContent(fullTask.report_data)
+              const aiContent = getAIReportContent(fullTask.report_data)
+              setEditedReport(humanContent || aiContent || '')
+            }
+          }
         }
+      } catch (_error) {
+        toast({
+          title: t('errors.load_failed'),
+          description: t('errors.not_found'),
+          variant: 'destructive',
+        })
+        router.push('/evaluation/grader')
+      } finally {
+        setLoading(false)
       }
-    } catch (_error) {
-      toast({
-        title: t('errors.load_failed'),
-        description: t('errors.not_found'),
-        variant: 'destructive',
-      })
-      router.push('/evaluation/grader')
-    } finally {
-      setLoading(false)
-    }
-  }, [answerId, toast, router, t])
+    },
+    [answerId, toast, router, t]
+  )
 
   useEffect(() => {
     if (answerId) {
@@ -535,19 +539,22 @@ function GraderAnswerContent() {
   }
 
   const handleSaveReport = async () => {
-    if (!gradingTask || !editedReport.trim()) return
+    if (!gradingTask || !editedReport.trim()) {
+      return
+    }
+
     setSaving(true)
     try {
-      const updatedTask = await updateGraderReport(gradingTask.id, {
+      await updateGraderReport(gradingTask.id, {
         report_content: editedReport.trim(),
       })
-      // Update local state directly with the returned data
-      setGradingTask(updatedTask)
+
       toast({
         title: t('grading.edit_report'),
         description: t('actions.save') + ' ' + t('grading.report'),
       })
       setIsEditing(false)
+      loadData()
     } catch (_error) {
       toast({
         title: t('errors.save_failed'),

@@ -1000,6 +1000,8 @@ def update_grading_config(
 
     # Update grading config
     # Note: Must reassign the entire dict for SQLAlchemy to detect changes on JSON fields
+    from sqlalchemy.orm.attributes import flag_modified
+
     existing_config = topic.grading_team_config or {}
     updated_config = {
         **existing_config,
@@ -1009,6 +1011,8 @@ def update_grading_config(
         "grading_timeout": config_update.grading_timeout,
     }
     topic.grading_team_config = updated_config
+    # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+    flag_modified(topic, "grading_team_config")
 
     db.commit()
 
