@@ -1225,7 +1225,11 @@
       "network_error_hint": "网络连接异常，请检查网络后重试",
       "content_truncated": "文件内容已压缩",
       "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符",
-      "batch_limit_exceeded": "选择的文件过多（最多 {{max}} 个文件）"
+      "batch_limit_exceeded": "选择的文件过多（最多 {{max}} 个文件）",
+      "chunked_upload_failed": "大文件上传失败",
+      "chunked_upload_failed_hint": "大文件分片上传失败，请重试",
+      "upload_session_expired": "上传会话已过期",
+      "upload_session_expired_hint": "上传会话已过期，请重新开始上传"
     },
     "preview": {
       "label": "预览",
@@ -1239,7 +1243,13 @@
     "html_preview": "HTML 预览",
     "click_to_preview": "点击预览",
     "characters": "字符",
-    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, 代码文件及各类文本文件\n最大文件大小: {{size}} MB"
+    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, 代码文件及各类文本文件\n最大文件大小: {{size}} MB",
+    "chunked_upload": {
+      "initializing": "正在准备上传...",
+      "uploading": "上传中 ({{percent}}%)",
+      "completing": "正在处理文件...",
+      "large_file_hint": "大文件将采用分片上传"
+    }
   },
   "editor": {
     "vim": {

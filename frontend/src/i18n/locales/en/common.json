@@ -1231,7 +1231,11 @@
       "network_error_hint": "Network connection error. Please check your network and try again",
       "content_truncated": "File content truncated",
       "content_truncated_hint": "File content was too long. Kept first {{length}} million characters",
-      "batch_limit_exceeded": "Too many files selected (max {{max}} files)"
+      "batch_limit_exceeded": "Too many files selected (max {{max}} files)",
+      "chunked_upload_failed": "Large file upload failed",
+      "chunked_upload_failed_hint": "Failed to upload large file. Please try again",
+      "upload_session_expired": "Upload session expired",
+      "upload_session_expired_hint": "The upload session has expired. Please start a new upload"
     },
     "preview": {
       "label": "Preview",
@@ -1245,7 +1249,13 @@
     "html_preview": "HTML Preview",
     "click_to_preview": "Click to preview",
     "characters": "chars",
-    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
+    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB",
+    "chunked_upload": {
+      "initializing": "Preparing upload...",
+      "uploading": "Uploading ({{percent}}%)",
+      "completing": "Processing file...",
+      "large_file_hint": "Large file will be uploaded in chunks"
+    }
   },
   "editor": {
     "vim": {
