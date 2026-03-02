@@ -13,6 +13,8 @@ import AttachmentEmbed from '@/components/common/AttachmentEmbed'
 import { SchemeLink } from '@/lib/scheme'
 import { isImageUrl, detectUrls } from '@/utils/url-detector'
 import { parseAttachmentSchemeUrl } from '@/utils/attachment'
+import { parseSubscriptionSchemeUrl } from '@/utils/subscription'
+import SubscriptionInlineCard from '@/components/common/SubscriptionInlineCard'
 
 /**
  * Check if a URL is an absolute HTTP(S) URL.
@@ -56,6 +58,11 @@ export function SmartLink({ href, children }: SmartLinkProps) {
   const attachmentSchemeId = parseAttachmentSchemeUrl(href)
   if (attachmentSchemeId) {
     return <AttachmentEmbed attachmentId={attachmentSchemeId} />
+  }
+
+  const subscriptionId = parseSubscriptionSchemeUrl(href)
+  if (subscriptionId) {
+    return <SubscriptionInlineCard subscriptionId={subscriptionId} />
   }
 
   // Check if this is an attachment download URL
@@ -131,9 +138,9 @@ export function createSmartMarkdownComponents(options?: {
 }) {
   const { enableImagePreview = true, theme = 'light' } = options || {}
 
-  const isAttachmentEmbedElement = (node: React.ReactNode): boolean => {
+  const isBlockLevelElement = (node: React.ReactNode): boolean => {
     if (!React.isValidElement(node)) return false
-    if (node.type === AttachmentEmbed) return true
+    if (node.type === AttachmentEmbed || node.type === SubscriptionInlineCard) return true
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const props = (node.props as any) || {}
     return Boolean(props['data-attachment-embed'] || props['data-id'] || props.id)
@@ -141,10 +148,10 @@ export function createSmartMarkdownComponents(options?: {
 
   const renderParagraph = (children?: React.ReactNode) => {
     const childArray = React.Children.toArray(children)
-    // If the paragraph contains any block-level elements like AttachmentEmbed,
+    // If the paragraph contains any block-level elements like AttachmentEmbed or SubscriptionInlineCard,
     // we must use <div> instead of <p> to avoid invalid HTML nesting (<div> inside <p>)
     // which causes hydration errors.
-    if (childArray.some(child => isAttachmentEmbedElement(child))) {
+    if (childArray.some(child => isBlockLevelElement(child))) {
       return <div>{children}</div>
     }
     return <p>{children}</p>
@@ -170,6 +177,11 @@ export function createSmartMarkdownComponents(options?: {
       const attachmentSchemeId = parseAttachmentSchemeUrl(href)
       if (attachmentSchemeId) {
         return <AttachmentEmbed attachmentId={attachmentSchemeId} theme={theme} />
+      }
+
+      const subscriptionId = parseSubscriptionSchemeUrl(href)
+      if (subscriptionId) {
+        return <SubscriptionInlineCard subscriptionId={subscriptionId} theme={theme} />
       }
 
       // Check if this is an attachment download URL
