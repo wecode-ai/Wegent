@@ -17,6 +17,7 @@ const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
 const httpProxy = require('http-proxy');
+const { createVncProxy } = require('./wecode/server/vnc-proxy.cjs');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || 'localhost';
@@ -62,6 +63,9 @@ if (dev) {
   });
 }
 
+// VNC WebSocket proxy for cloud devices (internal network feature)
+const vncProxy = createVncProxy(BACKEND_URL);
+
 app.prepare().then(() => {
   const server = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
@@ -94,8 +98,11 @@ app.prepare().then(() => {
     if (pathname.startsWith('/socket.io')) {
       console.log(`[Proxy WS Upgrade] ${req.url}`);
       proxy.ws(req, socket, head);
+    } else if (pathname.startsWith('/vnc-proxy/')) {
+      // VNC WebSocket proxy (cloud devices)
+      vncProxy.handleUpgrade(req, socket, head);
     } else {
-      // Close non-Socket.IO WebSocket connections
+      // Close other WebSocket connections
       socket.destroy();
     }
   });
@@ -110,5 +117,6 @@ app.prepare().then(() => {
     console.log(`[Server] Ready on http://${hostname}:${port}`);
     console.log(`[Server] Socket.IO proxy: /socket.io/* -> ${BACKEND_URL}/socket.io/*`);
     console.log(`[Server] API proxy: /api/* -> ${BACKEND_URL}/api/*`);
+    console.log(`[Server] VNC proxy: /vnc-proxy/{deviceId} -> Nevis VNC WebSocket`);
   });
 });

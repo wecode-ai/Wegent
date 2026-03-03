@@ -67,6 +67,7 @@ import {
   getStatusLabel,
 } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDateTime } from '@/utils/dateTime'
 
 function TopicGradingContent() {
   const router = useRouter()
@@ -505,6 +506,7 @@ function TopicGradingContent() {
                   <TableHead>{t('questions.question_title')}</TableHead>
                   <TableHead>{t('permissions.user')}</TableHead>
                   <TableHead>{t('common.status')}</TableHead>
+                  <TableHead>{t('answers.submitted_at')}</TableHead>
                   <TableHead className="text-right">{t('actions.view')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -524,9 +526,15 @@ function TopicGradingContent() {
                         {getStatusLabel(task.status, 'grading', t)}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {task.submitted_at
+                        ? formatDateTime(new Date(task.submitted_at).getTime())
+                        : '-'}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {task.status === GradingTaskStatus.PENDING && (
+                        {/* AI Grading Actions - Only show when grading bot is configured */}
+                        {task.team_id > 0 && task.status === GradingTaskStatus.PENDING && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -537,19 +545,20 @@ function TopicGradingContent() {
                             <Play className="h-4 w-4" />
                           </Button>
                         )}
-                        {(task.status === GradingTaskStatus.FAILED ||
-                          task.status === GradingTaskStatus.RUNNING ||
-                          task.status === GradingTaskStatus.COMPLETED) && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleRetrySingle(task.id)}
-                            disabled={executing}
-                            title={t('grading.retry')}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                          </Button>
-                        )}
+                        {task.team_id > 0 &&
+                          (task.status === GradingTaskStatus.FAILED ||
+                            task.status === GradingTaskStatus.RUNNING ||
+                            task.status === GradingTaskStatus.COMPLETED) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleRetrySingle(task.id)}
+                              disabled={executing}
+                              title={t('grading.retry')}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                            </Button>
+                          )}
                         {(task.status === GradingTaskStatus.COMPLETED ||
                           task.status === GradingTaskStatus.PUBLISHED) && (
                           <>
@@ -622,8 +631,7 @@ function TopicGradingContent() {
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data &&
-              Object.keys(selectedTask.report_data).length > 0 ? (
+            ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
               <div className="rounded-lg bg-surface p-4">
                 <EnhancedMarkdown
                   source={

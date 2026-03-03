@@ -58,6 +58,10 @@ class TopicUpdate(BaseModel):
         max_length=10000,
         description="Exam instructions in Markdown format",
     )
+    extra_data: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Extra data: {duration: {intro, exam, review}, instructions: string}",
+    )
 
 
 class TopicInDB(TopicBase):
@@ -362,12 +366,18 @@ class GradingTaskInDB(BaseModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     published_at: Optional[datetime]
+    version: int = Field(1, description="Optimistic locking version for report editing")
 
     # Optional related info
     respondent_name: Optional[str] = Field(None)
     question_title: Optional[str] = Field(None)
     topic_id: Optional[int] = Field(None, description="Topic ID")
     topic_name: Optional[str] = Field(None, description="Topic name")
+
+    # Answer submission time
+    submitted_at: Optional[datetime] = Field(
+        None, description="When the answer was submitted by the respondent"
+    )
 
     class Config:
         from_attributes = True
@@ -400,6 +410,7 @@ class GradingTaskUpdateReportRequest(BaseModel):
     """Request schema for updating a grading report before publishing."""
 
     report_content: str = Field(..., description="Updated report content in Markdown")
+    version: int = Field(..., description="Current version for optimistic locking")
 
 
 # ============================================================================

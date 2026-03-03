@@ -72,7 +72,18 @@
     "instructions": "Exam Instructions",
     "instructions_placeholder": "Enter exam instructions in Markdown format. These will be shown to respondents before they start answering.",
     "instructions_hint": "Supports Markdown formatting. Leave empty to use no instructions for this topic.",
-    "no_instructions": "No instructions configured"
+    "no_instructions": "No instructions configured",
+    "exam_mode": "Exam Mode",
+    "exam_mode_enabled": "This topic will be displayed as an exam with timer and enhanced UI",
+    "exam_mode_disabled": "Standard Q&A mode",
+    "exam_config": "Exam Config",
+    "exam_config_saved": "Exam configuration saved",
+    "config_title": "Topic Configuration",
+    "basic_info": "Basic Info",
+    "exam_settings": "Exam Settings",
+    "duration": "Duration",
+    "qa_duration": "Q&A Duration",
+    "enable_exam_mode_first": "Enable exam mode first"
   },
   "versions": {
     "current": "Current",
@@ -100,6 +111,7 @@
     "criteria": "Grading Criteria",
     "criteria_type": "Criteria Type",
     "criteria_placeholder": "Enter grading criteria (Markdown supported)",
+    "criteria_section": "Grading Criteria",
     "order": "Order",
     "preview": "Preview",
     "markdown_hint": "Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.",
@@ -126,7 +138,7 @@
       "text": "Text",
       "url": "URL",
       "attachment": "Attachment",
-      "mixed": "Mixed"
+      "mixed": "Standard"
     }
   },
   "permissions": {
@@ -148,7 +160,8 @@
     "roles": {
       "creator": "Creator",
       "respondent": "Respondent",
-      "grader": "Grader"
+      "grader": "Grader",
+      "question_creator": "Question Creator"
     },
     "granted_success": "Permission granted successfully",
     "revoked_success": "Permission revoked successfully"
@@ -165,6 +178,8 @@
     "show_text_input_hint": "If you cannot upload files, you can use the text input (not recommended)",
     "hide_text_input": "Hide text input",
     "upload_recommended": "File upload is the recommended submission method",
+    "upload_drag_hint": "Drag & drop files here or click to browse",
+    "upload_format_hint": "Support multiple files upload",
     "confirm_submit_title": "Confirm Submission",
     "confirm_submit_description": "This will overwrite your previous submission. Are you sure you want to continue?",
     "submitted_at": "Submitted At",
@@ -172,6 +187,14 @@
     "latest": "Latest",
     "history": "Answer History",
     "no_answers": "No answers yet",
+    "exam_slots": {
+      "main": "Main Report",
+      "interaction": "Interaction Records",
+      "bonus_agent": "Bonus - Agent/Workflow",
+      "bonus_multimodal": "Bonus - Multimodal Deliverables"
+    },
+    "supplementary_notes": "Answer Notes",
+    "supplementary_notes_files": "Answer Notes Files",
     "submit_success": "Answer submitted successfully",
     "view": "View Answer",
     "new_version_available": "A new version of this question is available. You may want to re-answer.",
@@ -234,6 +257,19 @@
     },
     "no_tasks": "No grading tasks",
     "no_report_data": "No report data available",
+    "final_report": "Final Published Report",
+    "human_report": "Human Revised Report",
+    "ai_report": "AI Generated Report",
+    "report_content_placeholder": "Enter grading report content here (Markdown supported)...",
+    "preview": "Preview",
+    "real_time_preview": "Real-time",
+    "preview_empty": "Start typing to see preview...",
+    "markdown_hint": "Supports Markdown formatting: **bold**, *italic*, `code`, lists, etc.",
+    "human_report_published": "Published",
+    "human_report_draft": "Draft",
+    "no_human_report": "No Report",
+    "publish_error": "Cannot Publish",
+    "publish_error_no_human_report": "Please edit and save a human grading report before publishing.",
     "view_execution_task": "View Execution Task",
     "view_execution_task_hint": "View detailed execution log for debugging",
     "execute_success": "Grading task started",
@@ -251,8 +287,33 @@
     "select_team_placeholder": "Select an AI team",
     "no_team": "No team (manual grading only)",
     "no_team_warning": "Without an AI team, answers will need to be graded manually.",
+    "manual_only": "Manual grading only",
+    "conflict_title": "Report Modified by Another User",
+    "conflict_description": "This report has been modified by another user while you were editing. How would you like to resolve this conflict?",
+    "conflict_info": "Your changes could not be saved because the report was updated by someone else. You can:",
+    "conflict_option_view": "Load the server version and continue editing based on it",
+    "conflict_option_overwrite": "Overwrite the server version with your changes (may lose others' work)",
+    "conflict_option_cancel": "Cancel and keep editing your current version",
+    "conflict_load_server": "Load Server Version",
+    "conflict_overwrite": "Overwrite",
+    "conflict_resolved": "Server version loaded",
+    "server_version_loaded": "The server version has been loaded. Review and save again.",
+    "conflict_cancelled": "Save cancelled",
+    "conflict_keep_editing": "You can review the content and try saving again.",
+    "conflict_error": "Conflict detected but failed to load server version",
     "no_group_teams": "No group teams available. Please create a group team for grading.",
     "all_teams_shown": "Showing all available teams",
+    "publish_hint": "Publish the grading report",
+    "publish_disabled_hint": "Please edit and save a report before publishing",
+    "publish_dialog_title": "Publish Grading Report",
+    "publish_dialog_description": "Review the report content before publishing. You can also attach a file as the final report.",
+    "report_preview": "Report Preview",
+    "attachment_optional": "Attachment (Optional)",
+    "attachment_hint": "Upload a file to use as the final report. If not provided, the edited report will be used.",
+    "selected_file": "Selected file",
+    "confirm_publish": "Confirm Publish",
+    "publishing": "Publishing...",
+    "publish_error_no_report": "Please edit and save a report, or wait for AI grading to complete.",
     "auto_trigger": "Auto Trigger",
     "auto_trigger_description": "Configure when to automatically trigger AI grading.",
     "enable_auto_trigger": "Enable auto grading",
@@ -274,6 +335,7 @@
     "view": "View",
     "view_details": "View Details",
     "edit": "Edit",
+    "config": "Configuration",
     "delete": "Delete",
     "refresh": "Refresh",
     "creating": "Creating...",
@@ -296,6 +358,144 @@
     "resubmit": "Resubmit",
     "submit_answer": "Submit Answer"
   },
+  "exam": {
+    "title": "Assessment",
+    "exam_mode": "Exam Mode",
+    "exam_mode_description": "This topic will be conducted as an exam with time limits and an enhanced interface.",
+    "questions_count": "Questions",
+    "no_time_limit": "No limit",
+    "time_limit": "Time Limit",
+    "enter_exam": "Enter Exam",
+    "loading": "Loading...",
+    "config_incomplete": "Exam configuration incomplete",
+    "config_incomplete_hint": "Please configure exam information (duration) first",
+    "waiting_start": "Exam will start soon, please wait...",
+    "start_exam": "Enter Exam",
+    "start_answering": "Start Answering",
+    "end_exam": "End Answering",
+    "leave_exam": "Leave Exam",
+    "exam_ended": "Exam Ended",
+    "submit_count": "Submitted {{count}} times",
+    "progress": {
+      "select_topic": "Select Topic",
+      "upload_materials": "Upload Materials",
+      "fill_notes": "Fill Notes",
+      "confirm_submit": "Confirm Submit"
+    },
+    "participant": {
+      "title": "Participant Info",
+      "name": "Name",
+      "name_placeholder": "Please enter your name",
+      "username": "Username",
+      "required": "Required"
+    },
+    "topic": {
+      "title": "Select Assessment Topic",
+      "select_one": "Choose 1 of 3",
+      "question_number": "Question {{number}}",
+      "requirements": "Requirements",
+      "deliverables": "Deliverables",
+      "bonus_deliverables": "Bonus Deliverables",
+      "criteria": "Grading Criteria"
+    },
+    "upload": {
+      "title": "Submit Materials",
+      "main_report": "Assessment Report / Solution Document",
+      "main_report_hint": "Supports PDF, Word, TXT formats, up to 20 files",
+      "interaction": "Interaction Records",
+      "interaction_hint": "Supports PDF, images, text formats, up to 20 files",
+      "bonus_agent": "Bonus 1: Agent / Workflow",
+      "bonus_agent_hint": "Supports images, PDF, documents, up to 20 files",
+      "bonus_agent_link": "Agent Share Link",
+      "bonus_agent_link_placeholder": "Paste accessible/runnable Agent share link",
+      "bonus_multimodal": "Bonus 2: Multimodal Deliverables",
+      "bonus_multimodal_hint": "Supports PPTX, PDF, images, MP4 formats, up to 20 files",
+      "share_link": "Share Link",
+      "share_link_placeholder": "Paste accessible link",
+      "click_or_drag": "Click to select or drag files here",
+      "required": "Required",
+      "optional": "Optional",
+      "download": "Download",
+      "delete": "Delete"
+    },
+    "bonus": {
+      "title": "Bonus Questions",
+      "optional": "Optional bonus items",
+      "item": "Bonus {{number}}",
+      "deliverables": "Deliverables reference:"
+    },
+    "supplementary": {
+      "title": "Supplementary Notes",
+      "placeholder": "Please enter your supplementary notes here...",
+      "hint_1": "Please supplement your overall approach to completing the answer with AI, and the models and tools used, for example:",
+      "hint_2": "Which models or platforms were used, whether different models or tools were switched at different stages, which steps they were used for, and whether there were other reference sources or auxiliary tools.",
+      "hint_3": "You can also add other information that you think can demonstrate your AI usage ideas and techniques.",
+      "character_count": "{{count}} characters",
+      "uploaded_files": "Uploaded supplementary files:"
+    },
+    "submit": {
+      "title": "Submit Checklist",
+      "check_item": {
+        "topic_selected": "Topic Selected",
+        "name_filled": "Name Filled",
+        "report_uploaded": "Report Uploaded",
+        "notes_filled": "Notes Filled"
+      },
+      "nth_submit": "(Submit {{count}})",
+      "file_limit": "Total attachments per question cannot exceed 20, currently uploaded {{count}}",
+      "submit_button": "Submit Assessment Materials",
+      "resubmit_button": "Submit Again"
+    },
+    "confirm": {
+      "title": "Confirm Submission",
+      "description": "Please confirm the following submission content is correct",
+      "participant_name": "Participant Name",
+      "selected_topic": "Selected Topic",
+      "not_filled": "Not filled",
+      "not_selected": "Not selected",
+      "main_report": "Main Report",
+      "file_count": "{{count}} files",
+      "interaction_record": "Interaction Record",
+      "bonus_1": "Bonus 1",
+      "bonus_2": "Bonus 2",
+      "provided": "Provided",
+      "not_provided": "Not provided",
+      "supplementary_notes": "Answer Notes",
+      "character_count": "{{count}} characters",
+      "cancel": "Go Back",
+      "confirm": "Confirm Submit"
+    },
+    "modal": {
+      "end_title": "Confirm End Answering",
+      "end_description": "After ending answering, you will enter the review phase and will no longer be able to modify your answers.",
+      "end_warning": "This action cannot be undone. Please confirm you have completed all answers.",
+      "end_confirm": "Confirm End",
+      "leave_title": "Confirm Leave Exam",
+      "leave_description": "After leaving the exam, the assessment will end and you will no longer be able to view or modify your answers.",
+      "leave_hint": "Please confirm you have completed all checks and are ready to submit.",
+      "leave_confirm": "Confirm Leave",
+      "cancel": "Cancel"
+    },
+    "success": {
+      "title": "Submission Successful",
+      "description": "Assessment materials have been submitted successfully.",
+      "close": "Close"
+    },
+    "time_warning": {
+      "title": "Exam Ending Soon",
+      "description": "There are {{minutes}} minutes remaining until the exam ends. Please complete your answers and prepare to submit.",
+      "hint": "Recommendation: Check if all required items are completed (answer notes, assessment report, interaction records), and submit promptly after confirmation."
+    },
+    "exam_method": {
+      "title": "Assessment Method",
+      "dimensions": "Evaluation Dimensions",
+      "bonus_title": "Bonus Items Description"
+    },
+    "phase": {
+      "qa_title": "Current Phase: Pre-exam Q&A",
+      "qa_description": "Please read the exam instructions carefully and click start when ready"
+    }
+  },
   "common": {
     "all": "All",
     "all_status": "All Status",
@@ -314,6 +514,8 @@
     "download_failed": "Failed to download",
     "permission_denied": "Permission denied",
     "not_found": "Not found",
-    "question_not_found": "Question not found"
+    "question_not_found": "Question not found",
+    "login_required": "Login Required",
+    "please_login": "Please login before accessing this page"
   }
 }

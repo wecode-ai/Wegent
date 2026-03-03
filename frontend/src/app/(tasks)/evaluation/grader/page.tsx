@@ -63,6 +63,7 @@ import {
 import { graderListTopics, type GraderTopicItem } from '@wecode/api/evaluation-grader'
 import { GradingTaskStatus, type GradingTask, getStatusLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatDateTime } from '@/utils/dateTime'
 
 function GraderDashboardContent() {
   const router = useRouter()
@@ -361,10 +362,18 @@ function GraderDashboardContent() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => router.push('/evaluation/grader/tasks')}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push('/evaluation/grader/tasks')}
+          >
             {t('grading.tasks')}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => router.push('/evaluation/grader/reports')}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push('/evaluation/grader/reports')}
+          >
             {t('grader.all_reports')}
           </Button>
           <Button variant="outline" onClick={handleRefresh}>
@@ -544,6 +553,7 @@ function GraderDashboardContent() {
                   <TableHead>{t('questions.question_title')}</TableHead>
                   <TableHead>{t('permissions.user')}</TableHead>
                   <TableHead>{t('common.status')}</TableHead>
+                  <TableHead>{t('answers.submitted_at')}</TableHead>
                   <TableHead className="text-right">{t('actions.view')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -556,19 +566,46 @@ function GraderDashboardContent() {
                         onCheckedChange={checked => handleSelectTask(task.id, checked as boolean)}
                       />
                     </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {task.topic_name || '-'}
-                    </TableCell>
+                    <TableCell className="text-text-secondary">{task.topic_name || '-'}</TableCell>
                     <TableCell>{task.question_title || `Question #${task.question_id}`}</TableCell>
                     <TableCell>{task.respondent_name || `User #${task.respondent_id}`}</TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(task.status)}>
-                        {getStatusLabel(task.status, 'grading', t)}
-                      </Badge>
+                      {(() => {
+                        // Check if task has human report
+                        const reportData = task.report_data || {}
+                        const humanReport = reportData.human_report as
+                          | { content?: string; s3_path?: string }
+                          | undefined
+                        const hasHumanReport = !!(humanReport?.content || humanReport?.s3_path)
+                        const isDraft =
+                          hasHumanReport &&
+                          (task.status === GradingTaskStatus.PENDING ||
+                            task.status === GradingTaskStatus.FAILED)
+
+                        if (isDraft) {
+                          return (
+                            <Badge variant="warning">
+                              {t('grading.human_report_draft') || 'Draft'}
+                            </Badge>
+                          )
+                        }
+                        return (
+                          <Badge variant={getStatusBadgeVariant(task.status)}>
+                            {getStatusLabel(task.status, 'grading', t)}
+                          </Badge>
+                        )
+                      })()}
+                    </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {task.submitted_at
+                        ? formatDateTime(new Date(task.submitted_at).getTime())
+                        : '-'}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {task.status === GradingTaskStatus.PENDING && (
+                        {/* AI Grading Actions - Only show when grading bot is configured */}
+                        {/* AI Grading Actions - Only show when grading bot is configured and no human report exists */}
+                        {task.team_id > 0 && task.status === GradingTaskStatus.PENDING && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -579,43 +616,63 @@ function GraderDashboardContent() {
                             <Play className="h-4 w-4" />
                           </Button>
                         )}
-                        {(task.status === GradingTaskStatus.FAILED ||
-                          task.status === GradingTaskStatus.RUNNING ||
-                          task.status === GradingTaskStatus.COMPLETED) && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleRetrySingle(task.id)}
-                            disabled={executing}
-                            title={t('grading.retry')}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {(task.status === GradingTaskStatus.COMPLETED ||
-                          task.status === GradingTaskStatus.PUBLISHED) && (
-                          <>
+                        {task.team_id > 0 &&
+                          (task.status === GradingTaskStatus.FAILED ||
+                            task.status === GradingTaskStatus.RUNNING ||
+                            task.status === GradingTaskStatus.COMPLETED) && (
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
-                              onClick={() => handleViewReport(task)}
-                              title={t('grading.view_report')}
+                              onClick={() => handleRetrySingle(task.id)}
+                              disabled={executing}
+                              title={t('grading.retry')}
                             >
-                              <Eye className="h-4 w-4" />
+                              <RotateCcw className="h-4 w-4" />
                             </Button>
-                            {task.status === GradingTaskStatus.COMPLETED && (
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={() => handlePublishSingle(task.id)}
-                                disabled={publishing}
-                                title={t('grading.publish')}
-                              >
-                                <Send className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </>
-                        )}
+                          )}
+                        {(() => {
+                          // Check if task can show report or be published
+                          const reportData = task.report_data || {}
+                          const humanReport = reportData.human_report as
+                            | { content?: string; s3_path?: string }
+                            | undefined
+                          const hasHumanReport = !!(humanReport?.content || humanReport?.s3_path)
+                          const canPublish =
+                            task.status === GradingTaskStatus.COMPLETED ||
+                            ((task.status === GradingTaskStatus.PENDING ||
+                              task.status === GradingTaskStatus.FAILED) &&
+                              hasHumanReport)
+                          const showReport =
+                            task.status === GradingTaskStatus.COMPLETED ||
+                            task.status === GradingTaskStatus.PUBLISHED ||
+                            hasHumanReport
+
+                          return (
+                            <>
+                              {showReport && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleViewReport(task)}
+                                  title={t('grading.view_report')}
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {canPublish && task.status !== GradingTaskStatus.PUBLISHED && (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={() => handlePublishSingle(task.id)}
+                                  disabled={publishing}
+                                  title={t('grading.publish')}
+                                >
+                                  <Send className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </>
+                          )
+                        })()}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -665,8 +722,7 @@ function GraderDashboardContent() {
           <div className="max-h-96 overflow-auto">
             {loadingReport ? (
               <Skeleton className="h-48 w-full" />
-            ) : selectedTask?.report_data &&
-              Object.keys(selectedTask.report_data).length > 0 ? (
+            ) : selectedTask?.report_data && Object.keys(selectedTask.report_data).length > 0 ? (
               <div className="rounded-lg bg-surface p-4">
                 <EnhancedMarkdown
                   source={

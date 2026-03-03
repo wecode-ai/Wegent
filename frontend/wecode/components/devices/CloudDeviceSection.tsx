@@ -24,6 +24,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Cloud, Plus, Loader2, Trash2, Play, Star, MoreVertical, Monitor } from 'lucide-react'
 import {
   DropdownMenu,
@@ -63,6 +74,9 @@ export function CloudDeviceSection({
   const [isDeleting, setIsDeleting] = useState(false)
   const [showCreateConfirm, setShowCreateConfirm] = useState(false)
   const [cloudConfig, setCloudConfig] = useState<CloudDeviceConfig | null>(null)
+  const [mailEnabled, setMailEnabled] = useState(false)
+  const [mailEmail, setMailEmail] = useState('')
+  const [mailpassword, setMailpassword] = useState('')
 
   // Fetch cloud device configuration
   useEffect(() => {
@@ -81,7 +95,11 @@ export function CloudDeviceSection({
     setShowCreateConfirm(false)
     setIsCreating(true)
     try {
-      await cloudDeviceApis.createCloudDevice()
+      const body =
+        mailEnabled && mailEmail && mailpassword
+          ? { mail_email: mailEmail, mail_password: mailpassword }
+          : undefined
+      await cloudDeviceApis.createCloudDevice(body)
       toast.success(t('cloud_device.create_success'))
       onDeviceCreated()
     } catch (error: unknown) {
@@ -97,8 +115,11 @@ export function CloudDeviceSection({
       }
     } finally {
       setIsCreating(false)
+      setMailEnabled(false)
+      setMailEmail('')
+      setMailpassword('')
     }
-  }, [t, onDeviceCreated, cloudConfig])
+  }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deviceToDelete) return
@@ -179,29 +200,86 @@ export function CloudDeviceSection({
       )}
 
       {/* Create confirmation dialog */}
-      <AlertDialog open={showCreateConfirm} onOpenChange={setShowCreateConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('cloud_device.create_confirm_title')}</AlertDialogTitle>
-            <AlertDialogDescription>
+      <Dialog
+        open={showCreateConfirm}
+        onOpenChange={open => {
+          setShowCreateConfirm(open)
+          if (!open) {
+            setMailEnabled(false)
+            setMailEmail('')
+            setMailpassword('')
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('cloud_device.create_confirm_title')}</DialogTitle>
+            <DialogDescription>
               {t('cloud_device.create_confirm_message')}
               <br />
               <span className="text-yellow-600 dark:text-yellow-500">
                 {t('cloud_device.create_confirm_note')}
               </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleCreateCloudDevice}
-              className="bg-primary text-white hover:bg-primary/90"
-            >
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Mail skill section */}
+          <div className="space-y-3 py-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="mail-enable"
+                checked={mailEnabled}
+                onCheckedChange={checked => setMailEnabled(checked === true)}
+              />
+              <Label htmlFor="mail-enable" className="text-sm font-medium cursor-pointer">
+                {t('cloud_device.mail_enable')}
+              </Label>
+            </div>
+            {mailEnabled && (
+              <div className="space-y-3 pl-6">
+                <div className="space-y-1">
+                  <Label htmlFor="mail-email" className="text-sm">
+                    {t('cloud_device.mail_email')}
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="mail-email"
+                      value={mailEmail}
+                      onChange={e => setMailEmail(e.target.value)}
+                      placeholder={t('cloud_device.mail_email_placeholder')}
+                      className="flex-1"
+                    />
+                    <span className="text-sm text-text-muted whitespace-nowrap">
+                      @staff.sina.com.cn
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-muted">{t('cloud_device.mail_email_hint')}</p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="mail-password" className="text-sm">
+                    {t('cloud_device.mail_password')}
+                  </Label>
+                  <Input
+                    id="mail-password"
+                    type="password"
+                    value={mailpassword}
+                    onChange={e => setMailpassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateConfirm(false)}>
+              {t('common:actions.cancel')}
+            </Button>
+            <Button variant="primary" onClick={handleCreateCloudDevice}>
               {t('cloud_device.create')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirmation dialog */}
       <AlertDialog open={!!deviceToDelete} onOpenChange={() => setDeviceToDelete(null)}>
@@ -249,7 +327,8 @@ function CloudDeviceCard({
   t,
 }: CloudDeviceCardProps) {
   const isOnline = device.status === 'online' || device.status === 'busy'
-  const canStartTask = isOnline && device.slot_used < device.slot_max
+  const slotsAvailable = device.slot_max === 0 || device.slot_used < device.slot_max
+  const canStartTask = isOnline && slotsAvailable
   const [vncUrl, setVncUrl] = useState<string | null>(null)
 
   // Fetch VNC URL for online cloud devices
@@ -360,13 +439,11 @@ function CloudDeviceCard({
                     className="flex items-center gap-2"
                   >
                     <Play className="w-4 h-4" />
-                    {device.slot_used >= device.slot_max
-                      ? t('devices:slots_full')
-                      : t('devices:start_task')}
+                    {!slotsAvailable ? t('devices:slots_full') : t('devices:start_task')}
                   </Button>
                 </div>
               </TooltipTrigger>
-              {device.slot_used >= device.slot_max && isOnline && (
+              {!slotsAvailable && isOnline && (
                 <TooltipContent>
                   <p className="text-sm">{t('devices:slots_full_hint')}</p>
                 </TooltipContent>

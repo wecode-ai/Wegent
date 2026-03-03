@@ -29,6 +29,7 @@ export const TopicVisibility = {
 export const PermissionRole = {
   RESPONDENT: 'respondent',
   GRADER: 'grader',
+  QUESTION_CREATOR: 'question_creator',
 } as const
 
 export const ContentType = {
@@ -87,6 +88,7 @@ export interface TopicUpdate {
   instructions?: string
   visibility?: string
   grading_team_id?: number
+  extra_data?: Record<string, unknown>
 }
 
 export interface TopicVersion {
@@ -248,6 +250,8 @@ export interface GradingTask {
   question_title?: string
   topic_id?: number
   topic_name?: string
+  submitted_at?: string
+  version?: number
 }
 
 export interface GradingTaskExecuteRequest {
@@ -260,6 +264,7 @@ export interface GradingTaskPublishRequest {
 
 export interface GradingTaskUpdateReportRequest {
   report_content: string
+  version: number
 }
 
 // Grading configuration types
@@ -341,6 +346,8 @@ export function getRoleLabel(role: string): string {
       return 'Respondent'
     case PermissionRole.GRADER:
       return 'Grader'
+    case PermissionRole.QUESTION_CREATOR:
+      return 'Question Creator'
     case 'creator':
       return 'Creator'
     default:

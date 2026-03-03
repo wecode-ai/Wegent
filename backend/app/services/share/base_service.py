@@ -23,13 +23,14 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import PermissionLevel, ResourceType, ShareLink
 from app.models.user import User
 from app.schemas.share import (
     JoinByLinkResponse,
     MemberListResponse,
 )
+from app.schemas.share import MemberRole as SchemaMemberRole
 from app.schemas.share import MemberStatus as SchemaMemberStatus
 from app.schemas.share import (
     PendingRequestListResponse,
@@ -65,11 +66,34 @@ class UnifiedShareService(ABC):
     - _on_member_approved(): Hook called when member is approved
     """
 
-    # Permission hierarchy for comparison
+    # Permission hierarchy for comparison (legacy, use ROLE_HIERARCHY)
     PERMISSION_HIERARCHY: Dict[str, int] = {
         PermissionLevel.VIEW.value: 1,
         PermissionLevel.EDIT.value: 2,
         PermissionLevel.MANAGE.value: 3,
+    }
+
+    # Role hierarchy for comparison
+    ROLE_HIERARCHY: Dict[str, int] = {
+        ResourceRole.REPORTER.value: 1,
+        ResourceRole.DEVELOPER.value: 2,
+        ResourceRole.MAINTAINER.value: 3,
+        ResourceRole.OWNER.value: 4,
+    }
+
+    # Role to permission level mapping for backward compatibility
+    ROLE_TO_PERMISSION: Dict[str, str] = {
+        ResourceRole.OWNER.value: PermissionLevel.MANAGE.value,
+        ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
+        ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
+        ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
+    }
+
+    # Permission level to role mapping for backward compatibility
+    PERMISSION_TO_ROLE: Dict[str, str] = {
+        PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
+        PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
+        PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
     }
 
     def __init__(self, resource_type: ResourceType):
@@ -467,6 +491,13 @@ class UnifiedShareService(ABC):
 
     def _share_link_to_response(self, share_link: ShareLink) -> ShareLinkResponse:
         """Convert ShareLink model to response schema."""
+        # Get default_role from the model, fallback to mapping from default_permission_level
+        default_role = getattr(share_link, "default_role", None)
+        if not default_role:
+            default_role = self.PERMISSION_TO_ROLE.get(
+                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
+            )
+
         return ShareLinkResponse(
             id=share_link.id,
             resource_type=share_link.resource_type,
@@ -474,6 +505,7 @@ class UnifiedShareService(ABC):
             share_url=self._generate_share_url(share_link.share_token),
             share_token=share_link.share_token,
             require_approval=share_link.require_approval,
+            default_role=default_role,
             default_permission_level=share_link.default_permission_level,
             expires_at=share_link.expires_at,
             is_active=share_link.is_active,
@@ -536,6 +568,13 @@ class UnifiedShareService(ABC):
         )
         owner_name = owner.user_name if owner else f"User_{owner_id}"
 
+        # Get default_role from the model, fallback to mapping from default_permission_level
+        default_role = getattr(share_link, "default_role", None)
+        if not default_role:
+            default_role = self.PERMISSION_TO_ROLE.get(
+                share_link.default_permission_level.lower(), ResourceRole.REPORTER.value
+            )
+
         return ShareInfoResponse(
             resource_type=self.resource_type.value,
             resource_id=resource_id,
@@ -543,6 +582,7 @@ class UnifiedShareService(ABC):
             owner_user_id=owner_id,
             owner_user_name=owner_name,
             require_approval=share_link.require_approval,
+            default_role=default_role,
             default_permission_level=share_link.default_permission_level,
             is_expired=is_expired,
         )
@@ -556,7 +596,7 @@ class UnifiedShareService(ABC):
         db: Session,
         share_token: str,
         user_id: int,
-        requested_permission_level: Optional[SchemaPermissionLevel] = None,
+        requested_role: Optional[SchemaMemberRole] = None,
     ) -> JoinByLinkResponse:
         """Handle join request via share link."""
         # Decode token
@@ -634,13 +674,19 @@ class UnifiedShareService(ABC):
                 if is_pending
                 else MemberStatus.APPROVED.value
             )
-            # Only use requested_permission_level when require_approval is True
-            # Otherwise, always use share_link.default_permission_level to prevent self-elevation
-            existing_member.permission_level = (
-                requested_permission_level.value
-                if is_pending and requested_permission_level
-                else share_link.default_permission_level
+            # Determine role from share link default_role or requested_role
+            default_role = getattr(share_link, "default_role", None)
+            if not default_role:
+                default_role = self.PERMISSION_TO_ROLE.get(
+                    share_link.default_permission_level.lower(),
+                    ResourceRole.REPORTER.value,
+                )
+
+            # Use requested role if provided and approval is required, otherwise use default
+            role = (
+                requested_role.value if is_pending and requested_role else default_role
             )
+            existing_member.set_role(role)
             existing_member.share_link_id = share_link.id
             existing_member.requested_at = datetime.utcnow()
             # For PENDING status, use 0 as placeholder; for APPROVED, use owner_id
@@ -658,13 +704,17 @@ class UnifiedShareService(ABC):
                 else MemberStatus.APPROVED.value
             )
 
-            # Determine permission level
-            # Only use requested_permission_level when require_approval is True
-            # Otherwise, always use share_link.default_permission_level to prevent self-elevation
-            permission_level = (
-                requested_permission_level.value
-                if is_pending and requested_permission_level
-                else share_link.default_permission_level
+            # Determine role from share link default_role or requested_role
+            default_role = getattr(share_link, "default_role", None)
+            if not default_role:
+                default_role = self.PERMISSION_TO_ROLE.get(
+                    share_link.default_permission_level.lower(),
+                    ResourceRole.REPORTER.value,
+                )
+
+            # Use requested role if provided and approval is required, otherwise use default
+            role = (
+                requested_role.value if is_pending and requested_role else default_role
             )
 
             # Create member record
@@ -674,13 +724,14 @@ class UnifiedShareService(ABC):
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
                 user_id=user_id,
-                permission_level=permission_level,
                 status=initial_status,
                 invited_by_user_id=0,  # Via link
                 share_link_id=share_link.id,
                 reviewed_by_user_id=0 if is_pending else owner_id,
                 reviewed_at=datetime.utcnow(),
+                requested_at=datetime.utcnow(),
             )
+            member.set_role(role)
 
             db.add(member)
 
@@ -791,7 +842,7 @@ class UnifiedShareService(ABC):
         resource_id: int,
         current_user_id: int,
         target_user_id: int,
-        permission_level: SchemaPermissionLevel,
+        role: SchemaMemberRole,
     ) -> ResourceMemberResponse:
         """Directly add a member to a resource."""
         # Validate resource and ownership/manage permission
@@ -883,7 +934,7 @@ class UnifiedShareService(ABC):
                 existing.share_link_id = share_link.id
 
             # Update existing record
-            existing.permission_level = permission_level.value
+            existing.set_role(role.value)
             existing.status = MemberStatus.APPROVED.value
             existing.invited_by_user_id = current_user_id
             existing.reviewed_by_user_id = current_user_id
@@ -929,13 +980,14 @@ class UnifiedShareService(ABC):
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
                 user_id=target_user_id,
-                permission_level=permission_level.value,
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=current_user_id,
                 share_link_id=share_link.id,
                 reviewed_by_user_id=current_user_id,
                 reviewed_at=datetime.utcnow(),
+                requested_at=datetime.utcnow(),
             )
+            member.set_role(role.value)
             db.add(member)
 
         db.commit()
@@ -963,9 +1015,9 @@ class UnifiedShareService(ABC):
         resource_id: int,
         member_id: int,
         current_user_id: int,
-        permission_level: SchemaPermissionLevel,
+        role: SchemaMemberRole,
     ) -> ResourceMemberResponse:
-        """Update a member's permission level."""
+        """Update a member's role."""
         # Validate resource and ownership/manage permission
         resource = self._get_resource(db, resource_id, current_user_id)
         if not resource:
@@ -1000,8 +1052,8 @@ class UnifiedShareService(ABC):
         if not member:
             raise HTTPException(status_code=404, detail="Member not found")
 
-        # Update permission
-        member.permission_level = permission_level.value
+        # Update role (this also updates permission_level for backward compatibility)
+        member.set_role(role.value)
         member.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(member)
@@ -1087,6 +1139,9 @@ class UnifiedShareService(ABC):
                 reviewed_by_user.user_name if reviewed_by_user else None
             )
 
+        # Get effective role for response
+        effective_role = member.get_effective_role()
+
         return ResourceMemberResponse(
             id=member.id,
             resource_type=member.resource_type,
@@ -1094,6 +1149,7 @@ class UnifiedShareService(ABC):
             user_id=member.user_id,
             user_name=user_name,
             user_email=user_email,
+            role=effective_role,
             permission_level=member.permission_level,
             status=member.status,
             invited_by_user_id=member.invited_by_user_id,
@@ -1158,23 +1214,28 @@ class UnifiedShareService(ABC):
         users = db.query(User).filter(User.id.in_(user_ids)).all()
         user_map = {u.id: u for u in users}
 
-        requests = [
-            PendingRequestResponse(
-                id=m.id,
-                user_id=m.user_id,
-                user_name=(
-                    user_map.get(m.user_id).user_name
-                    if user_map.get(m.user_id)
-                    else None
-                ),
-                user_email=(
-                    user_map.get(m.user_id).email if user_map.get(m.user_id) else None
-                ),
-                requested_permission_level=m.permission_level,
-                requested_at=m.requested_at,
+        requests = []
+        for m in pending_members:
+            effective_role = m.get_effective_role()
+            requests.append(
+                PendingRequestResponse(
+                    id=m.id,
+                    user_id=m.user_id,
+                    user_name=(
+                        user_map.get(m.user_id).user_name
+                        if user_map.get(m.user_id)
+                        else None
+                    ),
+                    user_email=(
+                        user_map.get(m.user_id).email
+                        if user_map.get(m.user_id)
+                        else None
+                    ),
+                    requested_role=effective_role,
+                    requested_permission_level=m.permission_level,
+                    requested_at=m.requested_at,
+                )
             )
-            for m in pending_members
-        ]
 
         return PendingRequestListResponse(requests=requests, total=len(requests))
 
@@ -1185,7 +1246,7 @@ class UnifiedShareService(ABC):
         request_id: int,
         reviewer_id: int,
         approved: bool,
-        permission_level: Optional[SchemaPermissionLevel] = None,
+        role: Optional[SchemaMemberRole] = None,
     ) -> ReviewRequestResponse:
         """Review (approve/reject) a pending request."""
         # Validate resource and ownership/manage permission
@@ -1232,8 +1293,8 @@ class UnifiedShareService(ABC):
         # Update status
         if approved:
             member.status = MemberStatus.APPROVED.value
-            if permission_level:
-                member.permission_level = permission_level.value
+            if role:
+                member.set_role(role.value)
         else:
             member.status = MemberStatus.REJECTED.value
 
@@ -1251,10 +1312,12 @@ class UnifiedShareService(ABC):
                 member.copied_resource_id = copied_resource_id
                 db.commit()
 
+        effective_role = member.get_effective_role()
         return ReviewRequestResponse(
             message="Request approved" if approved else "Request rejected",
             member_id=member.id,
             new_status=SchemaMemberStatus(member.status),
+            role=effective_role if approved else None,
             permission_level=member.permission_level if approved else None,
         )
 
@@ -1299,8 +1362,14 @@ class UnifiedShareService(ABC):
         if not member:
             return False
 
-        actual_level = self.PERMISSION_HIERARCHY.get(member.permission_level, 0)
-        required = self.PERMISSION_HIERARCHY.get(required_level.value, 0)
+        # Use effective role for permission check
+        effective_role = member.get_effective_role()
+        actual_level = self.ROLE_HIERARCHY.get(effective_role, 0)
+        # Map required permission level to role hierarchy
+        required_role = self.PERMISSION_TO_ROLE.get(
+            required_level.value, ResourceRole.REPORTER.value
+        )
+        required = self.ROLE_HIERARCHY.get(required_role, 0)
 
         return actual_level >= required
 

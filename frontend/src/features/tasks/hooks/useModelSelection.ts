@@ -17,7 +17,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
+import { modelApis, UnifiedModel, ModelTypeEnum, ModelCategoryType } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
@@ -27,13 +27,15 @@ import {
   type ModelPreference,
 } from '@/utils/modelPreferences'
 import type { Team, BotSummary } from '@/types/api'
-
 // ============================================================================
 // Types
 // ============================================================================
 
 /** Region type for model deployment location */
 export type ModelRegion = 'domestic' | 'overseas' | undefined
+
+// Re-export ModelCategoryType from @/apis/models for convenience
+export type { ModelCategoryType } from '@/apis/models'
 
 /** Model type for component props (extended with type information) */
 export interface Model {
@@ -43,6 +45,8 @@ export interface Model {
   displayName?: string | null
   type?: ModelTypeEnum
   region?: ModelRegion
+  isAdvanced?: boolean
+  namespace?: string
 }
 
 /** Special constant for default model option */
@@ -70,6 +74,8 @@ export interface UseModelSelectionOptions {
   selectedTeam: TeamWithBotDetails | null
   /** Whether the selector is disabled (e.g., viewing existing task) */
   disabled?: boolean
+  /** Model category type to filter models (default: 'llm') */
+  modelCategoryType?: ModelCategoryType
 }
 
 /** Return type for useModelSelection hook */
@@ -87,12 +93,15 @@ export interface UseModelSelectionReturn {
   isModelRequired: boolean
   isMixedTeam: boolean
   compatibleProvider: string | null
+  hasAdvancedModels: boolean
 
   // Actions
   selectModel: (model: Model | null) => void
   selectModelByKey: (key: string) => void
   selectDefaultModel: () => void
   setForceOverride: (value: boolean) => void
+  showAdvancedModels: boolean
+  setShowAdvancedModels: (value: boolean) => void
   refreshModels: () => Promise<void>
 
   // Display helpers
@@ -114,6 +123,7 @@ function unifiedToModel(unified: UnifiedModel): Model {
     modelId: unified.modelId || '',
     displayName: unified.displayName,
     type: unified.type,
+    isAdvanced: unified.isAdvanced ?? false,
   }
 }
 
@@ -146,6 +156,7 @@ export function useModelSelection({
   taskModelId,
   selectedTeam,
   disabled = false,
+  modelCategoryType = 'llm',
 }: UseModelSelectionOptions): UseModelSelectionReturn {
   const { t } = useTranslation()
 
@@ -157,6 +168,7 @@ export function useModelSelection({
   const [models, setModels] = useState<Model[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showAdvancedModels, setShowAdvancedModelsState] = useState(false)
 
   // -------------------------------------------------------------------------
   // Refs for tracking state changes
@@ -183,18 +195,30 @@ export function useModelSelection({
     return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
   }, [selectedTeam?.agent_type])
 
-  /** Filter models by compatible provider and sort by display name */
+  /** Check if there are any advanced models (after provider filtering) */
+  const hasAdvancedModels = useMemo(() => {
+    let result = models
+    if (compatibleProvider) {
+      result = result.filter(model => model.provider === compatibleProvider)
+    }
+    return result.some(model => model.isAdvanced === true)
+  }, [models, compatibleProvider])
+
+  /** Filter models by compatible provider, advanced flag, and sort by display name */
   const filteredModels = useMemo(() => {
     let result = models
     if (compatibleProvider) {
-      result = models.filter(model => model.provider === compatibleProvider)
+      result = result.filter(model => model.provider === compatibleProvider)
+    }
+    if (!showAdvancedModels) {
+      result = result.filter(model => !model.isAdvanced)
     }
     return result.slice().sort((a, b) => {
       const displayA = getModelDisplayTextHelper(a).toLowerCase()
       const displayB = getModelDisplayTextHelper(b).toLowerCase()
       return displayA.localeCompare(displayB)
     })
-  }, [models, compatibleProvider])
+  }, [models, compatibleProvider, showAdvancedModels])
 
   /** Check if model selection is required */
   const isModelRequired = !showDefaultOption && !selectedModel
@@ -223,12 +247,17 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   // Model Fetching
   // -------------------------------------------------------------------------
-
   const fetchModels = useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+      const response = await modelApis.getUnifiedModels(
+        undefined,
+        false,
+        'all',
+        undefined,
+        modelCategoryType
+      )
       const modelList = (response.data || []).map(unifiedToModel)
       setModels(modelList)
     } catch (err) {
@@ -237,7 +266,7 @@ export function useModelSelection({
     } finally {
       setIsLoading(false)
     }
-  }, [t])
+  }, [t, modelCategoryType])
 
   // Load models on mount
   useEffect(() => {
@@ -428,6 +457,11 @@ export function useModelSelection({
     setForceOverrideState(value)
   }, [])
 
+  /** Set show advanced models flag */
+  const setShowAdvancedModels = useCallback((value: boolean) => {
+    setShowAdvancedModelsState(value)
+  }, [])
+
   // -------------------------------------------------------------------------
   // Display Helpers
   // -------------------------------------------------------------------------
@@ -512,12 +546,15 @@ export function useModelSelection({
     isModelRequired,
     isMixedTeam,
     compatibleProvider,
+    hasAdvancedModels,
 
     // Actions
     selectModel,
     selectModelByKey,
     selectDefaultModel,
     setForceOverride,
+    showAdvancedModels,
+    setShowAdvancedModels,
     refreshModels: fetchModels,
 
     // Display helpers

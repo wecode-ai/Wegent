@@ -44,15 +44,34 @@ export interface CloudDeviceConfig {
 }
 
 /**
+ * Request body for cloud device creation
+ */
+export interface CreateCloudDeviceRequest {
+  mail_email?: string
+  mail_password?: string
+}
+
+/**
+ * VNC WebSocket connection configuration
+ */
+export interface VncConfig {
+  wss_url: string
+  signature: string
+  sandbox_id: string
+}
+
+/**
  * Cloud device API services
  */
 export const cloudDeviceApis = {
   /**
    * Create a new cloud device via Nevis Sandbox API.
    * Creates a VM with pre-installed wegent-executor.
+   *
+   * @param body - Optional request body with mail configuration
    */
-  async createCloudDevice(): Promise<CloudDeviceResponse> {
-    return apiClient.post('/cloud-devices')
+  async createCloudDevice(body?: CreateCloudDeviceRequest): Promise<CloudDeviceResponse> {
+    return apiClient.post('/cloud-devices', body)
   },
 
   /**
@@ -81,5 +100,16 @@ export const cloudDeviceApis = {
    */
   async getCloudDeviceConfig(): Promise<CloudDeviceConfig> {
     return apiClient.get('/cloud-devices/config')
+  },
+
+  /**
+   * Get VNC WebSocket connection configuration for a cloud device.
+   * Returns the upstream WSS URL and authentication signature needed
+   * to proxy VNC connections through server.cjs.
+   *
+   * @param deviceId - Cloud device ID (sandbox ID)
+   */
+  async getVncConfig(deviceId: string): Promise<VncConfig> {
+    return apiClient.get(`/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`)
   },
 }

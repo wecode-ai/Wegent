@@ -6,7 +6,6 @@
 API endpoints for task members (group chat) management.
 """
 
-import asyncio
 import logging
 from typing import Optional
 
@@ -15,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.resource_member import MemberStatus as DBMemberStatus
 from app.models.user import User
 from app.schemas.task_invite import (
     InviteInfoResponse,
@@ -23,6 +23,9 @@ from app.schemas.task_invite import (
 )
 from app.schemas.task_member import (
     AddMemberRequest,
+)
+from app.schemas.task_member import MemberStatus as SchemaMemberStatus
+from app.schemas.task_member import (
     RemoveMemberResponse,
     TaskMemberListResponse,
     TaskMemberResponse,
@@ -33,6 +36,28 @@ from app.services.task_member_service import task_member_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _map_db_status_to_schema(db_status: str) -> SchemaMemberStatus:
+    """
+    Map database MemberStatus to schema MemberStatus.
+
+    Database uses: pending, approved, rejected (lowercase)
+    Schema uses: ACTIVE, REMOVED (uppercase)
+
+    Uses case-insensitive comparison for robustness against
+    potential case variations in database values.
+    """
+    # Normalize to lowercase for case-insensitive comparison
+    normalized_status = str(db_status).lower() if db_status else ""
+
+    if normalized_status == DBMemberStatus.APPROVED.value.lower():
+        return SchemaMemberStatus.ACTIVE
+    elif normalized_status == DBMemberStatus.REJECTED.value.lower():
+        return SchemaMemberStatus.REMOVED
+    else:
+        # Default to ACTIVE for pending or unknown status
+        return SchemaMemberStatus.ACTIVE
 
 
 async def _emit_task_invited(
@@ -206,7 +231,7 @@ async def add_task_member(
         avatar=None,
         invited_by=current_user.id,
         inviter_name=inviter.user_name if inviter else "Unknown",
-        status=member.status,
+        status=_map_db_status_to_schema(member.status),
         joined_at=member.joined_at,
         is_owner=False,
     )

@@ -9,7 +9,7 @@ Handles CRUD operations and version management for examination topics.
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
@@ -191,6 +191,7 @@ class TopicService:
         visibility: Optional[str] = None,
         grading_team_id: Optional[int] = None,
         instructions: Optional[str] = None,
+        extra_data: Optional[Dict[str, Any]] = None,
     ) -> EvalTopic:
         """
         Update a topic.
@@ -203,30 +204,47 @@ class TopicService:
             visibility: New visibility (optional)
             grading_team_id: New grading team ID (optional)
             instructions: New exam instructions (optional)
+            extra_data: Additional extra data to merge (optional)
 
         Returns:
             Updated topic
         """
+        from sqlalchemy.orm.attributes import flag_modified
+
         if name:
             topic.name = name
 
-        # Handle extra_data updates (description, instructions)
+        # Handle extra_data updates (description, instructions, and other fields)
         # Reassign the entire dict for SQLAlchemy JSON column mutation detection
-        if description is not None or instructions is not None:
-            extra_data = dict(topic.extra_data) if topic.extra_data else {}
+        if (
+            description is not None
+            or instructions is not None
+            or extra_data is not None
+        ):
+            current_extra_data = dict(topic.extra_data) if topic.extra_data else {}
             if description is not None:
-                extra_data["description"] = description
+                current_extra_data["description"] = description
             if instructions is not None:
-                extra_data["instructions"] = instructions
-            topic.extra_data = extra_data
+                current_extra_data["instructions"] = instructions
+            if extra_data is not None:
+                current_extra_data.update(extra_data)
+            topic.extra_data = current_extra_data
+            # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+            flag_modified(topic, "extra_data")
 
         if visibility:
             topic.visibility = visibility
 
         if grading_team_id is not None:
-            if not topic.grading_team_config:
-                topic.grading_team_config = {}
-            topic.grading_team_config["team_id"] = grading_team_id
+            # Create a copy of grading_team_config to ensure SQLAlchemy detects the change
+            # SQLAlchemy doesn't detect in-place modifications to JSON fields
+            current_config = (
+                dict(topic.grading_team_config) if topic.grading_team_config else {}
+            )
+            current_config["team_id"] = grading_team_id
+            topic.grading_team_config = current_config
+            # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+            flag_modified(topic, "grading_team_config")
 
         db.flush()
         logger.info(f"[Evaluation] Updated topic {topic.id}")

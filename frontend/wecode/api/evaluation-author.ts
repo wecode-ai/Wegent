@@ -369,3 +369,108 @@ export async function listAuthorGraders(
     getAuthorUrl(`/topics/${topicId}/graders?${searchParams.toString()}`)
   )
 }
+
+// ============================================================================
+// Exam Session API (Author)
+// ============================================================================
+
+export interface ExamSession {
+  user_id: number
+  user_name?: string
+  user_email?: string
+  current_phase: 'intro' | 'exam' | 'review' | 'completed'
+  started_at: string | null
+  submit_count: number
+  selected_question_id: number | null
+}
+
+export interface ExamTopicInfo {
+  id: number
+  name: string
+  description?: string
+  exam_mode: boolean
+  intro_duration_minutes: number
+  exam_duration_minutes: number
+  review_duration_minutes: number
+}
+
+export interface ExamSessionListResponse {
+  topic: ExamTopicInfo
+  sessions: ExamSession[]
+  total: number
+}
+
+export async function getTopicExamSessions(
+  topicId: number,
+  params: {
+    page?: number
+    limit?: number
+    phase?: string
+  }
+): Promise<ExamSessionListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', params.page.toString())
+  if (params.limit) searchParams.set('limit', params.limit.toString())
+  if (params.phase) searchParams.set('phase', params.phase)
+
+  return fetchJson<ExamSessionListResponse>(
+    getAuthorUrl(`/topics/${topicId}/exam-sessions?${searchParams.toString()}`)
+  )
+}
+
+export async function resetUserExamSession(
+  topicId: number,
+  userId: number
+): Promise<{ success: boolean; message: string }> {
+  return fetchJson<{ success: boolean; message: string }>(
+    getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/reset`),
+    {
+      method: 'POST',
+    }
+  )
+}
+
+export async function updateUserExamSessionPhase(
+  topicId: number,
+  userId: number,
+  targetPhase: 'intro' | 'exam' | 'review' | 'completed',
+  force?: boolean
+): Promise<{
+  success: boolean
+  message: string
+  previous_phase: string
+  current_phase: string
+  user_id: number
+}> {
+  return fetchJson<{
+    success: boolean
+    message: string
+    previous_phase: string
+    current_phase: string
+    user_id: number
+  }>(getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/update-phase`), {
+    method: 'POST',
+    body: JSON.stringify({ target_phase: targetPhase, force }),
+  })
+}
+
+export async function forceEndExamSession(
+  topicId: number,
+  userId: number
+): Promise<{
+  success: boolean
+  message: string
+  previous_phase: string
+  current_phase: string
+  user_id: number
+}> {
+  return fetchJson<{
+    success: boolean
+    message: string
+    previous_phase: string
+    current_phase: string
+    user_id: number
+  }>(getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/force-end`), {
+    method: 'POST',
+  })
+}

@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
-from app.models.namespace_member import NamespaceMember
+from app.models.namespace import Namespace
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.namespace import (
     GroupCreate,
@@ -120,12 +121,14 @@ def list_members(
             detail="You are not a member of this group",
         )
 
-    # Get all active members with user information
+    # Get all approved members with user information using ResourceMember
     members = (
-        db.query(NamespaceMember)
+        db.query(ResourceMember)
+        .join(Namespace, Namespace.id == ResourceMember.resource_id)
         .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.is_active == True,
+            ResourceMember.resource_type == "Namespace",
+            Namespace.name == group_name,
+            ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .all()
     )
@@ -135,11 +138,11 @@ def list_members(
     for m in members:
         member_dict = {
             "id": m.id,
-            "group_name": m.group_name,
+            "group_name": group_name,
             "user_id": m.user_id,
             "role": m.role,
             "invited_by_user_id": m.invited_by_user_id,
-            "is_active": m.is_active,
+            "is_active": True,  # ResourceMember uses status instead
             "created_at": m.created_at,
             "updated_at": m.updated_at,
         }
@@ -190,6 +193,9 @@ def add_member_endpoint(
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).exception(f"Failed to add member: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to add member: {str(e)}",

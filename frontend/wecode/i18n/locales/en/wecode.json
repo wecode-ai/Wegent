@@ -15,6 +15,11 @@
     "create_success": "Cloud device created, starting executor...",
     "create_error": "Failed to create cloud device",
     "delete_success": "Cloud device deleted",
-    "delete_error": "Failed to delete cloud device"
+    "delete_error": "Failed to delete cloud device",
+    "mail_enable": "Enable Mail Skill",
+    "mail_email": "Email Account",
+    "mail_email_placeholder": "e.g. zhangsan",
+    "mail_email_hint": "No need to enter @staff.sina.com.cn suffix",
+    "mail_password": "Email Password"
   }
 }

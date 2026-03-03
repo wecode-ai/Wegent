@@ -13,11 +13,14 @@ import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
 import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
-import type { Team, ChatTipItem } from '@/types/api'
+import type { Team, ChatTipItem, TaskType } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
-export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
+export interface ChatInputCardProps extends Omit<
+  ChatInputControlsProps,
+  'taskInputMessage' | 'taskType'
+> {
   // Input message
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
@@ -35,7 +38,7 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   isUsingDefaultTeam?: boolean
 
   // Task type
-  taskType: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType: TaskType
   autoFocus?: boolean
 
   // Knowledge base ID to exclude from context selector (used in notebook mode)
@@ -156,6 +159,28 @@ export function ChatInputCard({
   preloadedSkillNames,
   selectedSkillNames,
   onToggleSkill,
+  // Video mode props
+  videoModels,
+  selectedVideoModel,
+  onVideoModelChange,
+  isVideoModelsLoading,
+  selectedResolution,
+  onResolutionChange,
+  availableResolutions,
+  selectedRatio,
+  onRatioChange,
+  availableRatios,
+  selectedDuration,
+  onDurationChange,
+  availableDurations,
+  // Image mode props
+  selectedImageModel,
+  onImageModelChange,
+  isImageModelsLoading,
+  selectedImageSize,
+  onImageSizeChange,
+  // Generate mode switch props
+  onGenerateModeChange,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
 
@@ -331,6 +356,29 @@ export function ChatInputCard({
             selectedSkillNames={selectedSkillNames}
             onToggleSkill={onToggleSkill}
             skillSelectorRef={skillSelectorRef}
+            // Video mode props
+            taskType={taskType}
+            videoModels={videoModels}
+            selectedVideoModel={selectedVideoModel}
+            onVideoModelChange={onVideoModelChange}
+            isVideoModelsLoading={isVideoModelsLoading}
+            selectedResolution={selectedResolution}
+            onResolutionChange={onResolutionChange}
+            availableResolutions={availableResolutions}
+            selectedRatio={selectedRatio}
+            onRatioChange={onRatioChange}
+            availableRatios={availableRatios}
+            selectedDuration={selectedDuration}
+            onDurationChange={onDurationChange}
+            availableDurations={availableDurations}
+            // Image mode props
+            selectedImageModel={selectedImageModel}
+            onImageModelChange={onImageModelChange}
+            isImageModelsLoading={isImageModelsLoading}
+            selectedImageSize={selectedImageSize}
+            onImageSizeChange={onImageSizeChange}
+            // Generate mode switch props
+            onGenerateModeChange={onGenerateModeChange}
           />
         </div>
       </div>

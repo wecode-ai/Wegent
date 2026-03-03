@@ -16,6 +16,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -42,6 +43,7 @@ from wecode.schemas.evaluation import (
     TopicVersionListResponse,
 )
 from wecode.service.evaluation import (
+    get_exam_session_service,
     get_permission_service,
     get_question_service,
     get_topic_service,
@@ -51,9 +53,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _verify_topic_ownership(topic, user_id: int) -> None:
+def _verify_topic_ownership(db: Session, topic, user_id: int) -> None:
     """
-    Verify that the user is the creator of the topic.
+    Verify that the user can edit/manage the topic.
+
+    Args:
+        db: Database session
+        topic: Topic to verify
+        user_id: User ID to check
+
+    Raises:
+        HTTPException: If user is not authorized
+    """
+    permission_service = get_permission_service()
+    if not permission_service.can_edit_topic(db, topic, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the topic creator or question creator can perform this operation",
+        )
+
+
+def _verify_topic_delete_permission(topic, user_id: int) -> None:
+    """
+    Verify that the user is the original creator of the topic (for delete operations).
 
     Args:
         topic: Topic to verify
@@ -63,10 +85,10 @@ def _verify_topic_ownership(topic, user_id: int) -> None:
         HTTPException: If user is not the topic creator
     """
     permission_service = get_permission_service()
-    if not permission_service.can_edit_topic(topic, user_id):
+    if not permission_service.can_delete_topic(topic, user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the topic creator can perform this operation",
+            detail="Only the topic creator can delete this topic",
         )
 
 
@@ -235,7 +257,7 @@ def get_topic(
     Only the topic creator can access this endpoint.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     return _topic_to_response(topic)
 
@@ -253,7 +275,7 @@ def update_topic(
     Only the topic creator can update.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     topic = topic_service.update(
@@ -264,6 +286,7 @@ def update_topic(
         visibility=topic_update.visibility,
         grading_team_id=topic_update.grading_team_id,
         instructions=topic_update.instructions,
+        extra_data=topic_update.extra_data,
     )
     db.commit()
 
@@ -282,7 +305,7 @@ def delete_topic(
     Only the topic creator can delete.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_delete_permission(topic, current_user.id)
 
     topic_service = get_topic_service()
     topic_service.delete(db, topic)
@@ -299,10 +322,10 @@ def publish_topic(
     Publish a topic.
 
     Creates a new version with question snapshots.
-    Only the topic creator can publish.
+    Only the topic creator or question creator can publish.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     version = topic_service.publish(db, topic, current_user.id)
@@ -329,11 +352,11 @@ def get_topic_versions(
     """
     Get version history for a topic.
 
-    Only the topic creator can access this endpoint.
+    Only the topic creator or question creator can access this endpoint.
     Returns all versions sorted by published date (newest first).
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     versions, total = topic_service.list_versions(db, topic_id, page=page, limit=limit)
@@ -363,10 +386,10 @@ def get_topic_statistics(
     """
     Get statistics for a topic.
 
-    Only the topic creator can access this endpoint.
+    Only the topic creator or question creator can access this endpoint.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
     stats = topic_service.get_statistics(db, topic_id)
@@ -396,7 +419,7 @@ def add_question(
     Only the topic creator can add questions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question_service = get_question_service()
     question = question_service.create(
@@ -433,7 +456,7 @@ def list_questions(
     Returns all questions including draft ones, with criteria data.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question_service = get_question_service()
     questions, total = question_service.list_questions(
@@ -472,7 +495,7 @@ def get_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     return _question_to_response(question, include_criteria=True)
 
@@ -499,7 +522,7 @@ def update_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question = question_service.update(
         db=db,
@@ -537,7 +560,7 @@ def delete_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     question_service.delete(db, question)
     db.commit()
@@ -564,7 +587,7 @@ def publish_question(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     version = question_service.publish(db, question, current_user.id)
     db.commit()
@@ -607,7 +630,7 @@ def list_question_versions(
         )
 
     topic = _get_topic_or_404(db, question.topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Query versions
     query = db.query(EvalQuestionVersion).filter(
@@ -657,16 +680,16 @@ def create_permission(
     """
     Create a new permission for a user on a topic.
 
-    Only the topic creator can manage permissions.
+    Only the topic creator or question creator can manage permissions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Validate role
-    if permission_create.role not in ("respondent", "grader"):
+    if permission_create.role not in ("respondent", "grader", "question_creator"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role must be 'respondent' or 'grader'",
+            detail="Role must be 'respondent', 'grader', or 'question_creator'",
         )
 
     permission_service = get_permission_service()
@@ -699,16 +722,16 @@ def update_permission(
     """
     Update permission for a user on a topic.
 
-    Only the topic creator can manage permissions.
+    Only the topic creator or question creator can manage permissions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Validate role
-    if permission_create.role not in ("respondent", "grader"):
+    if permission_create.role not in ("respondent", "grader", "question_creator"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Role must be 'respondent' or 'grader'",
+            detail="Role must be 'respondent', 'grader', or 'question_creator'",
         )
 
     permission_service = get_permission_service()
@@ -746,7 +769,7 @@ def get_permissions(
     Only the topic creator can view permissions.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     permission_service = get_permission_service()
     permissions, total = permission_service.list_permissions(
@@ -802,7 +825,7 @@ def delete_permission(
     If role is not specified, revoke all permissions for that user.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     permission_service = get_permission_service()
     revoked = permission_service.revoke_permission(
@@ -831,10 +854,10 @@ def get_graders(
     """
     Get list of graders for a topic.
 
-    Only the topic creator can view graders.
+    Only the topic creator or question creator can view graders.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     permission_service = get_permission_service()
     permissions, total = permission_service.list_permissions(
@@ -885,10 +908,10 @@ def get_grading_config(
     """
     Get grading configuration for a topic.
 
-    Only the topic creator can view grading configuration.
+    Only the topic creator or question creator can view grading configuration.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     config = topic.grading_team_config or {}
 
@@ -933,14 +956,14 @@ def update_grading_config(
     """
     Update grading configuration for a topic.
 
-    Only the topic creator can update grading configuration.
+    Only the topic creator or question creator can update grading configuration.
 
     Constraints:
     - Team must be of Chat shell type (for AI grading)
     - Team must belong to the user or be a public team
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     # Validate team_id if provided
     team_name = None
@@ -978,6 +1001,8 @@ def update_grading_config(
 
     # Update grading config
     # Note: Must reassign the entire dict for SQLAlchemy to detect changes on JSON fields
+    from sqlalchemy.orm.attributes import flag_modified
+
     existing_config = topic.grading_team_config or {}
     updated_config = {
         **existing_config,
@@ -987,6 +1012,8 @@ def update_grading_config(
         "grading_timeout": config_update.grading_timeout,
     }
     topic.grading_team_config = updated_config
+    # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
+    flag_modified(topic, "grading_team_config")
 
     db.commit()
 
@@ -1016,10 +1043,10 @@ def rollback_topic(
     Rollback a topic to a specific version.
 
     This updates the current_version to the specified previous version.
-    Only the topic creator can rollback.
+    Only the topic creator or question creator can rollback.
     """
     topic = _get_topic_or_404(db, topic_id)
-    _verify_topic_ownership(topic, current_user.id)
+    _verify_topic_ownership(db, topic, current_user.id)
 
     topic_service = get_topic_service()
 
@@ -1036,3 +1063,257 @@ def rollback_topic(
     db.commit()
 
     return _topic_to_response(topic)
+
+
+# ============================================================================
+# Exam Session Management Endpoints
+# ============================================================================
+
+
+@router.get("/topics/{topic_id}/exam-sessions")
+def get_topic_exam_sessions(
+    topic_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get all exam sessions for a topic (author only).
+
+    Returns session information including:
+    - User ID and name
+    - Start time
+    - Current phase (active, qa, completed)
+    - Submit count
+    - Selected question ID
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(db, topic, current_user.id)
+
+    extra_data = topic.extra_data or {}
+
+    from app.models.user import User
+    from wecode.models.evaluation_exam_session import EvalExamSession
+
+    sessions = (
+        db.query(EvalExamSession, User)
+        .join(User, EvalExamSession.user_id == User.id)
+        .filter(
+            EvalExamSession.topic_id == topic_id,
+            EvalExamSession.is_active == 1,
+        )
+        .all()
+    )
+
+    # Build simplified session list without redundant topic data
+    session_list = []
+    for session, user in sessions:
+        session_list.append(
+            {
+                "user_id": session.user_id,
+                "user_name": user.user_name if user else f"User {session.user_id}",
+                "user_email": user.email if user else None,
+                "current_phase": session.current_phase,
+                "started_at": (
+                    session.started_at.isoformat() if session.started_at else None
+                ),
+                "submit_count": session.submit_count,
+                "selected_question_id": session.selected_question_id or None,
+            }
+        )
+
+    # Return topic info at top level + simplified sessions list
+    return {
+        "topic": {
+            "id": topic.id,
+            "name": topic.name,
+            "description": extra_data.get("description"),
+            "exam_mode": True,
+            "intro_duration_minutes": extra_data.get("introDurationMinutes", 5),
+            "exam_duration_minutes": extra_data.get("examDurationMinutes", 50),
+            "review_duration_minutes": extra_data.get("reviewDurationMinutes", 5),
+        },
+        "sessions": session_list,
+        "total": len(session_list),
+    }
+
+
+@router.post("/topics/{topic_id}/exam-sessions/{user_id}/reset")
+def reset_user_exam_session(
+    topic_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Reset exam session for a user (author only).
+
+    Soft deletes the active session, allowing the user to start fresh.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(db, topic, current_user.id)
+
+    exam_session_service = get_exam_session_service()
+    exam_session_service.reset_session(db, topic_id, user_id)
+
+    return {"success": True, "message": "Exam session reset successfully"}
+
+
+class UpdateSessionPhaseRequest(BaseModel):
+    """Schema for updating exam session phase (author only)."""
+
+    target_phase: str = Field(
+        ..., description="Target phase to set (intro, exam, review, completed)"
+    )
+    force: bool = Field(
+        default=False, description="Force transition even if not in valid sequence"
+    )
+
+
+@router.post("/topics/{topic_id}/exam-sessions/{user_id}/update-phase")
+def update_user_exam_session_phase(
+    topic_id: int,
+    user_id: int,
+    request: UpdateSessionPhaseRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update exam session phase for a user (author only).
+
+    This allows the topic author to manually control a user's exam session state:
+    - intro: Initial phase
+    - exam: Exam answering phase
+    - review: Review phase
+    - completed: Completed (triggers grading task creation)
+
+    By default, only valid transitions are allowed. Set force=true to allow any transition.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(db, topic, current_user.id)
+
+    exam_session_service = get_exam_session_service()
+
+    # Get user's active session
+    session = exam_session_service.get_active_session(db, topic_id, user_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active exam session found for this user",
+        )
+
+    # Validate target phase
+    valid_phases = ["intro", "exam", "review", "completed"]
+    if request.target_phase not in valid_phases:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid phase. Must be one of: {', '.join(valid_phases)}",
+        )
+
+    previous_phase = session.current_phase
+
+    # Check if transition is valid (unless force=true)
+    if not request.force:
+        valid_transitions = {
+            "intro": ["exam"],
+            "exam": ["review", "completed"],  # Allow skip to completed
+            "review": ["completed"],
+            "completed": [],
+        }
+        if request.target_phase not in valid_transitions.get(previous_phase, []):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot transition from '{previous_phase}' to '{request.target_phase}'. "
+                f"Use force=true to override.",
+            )
+
+    # Update phase using service method
+    exam_session_service.update_session_phase(
+        db=db,
+        session=session,
+        target_phase=request.target_phase,
+    )
+
+    # If transitioning to completed, create grading tasks
+    if request.target_phase == "completed":
+        from wecode.api.evaluation.respondent import (
+            _create_grading_tasks_for_exam_completion,
+        )
+
+        _create_grading_tasks_for_exam_completion(
+            db=db,
+            topic_id=topic_id,
+            user_id=user_id,
+            topic=topic,
+        )
+
+    return {
+        "success": True,
+        "message": f"Session phase updated from '{previous_phase}' to '{request.target_phase}'",
+        "previous_phase": previous_phase,
+        "current_phase": request.target_phase,
+        "user_id": user_id,
+    }
+
+
+@router.post("/topics/{topic_id}/exam-sessions/{user_id}/force-end")
+def force_end_exam_session(
+    topic_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Force end a user's exam session and trigger grading (author only).
+
+    This immediately sets the session to 'completed' and creates grading tasks
+    for all submitted answers. Useful when a user abandons the exam or
+    encounters technical issues.
+    """
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(db, topic, current_user.id)
+
+    exam_session_service = get_exam_session_service()
+
+    # Get user's active session
+    session = exam_session_service.get_active_session(db, topic_id, user_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active exam session found for this user",
+        )
+
+    # Cannot force-end an already completed session
+    if session.current_phase == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session is already completed",
+        )
+
+    previous_phase = session.current_phase
+
+    # Update to completed phase
+    exam_session_service.update_session_phase(
+        db=db,
+        session=session,
+        target_phase="completed",
+    )
+
+    # Create grading tasks
+    from wecode.api.evaluation.respondent import (
+        _create_grading_tasks_for_exam_completion,
+    )
+
+    _create_grading_tasks_for_exam_completion(
+        db=db,
+        topic_id=topic_id,
+        user_id=user_id,
+        topic=topic,
+    )
+
+    return {
+        "success": True,
+        "message": f"Session force-ended (was: {previous_phase}) and grading tasks created",
+        "previous_phase": previous_phase,
+        "current_phase": "completed",
+        "user_id": user_id,
+    }

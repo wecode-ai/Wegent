@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
@@ -127,7 +128,7 @@ export default function LoginForm() {
               {t('common:login.username')}
             </label>
             <div className="mt-1">
-              <input
+              <Input
                 id="user_name"
                 name="user_name"
                 type="text"
@@ -135,7 +136,7 @@ export default function LoginForm() {
                 required
                 value={formData.user_name}
                 onChange={handleInputChange}
-                className="appearance-none block w-full px-3 py-2 border border-border rounded-md shadow-sm bg-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent sm:text-sm"
+                className="shadow-sm"
                 placeholder={t('common:login.enter_username')}
               />
             </div>
@@ -146,7 +147,7 @@ export default function LoginForm() {
               {t('common:login.password')}
             </label>
             <div className="mt-1 relative">
-              <input
+              <Input
                 id="password"
                 name="password"
                 type={showPassword ? 'text' : 'password'}
@@ -154,7 +155,7 @@ export default function LoginForm() {
                 required
                 value={formData.password}
                 onChange={handleInputChange}
-                className="appearance-none block w-full px-3 py-2 pr-10 border border-border rounded-md shadow-sm bg-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent sm:text-sm"
+                className="pr-10 shadow-sm"
                 placeholder={t('common:login.enter_password')}
               />
               <button

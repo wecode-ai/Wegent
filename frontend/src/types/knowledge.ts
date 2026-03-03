@@ -325,14 +325,60 @@ export type PermissionLevel = 'view' | 'edit' | 'manage'
 export type PermissionStatus = 'pending' | 'approved' | 'rejected'
 export type ReviewAction = 'approve' | 'reject'
 
+// New role-based permission types
+export type MemberRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
+
+// Role to permission level mapping
+export const ROLE_TO_PERMISSION: Record<MemberRole, PermissionLevel> = {
+  Owner: 'manage',
+  Maintainer: 'manage',
+  Developer: 'edit',
+  Reporter: 'view',
+}
+
+// Permission level to role mapping (for backward compatibility)
+export const PERMISSION_TO_ROLE: Record<PermissionLevel, MemberRole> = {
+  view: 'Reporter',
+  edit: 'Developer',
+  manage: 'Maintainer',
+}
+
+// Role display names (Chinese)
+export const ROLE_DISPLAY_NAMES: Record<MemberRole, string> = {
+  Owner: '创建者',
+  Maintainer: '管理员',
+  Developer: '开发者',
+  Reporter: '使用者',
+}
+
+// Role display names (English)
+export const ROLE_DISPLAY_NAMES_EN: Record<MemberRole, string> = {
+  Owner: 'Owner',
+  Maintainer: 'Maintainer',
+  Developer: 'Developer',
+  Reporter: 'Reporter',
+}
+
+// Role hierarchy for comparison (higher = more permissions)
+export const ROLE_HIERARCHY: Record<MemberRole, number> = {
+  Owner: 4,
+  Maintainer: 3,
+  Developer: 2,
+  Reporter: 1,
+}
+
 // Permission Apply types
 export interface PermissionApplyRequest {
-  permission_level: PermissionLevel
+  role: MemberRole
+  /** @deprecated Use role instead */
+  permission_level?: PermissionLevel
 }
 
 export interface PermissionApplyResponse {
   id: number
   knowledge_base_id: number
+  role: MemberRole
+  /** @deprecated Use role instead */
   permission_level: PermissionLevel
   status: PermissionStatus
   requested_at: string
@@ -342,13 +388,17 @@ export interface PermissionApplyResponse {
 // Permission Review types
 export interface PermissionReviewRequest {
   action: ReviewAction
+  role?: MemberRole
+  /** @deprecated Use role instead */
   permission_level?: PermissionLevel
 }
 
 export interface PermissionReviewResponse {
   id: number
   user_id: number
-  permission_level: PermissionLevel
+  role: MemberRole | null
+  /** @deprecated Use role instead */
+  permission_level: PermissionLevel | null
   status: PermissionStatus
   reviewed_at: string
   message: string
@@ -357,11 +407,15 @@ export interface PermissionReviewResponse {
 // Permission Add/Update types
 export interface PermissionAddRequest {
   user_name: string
-  permission_level: PermissionLevel
+  role: MemberRole
+  /** @deprecated Use role instead */
+  permission_level?: PermissionLevel
 }
 
 export interface PermissionUpdateRequest {
-  permission_level: PermissionLevel
+  role: MemberRole
+  /** @deprecated Use role instead */
+  permission_level?: PermissionLevel
 }
 
 // Permission User Info types
@@ -370,6 +424,8 @@ export interface PermissionUserInfo {
   user_id: number
   username: string
   email?: string
+  role: MemberRole
+  /** @deprecated Use role instead */
   permission_level: PermissionLevel
   requested_at: string
   reviewed_at?: string
@@ -381,10 +437,21 @@ export interface PendingPermissionInfo {
   user_id: number
   username: string
   email?: string
+  role: MemberRole
+  /** @deprecated Use role instead */
   permission_level: PermissionLevel
   requested_at: string
 }
 
+// Approved permissions grouped by role
+export interface ApprovedPermissionsByRole {
+  Owner: PermissionUserInfo[]
+  Maintainer: PermissionUserInfo[]
+  Developer: PermissionUserInfo[]
+  Reporter: PermissionUserInfo[]
+}
+
+/** @deprecated Use ApprovedPermissionsByRole instead */
 export interface ApprovedPermissionsByLevel {
   view: PermissionUserInfo[]
   edit: PermissionUserInfo[]
@@ -393,18 +460,24 @@ export interface ApprovedPermissionsByLevel {
 
 export interface PermissionListResponse {
   pending: PendingPermissionInfo[]
-  approved: ApprovedPermissionsByLevel
+  approved: ApprovedPermissionsByRole
+  /** @deprecated Use approved instead */
+  approved_by_level?: ApprovedPermissionsByLevel
 }
 
 // Current User Permission types
 export interface PendingRequestInfo {
   id: number
+  role: MemberRole
+  /** @deprecated Use role instead */
   permission_level: PermissionLevel
   requested_at: string
 }
 
 export interface MyPermissionResponse {
   has_access: boolean
+  role: MemberRole | null
+  /** @deprecated Use role instead */
   permission_level: PermissionLevel | null
   is_creator: boolean
   pending_request: PendingRequestInfo | null
@@ -415,6 +488,8 @@ export interface PermissionResponse {
   id: number
   knowledge_base_id: number
   user_id: number
+  role: MemberRole
+  /** @deprecated Use role instead */
   permission_level: PermissionLevel
   status: PermissionStatus
   requested_at: string
@@ -444,6 +519,8 @@ export interface PublicKnowledgeBaseResponse {
   creator_id: number
   creator_name: string
   require_approval: boolean
+  default_role: MemberRole
+  /** @deprecated Use default_role instead */
   default_permission_level: string
   is_expired: boolean
 }
@@ -451,6 +528,8 @@ export interface PublicKnowledgeBaseResponse {
 // Share Link types
 export interface ShareLinkConfig {
   require_approval?: boolean
+  default_role?: MemberRole
+  /** @deprecated Use default_role instead */
   default_permission_level?: PermissionLevel
   expires_in_hours?: number
 }
@@ -462,6 +541,8 @@ export interface ShareLinkResponse {
   share_url: string
   share_token: string
   require_approval: boolean
+  default_role: MemberRole
+  /** @deprecated Use default_role instead */
   default_permission_level: string
   expires_at?: string
   is_active: boolean
@@ -473,6 +554,8 @@ export interface ShareLinkResponse {
 // Join by link types
 export interface JoinByLinkRequest {
   share_token: string
+  requested_role?: MemberRole
+  /** @deprecated Use requested_role instead */
   requested_permission_level?: PermissionLevel
 }
 

@@ -103,12 +103,21 @@ def main() -> None:
         # Load full configuration for local mode
         try:
             device_config = load_device_config(config_path)
+
+            # Sync device config values to global config for modules that read
+            # from config directly. device_config already has env overrides applied.
+            from executor.config.config import sync_device_config
+
+            sync_device_config(device_config)
+
+            import executor.config.config as config
+
             logger.info("Starting executor in LOCAL mode")
             logger.info(f"Device ID: {device_config.device_id}")
             logger.info(f"Device Name: {device_config.device_name}")
-            logger.info(f"Backend URL: {device_config.connection.backend_url}")
+            logger.info(f"Backend URL: {config.WEGENT_BACKEND_URL}")
             logger.info(
-                f"Auth Token: {'***' if device_config.connection.auth_token else 'NOT SET'}"
+                f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}"
             )
 
             # Pass config to runner

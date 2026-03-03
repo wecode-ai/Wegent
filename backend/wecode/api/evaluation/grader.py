@@ -10,6 +10,7 @@ grading tasks, view answers, and publish reports.
 """
 
 import logging
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -149,6 +150,8 @@ def _get_topic_ids_with_grader_access(
     Get all topic IDs where user has grader access.
 
     Returns topic IDs where user is creator OR has grader permission.
+    Grader permission includes both 'grader' and 'question_creator' roles,
+    consistent with PermissionService.has_permission() logic.
     """
     from wecode.models.evaluation import EvalPermission, PermissionRole
 
@@ -163,11 +166,15 @@ def _get_topic_ids_with_grader_access(
     )
 
     # Topics where user has grader permission
+    # This aligns with PermissionService.has_permission() logic where
+    # GRADER role check includes both GRADER and QUESTION_CREATOR roles
     grader_topics = (
         db.query(EvalPermission.topic_id)
         .filter(
             EvalPermission.user_id == user_id,
-            EvalPermission.role == PermissionRole.GRADER,
+            EvalPermission.role.in_(
+                [PermissionRole.GRADER, PermissionRole.QUESTION_CREATOR]
+            ),
         )
         .all()
     )
@@ -187,6 +194,7 @@ def _convert_task_to_schema(
     respondent_name: Optional[str] = None,
     topic_id: Optional[int] = None,
     topic_name: Optional[str] = None,
+    submitted_at: Optional[datetime] = None,
 ) -> GradingTaskInDB:
     """Convert a grading task model to schema."""
     return GradingTaskInDB(
@@ -205,10 +213,12 @@ def _convert_task_to_schema(
         started_at=task.started_at,
         completed_at=task.completed_at,
         published_at=task.published_at,
+        version=task.version,
         question_title=question_title,
         respondent_name=respondent_name,
         topic_id=topic_id,
         topic_name=topic_name,
+        submitted_at=submitted_at,
     )
 
 
@@ -615,58 +625,49 @@ def list_grader_tasks(
         .scalar_subquery()
     )
 
-    # Build query
-    query = db.query(EvalGradingTask).filter(
-        EvalGradingTask.question_id.in_(question_ids_query)
+    # Build base query with joins to fetch all related data in one query
+    base_query = (
+        db.query(
+            EvalGradingTask,
+            EvalQuestion.title.label("question_title"),
+            EvalQuestion.topic_id.label("topic_id"),
+            EvalTopic.name.label("topic_name"),
+            User.user_name.label("respondent_name"),
+            EvalAnswer.submitted_at.label("submitted_at"),
+        )
+        .join(EvalQuestion, EvalGradingTask.question_id == EvalQuestion.id)
+        .join(EvalTopic, EvalQuestion.topic_id == EvalTopic.id)
+        .outerjoin(User, EvalGradingTask.respondent_id == User.id)
+        .outerjoin(EvalAnswer, EvalGradingTask.answer_id == EvalAnswer.id)
+        .filter(EvalGradingTask.question_id.in_(question_ids_query))
     )
 
     if status_filter is not None:
-        query = query.filter(EvalGradingTask.status == status_filter)
+        base_query = base_query.filter(EvalGradingTask.status == status_filter)
 
-    total = query.count()
-    tasks = (
-        query.order_by(EvalGradingTask.created_at.desc())
+    # Get total count
+    total = base_query.count()
+
+    # Get paginated results
+    results = (
+        base_query.order_by(EvalGradingTask.created_at.desc())
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
     )
 
-    # Get question titles, topic info, and respondent names
-    question_ids = list(set(t.question_id for t in tasks))
-    respondent_ids = list(set(t.respondent_id for t in tasks))
-
-    questions_map = {}
-    question_topic_map = {}
-    if question_ids:
-        questions = (
-            db.query(EvalQuestion).filter(EvalQuestion.id.in_(question_ids)).all()
-        )
-        questions_map = {q.id: q.title for q in questions}
-        question_topic_map = {q.id: q.topic_id for q in questions}
-
-    # Get topic names
-    topic_ids = list(set(question_topic_map.values()))
-    topics_map = {}
-    if topic_ids:
-        topics = db.query(EvalTopic).filter(EvalTopic.id.in_(topic_ids)).all()
-        topics_map = {t.id: t.name for t in topics}
-
-    users_map = {}
-    if respondent_ids:
-        users = db.query(User).filter(User.id.in_(respondent_ids)).all()
-        users_map = {u.id: u.user_name for u in users}
-
     return GradingTaskListResponse(
         total=total,
         items=[
             _convert_task_to_schema(
-                t,
-                question_title=questions_map.get(t.question_id),
-                respondent_name=users_map.get(t.respondent_id),
-                topic_id=question_topic_map.get(t.question_id),
-                topic_name=topics_map.get(question_topic_map.get(t.question_id, 0)),
+                task,
+                question_title=question_title,
+                respondent_name=respondent_name,
+                topic_id=topic_id,
+                topic_name=topic_name,
+                submitted_at=submitted_at,
             )
-            for t in tasks
+            for task, question_title, topic_id, topic_name, respondent_name, submitted_at in results
         ],
     )
 
@@ -714,12 +715,17 @@ def get_grader_task(
     respondent = db.query(User).filter(User.id == task.respondent_id).first()
     respondent_name = respondent.user_name if respondent else None
 
+    # Get answer submission time
+    answer = db.query(EvalAnswer).filter(EvalAnswer.id == task.answer_id).first()
+    submitted_at = answer.submitted_at if answer else None
+
     return _convert_task_to_schema(
         task,
         question_title=question.title,
         respondent_name=respondent_name,
         topic_id=topic.id,
         topic_name=topic.name,
+        submitted_at=submitted_at,
     )
 
 
@@ -886,10 +892,22 @@ def update_grader_task_report(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.COMPLETED:
+    # Allow updating report in PENDING, FAILED, or COMPLETED status (before publishing)
+    if task.status not in [
+        GradingTaskStatus.PENDING,
+        GradingTaskStatus.FAILED,
+        GradingTaskStatus.COMPLETED,
+    ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only update completed tasks before publishing",
+            detail="Can only update tasks that are pending, failed, or completed before publishing",
+        )
+
+    # Cannot update if already published
+    if task.status == GradingTaskStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot update published tasks",
         )
 
     question = question_service.get(db, task.question_id)
@@ -907,6 +925,17 @@ def update_grader_task_report(
         )
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    # Optimistic locking: check version before updating
+    if task.version != request.version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Report has been modified by another user",
+                "current_version": task.version,
+                "current_report": task.report_data,
+            },
+        )
 
     task = grading_service.update_report(
         db, task, request.report_content, current_user.id
@@ -926,7 +955,8 @@ def publish_grader_task(
     """
     Publish a grading report to the respondent.
 
-    The task must be in COMPLETED status.
+    The task must be in COMPLETED status or PENDING status with a human report.
+    This allows manual grading when no AI grading bot is configured.
     """
     topic_service = get_topic_service()
     question_service = get_question_service()
@@ -940,10 +970,30 @@ def publish_grader_task(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.COMPLETED:
+    # Allow publishing if task is COMPLETED, or PENDING/FAILED with a human report
+    # This supports manual-only grading scenarios
+    report_data = task.report_data or {}
+    has_human_report = bool(
+        report_data.get("human_report", {}).get("content")
+        or report_data.get("human_report", {}).get("s3_path")
+    )
+
+    # Task already published - cannot publish again
+    if task.status == GradingTaskStatus.PUBLISHED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only publish completed grading tasks",
+            detail="Task is already published",
+        )
+
+    # Allow publishing if task is COMPLETED, or PENDING/FAILED with a human report
+    allowed_statuses = [GradingTaskStatus.COMPLETED]
+    if has_human_report:
+        allowed_statuses.extend([GradingTaskStatus.PENDING, GradingTaskStatus.FAILED])
+
+    if task.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only publish completed grading tasks or tasks with a human report",
         )
 
     question = question_service.get(db, task.question_id)
@@ -1026,10 +1076,22 @@ async def upload_report_file(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.COMPLETED:
+    # Allow uploading report in PENDING, FAILED, or COMPLETED status (before publishing)
+    if task.status not in [
+        GradingTaskStatus.PENDING,
+        GradingTaskStatus.FAILED,
+        GradingTaskStatus.COMPLETED,
+    ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only upload report for completed tasks",
+            detail="Can only upload report for tasks that are pending, failed, or completed",
+        )
+
+    # Cannot upload if already published
+    if task.status == GradingTaskStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot upload report for published tasks",
         )
 
     question = question_service.get(db, task.question_id)
@@ -1233,7 +1295,9 @@ def download_report_file(
             attachment = report_data["final_report"].get("attachment")
             if attachment:
                 filename = attachment.get("filename", "final_report")
-                content_type = attachment.get("content_type", "application/octet-stream")
+                content_type = attachment.get(
+                    "content_type", "application/octet-stream"
+                )
             else:
                 filename = "final_report.md"
         elif report_data.get("human_report", {}).get("s3_path"):
@@ -1268,7 +1332,10 @@ def download_report_file(
         )
 
     # Use stored content type if available
-    if file_info.get("content_type") and file_info["content_type"] != "application/octet-stream":
+    if (
+        file_info.get("content_type")
+        and file_info["content_type"] != "application/octet-stream"
+    ):
         content_type = file_info["content_type"]
 
     # RFC 5987 encoding for non-ASCII filenames
@@ -1656,7 +1723,9 @@ def get_grader_question(
     criteria_data = criteria.get("data", {}) if criteria else {}
 
     # Get content data without criteria
-    content_data = {k: v for k, v in (question.content_data or {}).items() if k != "_criteria"}
+    content_data = {
+        k: v for k, v in (question.content_data or {}).items() if k != "_criteria"
+    }
 
     return QuestionInDB(
         id=question.id,

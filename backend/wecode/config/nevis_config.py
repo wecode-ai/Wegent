@@ -37,6 +37,14 @@ class NevisSettings(BaseSettings):
         "repository/files/dist%2Fwegent-executor-linux-amd64/raw?ref=master"
     )
 
+    # Install script URL for cloud devices.
+    # The script handles binary download, configuration, and executor startup.
+    NEVIS_INSTALL_SCRIPT_URL: str = (
+        "https://git.intra.weibo.com/api/v4/projects/"
+        "weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/"
+        "repository/files/dist%2Fdevice_install-and-run-wegent.sh/raw?ref=master"
+    )
+
     # Private token for accessing executor binary download URL
     NEVIS_EXECUTOR_DOWNLOAD_TOKEN: str = ""
 

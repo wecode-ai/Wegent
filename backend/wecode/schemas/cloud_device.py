@@ -14,6 +14,21 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class CreateCloudDeviceRequest(BaseModel):
+    """Request schema for cloud device creation.
+
+    Optional mail configuration is passed through to the startup script
+    and is NOT stored in the database.
+    """
+
+    mail_email: Optional[str] = Field(
+        None, description="Mail account username (without domain suffix)"
+    )
+    mail_password: Optional[str] = Field(
+        None, description="Mail account password (pass-through only, not stored)"
+    )
+
+
 class CloudDeviceConfig(BaseModel):
     """Cloud device configuration stored in Device CRD spec.
 
@@ -69,6 +84,20 @@ class NevisSandboxStatus(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class VncConfigResponse(BaseModel):
+    """Response schema for VNC connection configuration.
+
+    Provides the WebSocket URL and authentication signature needed
+    to establish a proxied VNC connection through server.cjs.
+    """
+
+    wss_url: str = Field(..., description="Upstream Nevis VNC WebSocket URL")
+    signature: str = Field(
+        ..., description="X-Signature header value for upstream auth"
+    )
+    sandbox_id: str = Field(..., description="Nevis sandbox ID")
 
 
 class CloudDeviceLimitError(BaseModel):

@@ -365,6 +365,7 @@ class TaskRequestBuilder:
         - Environment variable placeholder replacement
         - API key decryption
         - Custom placeholder replacement (user_id, task_id, etc.)
+        - Secondary model config for video models
 
         Args:
             bot: Bot Kind object
@@ -414,7 +415,100 @@ class TaskRequestBuilder:
             task_data=task_data,
         )
 
+        # Handle secondaryModelRef for video models
+        # When modelType is 'video', resolve secondary model for intent analysis
+        if model_config.get("modelType") == "video":
+            secondary_model_config = self._get_secondary_model_config(
+                bot=bot,
+                user_id=user_id,
+                user_name=user_name,
+                task_id=task_id,
+                team_id=team_id,
+            )
+            if secondary_model_config:
+                model_config["secondary_model_config"] = secondary_model_config
+
         return model_config
+
+    def _get_secondary_model_config(
+        self,
+        bot: Kind,
+        user_id: int,
+        user_name: str,
+        task_id: int,
+        team_id: int,
+    ) -> dict[str, Any] | None:
+        """Get secondary model configuration from bot's secondaryModelRef.
+
+        Used for auxiliary tasks like intent analysis in video generation.
+
+        Args:
+            bot: Bot Kind object
+            user_id: User ID
+            user_name: User name for placeholder replacement
+            task_id: Task ID for placeholder replacement
+            team_id: Team ID for placeholder replacement
+
+        Returns:
+            Secondary model configuration dictionary or None if not configured
+        """
+        from app.services.chat.config.model_resolver import (
+            _extract_model_config,
+            _find_model_with_namespace,
+            _process_model_config_placeholders,
+        )
+
+        bot_crd = Bot.model_validate(bot.json)
+
+        if not bot_crd.spec or not bot_crd.spec.secondaryModelRef:
+            logger.debug(
+                "[TaskRequestBuilder] No secondaryModelRef configured for bot=%s",
+                bot.name,
+            )
+            return None
+
+        secondary_model_ref = bot_crd.spec.secondaryModelRef
+        model_name = secondary_model_ref.name
+
+        # Find the secondary model
+        model_kind, model_spec = _find_model_with_namespace(
+            self.db, model_name, user_id
+        )
+
+        if not model_spec:
+            logger.warning(
+                "[TaskRequestBuilder] Secondary model not found: name=%s",
+                model_name,
+            )
+            return None
+
+        # Extract and process model config
+        secondary_config = _extract_model_config(model_spec)
+
+        # Process placeholders
+        bot_spec = bot.json.get("spec", {}) if bot.json else {}
+        agent_config = bot_spec.get("agent_config", {})
+        user_info = {"id": user_id, "name": user_name}
+        task_data = ExecutionRequest(
+            task_id=task_id,
+            team_id=team_id,
+            user=user_info,
+        )
+
+        secondary_config = _process_model_config_placeholders(
+            model_config=secondary_config,
+            user_id=user_id,
+            user_name=user_name,
+            agent_config=agent_config,
+            task_data=task_data,
+        )
+
+        logger.info(
+            "[TaskRequestBuilder] Resolved secondaryModelRef: model=%s",
+            model_name,
+        )
+
+        return secondary_config
 
     # =========================================================================
     # System Prompt (from ChatConfigBuilder)

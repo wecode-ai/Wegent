@@ -66,6 +66,7 @@ class UnifiedModel:
         model_category_type: Optional[
             str
         ] = None,  # New: llm, tts, stt, embedding, rerank
+        is_advanced: bool = False,
     ):
         self.name = name
         self.type = (
@@ -80,6 +81,7 @@ class UnifiedModel:
         self.model_category_type = (
             model_category_type or "llm"
         )  # Default to 'llm' for backward compatibility
+        self.is_advanced = is_advanced
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -102,6 +104,7 @@ class UnifiedModel:
             "modelId": self.model_id,
             "namespace": self.namespace,
             "modelCategoryType": self.model_category_type,  # New field
+            "isAdvanced": self.is_advanced,
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
@@ -141,6 +144,7 @@ class ModelAggregationService:
                 "display_name": None,
                 "config": {},
                 "model_category_type": "llm",
+                "is_advanced": False,
             }
 
         try:
@@ -160,6 +164,11 @@ class ModelAggregationService:
                 "display_name": model_crd.metadata.displayName,
                 "config": model_crd.spec.modelConfig,
                 "model_category_type": model_category_type,
+                "is_advanced": (
+                    bool(model_crd.spec.isAdvanced)
+                    if model_crd.spec.isAdvanced
+                    else False
+                ),
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -169,6 +178,7 @@ class ModelAggregationService:
                 "display_name": None,
                 "config": {},
                 "model_category_type": "llm",
+                "is_advanced": False,
             }
 
     def _is_model_compatible_with_shell(
@@ -396,6 +406,7 @@ class ModelAggregationService:
                     is_active=resource.is_active,
                     namespace=resource.namespace,
                     model_category_type=info.get("model_category_type", "llm"),
+                    is_advanced=info.get("is_advanced", False),
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -409,17 +420,12 @@ class ModelAggregationService:
         )
 
         for model_dict in public_models:
-            # public_model_service.get_models returns dict with 'config' and 'displayName' keys
             config = model_dict.get("config", {})
-            env = config.get("env", {}) if isinstance(config, dict) else {}
-
-            provider = env.get("model") if isinstance(env, dict) else None
-            model_id = env.get("model_id") if isinstance(env, dict) else None
+            provider = model_dict.get("provider")
+            model_id = model_dict.get("model_id")
 
             # Extract model category type from public model data
-            public_model_category_type = "llm"  # Default for backward compatibility
-            if isinstance(config, dict):
-                public_model_category_type = config.get("modelType", "llm")
+            public_model_category_type = model_dict.get("model_category_type", "llm")
 
             if shell_type and not self._is_model_compatible_with_shell(
                 provider, actual_shell_type, support_model
@@ -441,9 +447,11 @@ class ModelAggregationService:
                 ),  # Get displayName from model dict
                 provider=provider,
                 model_id=model_id,
+                config=config if include_config else {},
                 is_active=model_dict.get("is_active", True),
                 namespace="default",
                 model_category_type=public_model_category_type,
+                is_advanced=model_dict.get("is_advanced", False),
             )
 
             # If name already exists as user model, we still add public model
@@ -511,16 +519,18 @@ class ModelAggregationService:
 
             for model_dict in public_models:
                 if model_dict.get("name") == name:
-                    config = model_dict.get("config", {})
-                    env = config.get("env", {}) if isinstance(config, dict) else {}
-
                     return UnifiedModel(
                         name=model_dict.get("name", ""),
                         model_type=ModelType.PUBLIC,
-                        display_name=None,
-                        provider=env.get("model") if isinstance(env, dict) else None,
-                        model_id=env.get("model_id") if isinstance(env, dict) else None,
+                        display_name=model_dict.get("displayName"),
+                        provider=model_dict.get("provider"),
+                        model_id=model_dict.get("model_id"),
+                        config=model_dict.get("config", {}),
                         is_active=model_dict.get("is_active", True),
+                        model_category_type=model_dict.get(
+                            "model_category_type", "llm"
+                        ),
+                        is_advanced=model_dict.get("is_advanced", False),
                     ).to_full_dict()
 
         return None

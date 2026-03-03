@@ -5,7 +5,7 @@
 import { apiClient } from './client'
 
 // Model Category Type (different from resource type public/user/group)
-export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank'
+export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank' | 'video' | 'image'
 
 // Type-specific configurations
 export interface TTSConfig {
@@ -27,6 +27,46 @@ export interface EmbeddingConfig {
 export interface RerankConfig {
   top_n?: number
   return_documents?: boolean
+}
+
+export interface AspectRatioOption {
+  label: string
+  value: string
+}
+
+export interface ResolutionOption {
+  width?: number
+  height?: number
+  label: string
+}
+
+export interface VideoCapabilities {
+  aspect_ratios?: AspectRatioOption[]
+  resolutions?: ResolutionOption[]
+  durations_sec?: number[]
+}
+
+export interface VideoGenerationConfig {
+  resolution?: '480p' | '720p' | '1080p'
+  ratio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
+  duration?: number // 4-12 seconds
+  generate_audio?: boolean // Only Seedance 1.5 pro
+  draft?: boolean // Draft mode
+  seed?: number // Random seed
+  camera_fixed?: boolean // Fixed camera
+  watermark?: boolean // Whether to include watermark
+  capabilities?: VideoCapabilities // Model-declared capabilities
+}
+
+// Image generation specific configuration
+export interface ImageGenerationConfig {
+  size?: string // '2K', '3K', '2048x2048', etc.
+  sequential_image_generation?: 'auto' | 'disabled'
+  max_images?: number
+  response_format?: 'url' | 'b64_json'
+  output_format?: 'jpeg' | 'png'
+  watermark?: boolean
+  optimize_prompt_mode?: 'standard' | 'fast'
 }
 
 // Model CRD Types
@@ -59,6 +99,8 @@ export interface ModelCRD {
     sttConfig?: STTConfig
     embeddingConfig?: EmbeddingConfig
     rerankConfig?: RerankConfig
+    videoConfig?: VideoGenerationConfig
+    imageConfig?: ImageGenerationConfig
   }
   status?: {
     state: string
@@ -116,6 +158,7 @@ export interface UnifiedModel {
   config?: Record<string, unknown>
   isActive?: boolean
   modelCategoryType?: ModelCategoryType // New: model category type (llm, tts, stt, embedding, rerank)
+  isAdvanced?: boolean
 }
 
 export interface UnifiedModelListResponse {

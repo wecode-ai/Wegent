@@ -572,6 +572,7 @@ def _test_embedding_connection(
             api_key=api_key,
             base_url=base_url or "https://api.openai.com/v1",
             default_headers=custom_headers if custom_headers else None,
+            check_embedding_ctx_length=False,
         )
         embeddings.embed_query("test")
         return {

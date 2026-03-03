@@ -664,6 +664,12 @@ class EvalGradingTask(Base):
         server_default=text("'1970-01-01 00:00:00'"),
         comment="Report publication time",
     )
+    version = Column(
+        Integer,
+        nullable=False,
+        server_default="1",
+        comment="Optimistic locking version for report editing",
+    )
 
     __table_args__ = (
         Index("idx_wecode_eval_grading_tasks_answer", "answer_id"),
@@ -713,6 +719,7 @@ class PermissionRole:
 
     RESPONDENT = "respondent"
     GRADER = "grader"
+    QUESTION_CREATOR = "question_creator"
 
 
 class ContentType:

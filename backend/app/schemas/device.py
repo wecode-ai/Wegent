@@ -42,8 +42,10 @@ class DeviceConnectionMode(str, Enum):
     # API = "api"  # For cloud provider API-based connections
 
 
-# Maximum concurrent tasks per device
-MAX_DEVICE_SLOTS = 5
+# Maximum concurrent tasks per device (0 = unlimited)
+# With ephemeral CC sessions (auto-close after each message),
+# slot limits are no longer needed for local devices.
+MAX_DEVICE_SLOTS = 0
 
 
 class DeviceRunningTask(BaseModel):

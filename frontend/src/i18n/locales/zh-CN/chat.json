@@ -510,5 +510,63 @@
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
     "no_task_id": "没有可用的任务 ID"
+  },
+  "generate": {
+    "mode_selector": "生成类型"
+  },
+  "video": {
+    "title": "视频生成",
+    "model_selector": "选择视频模型",
+    "search_model": "搜索视频模型...",
+    "resolution_selector": "选择分辨率",
+    "resolution": {
+      "480p": "480p (标清)",
+      "720p": "720p (高清)",
+      "1080p": "1080p (全高清)",
+      "4k": "4K (超高清)"
+    },
+    "ratio": {
+      "16_9": "16:9 (横屏)",
+      "9_16": "9:16 (竖屏)",
+      "1_1": "1:1 (方形)",
+      "4_3": "4:3",
+      "3_4": "3:4",
+      "21_9": "21:9 (超宽)",
+      "adaptive": "自适应"
+    },
+    "generating": "正在生成视频...",
+    "preparing": "准备中...",
+    "progress": "生成进度: {{progress}}%",
+    "completed": "视频生成完成",
+    "failed": "视频生成失败",
+    "download": "下载视频",
+    "reference_image": "参考图片（可选）",
+    "no_models": "暂无可用的视频模型"
+  },
+  "image": {
+    "title": "图片生成",
+    "model_selector": "选择图片模型",
+    "search_model": "搜索图片模型...",
+    "size_selector": "选择尺寸",
+    "size": {
+      "1024x1024": "1K (1024×1024)",
+      "2048x2048": "2K (2048×2048)",
+      "2K": "2K (自适应)",
+      "3K": "3K (自适应)",
+      "2304x1728": "2K 4:3 横屏",
+      "1728x2304": "2K 3:4 竖屏",
+      "2848x1600": "2K 16:9 横屏",
+      "1600x2848": "2K 9:16 竖屏"
+    },
+    "generating": "正在生成图片...",
+    "preparing": "准备中...",
+    "progress": "生成进度: {{progress}}%",
+    "completed": "图片生成完成",
+    "failed": "图片生成失败",
+    "download": "下载图片",
+    "expand": "查看大图",
+    "generated_image": "生成的图片",
+    "lightbox": "图片预览",
+    "no_models": "暂无可用的图片模型"
   }
 }

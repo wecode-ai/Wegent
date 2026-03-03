@@ -13,10 +13,15 @@ import {
   FileCheck,
   BarChart3,
   Send,
-  Edit,
   History,
   Bot,
   Settings,
+  GraduationCap,
+  GripVertical,
+  Pencil,
+  Trash2,
+  FileText,
+  AlertCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,14 +35,175 @@ import {
   publishAuthorTopic,
   getAuthorTopicStatistics,
   listAuthorQuestions,
+  reorderAuthorQuestions,
+  deleteAuthorQuestion,
+  publishAuthorQuestion,
 } from '@wecode/api/evaluation-author'
 import type { Topic, Question, TopicStatistics } from '@wecode/types/evaluation'
-import {
-  TopicStatus,
-  TopicVisibility,
-  QuestionStatus,
-} from '@wecode/types/evaluation'
+import { TopicStatus, TopicVisibility, QuestionStatus, ContentType } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+
+// Sortable question card component
+interface SortableQuestionCardProps {
+  question: Question
+  index: number
+  onEdit: (questionId: number) => void
+  onDelete: (question: Question) => void
+  onPublish: (questionId: number) => void
+  getStatusText: (status: number, type: 'topic' | 'question') => string
+  t: (key: string) => string
+}
+
+function SortableQuestionCard({
+  question,
+  index,
+  onEdit,
+  onDelete,
+  onPublish,
+  getStatusText,
+  t,
+}: SortableQuestionCardProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: question.id,
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : 1,
+  }
+
+  // Get content preview from question content_data
+  const getContentPreview = (): string => {
+    const contentData = question.content_data as Record<string, unknown> | undefined
+    if (!contentData) return ''
+
+    // Try to get text content
+    const text = contentData.text as string | undefined
+    if (text) {
+      return text.length > 100 ? text.substring(0, 100) + '...' : text
+    }
+
+    // For rich_exam content type
+    if (question.content_type === ContentType.MIXED) {
+      const context = contentData.context as string | undefined
+      if (context) {
+        return context.length > 100 ? context.substring(0, 100) + '...' : context
+      }
+    }
+
+    return ''
+  }
+
+  const isPublished = question.status === QuestionStatus.PUBLISHED
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`group relative ${isDragging ? 'opacity-50' : ''}`}
+    >
+      <Card className="transition-shadow hover:shadow-md">
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            {/* Drag handle */}
+            <button
+              {...attributes}
+              {...listeners}
+              className="mt-1 cursor-grab active:cursor-grabbing text-text-muted hover:text-text-secondary"
+            >
+              <GripVertical className="h-5 w-5" />
+            </button>
+
+            {/* Question number */}
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface text-sm font-medium">
+              {index + 1}
+            </span>
+
+            {/* Content */}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate font-medium">{question.title}</h3>
+                  <p className="mt-1 line-clamp-2 text-sm text-text-secondary">
+                    {getContentPreview() || (
+                      <span className="italic text-text-muted">{t('questions.no_content')}</span>
+                    )}
+                  </p>
+                  <div className="mt-2 flex items-center gap-2 text-xs text-text-muted">
+                    <span>{t(`questions.content_types.${question.content_type}`)}</span>
+                    {question.criteria_type && (
+                      <>
+                        <span>•</span>
+                        <span>{t('questions.criteria')}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge variant={isPublished ? 'success' : 'info'}>
+                    {getStatusText(question.status, 'question')}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Quick actions */}
+              <div className="mt-3 flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => onEdit(question.id)}>
+                  <Pencil className="mr-1 h-4 w-4" />
+                  {t('actions.edit')}
+                </Button>
+                {!isPublished && (
+                  <Button variant="ghost" size="sm" onClick={() => onPublish(question.id)}>
+                    <Send className="mr-1 h-4 w-4" />
+                    {t('questions.publish')}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => onDelete(question)}
+                >
+                  <Trash2 className="mr-1 h-4 w-4" />
+                  {t('actions.delete')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
 
 function TopicDetailContent() {
   const router = useRouter()
@@ -51,6 +217,22 @@ function TopicDetailContent() {
   const [statistics, setStatistics] = useState<TopicStatistics | null>(null)
   const [loading, setLoading] = useState(true)
   const [publishing, setPublishing] = useState(false)
+  const [reordering, setReordering] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [questionToDelete, setQuestionToDelete] = useState<Question | null>(null)
+  const [deletingQuestionId, setDeletingQuestionId] = useState<number | null>(null)
+
+  // Sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -98,6 +280,92 @@ function TopicDetailContent() {
       })
     } finally {
       setPublishing(false)
+    }
+  }
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+
+    if (over && active.id !== over.id) {
+      setReordering(true)
+      const oldIndex = questions.findIndex(q => q.id === active.id)
+      const newIndex = questions.findIndex(q => q.id === over.id)
+
+      // Optimistically update UI
+      const newQuestions = arrayMove(questions, oldIndex, newIndex)
+      setQuestions(newQuestions)
+
+      // Call API to persist reorder
+      try {
+        await reorderAuthorQuestions(
+          topicId,
+          newQuestions.map(q => q.id)
+        )
+      } catch (_error) {
+        // Revert on error
+        setQuestions(questions)
+        toast({
+          title: t('errors.save_failed'),
+          description: 'Failed to reorder questions',
+          variant: 'destructive',
+        })
+      } finally {
+        setReordering(false)
+      }
+    }
+  }
+
+  const handleEditQuestion = (questionId: number) => {
+    router.push(`/evaluation/author/topics/${topicId}/questions/${questionId}`)
+  }
+
+  const handleDeleteClick = (question: Question) => {
+    setQuestionToDelete(question)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!questionToDelete) return
+
+    setDeletingQuestionId(questionToDelete.id)
+    try {
+      await deleteAuthorQuestion(questionToDelete.id)
+      toast({
+        title: t('questions.deleted_success'),
+        description: '',
+      })
+      // Remove from local state
+      setQuestions(questions.filter(q => q.id !== questionToDelete.id))
+    } catch (_error) {
+      toast({
+        title: t('errors.delete_failed'),
+        description: '',
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingQuestionId(null)
+      setDeleteDialogOpen(false)
+      setQuestionToDelete(null)
+    }
+  }
+
+  const handlePublishQuestion = async (questionId: number) => {
+    try {
+      await publishAuthorQuestion(questionId)
+      toast({
+        title: t('questions.published_success'),
+        description: '',
+      })
+      // Update local state
+      setQuestions(
+        questions.map(q => (q.id === questionId ? { ...q, status: QuestionStatus.PUBLISHED } : q))
+      )
+    } catch (_error) {
+      toast({
+        title: t('errors.save_failed'),
+        description: '',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -152,10 +420,10 @@ function TopicDetailContent() {
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={() => router.push(`/evaluation/author/topics/${topicId}/edit`)}
+            onClick={() => router.push(`/evaluation/author/topics/${topicId}/config`)}
           >
-            <Edit className="mr-2 h-4 w-4" />
-            {t('actions.edit')}
+            <Settings className="mr-2 h-4 w-4" />
+            {t('actions.config', 'Configuration')}
           </Button>
         </div>
       </div>
@@ -170,6 +438,10 @@ function TopicDetailContent() {
           <Badge variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}>
             {getStatusText(topic.status, 'topic')}
           </Badge>
+          <Badge variant="warning">
+            <GraduationCap className="mr-1 h-3 w-3" />
+            {t('topics.exam_mode', 'Exam Mode')}
+          </Badge>
         </div>
         {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
 
@@ -181,9 +453,7 @@ function TopicDetailContent() {
           </Button>
         ) : questions.length > 0 ? (
           <div className="rounded-lg border border-border bg-surface p-4">
-            <p className="text-sm text-text-muted">
-              {t('topics.publish_hint')}
-            </p>
+            <p className="text-sm text-text-muted">{t('topics.publish_hint')}</p>
           </div>
         ) : null}
       </div>
@@ -201,9 +471,7 @@ function TopicDetailContent() {
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-text-secondary">
-                {t('answers.respondents')}
-              </div>
+              <div className="text-sm text-text-secondary">{t('answers.respondents')}</div>
               <div className="text-2xl font-semibold">{statistics.total_respondents}</div>
             </CardContent>
           </Card>
@@ -243,11 +511,20 @@ function TopicDetailContent() {
             <History className="mr-2 h-4 w-4" />
             {t('topics.versions')}
           </TabsTrigger>
+          <TabsTrigger value="exam-sessions">
+            <GraduationCap className="mr-2 h-4 w-4" />
+            考试会话
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="questions" className="mt-6">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-medium">{t('questions.title')}</h2>
+            <div>
+              <h2 className="text-lg font-medium">{t('questions.title')}</h2>
+              {questions.length > 0 && (
+                <p className="text-sm text-text-muted">Drag and drop to reorder questions</p>
+              )}
+            </div>
             <Button
               variant="outline"
               onClick={() => router.push(`/evaluation/author/topics/${topicId}/questions/new`)}
@@ -260,9 +537,8 @@ function TopicDetailContent() {
           {questions.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-center">
-                <p className="text-text-secondary">
-                  {t('questions.no_questions')}
-                </p>
+                <FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />
+                <p className="text-text-secondary">{t('questions.no_questions')}</p>
                 <Button
                   variant="outline"
                   className="mt-4"
@@ -274,36 +550,31 @@ function TopicDetailContent() {
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-4">
-              {questions.map((question, index) => (
-                <Card
-                  key={question.id}
-                  className="cursor-pointer transition-shadow hover:shadow-md"
-                  onClick={() =>
-                    router.push(`/evaluation/author/topics/${topicId}/questions/${question.id}`)
-                  }
-                >
-                  <CardContent className="flex items-center justify-between p-4">
-                    <div className="flex items-center gap-4">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-surface text-sm font-medium">
-                        {index + 1}
-                      </span>
-                      <div>
-                        <h3 className="font-medium">{question.title}</h3>
-                        <span className="text-xs text-text-muted">
-                          {t(`questions.content_types.${question.content_type}`)}
-                        </span>
-                      </div>
-                    </div>
-                    <Badge
-                      variant={question.status === QuestionStatus.PUBLISHED ? 'success' : 'info'}
-                    >
-                      {getStatusText(question.status, 'question')}
-                    </Badge>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={questions.map(q => q.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className={`space-y-3 ${reordering ? 'pointer-events-none opacity-70' : ''}`}>
+                  {questions.map((question, index) => (
+                    <SortableQuestionCard
+                      key={question.id}
+                      question={question}
+                      index={index}
+                      onEdit={handleEditQuestion}
+                      onDelete={handleDeleteClick}
+                      onPublish={handlePublishQuestion}
+                      getStatusText={getStatusText}
+                      t={t}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           )}
         </TabsContent>
 
@@ -313,9 +584,7 @@ function TopicDetailContent() {
               <CardTitle>{t('permissions.management')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="mb-4 text-text-secondary">
-                {t('permissions.description')}
-              </p>
+              <p className="mb-4 text-text-secondary">{t('permissions.description')}</p>
               <Button
                 variant="primary"
                 onClick={() => router.push(`/evaluation/author/topics/${topicId}/permissions`)}
@@ -360,9 +629,7 @@ function TopicDetailContent() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="mb-4 text-sm text-text-secondary">
-                  {t('grading.description')}
-                </p>
+                <p className="mb-4 text-sm text-text-secondary">{t('grading.description')}</p>
                 <Button
                   variant="primary"
                   onClick={() => router.push(`/evaluation/grader/topics/${topicId}`)}
@@ -380,9 +647,7 @@ function TopicDetailContent() {
               <CardTitle>{t('topics.version_history')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="mb-4 text-text-secondary">
-                {t('topics.version_description')}
-              </p>
+              <p className="mb-4 text-text-secondary">{t('topics.version_description')}</p>
               <Button
                 variant="primary"
                 onClick={() => router.push(`/evaluation/author/topics/${topicId}/versions`)}
@@ -393,7 +658,55 @@ function TopicDetailContent() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="exam-sessions" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <GraduationCap className="h-5 w-5" />
+                考试会话管理
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="mb-4 text-sm text-text-secondary">
+                查看和管理考生的考试会话状态，包括考试进度、剩余时间和提交次数。
+              </p>
+              <Button
+                variant="primary"
+                onClick={() => router.push(`/evaluation/author/topics/${topicId}/exam-sessions`)}
+              >
+                <GraduationCap className="mr-2 h-4 w-4" />
+                管理考试会话
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+              {t('questions.delete_title')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t('questions.delete_description')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingQuestionId !== null}>
+              {t('actions.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              disabled={deletingQuestionId !== null}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingQuestionId !== null ? '...' : t('actions.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

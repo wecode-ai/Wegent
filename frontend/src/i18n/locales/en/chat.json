@@ -532,5 +532,63 @@
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
     "no_task_id": "No task ID available"
+  },
+  "generate": {
+    "mode_selector": "Generation Type"
+  },
+  "video": {
+    "title": "Video Generation",
+    "model_selector": "Select Video Model",
+    "search_model": "Search video models...",
+    "resolution_selector": "Select Resolution",
+    "resolution": {
+      "480p": "480p (SD)",
+      "720p": "720p (HD)",
+      "1080p": "1080p (Full HD)",
+      "4k": "4K (Ultra HD)"
+    },
+    "ratio": {
+      "16_9": "16:9 (Landscape)",
+      "9_16": "9:16 (Portrait)",
+      "1_1": "1:1 (Square)",
+      "4_3": "4:3",
+      "3_4": "3:4",
+      "21_9": "21:9 (Ultra Wide)",
+      "adaptive": "Adaptive"
+    },
+    "generating": "Generating video...",
+    "preparing": "Preparing...",
+    "progress": "Progress: {{progress}}%",
+    "completed": "Video generation completed",
+    "failed": "Video generation failed",
+    "download": "Download Video",
+    "reference_image": "Reference Image (Optional)",
+    "no_models": "No video models available"
+  },
+  "image": {
+    "title": "Image Generation",
+    "model_selector": "Select Image Model",
+    "search_model": "Search image models...",
+    "size_selector": "Select Size",
+    "size": {
+      "1024x1024": "1K (1024×1024)",
+      "2048x2048": "2K (2048×2048)",
+      "2K": "2K (Adaptive)",
+      "3K": "3K (Adaptive)",
+      "2304x1728": "2K 4:3 Landscape",
+      "1728x2304": "2K 3:4 Portrait",
+      "2848x1600": "2K 16:9 Landscape",
+      "1600x2848": "2K 9:16 Portrait"
+    },
+    "generating": "Generating images...",
+    "preparing": "Preparing...",
+    "progress": "Progress: {{progress}}%",
+    "completed": "Image generation completed",
+    "failed": "Image generation failed",
+    "download": "Download image",
+    "expand": "View full size",
+    "generated_image": "Generated image",
+    "lightbox": "Image preview",
+    "no_models": "No image models available"
   }
 }

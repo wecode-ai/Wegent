@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { TaskType } from '@/types/api'
+
 /**
  * Browser notification utility
  */
@@ -124,7 +126,7 @@ export function notifyTaskCompletion(
   taskId: number,
   taskTitle: string,
   success: boolean,
-  taskType?: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType?: TaskType
 ): void {
   const title = success ? '✅ Task Completed' : '❌ Task Failed'
   const body = taskTitle.length > 100 ? `${taskTitle.substring(0, 100)}...` : taskTitle
@@ -137,6 +139,8 @@ export function notifyTaskCompletion(
     targetUrl = `${window.location.origin}/knowledge?taskId=${taskId}`
   } else if (taskType === 'task') {
     targetUrl = `${window.location.origin}/devices/chat?taskId=${taskId}`
+  } else if (taskType === 'video') {
+    targetUrl = `${window.location.origin}/generate?taskId=${taskId}`
   } else {
     targetUrl = `${window.location.origin}/chat?taskId=${taskId}`
   }
