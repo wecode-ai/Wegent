@@ -4,194 +4,112 @@
 
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { FileText, Download, X, Save, CheckCircle, Loader2 } from 'lucide-react'
-import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
-import type { ExamAttachment } from '@wecode/types/evaluation-exam'
+import { useState, useEffect } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 
 interface SupplementaryNotesSectionProps {
   notes: string
-  files: ExamAttachment[]
   disabled: boolean
   onNotesChange: (notes: string) => void
-  onFileRemove: (index: number) => void
   required?: boolean
-  onSaveDraft?: () => Promise<void>
-  lastSavedAt?: Date | null
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1048576).toFixed(1)} MB`
 }
 
 export function SupplementaryNotesSection({
   notes,
-  files,
   disabled,
   onNotesChange,
-  onFileRemove,
   required,
-  onSaveDraft,
-  lastSavedAt,
 }: SupplementaryNotesSectionProps) {
-  const [isSaving, setIsSaving] = useState(false)
-  const [showSaved, setShowSaved] = useState(false)
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const { theme } = useTheme()
+  // When disabled (e.g., after exam ends), default to preview mode to show full content
+  const [showPreview, setShowPreview] = useState(disabled)
 
-  // Auto-save after user stops typing for 3 seconds
+  // Auto-switch to preview mode when disabled changes to true (e.g., exam ends)
   useEffect(() => {
-    if (disabled || !onSaveDraft) return
-
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current)
+    if (disabled) {
+      setShowPreview(true)
     }
-
-    autoSaveTimerRef.current = setTimeout(() => {
-      if (notes.trim().length > 0) {
-        handleSaveDraft()
-      }
-    }, 3000)
-
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current)
-      }
-    }
-  }, [notes, disabled, onSaveDraft])
-
-  const handleSaveDraft = useCallback(async () => {
-    if (!onSaveDraft || isSaving) return
-
-    setIsSaving(true)
-    try {
-      await onSaveDraft()
-      setShowSaved(true)
-      setTimeout(() => setShowSaved(false), 2000)
-    } catch (error) {
-      console.error('Failed to save draft:', error)
-    } finally {
-      setIsSaving(false)
-    }
-  }, [onSaveDraft, isSaving])
-
-  const formatLastSaved = () => {
-    if (!lastSavedAt) return ''
-    const now = new Date()
-    const diff = now.getTime() - lastSavedAt.getTime()
-    if (diff < 60000) return '刚刚保存'
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前保存`
-    return lastSavedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  }
+  }, [disabled])
 
   return (
     <section className="animate-[slideDown_0.35s_ease-out]">
       <div className="flex items-center gap-3 mb-6">
         <div className="w-1.5 h-7 bg-sky-500 rounded-full" />
         <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-          作答补充说明
+          作答说明
           {required && <span className="text-[#DF2029] text-sm font-normal">（必传）</span>}
         </h2>
-        {/* Auto-save status indicator */}
-        {!disabled && (
-          <div className="ml-auto flex items-center gap-2">
-            {isSaving ? (
-              <span className="text-sm text-gray-400 flex items-center gap-1">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                保存中...
-              </span>
-            ) : showSaved ? (
-              <span className="text-sm text-emerald-600 flex items-center gap-1">
-                <CheckCircle className="w-4 h-4" />
-                已保存
-              </span>
-            ) : lastSavedAt ? (
-              <span className="text-sm text-gray-400">{formatLastSaved()}</span>
-            ) : null}
-          </div>
-        )}
       </div>
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
         <div className="bg-sky-50 border border-sky-100 rounded-2xl p-5 mb-5">
           <p className="text-[1rem] text-sky-800 leading-[1.8]">
-            请补充说明你本次借助 AI 完成作答的整体思路，以及使用的模型与工具，例如：
+            请先阐述你本次借助 AI 完成作答的整体思路，以及计划使用的模型与工具，例如：
           </p>
           <p className="text-[1rem] text-sky-700 leading-[1.8] mt-2">
-            使用过哪些模型或平台、是否在不同阶段切换过不同模型或工具、各自用于哪些环节，是否有其他引用来源或辅助工具。
+            计划使用哪些模型或平台、如何在不同阶段选用合适的模型或工具、各自用于哪些环节，有哪些参考来源或辅助工具。
           </p>
           <p className="text-[1rem] text-sky-700 leading-[1.8] mt-2">
-            也可以补充其他你认为可以体现自己AI使用思路、技巧的信息。
+            也可以说明其他你认为可以体现自己AI使用思路、技巧的信息。完成思路阐述后，请在下方上传交互过程记录及最终产出结果。
           </p>
         </div>
-        <textarea
-          value={notes}
-          onChange={e => onNotesChange(e.target.value)}
-          placeholder="请在此输入你的作答补充说明..."
-          disabled={disabled}
-          className="w-full min-h-[200px] px-5 py-4 rounded-2xl border border-gray-200 text-[1rem] leading-[1.8] resize-y focus:border-red-400 focus:ring-2 focus:ring-red-100 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-50"
-        />
-        <div className="flex justify-between items-center mt-3">
-          <span className="text-sm text-gray-400">{notes.length} 字</span>
-          {!disabled && onSaveDraft && (
+
+        {/* Edit/Preview Toggle */}
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-sm text-gray-500">
+            {showPreview ? '预览模式' : '编辑模式'}（支持 Markdown 格式）
+          </span>
+          {!disabled && (
             <button
-              onClick={handleSaveDraft}
-              disabled={isSaving || notes.trim().length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-sky-600 bg-sky-50 hover:bg-sky-100 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => setShowPreview(!showPreview)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-sky-600 bg-sky-50 hover:bg-sky-100 rounded-lg transition"
             >
-              {isSaving ? (
+              {showPreview ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  保存中...
+                  <EyeOff className="w-4 h-4" />
+                  编辑
                 </>
               ) : (
                 <>
-                  <Save className="w-4 h-4" />
-                  保存草稿
+                  <Eye className="w-4 h-4" />
+                  预览
                 </>
               )}
             </button>
           )}
         </div>
 
-        {/* Supplementary Notes File Display */}
-        {files.length > 0 && (
-          <div className="mt-4 space-y-2">
-            <p className="text-sm text-gray-500">已上传的补充说明文件：</p>
-            {files.map((file, index) => (
-              <div
-                key={file.key}
-                className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
-              >
-                <FileText className="h-5 w-5 text-gray-400 flex-shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-gray-700">{file.filename}</p>
-                  {file.size && (
-                    <p className="text-xs text-gray-400">{formatFileSize(file.size)}</p>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => downloadEvaluationFile(file.key, file.filename)}
-                    className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-gray-200 transition"
-                    title="下载"
-                  >
-                    <Download className="h-4 w-4 text-gray-500" />
-                  </button>
-                  {!disabled && (
-                    <button
-                      onClick={() => onFileRemove(index)}
-                      className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-red-50 transition text-destructive hover:text-destructive"
-                      title="删除"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
+        {/* Content Area */}
+        {showPreview ? (
+          <div className="min-h-[200px] rounded-2xl border border-gray-200 bg-gray-50 p-5">
+            {notes.trim() ? (
+              <div className="markdown-content">
+                <EnhancedMarkdown source={notes} theme={theme === 'dark' ? 'dark' : 'light'} />
               </div>
-            ))}
+            ) : (
+              <p className="text-gray-400 text-center py-8">暂无内容</p>
+            )}
           </div>
+        ) : (
+          <textarea
+            value={notes}
+            onChange={e => onNotesChange(e.target.value)}
+            placeholder="请在此输入你的作答说明...（支持 Markdown 格式）"
+            disabled={disabled}
+            className="w-full min-h-[200px] px-5 py-4 rounded-2xl border border-gray-200 text-[1rem] leading-[1.8] resize-y focus:border-sky-400 focus:ring-2 focus:ring-sky-100 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-50 font-mono text-sm"
+          />
         )}
+
+        {/* Character Count */}
+        <div className="flex justify-between items-center mt-3">
+          <span className="text-sm text-gray-400">{notes.length} 字</span>
+          {!disabled && !showPreview && (
+            <span className="text-xs text-gray-400">
+              支持 **粗体**、*斜体*、`代码`、列表等 Markdown 语法
+            </span>
+          )}
+        </div>
       </div>
     </section>
   )

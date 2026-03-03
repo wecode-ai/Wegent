@@ -1215,11 +1215,15 @@ class GradingService:
         }
         report_data["content"] = report_content  # Update convenience field
         task.report_data = report_data
+        # Increment version for optimistic locking
+        task.version += 1
         # Explicitly mark the JSON field as modified to ensure SQLAlchemy persists the change
         flag_modified(task, "report_data")
         db.flush()
 
-        logger.info(f"[Evaluation] Updated report for grading task {task.id}")
+        logger.info(
+            f"[Evaluation] Updated report for grading task {task.id}, new version: {task.version}"
+        )
 
         return task
 

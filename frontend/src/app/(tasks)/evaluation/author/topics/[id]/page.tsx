@@ -408,7 +408,6 @@ function TopicDetailContent() {
   }
 
   const publishedQuestions = questions.filter(q => q.status === QuestionStatus.PUBLISHED)
-  const isExamMode = topic.extra_data?.examMode === true
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8">
@@ -439,12 +438,10 @@ function TopicDetailContent() {
           <Badge variant={topic.status === TopicStatus.PUBLISHED ? 'success' : 'info'}>
             {getStatusText(topic.status, 'topic')}
           </Badge>
-          {isExamMode && (
-            <Badge variant="warning">
-              <GraduationCap className="mr-1 h-3 w-3" />
-              {t('topics.exam_mode', 'Exam Mode')}
-            </Badge>
-          )}
+          <Badge variant="warning">
+            <GraduationCap className="mr-1 h-3 w-3" />
+            {t('topics.exam_mode', 'Exam Mode')}
+          </Badge>
         </div>
         {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
 
@@ -514,12 +511,10 @@ function TopicDetailContent() {
             <History className="mr-2 h-4 w-4" />
             {t('topics.versions')}
           </TabsTrigger>
-          {isExamMode && (
-            <TabsTrigger value="exam-sessions">
-              <GraduationCap className="mr-2 h-4 w-4" />
-              考试会话
-            </TabsTrigger>
-          )}
+          <TabsTrigger value="exam-sessions">
+            <GraduationCap className="mr-2 h-4 w-4" />
+            考试会话
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="questions" className="mt-6">
@@ -664,30 +659,28 @@ function TopicDetailContent() {
           </Card>
         </TabsContent>
 
-        {isExamMode && (
-          <TabsContent value="exam-sessions" className="mt-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <GraduationCap className="h-5 w-5" />
-                  考试会话管理
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="mb-4 text-sm text-text-secondary">
-                  查看和管理考生的考试会话状态，包括考试进度、剩余时间和提交次数。
-                </p>
-                <Button
-                  variant="primary"
-                  onClick={() => router.push(`/evaluation/author/topics/${topicId}/exam-sessions`)}
-                >
-                  <GraduationCap className="mr-2 h-4 w-4" />
-                  管理考试会话
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
+        <TabsContent value="exam-sessions" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <GraduationCap className="h-5 w-5" />
+                考试会话管理
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="mb-4 text-sm text-text-secondary">
+                查看和管理考生的考试会话状态，包括考试进度、剩余时间和提交次数。
+              </p>
+              <Button
+                variant="primary"
+                onClick={() => router.push(`/evaluation/author/topics/${topicId}/exam-sessions`)}
+              >
+                <GraduationCap className="mr-2 h-4 w-4" />
+                管理考试会话
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Delete Confirmation Dialog */}

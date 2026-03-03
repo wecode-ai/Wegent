@@ -24,6 +24,8 @@ import {
   EyeOff,
   Bot,
   User,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -32,6 +34,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
@@ -124,9 +134,16 @@ function GraderAnswerContent() {
   const [uploading, setUploading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedReport, setEditedReport] = useState('')
+  const [editedReportVersion, setEditedReportVersion] = useState<number>(1)
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
   const [showReportPreview, setShowReportPreview] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Conflict resolution dialog state
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false)
+  const [conflictServerVersion, setConflictServerVersion] = useState<number>(1)
+  const [conflictServerReport, setConflictServerReport] = useState('')
+  const [pendingSaveContent, setPendingSaveContent] = useState('')
 
   const loadData = useCallback(
     async (options?: { skipEditedReportUpdate?: boolean }) => {
@@ -151,6 +168,8 @@ function GraderAnswerContent() {
             const aiContent = getAIReportContent(taskData.report_data)
             setEditedReport(humanContent || aiContent || '')
           }
+          // Track version for optimistic locking
+          setEditedReportVersion(taskData.version || 1)
         } else {
           // Try to find grading task by answer_id
           const tasksData = await listGraderTasks({ limit: 100 })
@@ -163,6 +182,8 @@ function GraderAnswerContent() {
               const aiContent = getAIReportContent(fullTask.report_data)
               setEditedReport(humanContent || aiContent || '')
             }
+            // Track version for optimistic locking
+            setEditedReportVersion(fullTask.version || 1)
           }
         }
       } catch (_error) {
@@ -356,34 +377,31 @@ function GraderAnswerContent() {
 
     const elements: React.ReactNode[] = []
 
-    // Handle exam mode content
-    if (contentData.examMode === true) {
-      // Render exam attachments
-      const examAttachments = renderExamAttachments(
-        contentData.attachments as Record<string, unknown>
+    // Render exam attachments
+    const examAttachments = renderExamAttachments(
+      contentData.attachments as Record<string, unknown>
+    )
+    if (examAttachments) {
+      elements.push(<div key="examAttachments">{examAttachments}</div>)
+    }
+
+    // Render supplementary notes files
+    const supplementaryNotesFiles = contentData.supplementaryNotesFiles as
+      | EvalAttachment[]
+      | undefined
+    if (supplementaryNotesFiles && supplementaryNotesFiles.length > 0) {
+      elements.push(
+        <div key="supplementaryNotesFiles">
+          <h4 className="mb-2 text-sm font-medium text-text-secondary">
+            {t('answers.supplementary_notes') || 'Supplementary Notes'}
+          </h4>
+          {renderAttachmentList(supplementaryNotesFiles, 'supplementaryNotes')}
+        </div>
       )
-      if (examAttachments) {
-        elements.push(<div key="examAttachments">{examAttachments}</div>)
-      }
+    }
 
-      // Render supplementary notes files only (no text content for cleaner display)
-      const supplementaryNotesFiles = contentData.supplementaryNotesFiles as
-        | EvalAttachment[]
-        | undefined
-      if (supplementaryNotesFiles && supplementaryNotesFiles.length > 0) {
-        elements.push(
-          <div key="supplementaryNotesFiles">
-            <h4 className="mb-2 text-sm font-medium text-text-secondary">
-              {t('answers.supplementary_notes') || 'Supplementary Notes'}
-            </h4>
-            {renderAttachmentList(supplementaryNotesFiles, 'supplementaryNotes')}
-          </div>
-        )
-      }
-
-      if (elements.length > 0) {
-        return <div className="space-y-4">{elements}</div>
-      }
+    if (elements.length > 0) {
+      return <div className="space-y-4">{elements}</div>
     }
 
     // Handle text content - render as Markdown
@@ -456,7 +474,6 @@ function GraderAnswerContent() {
       'criteria',
       'url',
       'attachments',
-      'examMode',
       'participantName',
       'selectedTopicId',
       'supplementaryNotes',
@@ -520,15 +537,23 @@ function GraderAnswerContent() {
     }
   }
 
-  const handleSaveReport = async () => {
-    if (!gradingTask || !editedReport.trim()) {
+  const handleSaveReport = async (content?: string, version?: number) => {
+    if (!gradingTask) {
       return
     }
+
+    const reportContent = content ?? editedReport.trim()
+    if (!reportContent) {
+      return
+    }
+
+    const reportVersion = version ?? editedReportVersion
 
     setSaving(true)
     try {
       await updateGraderReport(gradingTask.id, {
-        report_content: editedReport.trim(),
+        report_content: reportContent,
+        version: reportVersion,
       })
 
       toast({
@@ -537,15 +562,70 @@ function GraderAnswerContent() {
       })
       setIsEditing(false)
       loadData()
-    } catch (_error) {
-      toast({
-        title: t('errors.save_failed'),
-        description: '',
-        variant: 'destructive',
-      })
+    } catch (error) {
+      // Check for 409 conflict error
+      if (error instanceof Error && error.message.includes('modified by another user')) {
+        // Parse error details from the error message or re-fetch to get current data
+        try {
+          const currentTask = await getGraderTask(gradingTask.id)
+          const serverVersion = currentTask.version || 1
+          const serverReportContent =
+            getHumanReportContent(currentTask.report_data) ||
+            getAIReportContent(currentTask.report_data) ||
+            ''
+
+          setConflictServerVersion(serverVersion)
+          setConflictServerReport(serverReportContent)
+          setPendingSaveContent(reportContent)
+          setConflictDialogOpen(true)
+        } catch {
+          toast({
+            title: t('errors.save_failed'),
+            description:
+              t('grading.conflict_error') || 'Conflict detected but failed to load server version',
+            variant: 'destructive',
+          })
+        }
+      } else {
+        toast({
+          title: t('errors.save_failed'),
+          description: error instanceof Error ? error.message : '',
+          variant: 'destructive',
+        })
+      }
     } finally {
       setSaving(false)
     }
+  }
+
+  // Handle conflict resolution choices
+  const handleConflictViewServer = () => {
+    // Load server version into editor
+    setEditedReport(conflictServerReport)
+    setEditedReportVersion(conflictServerVersion)
+    setConflictDialogOpen(false)
+    toast({
+      title: t('grading.conflict_resolved') || 'Server version loaded',
+      description:
+        t('grading.server_version_loaded') ||
+        'The server version has been loaded. Review and save again.',
+    })
+  }
+
+  const handleConflictOverwrite = async () => {
+    setConflictDialogOpen(false)
+    // Retry save with server version (force overwrite)
+    await handleSaveReport(pendingSaveContent, conflictServerVersion)
+  }
+
+  const handleConflictCancel = () => {
+    setConflictDialogOpen(false)
+    // Keep current editor content, user can review and try again
+    toast({
+      title: t('grading.conflict_cancelled') || 'Save cancelled',
+      description:
+        t('grading.conflict_keep_editing') || 'You can review the content and try saving again.',
+    })
   }
 
   const handlePublish = async () => {
@@ -865,19 +945,25 @@ function GraderAnswerContent() {
             <div className="flex items-center justify-between">
               <CardTitle>{t('grading.report')}</CardTitle>
               <div className="flex flex-wrap items-center gap-2">
-                {/* AI Grading Actions */}
-                {gradingTask.status === GradingTaskStatus.PENDING && (
+                {/* AI Grading Actions - Only show when grading bot is configured */}
+                {gradingTask.team_id > 0 && gradingTask.status === GradingTaskStatus.PENDING && (
                   <Button variant="outline" onClick={handleExecute} disabled={executing}>
                     <Play className="mr-2 h-4 w-4" />
                     {t('grading.execute')}
                   </Button>
                 )}
-                {(gradingTask.status === GradingTaskStatus.FAILED ||
-                  gradingTask.status === GradingTaskStatus.COMPLETED) && (
-                  <Button variant="outline" onClick={handleRetry} disabled={executing}>
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                    {t('grading.retry')}
-                  </Button>
+                {gradingTask.team_id > 0 &&
+                  (gradingTask.status === GradingTaskStatus.FAILED ||
+                    gradingTask.status === GradingTaskStatus.COMPLETED) && (
+                    <Button variant="outline" onClick={handleRetry} disabled={executing}>
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      {t('grading.retry')}
+                    </Button>
+                  )}
+                {gradingTask.team_id === 0 && (
+                  <span className="text-sm text-text-muted">
+                    {t('grading.manual_only') || 'Manual grading only'}
+                  </span>
                 )}
 
                 {/* Manual Report Management - Always Available */}
@@ -893,6 +979,8 @@ function GraderAnswerContent() {
                       } else {
                         setEditedReport('')
                       }
+                      // Initialize version for optimistic locking
+                      setEditedReportVersion(gradingTask?.version || 1)
                     }
                     setIsEditing(!isEditing)
                   }}
@@ -1028,7 +1116,7 @@ function GraderAnswerContent() {
                   <Button variant="outline" onClick={() => setIsEditing(false)}>
                     {t('actions.cancel')}
                   </Button>
-                  <Button variant="primary" onClick={handleSaveReport} disabled={saving}>
+                  <Button variant="primary" onClick={() => handleSaveReport()} disabled={saving}>
                     <Save className="mr-2 h-4 w-4" />
                     {saving ? '...' : t('actions.save')}
                   </Button>
@@ -1049,6 +1137,69 @@ function GraderAnswerContent() {
           </CardContent>
         </Card>
       )}
+
+      {/* Conflict Resolution Dialog */}
+      <Dialog open={conflictDialogOpen} onOpenChange={setConflictDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <DialogTitle>
+                {t('grading.conflict_title') || 'Report Modified by Another User'}
+              </DialogTitle>
+            </div>
+            <DialogDescription>
+              {t('grading.conflict_description') ||
+                'This report has been modified by another user while you were editing. How would you like to resolve this conflict?'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900 dark:bg-amber-900/20">
+              <p className="text-sm text-text-secondary">
+                {t('grading.conflict_info') ||
+                  'Your changes could not be saved because the report was updated by someone else. You can:'}
+              </p>
+              <ul className="mt-2 list-inside list-disc text-sm text-text-secondary">
+                <li>
+                  {t('grading.conflict_option_view') ||
+                    'Load the server version and continue editing based on it'}
+                </li>
+                <li>
+                  {t('grading.conflict_option_overwrite') ||
+                    "Overwrite the server version with your changes (may lose others' work)"}
+                </li>
+                <li>
+                  {t('grading.conflict_option_cancel') ||
+                    'Cancel and keep editing your current version'}
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-col gap-2 sm:flex-row">
+            <Button variant="outline" onClick={handleConflictCancel} className="w-full sm:w-auto">
+              {t('actions.cancel')}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleConflictViewServer}
+              className="w-full sm:w-auto"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              {t('grading.conflict_load_server') || 'Load Server Version'}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleConflictOverwrite}
+              className="w-full sm:w-auto"
+            >
+              <Save className="mr-2 h-4 w-4" />
+              {t('grading.conflict_overwrite') || 'Overwrite'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

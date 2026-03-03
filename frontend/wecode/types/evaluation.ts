@@ -251,6 +251,7 @@ export interface GradingTask {
   topic_id?: number
   topic_name?: string
   submitted_at?: string
+  version?: number
 }
 
 export interface GradingTaskExecuteRequest {
@@ -263,6 +264,7 @@ export interface GradingTaskPublishRequest {
 
 export interface GradingTaskUpdateReportRequest {
   report_content: string
+  version: number
 }
 
 // Grading configuration types

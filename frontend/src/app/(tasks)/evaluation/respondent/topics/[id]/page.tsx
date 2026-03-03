@@ -19,7 +19,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Progress } from '@/components/ui/progress'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
 import { respondentGetTopic, respondentListQuestions } from '@wecode/api/evaluation'
@@ -88,100 +87,6 @@ function RespondentTopicDetailContent() {
     return null
   }
 
-  // Check if topic is in exam mode
-  const isExamMode = topic.extra_data?.examMode === true
-
-  // Render exam mode entry page
-  if (isExamMode) {
-    return (
-      <div className="container mx-auto max-w-6xl px-4 py-8">
-        {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <Button variant="ghost" onClick={() => router.push('/evaluation/respondent')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            {t('actions.back')}
-          </Button>
-          <Button variant="outline" onClick={() => router.push('/evaluation/respondent/history')}>
-            <BookOpen className="mr-2 h-4 w-4" />
-            {t('answers.history')}
-          </Button>
-        </div>
-
-        {/* Topic Info */}
-        <div className="mb-8">
-          <div className="mb-2 flex items-center gap-3">
-            <h1 className="text-2xl font-semibold text-text-primary">{topic.name}</h1>
-            <Badge variant={topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'}>
-              {getVisibilityLabel(topic.visibility, t)}
-            </Badge>
-            <Badge variant="default">{t('exam.exam_mode')}</Badge>
-          </div>
-          {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
-        </div>
-
-        {/* Exam Info Card */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <PlayCircle className="h-5 w-5" />
-              {t('exam.title')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="mb-6 text-text-secondary">{t('exam.exam_mode_description')}</p>
-
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              <div className="rounded-lg bg-surface p-4 text-center">
-                <HelpCircle className="mx-auto mb-2 h-6 w-6 text-primary" />
-                <div className="text-2xl font-semibold">{questions.length}</div>
-                <div className="text-xs text-text-muted">{t('exam.questions_count')}</div>
-              </div>
-              <div className="rounded-lg bg-surface p-4 text-center">
-                <Clock className="mx-auto mb-2 h-6 w-6 text-primary" />
-                <div className="text-2xl font-semibold">
-                  {topic.extra_data?.timeLimit
-                    ? `${topic.extra_data.timeLimit} min`
-                    : t('exam.no_time_limit')}
-                </div>
-                <div className="text-xs text-text-muted">{t('exam.time_limit')}</div>
-              </div>
-              {progress && (
-                <>
-                  <div className="rounded-lg bg-surface p-4 text-center">
-                    <BarChart3 className="mx-auto mb-2 h-6 w-6 text-primary" />
-                    <div className="text-2xl font-semibold">{progress.answered_questions}</div>
-                    <div className="text-xs text-text-muted">{t('answers.progress.answered')}</div>
-                  </div>
-                  <div className="rounded-lg bg-surface p-4 text-center">
-                    <FileCheck className="mx-auto mb-2 h-6 w-6 text-primary" />
-                    <div className="text-2xl font-semibold">
-                      {Math.round(progress.completion_rate * 100)}%
-                    </div>
-                    <div className="text-xs text-text-muted">
-                      {t('answers.progress.completion')}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="mt-8 flex justify-center">
-              <Button
-                variant="default"
-                size="lg"
-                className="min-w-[200px]"
-                onClick={() => router.push(`/evaluation/respondent/topics/${topicId}/exam`)}
-              >
-                <PlayCircle className="mr-2 h-5 w-5" />
-                {t('exam.enter_exam')}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
   return (
     <div className="container mx-auto max-w-6xl px-4 py-8">
       {/* Header */}
@@ -203,99 +108,68 @@ function RespondentTopicDetailContent() {
           <Badge variant={topic.visibility === TopicVisibility.PUBLIC ? 'default' : 'secondary'}>
             {getVisibilityLabel(topic.visibility, t)}
           </Badge>
+          <Badge variant="default">{t('exam.exam_mode')}</Badge>
         </div>
         {topic.description && <p className="mb-4 text-text-secondary">{topic.description}</p>}
       </div>
 
-      {/* Progress Card */}
-      {progress && (
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              {t('answers.progress.title')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="mb-4">
-              <div className="mb-2 flex justify-between text-sm">
-                <span>{t('answers.progress.answered')}</span>
-                <span>
-                  {progress.answered_questions} / {progress.total_questions}
-                </span>
-              </div>
-              <Progress value={progress.completion_rate * 100} className="h-2" />
-            </div>
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div>
-                <div className="text-2xl font-semibold">{progress.total_questions}</div>
-                <div className="text-xs text-text-muted">{t('answers.progress.total')}</div>
-              </div>
-              <div>
-                <div className="text-2xl font-semibold">{progress.answered_questions}</div>
-                <div className="text-xs text-text-muted">{t('answers.progress.answered')}</div>
-              </div>
-              <div>
-                <div className="text-2xl font-semibold">{progress.published_reports}</div>
-                <div className="text-xs text-text-muted">{t('answers.progress.reports')}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Exam Info Card */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <PlayCircle className="h-5 w-5" />
+            {t('exam.title')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-6 text-text-secondary">{t('exam.exam_mode_description')}</p>
 
-      {/* Questions List */}
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-medium">{t('questions.title')}</h2>
-        <span className="text-sm text-text-muted">
-          {questions.length} {t('questions.title').toLowerCase()}
-        </span>
-      </div>
-
-      {questions.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <FileCheck className="mx-auto mb-4 h-12 w-12 text-text-muted" />
-            <p className="text-text-secondary">{t('questions.no_questions')}</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {questions.map((question, index) => (
-            <Card
-              key={question.id}
-              className="cursor-pointer transition-shadow hover:shadow-md"
-              onClick={() =>
-                router.push(`/evaluation/respondent/topics/${topicId}/questions/${question.id}`)
-              }
-            >
-              <CardContent className="flex items-center justify-between p-4">
-                <div className="flex items-center gap-4">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-surface text-sm font-medium">
-                    {index + 1}
-                  </span>
-                  <div>
-                    <h3 className="font-medium">{question.title}</h3>
-                    <span className="text-xs text-text-muted">
-                      {t(`questions.content_types.${question.content_type}`)}
-                    </span>
-                  </div>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="rounded-lg bg-surface p-4 text-center">
+              <HelpCircle className="mx-auto mb-2 h-6 w-6 text-primary" />
+              <div className="text-2xl font-semibold">{questions.length}</div>
+              <div className="text-xs text-text-muted">{t('exam.questions_count')}</div>
+            </div>
+            <div className="rounded-lg bg-surface p-4 text-center">
+              <Clock className="mx-auto mb-2 h-6 w-6 text-primary" />
+              <div className="text-2xl font-semibold">
+                {topic.extra_data?.timeLimit
+                  ? `${topic.extra_data.timeLimit} min`
+                  : t('exam.no_time_limit')}
+              </div>
+              <div className="text-xs text-text-muted">{t('exam.time_limit')}</div>
+            </div>
+            {progress && (
+              <>
+                <div className="rounded-lg bg-surface p-4 text-center">
+                  <BarChart3 className="mx-auto mb-2 h-6 w-6 text-primary" />
+                  <div className="text-2xl font-semibold">{progress.answered_questions}</div>
+                  <div className="text-xs text-text-muted">{t('answers.progress.answered')}</div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={e => {
-                    e.stopPropagation()
-                    router.push(`/evaluation/respondent/topics/${topicId}/questions/${question.id}`)
-                  }}
-                >
-                  {t('answers.submit')}
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                <div className="rounded-lg bg-surface p-4 text-center">
+                  <FileCheck className="mx-auto mb-2 h-6 w-6 text-primary" />
+                  <div className="text-2xl font-semibold">
+                    {Math.round(progress.completion_rate * 100)}%
+                  </div>
+                  <div className="text-xs text-text-muted">{t('answers.progress.completion')}</div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="mt-8 flex justify-center">
+            <Button
+              variant="default"
+              size="lg"
+              className="min-w-[200px]"
+              onClick={() => router.push(`/evaluation/respondent/topics/${topicId}/exam`)}
+            >
+              <PlayCircle className="mr-2 h-5 w-5" />
+              {t('exam.enter_exam')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

@@ -60,7 +60,7 @@ class TopicUpdate(BaseModel):
     )
     extra_data: Optional[Dict[str, Any]] = Field(
         None,
-        description="Extra data: {examMode: bool, duration: {exam, qa}, instructions: string}",
+        description="Extra data: {duration: {intro, exam, review}, instructions: string}",
     )
 
 
@@ -366,6 +366,7 @@ class GradingTaskInDB(BaseModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     published_at: Optional[datetime]
+    version: int = Field(1, description="Optimistic locking version for report editing")
 
     # Optional related info
     respondent_name: Optional[str] = Field(None)
@@ -409,6 +410,7 @@ class GradingTaskUpdateReportRequest(BaseModel):
     """Request schema for updating a grading report before publishing."""
 
     report_content: str = Field(..., description="Updated report content in Markdown")
+    version: int = Field(..., description="Current version for optimistic locking")
 
 
 # ============================================================================

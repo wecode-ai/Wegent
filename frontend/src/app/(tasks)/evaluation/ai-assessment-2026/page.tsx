@@ -38,6 +38,7 @@ import {
   SuccessModal,
   EndExamConfirmModal,
   LeaveExamConfirmModal,
+  TimeWarningModal,
 } from '@wecode/components/evaluation/exam'
 import type { Topic } from '@wecode/components/evaluation/exam'
 
@@ -70,7 +71,11 @@ const EXAM_DATA = {
       label: '提交要求',
       text: '现场由本人导出/分享可体现交互过程的记录（文本/链接），以及最终产出结果',
     },
-    { icon: 'shield', label: '公平原则', text: '为确保公平性，现场不得调用过往工作产出' },
+    {
+      icon: 'shield',
+      label: '公平原则',
+      text: '为确保公平性，现场不得直接使用过往工作产出作为结果提交',
+    },
   ],
   examMethod: {
     scoring: '由 AI Agent 评分机器人打分，专家组复核校验，一周内出具AI考评个人报告',
@@ -256,6 +261,9 @@ const UPLOAD_SLOTS = [
   },
 ]
 
+// Permission check states
+type PermissionState = 'checking' | 'granted' | 'denied'
+
 export default function AIAssessment2026Page() {
   const router = useRouter()
   const { user, isLoading: isUserLoading } = useUser()
@@ -266,6 +274,7 @@ export default function AIAssessment2026Page() {
   const [selectedTopic, setSelectedTopic] = useState<number | null>(null)
   const [isTransitioning, setIsTransitioning] = useState(false)
   const dataLoadedRef = useRef(false)
+  const [permissionState, setPermissionState] = useState<PermissionState>('checking')
   const participantName = user?.user_name || ''
 
   // Use exam timer hook for accurate timing based on server timestamps
@@ -281,8 +290,10 @@ export default function AIAssessment2026Page() {
     session: examSession,
   })
 
-  // Track last saved time for each question
-  const [lastSavedMap, setLastSavedMap] = useState<Record<number, Date | null>>({
+  // Note: lastSavedMap is no longer used since we removed auto-save
+  // Keep for potential future use
+
+  const [_lastSavedMap, _setLastSavedMap] = useState<Record<number, Date | null>>({
     1: null,
     2: null,
     3: null,
@@ -325,8 +336,10 @@ export default function AIAssessment2026Page() {
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [showEndExamConfirm, setShowEndExamConfirm] = useState(false)
   const [showLeaveExamConfirm, setShowLeaveExamConfirm] = useState(false)
+  const [showTimeWarning, setShowTimeWarning] = useState(false)
+  const [timeWarningShown, setTimeWarningShown] = useState(false)
 
-  // Check login status after user data is loaded
+  // Check login status and permission after user data is loaded
   useEffect(() => {
     // Wait for user data to finish loading before checking
     if (isUserLoading) return
@@ -338,37 +351,40 @@ export default function AIAssessment2026Page() {
         variant: 'destructive',
       })
       router.push('/login')
+      return
     }
-  }, [user, isUserLoading, router, toast, t])
 
-  // Load exam data on mount
-  useEffect(() => {
-    async function loadExamData() {
+    // User is logged in, now check permission by loading exam data
+    async function checkPermissionAndLoadData() {
       try {
         const data = await getExamData(1)
         setExamSession(data.session)
         if (data.session?.selected_question_id) {
           setSelectedTopic(data.session.selected_question_id - 1)
         }
+        setPermissionState('granted')
       } catch (error: unknown) {
         console.error('Failed to load exam data:', error)
         // Handle permission denied (403)
         const err = error as { status?: number; message?: string }
         if (err?.status === 403 || err?.message?.includes('permission')) {
+          setPermissionState('denied')
           toast({
             title: t('errors.load_failed'),
             description: t('errors.permission_denied'),
             variant: 'destructive',
           })
           router.push('/chat')
+        } else {
+          // Other errors - still show content but with error state
+          setPermissionState('granted')
         }
       } finally {
         setLoading(false)
       }
     }
-    if (user && !isUserLoading) {
-      loadExamData()
-    }
+
+    checkPermissionAndLoadData()
   }, [user, isUserLoading, router, toast, t])
 
   // Sync with server when page becomes visible after being hidden
@@ -386,6 +402,22 @@ export default function AIAssessment2026Page() {
     },
     minHiddenTime: 1000, // Sync even for short tab switches (1 second)
   })
+
+  // Show time warning when 5 minutes remaining during exam phase
+  useEffect(() => {
+    // Only show during exam phase, when time is around 5 minutes (300 seconds)
+    // and warning hasn't been shown yet
+    if (
+      examPhase === 'exam' &&
+      timeLeft <= 5 * 60 &&
+      timeLeft > 4 * 60 &&
+      !timeWarningShown &&
+      !isCompleted
+    ) {
+      setShowTimeWarning(true)
+      setTimeWarningShown(true)
+    }
+  }, [examPhase, timeLeft, timeWarningShown, isCompleted])
 
   // Fix sticky header by overriding body overflow
   useEffect(() => {
@@ -420,6 +452,10 @@ export default function AIAssessment2026Page() {
           const questionId = content.selectedTopicId
 
           if (questionId) {
+            // Load supplementary notes: prefer text content over files
+            // If text notes exist, use them; otherwise keep empty for user to fill
+            const loadedNotes = content.supplementaryNotes || ''
+
             setQuestionData(prev => ({
               ...prev,
               [questionId]: {
@@ -430,10 +466,7 @@ export default function AIAssessment2026Page() {
                   bonusMultimodal: content.attachments?.bonusMultimodal || [],
                 },
                 supplementaryNotesFiles: content.supplementaryNotesFiles || [],
-                supplementaryNotes:
-                  (content.supplementaryNotesFiles?.length ?? 0) > 0
-                    ? ''
-                    : content.supplementaryNotes || '',
+                supplementaryNotes: loadedNotes,
                 linkValues: {
                   bonusAgent: content.attachments?.bonusAgent?.link || '',
                 },
@@ -470,8 +503,8 @@ export default function AIAssessment2026Page() {
 
     return [
       { label: '选择题目', done: anyQuestionSelected },
-      { label: '上传材料', done: anyQuestionSelected && hasRequiredFiles },
       { label: '填写说明', done: anyQuestionSelected && hasNotes },
+      { label: '上传材料', done: anyQuestionSelected && hasRequiredFiles },
       { label: '确认提交', done: submitCount > 0 },
     ]
   }, [selectedTopic, questionData, submitCount])
@@ -578,8 +611,9 @@ export default function AIAssessment2026Page() {
     }
   }
 
-  // Save draft for current question (without creating grading task)
-  const saveDraft = async (): Promise<void> => {
+  // Note: saveDraft is no longer used since we removed auto-save from SupplementaryNotesSection
+
+  const _saveDraft = async (): Promise<void> => {
     if (selectedTopic === null) return
 
     const currentData = questionData[selectedTopic + 1]
@@ -646,7 +680,8 @@ export default function AIAssessment2026Page() {
       })
 
       // Update last saved time
-      setLastSavedMap(prev => ({
+
+      _setLastSavedMap((prev: Record<number, Date | null>) => ({
         ...prev,
         [questionId]: new Date(),
       }))
@@ -770,7 +805,6 @@ export default function AIAssessment2026Page() {
         selectedQuestionId: selectedTopic + 1,
         participantName,
         content_data: {
-          examMode: true,
           participantName,
           selectedTopicId: selectedTopic + 1,
           supplementaryNotes: currentData.supplementaryNotes,
@@ -799,7 +833,8 @@ export default function AIAssessment2026Page() {
           [selectedTopic + 1]: {
             ...prev[selectedTopic + 1],
             supplementaryNotesFiles: _supplementaryNotesFiles,
-            supplementaryNotes: '',
+            // Keep the notes in the input box after submission
+            supplementaryNotes: currentData.supplementaryNotes,
           },
         }))
       }
@@ -810,7 +845,15 @@ export default function AIAssessment2026Page() {
     }
   }
 
-  const handleSupplementaryFileRemove = async (index: number) => {
+  // Note: File upload for supplementary notes is disabled
+
+  const _handleSupplementaryFileRemove = async (_index: number) => {
+    // This function is kept for potential future use but currently not used
+    // as supplementary notes now only supports text input with Markdown
+  }
+
+  // Keep the original function for reference but mark as unused
+  const _originalHandleSupplementaryFileRemove = async (index: number) => {
     if (selectedTopic === null) return
 
     const currentData = questionData[selectedTopic + 1]
@@ -848,8 +891,22 @@ export default function AIAssessment2026Page() {
     }
   }
 
-  // Show loading state while checking auth
-  if (isUserLoading || !user) {
+  // Show loading state while checking auth and permission
+  // This prevents content flash before permission check completes
+  if (isUserLoading || !user || permissionState === 'checking') {
+    return (
+      <div className="min-h-screen bg-[#fafbfc] flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
+          <p className="text-text-secondary">{t('exam.loading')}</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Permission denied - don't render any content
+  // The useEffect above will handle the redirect
+  if (permissionState === 'denied') {
     return (
       <div className="min-h-screen bg-[#fafbfc] flex items-center justify-center">
         <div className="text-center">
@@ -948,6 +1005,24 @@ export default function AIAssessment2026Page() {
           <BonusItemsSection bonusItems={EXAM_DATA.bonusItems} />
         )}
 
+        {/* Supplementary Notes - shown before file uploads */}
+        {(examPhase === 'exam' || examPhase === 'review') && selectedTopic !== null && (
+          <SupplementaryNotesSection
+            notes={questionData[selectedTopic + 1]?.supplementaryNotes || ''}
+            disabled={examPhase !== 'exam'}
+            required={true}
+            onNotesChange={notes =>
+              setQuestionData(prev => ({
+                ...prev,
+                [selectedTopic + 1]: {
+                  ...prev[selectedTopic + 1],
+                  supplementaryNotes: notes,
+                },
+              }))
+            }
+          />
+        )}
+
         {/* File Uploads */}
         {(examPhase === 'exam' || examPhase === 'review') && selectedTopic !== null && (
           <SlotBasedFileUpload
@@ -1028,27 +1103,6 @@ export default function AIAssessment2026Page() {
             }}
           />
         )}
-        {/* Supplementary Notes */}
-        {(examPhase === 'exam' || examPhase === 'review') && selectedTopic !== null && (
-          <SupplementaryNotesSection
-            notes={questionData[selectedTopic + 1]?.supplementaryNotes || ''}
-            files={questionData[selectedTopic + 1]?.supplementaryNotesFiles || []}
-            disabled={examPhase !== 'exam'}
-            required={true}
-            onNotesChange={notes =>
-              setQuestionData(prev => ({
-                ...prev,
-                [selectedTopic + 1]: {
-                  ...prev[selectedTopic + 1],
-                  supplementaryNotes: notes,
-                },
-              }))
-            }
-            onFileRemove={handleSupplementaryFileRemove}
-            onSaveDraft={saveDraft}
-            lastSavedAt={selectedTopic !== null ? lastSavedMap[selectedTopic + 1] : null}
-          />
-        )}
 
         {/* Submit Section */}
         {(examPhase === 'exam' || examPhase === 'review') &&
@@ -1056,9 +1110,9 @@ export default function AIAssessment2026Page() {
           !isCompleted && (
             <SubmitSection
               checkItems={[
+                { label: '已填写说明', done: hasSupplementaryNotes, required: true },
                 { label: '已上传报告', done: hasMainReport, required: true },
                 { label: '已上传交互记录', done: hasInteractionRecord, required: true },
-                { label: '已填写说明', done: hasSupplementaryNotes, required: true },
               ]}
               submitCount={submitCount}
               totalFileCount={getTotalFileCount(selectedTopic + 1)}
@@ -1158,6 +1212,12 @@ export default function AIAssessment2026Page() {
         isOpen={showLeaveExamConfirm}
         onClose={() => setShowLeaveExamConfirm(false)}
         onConfirm={confirmFinishExam}
+      />
+
+      <TimeWarningModal
+        isOpen={showTimeWarning}
+        onClose={() => setShowTimeWarning(false)}
+        remainingMinutes={5}
       />
     </div>
   )

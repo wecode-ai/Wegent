@@ -581,7 +581,8 @@ function GraderDashboardContent() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {task.status === GradingTaskStatus.PENDING && (
+                        {/* AI Grading Actions - Only show when grading bot is configured */}
+                        {task.team_id > 0 && task.status === GradingTaskStatus.PENDING && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -592,19 +593,20 @@ function GraderDashboardContent() {
                             <Play className="h-4 w-4" />
                           </Button>
                         )}
-                        {(task.status === GradingTaskStatus.FAILED ||
-                          task.status === GradingTaskStatus.RUNNING ||
-                          task.status === GradingTaskStatus.COMPLETED) && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleRetrySingle(task.id)}
-                            disabled={executing}
-                            title={t('grading.retry')}
-                          >
-                            <RotateCcw className="h-4 w-4" />
-                          </Button>
-                        )}
+                        {task.team_id > 0 &&
+                          (task.status === GradingTaskStatus.FAILED ||
+                            task.status === GradingTaskStatus.RUNNING ||
+                            task.status === GradingTaskStatus.COMPLETED) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleRetrySingle(task.id)}
+                              disabled={executing}
+                              title={t('grading.retry')}
+                            >
+                              <RotateCcw className="h-4 w-4" />
+                            </Button>
+                          )}
                         {(task.status === GradingTaskStatus.COMPLETED ||
                           task.status === GradingTaskStatus.PUBLISHED) && (
                           <>
