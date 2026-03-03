@@ -82,7 +82,11 @@ export async function fetchJson<T>(url: string, options?: RequestInit): Promise<
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(error.detail || 'Request failed')
+    // Handle nested detail object (e.g., for 409 conflict with version info)
+    if (error.detail && typeof error.detail === 'object') {
+      throw new Error(JSON.stringify(error.detail))
+    }
+    throw new Error(error.detail || error.message || 'Request failed')
   }
 
   return response.json()
@@ -107,6 +111,10 @@ export async function fetchDelete(url: string): Promise<void> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(error.detail || 'Request failed')
+    // Handle nested detail object
+    if (error.detail && typeof error.detail === 'object') {
+      throw new Error(JSON.stringify(error.detail))
+    }
+    throw new Error(error.detail || error.message || 'Request failed')
   }
 }

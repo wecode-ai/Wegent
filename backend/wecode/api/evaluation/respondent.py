@@ -690,32 +690,7 @@ def get_exam_data(
     # Sort questions by order_index
     formatted_questions.sort(key=lambda x: x["order_index"])
 
-    # Check for existing answer from current user
-    # For exam mode, we store the answer at topic level (question_id will be the first question or 0)
-    existing_answer = None
-    if formatted_questions:
-
-        first_question_id = formatted_questions[0]["id"]
-        answer = answer_service.get_latest_answer(
-            db=db,
-            question_id=first_question_id,
-            respondent_id=current_user.id,
-        )
-        if answer:
-            existing_answer = {
-                "id": answer.id,
-                "question_id": answer.question_id,
-                "question_version": answer.question_version,
-                "respondent_id": answer.respondent_id,
-                "content_type": answer.content_type,
-                "content_data": answer.content_data,
-                "submitted_at": (
-                    answer.submitted_at.isoformat() if answer.submitted_at else None
-                ),
-                "is_latest": answer.is_latest,
-            }
-
-    # Get or create exam session (three-phase: intro, exam, review)
+    # Get or create exam session to check selected question
     duration = extra_data.get("duration", {})
     intro_duration = duration.get("intro", 5)
     exam_duration = duration.get("exam", 50)
@@ -747,11 +722,48 @@ def get_exam_data(
                 "intro_end_at": None,
                 "exam_end_at": None,
                 "review_end_at": None,
-                "remaining_seconds": 0,
-                "is_overtime": False,
                 "submit_count": 0,
                 "selected_question_id": None,
             }
+
+    # Check for existing answers from current user
+    # For exam mode, get answers for ALL questions in the topic
+    existing_answer = None
+    all_answers = {}
+    if formatted_questions:
+        # Get answers for all questions in the topic
+        answers, _ = answer_service.list_by_topic(
+            db=db,
+            topic_id=topic_id,
+            respondent_id=current_user.id,
+            latest_only=True,
+            limit=100,  # Get all answers
+        )
+
+        # Build a map of question_id -> answer data
+        for answer in answers:
+            all_answers[answer.question_id] = {
+                "id": answer.id,
+                "question_id": answer.question_id,
+                "question_version": answer.question_version,
+                "respondent_id": answer.respondent_id,
+                "content_type": answer.content_type,
+                "content_data": answer.content_data,
+                "submitted_at": (
+                    answer.submitted_at.isoformat() if answer.submitted_at else None
+                ),
+                "is_latest": answer.is_latest,
+            }
+
+        # For backward compatibility, also set existing_answer to the currently selected question
+        target_question_id = None
+        if session and session.selected_question_id:
+            target_question_id = session.selected_question_id
+        elif formatted_questions:
+            target_question_id = formatted_questions[0]["id"]
+
+        if target_question_id and target_question_id in all_answers:
+            existing_answer = all_answers[target_question_id]
 
     # Format topic
     formatted_topic = {
@@ -771,6 +783,7 @@ def get_exam_data(
         "topic": formatted_topic,
         "questions": formatted_questions,
         "userAnswer": existing_answer,
+        "allAnswers": all_answers,  # Include answers for all questions
         "session": session_status,
     }
 

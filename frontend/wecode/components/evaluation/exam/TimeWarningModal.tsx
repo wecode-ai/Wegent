@@ -35,23 +35,16 @@ export function TimeWarningModal({ isOpen, onClose, remainingMinutes }: TimeWarn
         </div>
 
         <h3 className="text-xl font-extrabold text-gray-900 mb-2 text-center">
-          {t('grading:exam.time_warning.title', '考试即将结束')}
+          {t('exam.time_warning.title')}
         </h3>
 
         <p className="text-base text-gray-600 mb-6 text-center">
-          {t(
-            'grading:exam.time_warning.description',
-            `距离考试结束还有 {{minutes}} 分钟，请尽快完成作答并准备提交。`,
-            { minutes: remainingMinutes }
-          )}
+          {t('exam.time_warning.description', { minutes: remainingMinutes })}
         </p>
 
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
           <p className="text-sm text-amber-800">
-            {t(
-              'grading:exam.time_warning.hint',
-              '建议：检查是否已完成所有必传项（作答说明、考核报告、交互记录），确认无误后及时提交。'
-            )}
+            {t('exam.time_warning.hint')}
           </p>
         </div>
 
@@ -59,7 +52,7 @@ export function TimeWarningModal({ isOpen, onClose, remainingMinutes }: TimeWarn
           onClick={onClose}
           className="w-full px-5 py-3 rounded-2xl bg-[#DF2029] hover:bg-[#c81d25] text-white text-base font-bold transition shadow-lg shadow-red-200/50"
         >
-          {t('common:actions.got_it', '我知道了')}
+          {t('common:actions.confirm')}
         </button>
       </div>
     </div>
