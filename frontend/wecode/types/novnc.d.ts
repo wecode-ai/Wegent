@@ -88,6 +88,10 @@ declare module '@novnc/novnc/lib/rfb' {
   export default RFB
 }
 
+declare module '@novnc/novnc/lib/rfb.js' {
+  export default RFB
+}
+
 declare module '@novnc/novnc/core/rfb' {
   export default RFB
 }

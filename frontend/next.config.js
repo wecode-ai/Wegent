@@ -47,11 +47,16 @@ const nextConfig = {
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
           }
 
-          // Handle noVNC CommonJS module properly
+          // Enable top-level await for @novnc/novnc
+          config.experiments = config.experiments || {}
+          config.experiments.topLevelAwait = true
+
+          // Configure @novnc/novnc to be treated as ESM
           config.module = config.module || {}
           config.module.rules = config.module.rules || []
           config.module.rules.push({
-            test: /node_modules\/@novnc\/novnc/,
+            test: /\.js$/,
+            include: /node_modules[\\/]@novnc[\\/]novnc/,
             type: 'javascript/esm',
           })
 

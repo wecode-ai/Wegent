@@ -49,6 +49,19 @@ export { TimeWarningModal } from './TimeWarningModal'
 
 // Types
 export type { Topic } from './AIAssessmentTopicCard'
+export type { PermissionState, QuestionDataMap, QuestionData } from './ai-assessment-types'
+export { createEmptyQuestionData, createInitialQuestionDataMap } from './ai-assessment-types'
+
+// AI Assessment constants and utilities
+export { EXAM_DATA, UPLOAD_SLOTS_CONFIG } from './ai-assessment-constants'
+export {
+  uploadSupplementaryNotes,
+  buildQuestionDataMapFromAnswers,
+  getTotalFileCount,
+  hasRequiredFiles,
+  hasSupplementaryNotes,
+  getTimerColorClass,
+} from './ai-assessment-utils'
 
 // Hooks
 export { useExamTimer } from './hooks/useExamTimer'
