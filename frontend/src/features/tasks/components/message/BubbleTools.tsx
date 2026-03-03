@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw, RotateCcw } from 'lucide-react'
+import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -193,7 +193,7 @@ const BubbleTools = ({
               onClick={onReEditClick}
               className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
             >
-              <RotateCcw className="h-3.5 w-3.5 text-text-muted" />
+              <History className="h-3.5 w-3.5 text-text-muted" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
