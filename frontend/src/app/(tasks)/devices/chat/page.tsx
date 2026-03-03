@@ -96,6 +96,8 @@ export default function DeviceChatPage() {
       .then(status => {
         if (!cancelled && status.sandbox_id) {
           setSandboxId(status.sandbox_id)
+          // Auto-open VNC panel when sandbox_id is available
+          setIsVncOpen(true)
         }
       })
       .catch(() => {
