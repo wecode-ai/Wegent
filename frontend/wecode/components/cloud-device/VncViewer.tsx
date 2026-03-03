@@ -42,7 +42,8 @@ export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
 
     try {
       // Dynamic import for SSR safety
-      const { default: RFB } = await import('@novnc/novnc/lib/rfb')
+      const novncModule = await import('@novnc/novnc/lib/rfb')
+      const RFB = novncModule.default || novncModule
 
       const token = getToken()
       if (!token) {
