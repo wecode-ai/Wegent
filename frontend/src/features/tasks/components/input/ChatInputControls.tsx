@@ -444,6 +444,11 @@ export function ChatInputControls({
           </>
         )}
 
+        {/* Reference image upload button - show for image and video generation modes */}
+        {isGenerationMode && (
+          <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
+        )}
+
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
           <>
