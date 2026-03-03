@@ -5,83 +5,31 @@
 /**
  * Client-side noVNC RFB loader
  *
- * Uses script tag injection to load noVNC from CDN,
- * completely bypassing Webpack/Turbopack module resolution issues.
+ * Uses ES module dynamic import from esm.sh CDN to load noVNC.
  */
 
 'use client'
 
-// Global type definition for noVNC
-declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    noVNC?: { RFB: any }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    RFB?: any
-  }
-}
+import type RFB from '@novnc/novnc/lib/rfb'
 
-// Use browser build from dist which properly exports to window.noVNC
-const NOVNC_CDN_URL = 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.6.0/dist/novnc.min.js'
-
-/**
- * Dynamically load a script by URL
- */
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Check if already loaded
-    if (document.querySelector(`script[src="${src}"]`)) {
-      resolve()
-      return
-    }
-
-    const script = document.createElement('script')
-    script.src = src
-    script.async = true
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error(`Failed to load script: ${src}`))
-    document.head.appendChild(script)
-  })
-}
+type RFBConstructor = typeof RFB
 
 /**
  * Load the noVNC RFB class.
- * This function can be called multiple times - it caches the result after first load.
+ * Uses esm.sh CDN which provides proper ES module wrapping.
  *
  * @returns Promise<RFB constructor>
  */
-export async function loadRFB() {
-  // Check if already loaded globally
-  if (typeof window !== 'undefined' && window.noVNC?.RFB) {
-    return window.noVNC.RFB
-  }
-  if (typeof window !== 'undefined' && window.RFB) {
-    return window.RFB
-  }
-
+export async function loadRFB(): Promise<RFBConstructor> {
   try {
-    // Load from CDN
-    await loadScript(NOVNC_CDN_URL)
-
-    // Wait a tick for the script to initialize
-    await new Promise(resolve => setTimeout(resolve, 100))
-
-    // Check for global RFB object - try multiple locations
-    const RFB =
-      window.noVNC?.RFB ||
-      window.RFB ||
-      (window as Window & { noVnc?: { RFB: unknown } }).noVnc?.RFB
+    // Use esm.sh which wraps npm packages as ES modules
+    const novnc = await import('https://esm.sh/@novnc/novnc@1.6.0/lib/rfb.js')
+    // Handle both ESM default export and named exports
+    const RFB = novnc.default || novnc.RFB || novnc
     if (!RFB) {
-      console.error(
-        '[VNC] Available globals:',
-        Object.keys(window).filter(
-          k => k.toLowerCase().includes('rfb') || k.toLowerCase().includes('novnc')
-        )
-      )
-      throw new Error('RFB class not found after loading noVNC')
+      throw new Error('RFB class not found in @novnc/novnc module')
     }
-
-    return RFB
+    return RFB as RFBConstructor
   } catch (error) {
     console.error('[VNC] Failed to load noVNC RFB:', error)
     throw new Error('Failed to load VNC library')
