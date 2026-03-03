@@ -95,7 +95,8 @@
     "found": "找到",
     "expand_content": "展开显示",
     "collapse_content": "收起内容",
-    "lines": "行"
+    "lines": "行",
+    "video_generation": "视频生成"
   },
   "shared_task": {
     "share_task": "分享",

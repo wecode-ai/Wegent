@@ -44,6 +44,7 @@ import { GeminiAnnotations } from '../chat/GeminiAnnotations'
 import CollapsibleMessage from './CollapsibleMessage'
 import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
+import VideoConfigBadge from './VideoConfigBadge'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
@@ -90,6 +91,13 @@ export interface Message {
       thumbnail?: string | null // Base64 encoded thumbnail
       duration?: number | null // Video duration in seconds
       is_placeholder?: boolean // True when video is still being generated
+    }
+    /** Video generation config (stored in user message subtask for display) */
+    video_config?: {
+      model?: string
+      resolution?: string
+      ratio?: string
+      duration?: number
     }
   }
   /** @deprecated Use contexts instead */
@@ -816,7 +824,11 @@ const MessageBubble = memo(
         }
       }
 
-      return (message.content?.split('\n') || []).map((line, idx) => {
+      // Check if this message has video_config (video generation parameters)
+      const videoConfig = message.result?.video_config
+
+      // Build content elements
+      const contentElements = (message.content?.split('\n') || []).map((line, idx) => {
         if (line.startsWith('__PROMPT_TRUNCATED__:')) {
           const lineMatch = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/)
           if (lineMatch) {
@@ -845,6 +857,18 @@ const MessageBubble = memo(
         // Pass disabled={isStreaming} to avoid metadata fetching during streaming
         return <SmartTextLine key={idx} text={line} disabled={isStreaming} />
       })
+
+      // Render with VideoConfigBadge if video_config is present
+      if (videoConfig) {
+        return (
+          <>
+            {contentElements}
+            <VideoConfigBadge config={videoConfig} />
+          </>
+        )
+      }
+
+      return contentElements
     }
     // Helper function to parse Markdown clarification questions
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels

@@ -317,6 +317,13 @@ export interface SubtaskResult {
   image?: string
   /** Video generation progress (0-100) */
   progress?: number
+  /** Video generation config (stored in user message subtask for display) */
+  video_config?: {
+    model?: string
+    resolution?: string
+    ratio?: string
+    duration?: number
+  }
   [key: string]: unknown
 }
 

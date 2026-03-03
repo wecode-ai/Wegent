@@ -95,7 +95,8 @@
     "found": "Found",
     "expand_content": "Expand",
     "collapse_content": "Collapse",
-    "lines": "lines"
+    "lines": "lines",
+    "video_generation": "Video Generation"
   },
   "thinking": {
     "tool_group": "Tool Group",
