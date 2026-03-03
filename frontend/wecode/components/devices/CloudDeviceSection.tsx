@@ -214,7 +214,7 @@ export function CloudDeviceSection({
 
       {/* Creating notice alert */}
       {hasCreatingDevice && (
-        <Alert variant="warning">
+        <Alert variant="success">
           <Loader2 className="w-4 h-4 animate-spin" />
           <AlertDescription>{t('cloud_device.creating_notice')}</AlertDescription>
         </Alert>
