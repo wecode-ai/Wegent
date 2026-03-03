@@ -298,10 +298,6 @@ class TestVideoGenerationConfig:
 class TestModelSpecWithImageConfig:
     """Tests for ModelSpec with imageConfig field."""
 
-
-class TestModelSpecWithImageConfig:
-    """Tests for ModelSpec with imageConfig field."""
-
     def test_model_spec_with_image_config(self):
         """Test ModelSpec includes imageConfig field."""
         from app.schemas.generation import ImageGenerationConfig

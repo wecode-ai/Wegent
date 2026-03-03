@@ -263,8 +263,11 @@ export function useChatAreaState({
   // Priority: external value (from model config) -> default (1 for image/video, undefined otherwise)
   const effectiveMaxAttachments = useMemo(() => {
     if (taskType === 'image' || taskType === 'video') {
-      // Use external value from model config, fallback to 1
-      return externalMaxAttachments ?? 1
+      // Normalize and clamp external value from model config
+      if (typeof externalMaxAttachments === 'number' && Number.isFinite(externalMaxAttachments)) {
+        return Math.min(10, Math.max(1, Math.floor(externalMaxAttachments)))
+      }
+      return 1
     }
     return undefined
   }, [taskType, externalMaxAttachments])
