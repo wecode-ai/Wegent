@@ -237,6 +237,11 @@ export function CreateGroupChatFromKnowledgeDialog({
             realTaskId: number,
             _subtaskId: number
           ) => {
+            // Bind knowledge bases FIRST, before closing dialog or navigating
+            // This ensures all props (knowledgeBaseName, etc.) are still valid
+            // and the component is still mounted
+            await bindKnowledgeBases(realTaskId)
+
             // Close dialog and reset form
             onOpenChange(false)
             resetForm()
@@ -262,10 +267,7 @@ export function CreateGroupChatFromKnowledgeDialog({
             })
 
             // Add group members in the background after navigation
-            await addGroupMembersToChat(realTaskId)
-
-            // Bind knowledge bases to the group chat
-            await bindKnowledgeBases(realTaskId)
+            void addGroupMembersToChat(realTaskId)
           },
           onError: error => {
             toast({
