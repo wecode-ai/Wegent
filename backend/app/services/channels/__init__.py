@@ -35,6 +35,7 @@ from app.services.channels.callback import (
     ChannelCallbackRegistry,
     ChannelType,
     get_callback_registry,
+    handle_channel_task_completed,
 )
 from app.services.channels.commands import (
     DEVICE_ITEM_TEMPLATE,
@@ -95,4 +96,5 @@ __all__ = [
     # Factory functions
     "get_channel_manager",
     "get_callback_registry",
+    "handle_channel_task_completed",
 ]
