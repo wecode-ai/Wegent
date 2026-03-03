@@ -178,90 +178,96 @@ export function CreateKnowledgeBaseDialog({
           <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto space-y-4 py-4">
-            <KnowledgeBaseForm
-              typeSection={
-                <div className="space-y-2">
-                  <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
+          <KnowledgeBaseForm
+            typeSection={
+              <div className="space-y-2">
+                <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
+                <div
+                  className={`flex items-center gap-3 p-3 rounded-md border ${
+                    isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
+                  }`}
+                >
                   <div
-                    className={`flex items-center gap-3 p-3 rounded-md border ${
-                      isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
+                    className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
+                      isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
                     }`}
                   >
-                    <div
-                      className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
-                        isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
-                      }`}
-                    >
-                      {isNotebook ? (
-                        <BookOpen className="w-4 h-4" />
-                      ) : (
-                        <FolderOpen className="w-4 h-4" />
-                      )}
+                    {isNotebook ? (
+                      <BookOpen className="w-4 h-4" />
+                    ) : (
+                      <FolderOpen className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm">
+                      {isNotebook
+                        ? t('knowledge:document.knowledgeBase.typeNotebook')
+                        : t('knowledge:document.knowledgeBase.typeClassic')}
                     </div>
-                    <div>
-                      <div className="font-medium text-sm">
-                        {isNotebook
-                          ? t('knowledge:document.knowledgeBase.typeNotebook')
-                          : t('knowledge:document.knowledgeBase.typeClassic')}
-                      </div>
-                      <div className="text-xs text-text-muted">
-                        {isNotebook
-                          ? t('knowledge:document.knowledgeBase.notebookDesc')
-                          : t('knowledge:document.knowledgeBase.classicDesc')}
-                      </div>
+                    <div className="text-xs text-text-muted">
+                      {isNotebook
+                        ? t('knowledge:document.knowledgeBase.notebookDesc')
+                        : t('knowledge:document.knowledgeBase.classicDesc')}
                     </div>
                   </div>
                 </div>
-              }
-              name={name}
-              description={description}
-              onNameChange={value => setName(value)}
-              onDescriptionChange={value => setDescription(value)}
-              summaryEnabled={summaryEnabled}
-              onSummaryEnabledChange={checked => {
-                setSummaryEnabled(checked)
-                if (!checked) {
-                  setSummaryModelRef(null)
-                  setSummaryModelError('')
-                }
-              }}
-              summaryModelRef={summaryModelRef}
-              summaryModelError={summaryModelError}
-              onSummaryModelChange={value => {
-                setSummaryModelRef(value)
+              </div>
+            }
+            name={name}
+            description={description}
+            onNameChange={value => setName(value)}
+            onDescriptionChange={value => setDescription(value)}
+            summaryEnabled={summaryEnabled}
+            onSummaryEnabledChange={checked => {
+              setSummaryEnabled(checked)
+              if (!checked) {
+                setSummaryModelRef(null)
                 setSummaryModelError('')
-              }}
-              knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-              callLimits={{ maxCalls, exemptCalls }}
-              onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
-                setMaxCalls(nextMax)
-                setExemptCalls(nextExempt)
-              }}
-              advancedVariant="accordion"
-              advancedOpen={accordionValue === 'advanced'}
-              onAdvancedOpenChange={open => setAccordionValue(open ? 'advanced' : '')}
-              advancedDescription={t('knowledge:document.advancedSettings.collapsed')}
-              showRetrievalSection={true}
-              retrievalConfig={retrievalConfig}
-              onRetrievalConfigChange={setRetrievalConfig}
-              retrievalScope={scope}
-              retrievalGroupName={groupName}
-            />
+              }
+            }}
+            summaryModelRef={summaryModelRef}
+            summaryModelError={summaryModelError}
+            onSummaryModelChange={value => {
+              setSummaryModelRef(value)
+              setSummaryModelError('')
+            }}
+            knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+            callLimits={{ maxCalls, exemptCalls }}
+            onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
+              setMaxCalls(nextMax)
+              setExemptCalls(nextExempt)
+            }}
+            advancedVariant="accordion"
+            advancedOpen={accordionValue === 'advanced'}
+            onAdvancedOpenChange={open => setAccordionValue(open ? 'advanced' : '')}
+            advancedDescription={t('knowledge:document.advancedSettings.collapsed')}
+            showRetrievalSection={true}
+            retrievalConfig={retrievalConfig}
+            onRetrievalConfigChange={setRetrievalConfig}
+            retrievalScope={scope}
+            retrievalGroupName={groupName}
+          />
 
-            {error && <p className="text-sm text-error">{error}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-              disabled={loading}
-            >
-              {t('common:actions.cancel')}
-            </Button>
-            <Button onClick={handleSubmit} variant="primary" disabled={loading}>
-              {loading ? t('common:actions.creating') : t('common:actions.create')}
-            </Button>
-          </DialogFooter>
+          {error && <p className="text-sm text-error">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
+            {t('common:actions.cancel')}
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            variant="primary"
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
+            {loading ? t('common:actions.creating') : t('common:actions.create')}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

@@ -187,6 +187,8 @@ export interface MessageBubbleProps {
   isRegenerating?: boolean
   /** Callback when user wants to use a generated image as reference for follow-up generation */
   onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
+  /** Callback when user clicks re-edit button - restores original user input to input box */
+  onReEdit?: (msg: Message) => void
   /** Share token for public access to attachments (no login required) */
   shareToken?: string
 }
@@ -283,6 +285,28 @@ const ParagraphWithAction = ({
   )
 }
 
+/** Determine whether the Re-edit button should be shown for an AI message. */
+function canShowReEdit(
+  msg: Message,
+  isGroupChat: boolean | undefined,
+  onReEdit: ((msg: Message) => void) | undefined
+): boolean {
+  if (!onReEdit || isGroupChat) return false
+  // Must have a valid subtaskId to support re-edit
+  if (!msg.subtaskId) return false
+  const isCompleted =
+    msg.subtaskStatus === 'COMPLETED' ||
+    msg.subtaskStatus === 'CANCELLED' ||
+    msg.status === 'completed'
+  const isNotRunning =
+    msg.subtaskStatus !== 'RUNNING' &&
+    msg.subtaskStatus !== 'PENDING' &&
+    msg.subtaskStatus !== 'PROCESSING' &&
+    msg.status !== 'streaming' &&
+    msg.status !== 'pending'
+  return isCompleted && isNotRunning
+}
+
 const MessageBubble = memo(
   function MessageBubble({
     msg,
@@ -312,6 +336,7 @@ const MessageBubble = memo(
     onRegenerate,
     isRegenerating,
     onUseAsReference,
+    onReEdit,
     shareToken,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
@@ -712,6 +737,8 @@ const MessageBubble = memo(
                   tooltipText={tooltipText}
                 />
               )}
+              showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
+              onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
             />
           )}
         </>
@@ -1481,6 +1508,8 @@ const MessageBubble = memo(
                               tooltipText={tooltipText}
                             />
                           )}
+                          showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
+                          onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
                         />
                       )}
                     </>
@@ -1653,7 +1682,8 @@ const MessageBubble = memo(
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
       prevProps.isRegenerating === nextProps.isRegenerating &&
-      prevProps.onUseAsReference === nextProps.onUseAsReference
+      prevProps.onUseAsReference === nextProps.onUseAsReference &&
+      prevProps.onReEdit === nextProps.onReEdit
 
     return shouldSkipRender
   }

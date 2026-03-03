@@ -261,7 +261,9 @@ export function useChatAreaState({
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
     isUploading,
-  } = useMultiAttachment()
+  } = useMultiAttachment({
+    maxAttachments: taskType === 'image' || taskType === 'video' ? 2 : undefined,
+  })
 
   // Refs for random indices (stable across taskType changes)
   const sloganRandomIndexRef = useRef<number | null>(null)

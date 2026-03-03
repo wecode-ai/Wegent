@@ -193,6 +193,8 @@ interface MessagesAreaProps {
   hideGroupChatOptions?: boolean
   /** Callback when user wants to use a generated image as reference for follow-up generation */
   onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
+  /** Callback when user clicks re-edit button on an AI message */
+  onReEdit?: (msg: Message) => void
 }
 
 export default function MessagesArea({
@@ -214,6 +216,7 @@ export default function MessagesArea({
   onContextReselect,
   hideGroupChatOptions = false,
   onUseAsReference,
+  onReEdit,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -1176,6 +1179,7 @@ export default function MessagesArea({
                     isPendingConfirmation={isPendingConfirmation}
                     onContextReselect={onContextReselect}
                     onUseAsReference={onUseAsReference}
+                    onReEdit={onReEdit}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -1245,6 +1249,7 @@ export default function MessagesArea({
                 onRegenerate={!isGroupChat ? handleRegenerate : undefined}
                 isRegenerating={isRegenerating}
                 onUseAsReference={onUseAsReference}
+                onReEdit={onReEdit}
               />
             )
           })}
