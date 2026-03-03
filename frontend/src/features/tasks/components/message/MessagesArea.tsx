@@ -151,6 +151,7 @@ function StreamingMessageBubble({
       isPendingConfirmation={isPendingConfirmation}
       onContextReselect={onContextReselect}
       onUseAsReference={onUseAsReference}
+      taskType={selectedTaskDetail?.task_type}
     />
   )
 }
@@ -1180,6 +1181,7 @@ export default function MessagesArea({
                     onContextReselect={onContextReselect}
                     onUseAsReference={onUseAsReference}
                     onReEdit={onReEdit}
+                    taskType={selectedTaskDetail?.task_type}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -1250,6 +1252,7 @@ export default function MessagesArea({
                 isRegenerating={isRegenerating}
                 onUseAsReference={onUseAsReference}
                 onReEdit={onReEdit}
+                taskType={selectedTaskDetail?.task_type}
               />
             )
           })}

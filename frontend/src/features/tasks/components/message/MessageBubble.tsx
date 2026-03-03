@@ -12,6 +12,7 @@ import type {
   GitBranch,
   Attachment,
   SubtaskContextBrief,
+  TaskType,
 } from '@/types/api'
 import {
   Bot,
@@ -199,6 +200,8 @@ export interface MessageBubbleProps {
   onReEdit?: (msg: Message) => void
   /** Share token for public access to attachments (no login required) */
   shareToken?: string
+  /** Current task type to determine which model category to show in regenerate popover */
+  taskType?: TaskType
 }
 
 // Component for rendering a paragraph with hover action button
@@ -346,6 +349,7 @@ const MessageBubble = memo(
     onUseAsReference,
     onReEdit,
     shareToken,
+    taskType,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -743,6 +747,7 @@ const MessageBubble = memo(
                   isLoading={isRegenerating}
                   trigger={defaultButton}
                   tooltipText={tooltipText}
+                  taskType={taskType}
                 />
               )}
               showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
@@ -1517,6 +1522,7 @@ const MessageBubble = memo(
                               isLoading={isRegenerating}
                               trigger={defaultButton}
                               tooltipText={tooltipText}
+                              taskType={taskType}
                             />
                           )}
                           showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
