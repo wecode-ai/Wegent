@@ -43,18 +43,47 @@ export default function AttachmentButton({
     }
   }, [disabled])
 
+  // Build accept string for file input - use override if provided
+  const acceptString = accept ?? SUPPORTED_EXTENSIONS.join(',')
+
+  // Check if a file matches the accept criteria
+  const isFileAccepted = useCallback(
+    (file: File) => {
+      if (!accept) return true
+
+      return accept.split(',').some(rule => {
+        const token = rule.trim().toLowerCase()
+        if (!token) return false
+
+        if (token.endsWith('/*')) {
+          return file.type.toLowerCase().startsWith(token.slice(0, -1))
+        }
+
+        if (token.startsWith('.')) {
+          return file.name.toLowerCase().endsWith(token)
+        }
+
+        return file.type.toLowerCase() === token
+      })
+    },
+    [accept]
+  )
+
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files
       if (files && files.length > 0) {
-        onFileSelect(Array.from(files))
+        const acceptedFiles = Array.from(files).filter(isFileAccepted)
+        if (acceptedFiles.length > 0) {
+          onFileSelect(acceptedFiles)
+        }
       }
       // Reset input so same file can be selected again
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
     },
-    [onFileSelect]
+    [isFileAccepted, onFileSelect]
   )
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -71,14 +100,14 @@ export default function AttachmentButton({
 
       const files = e.dataTransfer.files
       if (files && files.length > 0) {
-        onFileSelect(Array.from(files))
+        const acceptedFiles = Array.from(files).filter(isFileAccepted)
+        if (acceptedFiles.length > 0) {
+          onFileSelect(acceptedFiles)
+        }
       }
     },
-    [disabled, onFileSelect]
+    [disabled, isFileAccepted, onFileSelect]
   )
-
-  // Build accept string for file input - use override if provided
-  const acceptString = accept ?? SUPPORTED_EXTENSIONS.join(',')
 
   // Tooltip content
   const tooltipContent = t('chat:upload.tooltip', {

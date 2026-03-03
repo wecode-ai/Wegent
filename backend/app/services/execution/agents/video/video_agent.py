@@ -110,6 +110,7 @@ class VideoAgent(PollingAgent):
                     request=request,
                     emitter=emitter,
                     video_block_id=video_block_id,
+                    current_prompt=prompt_text,
                 )
                 final_prompt = intent_result.merged_prompt
                 reference_image = intent_result.reference_image
@@ -122,9 +123,8 @@ class VideoAgent(PollingAgent):
                 reference_image = (
                     user_reference_images[0] if user_reference_images else None
                 )
-                image_mode = (
-                    "first_frame"  # Default mode for user-uploaded reference images
-                )
+                # Only set image_mode when reference_image exists
+                image_mode = "first_frame" if reference_image else None
 
             # Step 2: Get video provider based on protocol
             # Use 'or' to handle both missing key and None value
@@ -361,6 +361,7 @@ class VideoAgent(PollingAgent):
         request: ExecutionRequest,
         emitter: ResultEmitter,
         video_block_id: str,
+        current_prompt: str,
     ) -> VideoIntentResult:
         """Analyze intent for follow-up messages.
 
@@ -368,13 +369,11 @@ class VideoAgent(PollingAgent):
             request: Execution request
             emitter: Result emitter for progress updates
             video_block_id: Video block ID for progress updates
+            current_prompt: Normalized prompt text (already processed by _normalize_prompt)
 
         Returns:
             VideoIntentResult with merged prompt and image info
         """
-        current_prompt = (
-            request.prompt if isinstance(request.prompt, str) else str(request.prompt)
-        )
 
         # Check if this is a follow-up
         if not request.task_id:

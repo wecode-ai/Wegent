@@ -230,7 +230,9 @@ export function useMultiAttachment(options?: {
           return prev
         }
         // Respect the maxAttachments cap so re-edit flows cannot exceed the limit
-        if (maxAttachments !== undefined && prev.attachments.length >= maxAttachments) {
+        // Include uploading files in the count to prevent exceeding the limit
+        const currentTotal = prev.attachments.length + prev.uploadingFiles.size
+        if (maxAttachments !== undefined && currentTotal >= maxAttachments) {
           return prev
         }
         return {

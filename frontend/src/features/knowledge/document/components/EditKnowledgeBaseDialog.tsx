@@ -198,10 +198,20 @@ export function EditKnowledgeBaseDialog({
           {error && <p className="text-sm text-error">{error}</p>}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
             {t('common:actions.cancel')}
           </Button>
-          <Button onClick={handleSubmit} variant="primary" disabled={loading}>
+          <Button
+            onClick={handleSubmit}
+            variant="primary"
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
             {loading ? t('common:actions.saving') : t('common:actions.save')}
           </Button>
         </DialogFooter>

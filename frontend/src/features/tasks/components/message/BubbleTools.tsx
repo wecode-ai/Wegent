@@ -189,9 +189,8 @@ const BubbleTools = ({
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
-              size="icon"
               onClick={onReEditClick}
-              className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+              className="h-11 min-w-[44px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
             >
               <History className="h-3.5 w-3.5 text-text-muted" />
             </Button>

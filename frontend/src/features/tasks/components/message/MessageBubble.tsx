@@ -292,6 +292,8 @@ function canShowReEdit(
   onReEdit: ((msg: Message) => void) | undefined
 ): boolean {
   if (!onReEdit || isGroupChat) return false
+  // Must have a valid subtaskId to support re-edit
+  if (!msg.subtaskId) return false
   const isCompleted =
     msg.subtaskStatus === 'COMPLETED' ||
     msg.subtaskStatus === 'CANCELLED' ||
