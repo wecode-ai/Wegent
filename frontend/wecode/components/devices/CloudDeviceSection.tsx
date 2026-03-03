@@ -13,6 +13,7 @@
 import '@wecode/i18n' // side-effect import to load wecode translations
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -35,7 +36,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Cloud, Plus, Loader2, Trash2, Play, Star, MoreVertical, Monitor } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Cloud, Plus, Loader2, Trash2, Play, Star, MoreVertical } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,14 +71,22 @@ export function CloudDeviceSection({
   onCancelTask,
 }: CloudDeviceSectionProps) {
   const { t } = useTranslation('wecode')
+  const { user } = useUser()
   const [isCreating, setIsCreating] = useState(false)
   const [deviceToDelete, setDeviceToDelete] = useState<DeviceInfo | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showCreateConfirm, setShowCreateConfirm] = useState(false)
   const [cloudConfig, setCloudConfig] = useState<CloudDeviceConfig | null>(null)
-  const [mailEnabled, setMailEnabled] = useState(false)
+  const [mailEnabled, setMailEnabled] = useState(true)
   const [mailEmail, setMailEmail] = useState('')
   const [mailpassword, setMailpassword] = useState('')
+
+  // Set default email when user data is available or dialog opens
+  useEffect(() => {
+    if (showCreateConfirm && user?.user_name && !mailEmail) {
+      setMailEmail(user.user_name)
+    }
+  }, [showCreateConfirm, user?.user_name, mailEmail])
 
   // Fetch cloud device configuration
   useEffect(() => {
@@ -115,11 +125,12 @@ export function CloudDeviceSection({
       }
     } finally {
       setIsCreating(false)
-      setMailEnabled(false)
-      setMailEmail('')
+      // Reset to defaults after creation
+      setMailEnabled(true)
+      setMailEmail(user?.user_name || '')
       setMailpassword('')
     }
-  }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword])
+  }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword, user?.user_name])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deviceToDelete) return
@@ -139,6 +150,30 @@ export function CloudDeviceSection({
       setDeviceToDelete(null)
     }
   }, [deviceToDelete, t, onDeviceCreated])
+
+  // Check if any device is being created
+  const hasCreatingDevice = cloudDevices.some(device => {
+    // Check if device is offline and was recently created (within 3 minutes)
+    if (device.status === 'offline' && device.cloud_config?.createdAt) {
+      const createdAt = new Date(device.cloud_config.createdAt)
+      const now = new Date()
+      const diffMinutes = (now.getTime() - createdAt.getTime()) / 1000 / 60
+      return diffMinutes < 3
+    }
+
+    return false
+  })
+
+  // Auto-refresh when devices are being created
+  useEffect(() => {
+    if (!hasCreatingDevice) return
+
+    const interval = setInterval(() => {
+      onDeviceCreated() // Trigger refresh
+    }, 10000) // 10 seconds
+
+    return () => clearInterval(interval)
+  }, [hasCreatingDevice, onDeviceCreated])
 
   // Don't render if cloud devices are not enabled or user cannot create
   if (cloudConfig && !cloudConfig.enabled) {
@@ -177,6 +212,14 @@ export function CloudDeviceSection({
         )}
       </div>
 
+      {/* Creating notice alert */}
+      {hasCreatingDevice && (
+        <Alert variant="success">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <AlertDescription>{t('cloud_device.creating_notice')}</AlertDescription>
+        </Alert>
+      )}
+
       {/* Cloud devices list */}
       {cloudDevices.length === 0 ? (
         <div className="text-center py-8 text-text-muted">
@@ -201,12 +244,14 @@ export function CloudDeviceSection({
 
       {/* Create confirmation dialog */}
       <Dialog
+        key={showCreateConfirm ? 'open' : 'closed'}
         open={showCreateConfirm}
         onOpenChange={open => {
           setShowCreateConfirm(open)
           if (!open) {
-            setMailEnabled(false)
-            setMailEmail('')
+            // Reset to defaults when closing dialog
+            setMailEnabled(true)
+            setMailEmail(user?.user_name || '')
             setMailpassword('')
           }
         }}
@@ -329,31 +374,6 @@ function CloudDeviceCard({
   const isOnline = device.status === 'online' || device.status === 'busy'
   const slotsAvailable = device.slot_max === 0 || device.slot_used < device.slot_max
   const canStartTask = isOnline && slotsAvailable
-  const [vncUrl, setVncUrl] = useState<string | null>(null)
-
-  // Fetch VNC URL for online cloud devices
-  useEffect(() => {
-    if (!isOnline) {
-      setVncUrl(null)
-      return
-    }
-
-    let cancelled = false
-    cloudDeviceApis
-      .getCloudDeviceStatus(device.device_id)
-      .then(status => {
-        if (!cancelled && status.vnc_url) {
-          setVncUrl(status.vnc_url)
-        }
-      })
-      .catch(() => {
-        // Silently ignore - VNC button simply won't appear
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [device.device_id, isOnline])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -450,19 +470,6 @@ function CloudDeviceCard({
               )}
             </Tooltip>
           </TooltipProvider>
-          {vncUrl && (
-            <Button variant="default" size="sm" asChild>
-              <a
-                href={vncUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2"
-              >
-                <Monitor className="w-4 h-4" />
-                {t('devices:vnc_open_desktop')}
-              </a>
-            </Button>
-          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
