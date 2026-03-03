@@ -16,6 +16,7 @@
     "create_error": "云设备创建失败",
     "delete_success": "云设备已删除",
     "delete_error": "删除云设备失败",
+    "creating_notice": "云设备正在创建中，预计 1-3 分钟后可用，请稍候...",
     "mail_enable": "启用邮件功能",
     "mail_email": "邮箱账号",
     "mail_email_placeholder": "例如: zhangsan",

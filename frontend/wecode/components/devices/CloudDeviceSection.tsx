@@ -35,6 +35,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Cloud, Plus, Loader2, Trash2, Play, Star, MoreVertical, Monitor } from 'lucide-react'
 import {
   DropdownMenu,
@@ -140,6 +141,33 @@ export function CloudDeviceSection({
     }
   }, [deviceToDelete, t, onDeviceCreated])
 
+  // Check if any device is being created
+  const hasCreatingDevice = cloudDevices.some(device => {
+    // Check if device status is explicitly 'creating'
+    if (device.status === 'creating') return true
+
+    // Check if device is offline and was recently created (within 3 minutes)
+    if (device.status === 'offline' && device.cloud_config?.createdAt) {
+      const createdAt = new Date(device.cloud_config.createdAt)
+      const now = new Date()
+      const diffMinutes = (now.getTime() - createdAt.getTime()) / 1000 / 60
+      return diffMinutes < 3
+    }
+
+    return false
+  })
+
+  // Auto-refresh when devices are being created
+  useEffect(() => {
+    if (!hasCreatingDevice) return
+
+    const interval = setInterval(() => {
+      onDeviceCreated() // Trigger refresh
+    }, 10000) // 10 seconds
+
+    return () => clearInterval(interval)
+  }, [hasCreatingDevice, onDeviceCreated])
+
   // Don't render if cloud devices are not enabled or user cannot create
   if (cloudConfig && !cloudConfig.enabled) {
     return null
@@ -176,6 +204,14 @@ export function CloudDeviceSection({
           </Button>
         )}
       </div>
+
+      {/* Creating notice alert */}
+      {hasCreatingDevice && (
+        <Alert variant="default">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <AlertDescription>{t('cloud_device.creating_notice')}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Cloud devices list */}
       {cloudDevices.length === 0 ? (
