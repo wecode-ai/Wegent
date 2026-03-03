@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -51,7 +50,6 @@ function ConfigPageContent() {
   const [visibility, setVisibility] = useState<string>(TopicVisibility.PRIVATE)
   const [instructions, setInstructions] = useState('')
   const [showInstructionsPreview, setShowInstructionsPreview] = useState(false)
-  const [isExamMode, setIsExamMode] = useState(false)
 
   // Exam config state (three-phase: intro, exam, review)
   const [introMinutes, setIntroMinutes] = useState(5)
@@ -71,12 +69,10 @@ function ConfigPageContent() {
       setDescription(topicData.description || '')
       setVisibility(topicData.visibility)
       setInstructions((topicData.extra_data?.instructions as string) || '')
-      setIsExamMode(topicData.extra_data?.examMode === true)
 
       // Load exam config from extra_data (three-phase structure)
       const extraData = topicData.extra_data as Record<string, unknown> | undefined
-      const examData =
-        extraData?.examMode === true ? (extraData as unknown as ExamTopicExtraData) : undefined
+      const examData = extraData as unknown as ExamTopicExtraData | undefined
       if (examData?.duration) {
         setIntroMinutes(examData.duration.intro || 5)
         setExamMinutes(examData.duration.exam || 50)
@@ -115,18 +111,14 @@ function ConfigPageContent() {
     try {
       const currentExtraData = topic?.extra_data || {}
 
-      // Build exam config if exam mode is enabled (three-phase structure)
-      let examData: ExamTopicExtraData | undefined
-      if (isExamMode) {
-        examData = {
-          examMode: true,
-          duration: {
-            intro: introMinutes,
-            exam: examMinutes,
-            review: reviewMinutes,
-          },
-          instructions: examInstructions.trim(),
-        }
+      // Build exam config (three-phase structure)
+      const examData: ExamTopicExtraData = {
+        duration: {
+          intro: introMinutes,
+          exam: examMinutes,
+          review: reviewMinutes,
+        },
+        instructions: examInstructions.trim(),
       }
 
       await updateAuthorTopic(topicId, {
@@ -136,12 +128,8 @@ function ConfigPageContent() {
         instructions: instructions.trim() || undefined,
         extra_data: {
           ...currentExtraData,
-          examMode: isExamMode,
-          ...(examData && {
-            examMode: true,
-            duration: examData.duration,
-            instructions: examData.instructions,
-          }),
+          duration: examData.duration,
+          instructions: examData.instructions,
         },
       })
 
@@ -208,23 +196,15 @@ function ConfigPageContent() {
                 {t('topics.basic_info', 'Basic Info')}
               </button>
               <button
-                onClick={() => isExamMode && setActiveTab('exam')}
-                disabled={!isExamMode}
+                onClick={() => setActiveTab('exam')}
                 className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
                   activeTab === 'exam'
                     ? 'border-b-2 border-primary text-primary'
-                    : isExamMode
-                      ? 'text-text-secondary hover:text-text-primary'
-                      : 'cursor-not-allowed text-text-muted'
+                    : 'text-text-secondary hover:text-text-primary'
                 }`}
               >
                 <GraduationCap className="h-4 w-4" />
                 {t('topics.exam_config', 'Exam Config')}
-                {!isExamMode && (
-                  <span className="ml-1 text-xs">
-                    ({t('topics.enable_exam_mode_first', 'Enable exam mode first')})
-                  </span>
-                )}
               </button>
             </div>
           </div>
@@ -253,29 +233,6 @@ function ConfigPageContent() {
                   rows={4}
                   maxLength={2000}
                 />
-              </div>
-
-              {/* Exam Mode Toggle - Prominent placement */}
-              <div className="rounded-lg border border-border bg-surface p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <GraduationCap className="h-5 w-5 text-primary" />
-                      <Label htmlFor="examMode" className="text-base font-medium">
-                        {t('topics.exam_mode', 'Exam Mode')}
-                      </Label>
-                    </div>
-                    <p className="mt-1 text-sm text-text-muted">
-                      {isExamMode
-                        ? t(
-                            'topics.exam_mode_enabled',
-                            'This topic will be displayed as an exam with timer and enhanced UI'
-                          )
-                        : t('topics.exam_mode_disabled', 'Standard Q&A mode')}
-                    </p>
-                  </div>
-                  <Switch id="examMode" checked={isExamMode} onCheckedChange={setIsExamMode} />
-                </div>
               </div>
 
               <div className="space-y-2">
@@ -351,7 +308,7 @@ function ConfigPageContent() {
           )}
 
           {/* Exam Config Tab */}
-          {activeTab === 'exam' && isExamMode && (
+          {activeTab === 'exam' && (
             <div className="space-y-8">
               {/* Duration - Three Phase */}
               <div className="grid gap-4 md:grid-cols-3">

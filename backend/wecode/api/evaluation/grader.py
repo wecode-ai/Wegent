@@ -172,7 +172,9 @@ def _get_topic_ids_with_grader_access(
         db.query(EvalPermission.topic_id)
         .filter(
             EvalPermission.user_id == user_id,
-            EvalPermission.role.in_([PermissionRole.GRADER, PermissionRole.QUESTION_CREATOR]),
+            EvalPermission.role.in_(
+                [PermissionRole.GRADER, PermissionRole.QUESTION_CREATOR]
+            ),
         )
         .all()
     )
@@ -922,6 +924,17 @@ def update_grader_task_report(
         )
 
     _check_grader_permission(db, topic, current_user.id, permission_service)
+
+    # Optimistic locking: check version before updating
+    if task.version != request.version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Report has been modified by another user",
+                "current_version": task.version,
+                "current_report": task.report_data,
+            },
+        )
 
     task = grading_service.update_report(
         db, task, request.report_content, current_user.id

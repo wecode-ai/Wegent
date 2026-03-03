@@ -190,8 +190,8 @@ export function ExamPage() {
   // Compute progress steps
   const progressSteps = [
     { label: '选择题目', done: state.selectedQuestionId !== null },
-    { label: '上传材料', done: state.mainFiles.length > 0 },
     { label: '填写说明', done: state.supplementaryNotes.trim().length > 0 },
+    { label: '上传材料', done: state.mainFiles.length > 0 },
     { label: '确认提交', done: submitCount > 0 },
   ]
 
@@ -287,7 +287,6 @@ export function ExamPage() {
         selectedQuestionId: state.selectedQuestionId,
         participantName: state.participantName,
         content_data: {
-          examMode: true,
           participantName: state.participantName,
           selectedTopicId: state.selectedQuestionId,
           supplementaryNotes: state.supplementaryNotes,

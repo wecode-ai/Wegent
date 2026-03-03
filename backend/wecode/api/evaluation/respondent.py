@@ -620,8 +620,6 @@ def get_exam_data(
     Returns topic with extra_data, all questions with content_data,
     any existing answer from the current user, and exam session status.
 
-    Only works for topics with examMode enabled in extra_data.
-
     Args:
         create_session: If True, creates a new exam session (for "进入考试" action).
                        If False, returns existing session or "ready" state.
@@ -654,13 +652,7 @@ def get_exam_data(
             detail="This topic is not yet available",
         )
 
-    # Check if topic has examMode enabled
     extra_data = topic.extra_data or {}
-    if not extra_data.get("examMode"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This topic is not configured for exam mode",
-        )
 
     # Get all published questions for the topic
     questions, _ = question_service.list_questions(
@@ -790,7 +782,7 @@ class ExamSubmitRequest(BaseModel):
     participantName: str = Field(..., description="Name of the participant")
     content_data: Dict[str, Any] = Field(
         ...,
-        description="Exam content data including examMode, attachments, etc.",
+        description="Exam content data including attachments, participant name, etc.",
     )
 
 
@@ -836,14 +828,6 @@ def submit_exam(
             detail="Cannot submit answer to unpublished topic",
         )
 
-    # Check if topic has examMode enabled
-    extra_data = topic.extra_data or {}
-    if not extra_data.get("examMode"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This topic is not configured for exam mode",
-        )
-
     # Get session and validate timing
     session = exam_session_service.get_or_create_session(
         db=db, topic_id=topic_id, user_id=current_user.id
@@ -881,7 +865,6 @@ def submit_exam(
     # Build content data for exam submission
     content_data = {
         **request.content_data,
-        "examMode": True,
         "participantName": request.participantName,
         "selectedTopicId": topic_id,
     }
@@ -898,9 +881,37 @@ def submit_exam(
     )
 
     if existing_answer:
-        # Update existing answer (merge content data)
+        # Update existing answer (deep merge content data)
         existing_content = existing_answer.content_data or {}
-        updated_content = {**existing_content, **content_data}
+        new_content = content_data
+
+        # Deep merge attachments if both exist
+        if "attachments" in existing_content and "attachments" in new_content:
+            merged_attachments = {
+                **existing_content["attachments"],
+                **new_content["attachments"],
+            }
+            new_content["attachments"] = merged_attachments
+
+        # Handle supplementaryNotesFiles - use new value if provided, otherwise keep existing
+        if "supplementaryNotesFiles" in new_content:
+            # Use the new value (for delete operations)
+            pass
+        elif "supplementaryNotesFiles" in existing_content:
+            # Keep existing value if not in new content
+            new_content["supplementaryNotesFiles"] = existing_content[
+                "supplementaryNotesFiles"
+            ]
+
+        # Handle supplementaryNotes text - preserve if not in new content
+        if (
+            "supplementaryNotes" not in new_content
+            and "supplementaryNotes" in existing_content
+        ):
+            new_content["supplementaryNotes"] = existing_content["supplementaryNotes"]
+
+        # Update content_data
+        updated_content = {**existing_content, **new_content}
         existing_answer.content_data = updated_content
         existing_answer.submitted_at = datetime.now(timezone.utc)
         db.commit()
@@ -975,14 +986,6 @@ def select_exam_question(
             detail="You don't have permission to answer this topic",
         )
 
-    # Check if topic has examMode enabled
-    extra_data = topic.extra_data or {}
-    if not extra_data.get("examMode"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This topic is not configured for exam mode",
-        )
-
     # Verify the question exists and belongs to this topic
     question = question_service.get(db, request.question_id)
     if not question:
@@ -1053,14 +1056,6 @@ def update_exam_attachments(
             detail="You don't have permission to update answers for this topic",
         )
 
-    # Check if topic has examMode enabled
-    extra_data = topic.extra_data or {}
-    if not extra_data.get("examMode"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This topic is not configured for exam mode",
-        )
-
     # Verify the selected question exists and belongs to this topic
     question = question_service.get(db, request.selectedQuestionId)
     if not question:
@@ -1086,7 +1081,6 @@ def update_exam_attachments(
         # Create initial answer if not exists
         content_data = {
             **request.content_data,
-            "examMode": True,
             "selectedTopicId": request.selectedQuestionId,
         }
         answer = answer_service.submit(
@@ -1236,62 +1230,46 @@ def _has_valid_answer_content(answer: Any) -> bool:
     """
     Check if an answer has valid content for grading.
 
-    For exam mode answers, checks if there are any attachments
-    (main, interaction, bonusAgent files, bonusMultimodal) or
-    supplementary notes/files.
+    Checks if there are any attachments (main, interaction, bonusAgent files,
+    bonusMultimodal) or supplementary notes/files.
     """
     if not answer or not answer.content_data:
         return False
 
     content_data = answer.content_data
+    attachments = content_data.get("attachments", {})
 
-    # Check for exam mode content
-    if content_data.get("examMode"):
-        attachments = content_data.get("attachments", {})
-
-        # Check main attachments
-        if attachments.get("main") and len(attachments["main"]) > 0:
-            return True
-
-        # Check interaction attachments
-        if attachments.get("interaction") and len(attachments["interaction"]) > 0:
-            return True
-
-        # Check bonusAgent files
-        bonus_agent = attachments.get("bonusAgent", {})
-        if bonus_agent.get("files") and len(bonus_agent["files"]) > 0:
-            return True
-        if bonus_agent.get("link") and bonus_agent["link"].strip():
-            return True
-
-        # Check bonusMultimodal attachments
-        if (
-            attachments.get("bonusMultimodal")
-            and len(attachments["bonusMultimodal"]) > 0
-        ):
-            return True
-
-        # Check supplementary notes files
-        if (
-            content_data.get("supplementaryNotesFiles")
-            and len(content_data["supplementaryNotesFiles"]) > 0
-        ):
-            return True
-
-        # Check supplementary notes text
-        if (
-            content_data.get("supplementaryNotes")
-            and content_data["supplementaryNotes"].strip()
-        ):
-            return True
-
-        return False
-
-    # For non-exam mode, check for text content or attachments
-    if content_data.get("text") and content_data["text"].strip():
+    # Check main attachments
+    if attachments.get("main") and len(attachments["main"]) > 0:
         return True
 
-    if content_data.get("attachments") and len(content_data["attachments"]) > 0:
+    # Check interaction attachments
+    if attachments.get("interaction") and len(attachments["interaction"]) > 0:
+        return True
+
+    # Check bonusAgent files
+    bonus_agent = attachments.get("bonusAgent", {})
+    if bonus_agent.get("files") and len(bonus_agent["files"]) > 0:
+        return True
+    if bonus_agent.get("link") and bonus_agent["link"].strip():
+        return True
+
+    # Check bonusMultimodal attachments
+    if attachments.get("bonusMultimodal") and len(attachments["bonusMultimodal"]) > 0:
+        return True
+
+    # Check supplementary notes files
+    if (
+        content_data.get("supplementaryNotesFiles")
+        and len(content_data["supplementaryNotesFiles"]) > 0
+    ):
+        return True
+
+    # Check supplementary notes text
+    if (
+        content_data.get("supplementaryNotes")
+        and content_data["supplementaryNotes"].strip()
+    ):
         return True
 
     return False

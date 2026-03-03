@@ -45,6 +45,7 @@ export { ParticipantInfoSection } from './ParticipantInfoSection'
 export { CompletedState } from './CompletedState'
 export { EndExamConfirmModal } from './EndExamConfirmModal'
 export { LeaveExamConfirmModal } from './LeaveExamConfirmModal'
+export { TimeWarningModal } from './TimeWarningModal'
 
 // Types
 export type { Topic } from './AIAssessmentTopicCard'

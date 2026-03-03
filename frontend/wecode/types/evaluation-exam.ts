@@ -26,8 +26,6 @@ export interface ExamDuration {
  * Enables exam mode for a topic with essential exam settings
  */
 export interface ExamTopicExtraData {
-  /** Flag to enable exam mode for this topic */
-  examMode: true
   /** Duration configuration */
   duration: ExamDuration
   /** Instructions markdown content */
@@ -72,8 +70,6 @@ export interface ExamAttachmentGroup {
  * Contains participant submission with all attachments
  */
 export interface ExamAnswerContent {
-  /** Flag indicating exam mode submission */
-  examMode: true
   /** Participant's name */
   participantName: string
   /** Selected topic ID (for validation) */

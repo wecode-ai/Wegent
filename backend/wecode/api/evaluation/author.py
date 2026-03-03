@@ -1089,13 +1089,7 @@ def get_topic_exam_sessions(
     topic = _get_topic_or_404(db, topic_id)
     _verify_topic_ownership(db, topic, current_user.id)
 
-    # Check if topic has examMode enabled
     extra_data = topic.extra_data or {}
-    if not extra_data.get("examMode"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This topic is not configured for exam mode",
-        )
 
     from app.models.user import User
     from wecode.models.evaluation_exam_session import EvalExamSession
@@ -1113,15 +1107,19 @@ def get_topic_exam_sessions(
     # Build simplified session list without redundant topic data
     session_list = []
     for session, user in sessions:
-        session_list.append({
-            "user_id": session.user_id,
-            "user_name": user.user_name if user else f"User {session.user_id}",
-            "user_email": user.email if user else None,
-            "current_phase": session.current_phase,
-            "started_at": session.started_at.isoformat() if session.started_at else None,
-            "submit_count": session.submit_count,
-            "selected_question_id": session.selected_question_id or None,
-        })
+        session_list.append(
+            {
+                "user_id": session.user_id,
+                "user_name": user.user_name if user else f"User {session.user_id}",
+                "user_email": user.email if user else None,
+                "current_phase": session.current_phase,
+                "started_at": (
+                    session.started_at.isoformat() if session.started_at else None
+                ),
+                "submit_count": session.submit_count,
+                "selected_question_id": session.selected_question_id or None,
+            }
+        )
 
     # Return topic info at top level + simplified sessions list
     return {
@@ -1237,7 +1235,9 @@ def update_user_exam_session_phase(
 
     # If transitioning to completed, create grading tasks
     if request.target_phase == "completed":
-        from wecode.api.evaluation.respondent import _create_grading_tasks_for_exam_completion
+        from wecode.api.evaluation.respondent import (
+            _create_grading_tasks_for_exam_completion,
+        )
 
         _create_grading_tasks_for_exam_completion(
             db=db,
@@ -1299,7 +1299,9 @@ def force_end_exam_session(
     )
 
     # Create grading tasks
-    from wecode.api.evaluation.respondent import _create_grading_tasks_for_exam_completion
+    from wecode.api.evaluation.respondent import (
+        _create_grading_tasks_for_exam_completion,
+    )
 
     _create_grading_tasks_for_exam_completion(
         db=db,
