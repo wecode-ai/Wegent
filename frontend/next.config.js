@@ -51,6 +51,15 @@ const nextConfig = {
           config.experiments = config.experiments || {}
           config.experiments.topLevelAwait = true
 
+          // Configure @novnc/novnc to be treated as ESM
+          config.module = config.module || {}
+          config.module.rules = config.module.rules || []
+          config.module.rules.push({
+            test: /\.js$/,
+            include: /node_modules[\\/]@novnc[\\/]novnc/,
+            type: 'javascript/esm',
+          })
+
           // Handle chunk loading issues
           config.optimization = {
             ...config.optimization,
