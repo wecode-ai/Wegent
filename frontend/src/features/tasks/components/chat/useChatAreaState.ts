@@ -107,6 +107,8 @@ export interface ChatAreaState {
   attachmentState: MultiAttachmentUploadState
   handleFileSelect: (files: File | File[]) => Promise<void>
   handleAttachmentRemove: (attachmentId: number) => Promise<void>
+  /** Add an already-uploaded attachment as reference (e.g., from ImageGallery follow-up) */
+  addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   resetAttachment: () => void
   isAttachmentReadyToSend: boolean
   isUploading: boolean
@@ -254,6 +256,7 @@ export function useChatAreaState({
   const {
     state: attachmentState,
     handleFileSelect,
+    addExistingAttachment,
     handleRemove: handleAttachmentRemove,
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
@@ -608,6 +611,7 @@ export function useChatAreaState({
     // Attachment state (multi-attachment)
     attachmentState,
     handleFileSelect,
+    addExistingAttachment,
     handleAttachmentRemove,
     resetAttachment,
     isAttachmentReadyToSend,

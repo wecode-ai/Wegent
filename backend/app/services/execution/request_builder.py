@@ -415,9 +415,10 @@ class TaskRequestBuilder:
             task_data=task_data,
         )
 
-        # Handle secondaryModelRef for video models
-        # When modelType is 'video', resolve secondary model for intent analysis
-        if model_config.get("modelType") == "video":
+        # Handle secondaryModelRef for generation models (video and image).
+        # When modelType is 'video' or 'image', resolve secondary model for intent analysis
+        # used in multi-turn follow-up generation.
+        if model_config.get("modelType") in ("video", "image"):
             secondary_model_config = self._get_secondary_model_config(
                 bot=bot,
                 user_id=user_id,
@@ -440,7 +441,8 @@ class TaskRequestBuilder:
     ) -> dict[str, Any] | None:
         """Get secondary model configuration from bot's secondaryModelRef.
 
-        Used for auxiliary tasks like intent analysis in video generation.
+        Used for auxiliary tasks like intent analysis in video/image generation
+        follow-up conversations.
 
         Args:
             bot: Bot Kind object
