@@ -176,6 +176,31 @@ export WEGENT_BACKEND_URL="{backend_url}"
 # Download and execute the shared install script
 {curl_download_cmd} | bash -s -- {install_args}
 
+# Wait for executor setup to complete
+sleep 3
+
+# Open Chrome browser with weibo.com as ubuntu user
+echo "[CloudDevice] Opening Chrome browser with weibo.com..."
+
+# Set DISPLAY for GUI applications
+export DISPLAY=:0
+
+# Wait for X server to be ready
+for i in {{1..30}}; do
+    if xdpyinfo &>/dev/null; then
+        echo "[CloudDevice] X server is ready"
+        break
+    fi
+    echo "[CloudDevice] Waiting for X server... ($i/30)"
+    sleep 1
+done
+
+# Launch Chrome in the background with weibo.com
+# Use nohup to prevent termination when script exits
+nohup google-chrome --no-first-run --no-default-browser-check --start-maximized https://weibo.com </dev/null >/dev/null 2>&1 &
+
+echo "[CloudDevice] Chrome browser launched with weibo.com"
+
 UBUNTU_SCRIPT
 
 echo "[CloudDevice] Setup complete at $(date)"
