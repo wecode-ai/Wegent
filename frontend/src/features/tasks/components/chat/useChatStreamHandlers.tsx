@@ -96,13 +96,18 @@ export interface UseChatStreamHandlersOptions {
 /**
  * Parameters for content generation (video, image, etc.)
  * Used when taskType is 'video' or 'image' to provide generation-specific settings.
- * Note: The model is passed via selectedModel, not in this struct.
  */
 export interface GenerateParams {
   /** Resolution for generation (e.g., '1080p', '720p', '480p') */
   resolution?: string
   /** Aspect ratio for generation (e.g., '16:9', '9:16', '1:1') */
   ratio?: string
+  /** Duration in seconds for video generation */
+  duration?: number
+  /** Model name for video/image generation (for display in user message) */
+  model?: string
+  /** Image size for image generation (e.g., '2048x2048') */
+  size?: string
 }
 
 export interface ChatStreamHandlers {
@@ -653,9 +658,9 @@ export function useChatStreamHandlers({
       selectedDeviceId,
       effectiveRequiresWorkspace,
       additionalSkills,
+      generateParams,
     ]
   )
-
   /**
    * Send a message with a temporary model override.
    * This is used for regeneration where user selects a specific model for that single regeneration.
