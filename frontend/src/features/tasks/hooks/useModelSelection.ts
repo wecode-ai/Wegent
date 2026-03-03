@@ -47,6 +47,7 @@ export interface Model {
   region?: ModelRegion
   isAdvanced?: boolean
   namespace?: string
+  config?: Record<string, unknown>
 }
 
 /** Special constant for default model option */
@@ -124,6 +125,7 @@ function unifiedToModel(unified: UnifiedModel): Model {
     displayName: unified.displayName,
     type: unified.type,
     isAdvanced: unified.isAdvanced ?? false,
+    config: unified.config,
   }
 }
 
@@ -284,26 +286,52 @@ export function useModelSelection({
 
   // -------------------------------------------------------------------------
   // Model Selection Logic (Simplified)
-  // Priority: 1. taskModelId (from API) -> 2. team's bind_model -> 3. global preference
+  // Priority: 1. taskModelId (from API) -> 2. global preference -> 3. team's bind_model
   // -------------------------------------------------------------------------
+  // Track if team's bot config has been loaded (for detecting async bot data loading)
+  const prevBotConfigRef = useRef<Record<string, unknown> | undefined>(undefined)
+
   useEffect(() => {
     const currentTeamId = selectedTeam?.id ?? null
-    const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId
-    const taskChanged =
-      hasInitializedRef.current &&
-      prevTaskIdRef.current !== taskId &&
-      (typeof prevTaskIdRef.current === 'number' || typeof taskId === 'number')
+    const currentBotConfig = selectedTeam?.bots?.[0]?.bot?.agent_config as
+      | Record<string, unknown>
+      | undefined
 
-    prevTeamIdRef.current = currentTeamId
-    prevTaskIdRef.current = taskId
-
-    // Skip if no models loaded yet
+    // Skip if no models loaded yet - but don't update refs yet
     if (models.length === 0) {
       return
     }
 
-    // Case 1: Initial load or team/task changed - restore model
-    if (!hasInitializedRef.current || teamChanged || taskChanged) {
+    // Skip initialization if no team is selected yet
+    // This prevents hasInitializedRef from being set to true before team is available
+    // But don't update refs yet so we can detect team change later
+    if (!selectedTeam && !hasInitializedRef.current) {
+      return
+    }
+
+    // Team changed: either from one team to another, OR from null to a valid team
+    // Also detect when team becomes available for the first time (null -> valid)
+    const teamChanged = prevTeamIdRef.current !== currentTeamId
+
+    const taskChanged =
+      hasInitializedRef.current &&
+      prevTaskIdRef.current !== taskId &&
+      (typeof prevTaskIdRef.current === 'number' || typeof taskId === 'number')
+    // Bot config changed: from undefined to defined (async loading completed)
+    // This handles the case where team data loads before bot details
+    const botConfigLoaded =
+      hasInitializedRef.current &&
+      prevBotConfigRef.current === undefined &&
+      currentBotConfig !== undefined &&
+      !selectedModel // Only re-trigger if no model is selected yet
+
+    // Update refs AFTER checking for changes
+    prevTeamIdRef.current = currentTeamId
+    prevTaskIdRef.current = taskId
+    prevBotConfigRef.current = currentBotConfig
+
+    // Case 1: Initial load or team/task changed or bot config loaded - restore model
+    if (!hasInitializedRef.current || teamChanged || taskChanged || botConfigLoaded) {
       isRestoringRef.current = true
       let restoredModel: Model | null = null
 
@@ -320,7 +348,8 @@ export function useModelSelection({
       // NOTE: Must search in filteredModels to ensure model is compatible with current team's agent_type
       if (!restoredModel && teamId && !taskId) {
         const preference = getGlobalModelPreference(teamId)
-        if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
+        // Skip empty or default model names from preference
+        if (preference && preference.modelName && preference.modelName !== DEFAULT_MODEL_NAME) {
           // Search in filteredModels (not models) to ensure compatibility with team's agent_type
           const foundModel = filteredModels.find(m => {
             if (preference.modelType) {
@@ -334,7 +363,6 @@ export function useModelSelection({
           }
         }
       }
-
       // Priority 3: Use team's bot bind_model as fallback
       if (!restoredModel && !taskModelId) {
         const teamDefaultModel = getTeamDefaultModel()
@@ -381,6 +409,7 @@ export function useModelSelection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedTeam?.id,
+    selectedTeam?.bots, // Added to detect when bot data loads asynchronously
     showDefaultOption,
     models,
     filteredModels,
@@ -405,6 +434,11 @@ export function useModelSelection({
 
     // Skip if not initialized (initial load)
     if (!hasInitializedRef.current) {
+      return
+    }
+
+    // Skip saving empty or default model names
+    if (!selectedModel.name || selectedModel.name === DEFAULT_MODEL_NAME) {
       return
     }
 
@@ -504,30 +538,19 @@ export function useModelSelection({
       }
       return t('common:task_submit.select_model', '选择模型')
     }
-    if (selectedModel.name === DEFAULT_MODEL_NAME) {
-      const boundModelDisplayNames = getBoundModelDisplayNames()
+    // if (selectedModel.name === DEFAULT_MODEL_NAME) {
+    //   const boundModelDisplayNames = getBoundModelDisplayNames()
 
-      if (boundModelDisplayNames.length === 1) {
-        return boundModelDisplayNames[0]
-      } else if (boundModelDisplayNames.length > 1) {
-        return `${boundModelDisplayNames[0]} +${boundModelDisplayNames.length - 1}`
-      }
-      return t('common:task_submit.default_model', '默认')
-    }
+    //   if (boundModelDisplayNames.length === 1) {
+    //     return boundModelDisplayNames[0]
+    //   } else if (boundModelDisplayNames.length > 1) {
+    //     return `${boundModelDisplayNames[0]} +${boundModelDisplayNames.length - 1}`
+    //   }
+    //   return t('common:task_submit.default_model', '默认')
+    // }
     const displayText = getModelDisplayTextHelper(selectedModel)
-    if (forceOverride && !isMixedTeam) {
-      return `${displayText}(${t('common:task_submit.override_short', '覆盖')})`
-    }
     return displayText
-  }, [
-    selectedModel,
-    isLoading,
-    isModelRequired,
-    forceOverride,
-    isMixedTeam,
-    getBoundModelDisplayNames,
-    t,
-  ])
+  }, [selectedModel, isLoading, isModelRequired, t])
 
   // -------------------------------------------------------------------------
   // Return

@@ -28,7 +28,6 @@ import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
-import { getAttachment } from '@/apis/attachments'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
@@ -81,7 +80,7 @@ function ChatAreaContent({
   showRepositorySelector = true,
   taskType = 'chat',
   onShareButtonRender,
-  onRefreshTeams,
+  onRefreshTeams: _onRefreshTeams,
   initialKnowledgeBase,
   onTaskCreated,
   knowledgeBaseId,
@@ -97,7 +96,7 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
@@ -118,20 +117,22 @@ function ChatAreaContent({
 
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
+  // Pass selectedTeam to enable reading bind_model from team's bot config
   const videoModelSelection = useModelSelection({
-    teamId: null,
-    taskId: null,
-    selectedTeam: null,
+    teamId: chatState.selectedTeam?.id ?? null,
+    taskId: selectedTaskDetail?.id ?? null,
+    selectedTeam: chatState.selectedTeam,
     disabled: taskType !== 'video',
     modelCategoryType: 'video',
   })
 
   // Image model selection state - only enabled for image mode
   // Uses unified useModelSelection hook with modelCategoryType='image'
+  // Pass selectedTeam to enable reading bind_model from team's bot config
   const imageModelSelection = useModelSelection({
-    teamId: null,
-    taskId: null,
-    selectedTeam: null,
+    teamId: chatState.selectedTeam?.id ?? null,
+    taskId: selectedTaskDetail?.id ?? null,
+    selectedTeam: chatState.selectedTeam,
     disabled: taskType !== 'image',
     modelCategoryType: 'image',
   })
@@ -141,9 +142,64 @@ function ChatAreaContent({
   const [selectedResolution, setSelectedResolution] = useState('1080p')
   const [selectedRatio, setSelectedRatio] = useState('16:9')
   const [selectedDuration, setSelectedDuration] = useState(5)
-  const availableResolutions = useMemo(() => ['720p', '1080p', '2K', '4K'], [])
-  const availableRatios = useMemo(() => ['16:9', '9:16', '1:1', '4:3', '3:4'], [])
-  const availableDurations = useMemo(() => [5, 10], [])
+
+  // Derive available options and defaults from selected video model's config
+  const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
+    | {
+        resolution?: string
+        ratio?: string
+        duration?: number
+        capabilities?: {
+          aspect_ratios?: { value: string }[]
+          resolutions?: { label: string }[]
+          durations_sec?: number[]
+        }
+      }
+    | undefined
+  const videoCapabilities = videoConfig?.capabilities
+
+  const availableResolutions = useMemo(() => {
+    if (videoCapabilities?.resolutions?.length) {
+      return videoCapabilities.resolutions.map(r => r.label)
+    }
+    return ['480p', '720p', '1080p']
+  }, [videoCapabilities?.resolutions])
+
+  const availableRatios = useMemo(() => {
+    if (videoCapabilities?.aspect_ratios?.length) {
+      return videoCapabilities.aspect_ratios.map(r => r.value)
+    }
+    return ['16:9', '9:16', '1:1', '4:3', '3:4']
+  }, [videoCapabilities?.aspect_ratios])
+
+  const availableDurations = useMemo(() => {
+    if (videoCapabilities?.durations_sec?.length) {
+      return videoCapabilities.durations_sec
+    }
+    return [5, 10]
+  }, [videoCapabilities?.durations_sec])
+
+  // When video model changes, apply model's recommended defaults
+  const videoModelName = videoModelSelection.selectedModel?.name
+  useEffect(() => {
+    if (!videoConfig) return
+    if (videoConfig.resolution && availableResolutions.includes(videoConfig.resolution)) {
+      setSelectedResolution(videoConfig.resolution)
+    } else if (availableResolutions.length) {
+      setSelectedResolution(availableResolutions[0])
+    }
+    if (videoConfig.ratio && availableRatios.includes(videoConfig.ratio)) {
+      setSelectedRatio(videoConfig.ratio)
+    } else if (availableRatios.length) {
+      setSelectedRatio(availableRatios[0])
+    }
+    if (videoConfig.duration && availableDurations.includes(videoConfig.duration)) {
+      setSelectedDuration(videoConfig.duration)
+    } else if (availableDurations.length) {
+      setSelectedDuration(availableDurations[0])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoModelName])
 
   // Image mode specific state - image size
   const [selectedImageSize, setSelectedImageSize] = useState('2048x2048')
@@ -171,14 +227,17 @@ function ChatAreaContent({
     return Boolean(hasSelectedTask || hasContextMessages)
   }, [selectedTaskDetail, taskState?.messages])
 
-  // Get taskId from URL for team sync logic
+  // Get taskId and team/skill from URL for sync logic
   const searchParams = useSearchParams()
   const taskIdFromUrl =
     searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  const teamNameFromUrl = searchParams.get('team')
+  const skillNameFromUrl = searchParams.get('skill')
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
   const lastSyncedTaskIdRef = useRef<number | null>(null)
+  const hasInitializedSkillRef = useRef(false)
 
   // Filter teams by bind_mode based on current mode
   const filteredTeams = useMemo(() => {
@@ -202,7 +261,9 @@ function ChatAreaContent({
 
   // Team selection logic - using default team from server configuration
   useEffect(() => {
-    if (filteredTeams.length === 0) return
+    if (filteredTeams.length === 0 && !teamNameFromUrl) return
+    // When team is requested via URL, wait for full teams list to load
+    if (teamNameFromUrl && teams.length === 0) return
 
     // Extract team ID from task detail
     const detailTeamId = selectedTaskDetail?.team
@@ -213,8 +274,19 @@ function ChatAreaContent({
 
     // Case 1: Sync from task detail (HIGHEST PRIORITY)
     // Only sync when URL taskId matches taskDetail.id to prevent race conditions
-    if (taskIdFromUrl && selectedTaskDetail?.id && detailTeamId) {
+    if (taskIdFromUrl && selectedTaskDetail?.id) {
       if (selectedTaskDetail.id.toString() === taskIdFromUrl) {
+        // Handle case where team was deleted (detailTeamId is null)
+        if (!detailTeamId) {
+          // Team was deleted, reset selectedTeam if it's not already null
+          if (selectedTeam !== null) {
+            handleTeamChange(null)
+          }
+          lastSyncedTaskIdRef.current = selectedTaskDetail.id
+          hasInitializedTeamRef.current = true
+          return
+        }
+
         // Only update if we haven't synced this task yet or team is different
         if (
           lastSyncedTaskIdRef.current !== selectedTaskDetail.id ||
@@ -247,8 +319,19 @@ function ChatAreaContent({
       }
     }
 
-    // Case 2: New chat (no taskId in URL) - use default team from server config
+    // Case 2: New chat (no taskId in URL) - use team from URL param or default team
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
+      // Priority: team from URL query param > default team from server config
+      // Search in full teams list (not filteredTeams) to bypass bind_mode filter
+      if (teamNameFromUrl) {
+        const teamFromUrl = teams.find(t => t.name === teamNameFromUrl)
+        if (teamFromUrl) {
+          handleTeamChange(teamFromUrl)
+          hasInitializedTeamRef.current = true
+          lastSyncedTaskIdRef.current = null
+          return
+        }
+      }
       // Use the default team computed from server config
       const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
       if (defaultTeamForMode) {
@@ -267,21 +350,24 @@ function ChatAreaContent({
     }
 
     // Case 3: Validate current selection exists in filtered list
+    // Skip validation if team was explicitly set via URL param
     if (selectedTeam) {
       const exists = filteredTeams.some(t => t.id === selectedTeam.id)
-      if (!exists) {
+      if (!exists && !teamNameFromUrl) {
         const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
         handleTeamChange(defaultTeamForMode || filteredTeams[0])
       }
-    } else if (!taskIdFromUrl) {
+    } else if (!taskIdFromUrl && !teamNameFromUrl) {
       // No selection and no task - select default team
       const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
       handleTeamChange(defaultTeamForMode || filteredTeams[0])
     }
   }, [
+    teams,
     filteredTeams,
     selectedTaskDetail,
     taskIdFromUrl,
+    teamNameFromUrl,
     selectedTeam,
     handleTeamChange,
     findDefaultTeamForMode,
@@ -293,6 +379,32 @@ function ChatAreaContent({
       lastSyncedTaskIdRef.current = null
     }
   }, [taskIdFromUrl])
+
+  // Auto-select skill from URL param (?skill=<name>)
+  // Uses a stable team ID ref to ensure skill is added after the team's skill reset completes.
+  // The useSkillSelector hook resets selectedSkillNames when team?.id changes,
+  // so we track which team ID the skill was added for to re-add if reset occurs.
+  const skillTeamIdRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!skillNameFromUrl) return
+    if (!selectedTeam) return
+    if (skillSelector.availableSkills.length === 0) return
+
+    // If we already initialized for this team, skip
+    if (hasInitializedSkillRef.current && skillTeamIdRef.current === selectedTeam.id) return
+
+    const skillExists = skillSelector.availableSkills.some(s => s.name === skillNameFromUrl)
+    if (skillExists) {
+      // Use setTimeout to ensure this runs after useSkillSelector's reset effect
+      const timer = setTimeout(() => {
+        skillSelector.addSkill(skillNameFromUrl)
+        hasInitializedSkillRef.current = true
+        skillTeamIdRef.current = selectedTeam.id
+      }, 0)
+      return () => clearTimeout(timer)
+    }
+  }, [skillNameFromUrl, selectedTeam, skillSelector])
 
   // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
@@ -584,37 +696,10 @@ function ChatAreaContent({
     [chatState]
   )
 
-  // Callback when user wants to use a previously generated image as reference
-  // Fetches the attachment metadata and adds it to the current input attachments
-  const handleUseAsReference = useCallback(
-    async (item: import('../message/ImageGallery').ImageItem) => {
-      if (!item.attachmentId) return
-      try {
-        const detail = await getAttachment(item.attachmentId)
-        chatState.addExistingAttachment({
-          id: detail.id,
-          filename: detail.filename,
-          file_size: detail.file_size,
-          mime_type: detail.mime_type,
-          status: detail.status,
-          text_length: detail.text_length ?? null,
-          error_message: detail.error_message ?? null,
-          error_code: detail.error_code ?? null,
-          subtask_id: detail.subtask_id ?? null,
-          file_extension: detail.file_extension,
-          created_at: detail.created_at,
-        })
-      } catch (error) {
-        // Log error; system will fall back to auto intent analysis
-        console.error('Failed to use image as reference:', error)
-      }
-    },
-    [chatState]
-  )
-
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
+      clearAccessDenied()
       setSelectedTask(null)
       router.push('/chat')
     }
@@ -659,6 +744,7 @@ function ChatAreaContent({
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
     selectedTeam: chatState.selectedTeam,
+    teams: filteredTeams,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
@@ -719,7 +805,7 @@ function ChatAreaContent({
     isStopping: streamHandlers.isStopping,
     hasMessages,
     shouldCollapseSelectors,
-    shouldHideQuotaUsage: chatState.shouldHideQuotaUsage,
+    shouldHideQuotaUsage: true,
     shouldHideChatInput: chatState.shouldHideChatInput,
     isModelSelectionRequired,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
@@ -775,19 +861,48 @@ function ChatAreaContent({
   return (
     <div
       ref={chatAreaRef}
-      className="flex-1 flex flex-col min-h-0 w-full relative"
-      style={{ height: '100%', boxSizing: 'border-box' }}
+      className="flex-1 flex flex-col min-h-0 w-full relative overflow-hidden"
+      style={{ height: '100%', boxSizing: 'border-box', isolation: 'isolate' }}
     >
+      {/* Background images layer - only shows on homepage (no messages) and not in notebook mode */}
+      {!hasMessages && taskType !== 'knowledge' && (
+        <>
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage:
+                'url(/377208e3fc0f03f8bba6cb889d657ebed910a2de.png), url(/c076018773accb45373f8d36db62c64d2ccce368.png)',
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+              zIndex: -2,
+            }}
+          />
+          {/* Frosted glass overlay */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background:
+                'linear-gradient(0deg, rgba(242, 240, 229, 0.2), rgba(242, 240, 229, 0.2)), radial-gradient(62.88% 61.99% at 50% 50%, rgba(255, 255, 255, 0.8) 0%, #FFFFFF 100%)',
+              backdropFilter: 'blur(50px)',
+              WebkitBackdropFilter: 'blur(50px)',
+              zIndex: -1,
+            }}
+          />
+        </>
+      )}
       {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
       {hasMessages && selectedTaskDetail?.id && (
-        <PipelineStageIndicator
-          taskId={selectedTaskDetail.id}
-          taskStatus={selectedTaskDetail.status || null}
-          collaborationModel={
-            selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
-          }
-          onStageInfoChange={setPipelineStageInfo}
-        />
+        <div className="relative">
+          <PipelineStageIndicator
+            taskId={selectedTaskDetail.id}
+            taskStatus={selectedTaskDetail.status || null}
+            collaborationModel={
+              selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
+            }
+            onStageInfoChange={setPipelineStageInfo}
+          />
+        </div>
       )}
 
       {/* Messages Area: always mounted to keep scroll container stable */}
@@ -832,26 +947,25 @@ function ChatAreaContent({
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
               onContextReselect={handleContextReselect}
               hideGroupChatOptions={taskType === 'knowledge'}
-              onUseAsReference={handleUseAsReference}
             />
           </div>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className={hasMessages ? 'w-full' : 'flex-1 flex flex-col w-full'}>
+      <div className={hasMessages ? 'w-full' : 'flex-1 flex flex-col w-full relative'}>
         {/* Center area for input when no messages */}
         {!hasMessages && (
           <div
             className={
               taskType === 'knowledge'
-                ? 'flex-1 flex items-end justify-center w-full pb-6'
-                : 'flex-1 flex items-center justify-center w-full'
+                ? 'flex-1 flex items-end justify-center w-full pb-10'
+                : 'flex-1 flex items-center justify-center w-full pb-10'
             }
-            style={taskType === 'knowledge' ? undefined : { marginBottom: '20vh' }}
+            style={taskType === 'knowledge' ? undefined : { marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
+              {taskType !== 'knowledge' && <SloganDisplay />}
               <ChatInputCard
                 {...inputCardProps}
                 autoFocus={!hasMessages}
@@ -866,12 +980,16 @@ function ChatAreaContent({
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
                   hideSelected={true}
-                  onRefreshTeams={onRefreshTeams}
-                  showWizardButton={taskType === 'chat'}
                   defaultTeam={chatState.defaultTeam}
                 />
               )}
             </div>
+          </div>
+        )}
+        {/* AI Disclaimer - fixed at bottom center when no messages */}
+        {!hasMessages && (
+          <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
+            <p className="text-xs text-text-muted">{t('chat:ai_disclaimer')}</p>
           </div>
         )}
 
@@ -882,7 +1000,7 @@ function ChatAreaContent({
             className="fixed bottom-0 z-50"
             style={{
               left: floatingMetrics.left,
-              width: floatingMetrics.width,
+              width: floatingMetrics.width - 12, // Subtract scrollbar width to avoid blocking it
             }}
           >
             {/* Bottom gradient fade effect - text fades as it approaches the input, limited width to avoid overlapping scrollbar */}
@@ -903,6 +1021,10 @@ function ChatAreaContent({
             </div>
             <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4 bg-base">
               <ChatInputCard {...inputCardProps} />
+              {/* AI Disclaimer - below input card when has messages */}
+              <div className="flex justify-center mt-2 pointer-events-none">
+                <p className="text-xs text-text-muted">{t('chat:ai_disclaimer')}</p>
+              </div>
             </div>
           </div>
         )}
