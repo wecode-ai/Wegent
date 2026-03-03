@@ -23,9 +23,10 @@ type RFBConstructor = typeof RFB
 export async function loadRFB(): Promise<RFBConstructor> {
   try {
     // Dynamic import with webpackIgnore to bypass bundler issues
+    // Use relative path from node_modules for runtime loading
     const novnc = await import(
       /* webpackIgnore: true */
-      '@novnc/novnc/lib/rfb.js'
+      '/node_modules/@novnc/novnc/lib/rfb.js'
     )
 
     // Handle different export formats
