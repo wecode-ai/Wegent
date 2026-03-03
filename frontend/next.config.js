@@ -29,6 +29,7 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
+    '@novnc/novnc',
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
@@ -46,12 +47,9 @@ const nextConfig = {
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
           }
 
-          // Configure @novnc/novnc as external to avoid webpack parsing issues
-          // with top-level await in the library
-          config.externals = config.externals || []
-          if (Array.isArray(config.externals)) {
-            config.externals.push('@novnc/novnc')
-          }
+          // Enable top-level await for @novnc/novnc
+          config.experiments = config.experiments || {}
+          config.experiments.topLevelAwait = true
 
           // Handle chunk loading issues
           config.optimization = {

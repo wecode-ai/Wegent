@@ -5,53 +5,38 @@
 /**
  * Client-side noVNC RFB loader
  *
- * Uses Skypack CDN which provides proper ES module wrapping for browser use.
+ * Uses dynamic import from local node_modules with webpackIgnore.
  */
 
 'use client'
 
-// Global type definition for noVNC
-declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    noVNC?: { RFB: any }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    RFB?: any
-  }
-}
+import type RFB from '@novnc/novnc/lib/rfb'
+
+type RFBConstructor = typeof RFB
 
 /**
  * Load the noVNC RFB class.
- * Uses dynamic import with Skypack CDN (bypasses bundler).
+ * Uses dynamic import with webpackIgnore to load from node_modules at runtime.
  *
  * @returns Promise<RFB constructor>
  */
-export async function loadRFB() {
-  // Check if already loaded globally
-  if (typeof window !== 'undefined' && window.noVNC?.RFB) {
-    return window.noVNC.RFB
-  }
-
+export async function loadRFB(): Promise<RFBConstructor> {
   try {
-    // Use Skypack CDN with ?module to force ES module format
-    const novncModule = await import(
+    // Dynamic import with webpackIgnore to bypass bundler issues
+    const novnc = await import(
       /* webpackIgnore: true */
-      'https://cdn.skypack.dev/@novnc/novnc@1.6.0'
+      '@novnc/novnc/lib/rfb.js'
     )
 
-    // Extract RFB from the module
-    const RFB = novncModule.default?.RFB || novncModule.RFB || novncModule.default
+    // Handle different export formats
+    const RFB = novnc.default || novnc.RFB || novnc
 
     if (!RFB) {
-      console.error('[VNC] Module structure:', Object.keys(novncModule))
+      console.error('[VNC] Module exports:', Object.keys(novnc))
       throw new Error('RFB class not found in noVNC module')
     }
 
-    // Cache it globally
-    window.noVNC = window.noVNC || {}
-    window.noVNC.RFB = RFB
-
-    return RFB
+    return RFB as RFBConstructor
   } catch (error) {
     console.error('[VNC] Failed to load noVNC RFB:', error)
     throw new Error('Failed to load VNC library')
