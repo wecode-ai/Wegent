@@ -212,6 +212,12 @@ export class TaskStateMachine {
   // Queue for chunk events received during syncing state
   // These will be applied after sync completes
   private pendingChunks: PendingChunkEvent[] = []
+  // Queue for chat:start events received before recovery completes
+  // Prevents premature transition to streaming before cached_content is loaded
+  private pendingStarts: Array<{ subtaskId: number; shellType?: string; messageId?: number }> = []
+
+  // States where events should be queued instead of processed immediately
+  private static readonly BUFFERING_STATES: readonly TaskStatus[] = ['idle', 'joining', 'syncing']
 
   constructor(taskId: number, deps: TaskStateMachineDeps) {
     this.state = {
@@ -231,6 +237,35 @@ export class TaskStateMachine {
    */
   getState(): TaskStateData {
     return { ...this.state, messages: new Map(this.state.messages) }
+  }
+
+  /**
+   * Check if current state is buffering (events should be queued)
+   */
+  private isBufferingState(): boolean {
+    return TaskStateMachine.BUFFERING_STATES.includes(this.state.status)
+  }
+
+  /**
+   * Factory method to create a new AI streaming message
+   */
+  private createAiMessage(params: {
+    subtaskId: number
+    messageId?: number
+    shellType?: string
+    content?: string
+  }): UnifiedMessage {
+    const { subtaskId, messageId, shellType, content = '' } = params
+    return {
+      id: generateMessageId('ai', subtaskId),
+      type: 'ai',
+      status: 'streaming',
+      content,
+      timestamp: Date.now(),
+      subtaskId,
+      messageId,
+      result: shellType ? { shell_type: shellType } : undefined,
+    }
   }
 
   /**
@@ -474,6 +509,7 @@ export class TaskStateMachine {
         }
         this.pendingRecovery = false
         this.pendingChunks = [] // Clear pending chunks queue on leave
+        this.pendingStarts = [] // Clear pending start events on leave
         break
     }
 
@@ -612,6 +648,45 @@ export class TaskStateMachine {
         }
       }
 
+      // Sync result.blocks with recovered content for streaming messages.
+      // After recovery, message.content has the cached content (from Redis)
+      // but result.blocks may be empty or stale (from DB).
+      // The UI (MixedContentView) renders from result.blocks when available,
+      // so blocks must include the recovered content. Without this, new chunks
+      // create text blocks with only new content and the cached content is lost.
+      if (streamingInfo && streamingInfo.subtask_id) {
+        const recoveredMsg = this.state.messages.get(
+          generateMessageId('ai', streamingInfo.subtask_id)
+        )
+        if (recoveredMsg && recoveredMsg.status === 'streaming' && recoveredMsg.content) {
+          const existingBlocks = recoveredMsg.result?.blocks || []
+          const totalTextInBlocks = existingBlocks
+            .filter(b => b.type === 'text')
+            .reduce((total, b) => total + (b.content?.length || 0), 0)
+
+          if (totalTextInBlocks < recoveredMsg.content.length) {
+            const nonTextBlocks = existingBlocks.filter(b => b.type !== 'text')
+            const recoveredBlocks: MessageBlock[] = [
+              ...nonTextBlocks,
+              {
+                id: `text-recovered-${streamingInfo.subtask_id}`,
+                type: 'text',
+                content: recoveredMsg.content,
+                status: 'streaming',
+                timestamp: Date.now(),
+              },
+            ]
+
+            const updatedMessages = new Map(this.state.messages)
+            updatedMessages.set(generateMessageId('ai', streamingInfo.subtask_id), {
+              ...recoveredMsg,
+              result: { ...recoveredMsg.result, blocks: recoveredBlocks },
+            })
+            this.state = { ...this.state, messages: updatedMessages }
+          }
+        }
+      }
+
       // Check if any message is streaming
       let streamingSubtaskId: number | null = null
       for (const msg of this.state.messages.values()) {
@@ -627,13 +702,35 @@ export class TaskStateMachine {
         await this.dispatch({ type: 'SYNC_DONE' })
       }
 
-      // Apply pending chunks that were queued during sync
-      // This ensures chunks received during joining/syncing are not lost
+      // Apply pending start events and chunks that were queued during sync
+      // This ensures events received during joining/syncing are not lost
+      this.applyPendingStarts()
       this.applyPendingChunks()
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Sync failed'
       await this.dispatch({ type: 'SYNC_ERROR', error: errorMsg })
     }
+  }
+
+  /**
+   * Apply pending chat:start events that were queued during idle/joining/syncing.
+   * Creates AI messages for subtasks that started while recovery was in progress.
+   * Only creates a message if one doesn't already exist (buildMessages may have created it).
+   */
+  private applyPendingStarts(): void {
+    if (this.pendingStarts.length === 0) return
+
+    const newMessages = new Map(this.state.messages)
+    for (const start of this.pendingStarts) {
+      const aiMessageId = generateMessageId('ai', start.subtaskId)
+      if (newMessages.has(aiMessageId)) {
+        // Message already exists from buildMessages/cached_content, skip
+        continue
+      }
+      newMessages.set(aiMessageId, this.createAiMessage(start))
+    }
+    this.state = { ...this.state, messages: newMessages }
+    this.pendingStarts = []
   }
 
   /**
@@ -658,8 +755,8 @@ export class TaskStateMachine {
       }
 
       // Apply the chunk to the message
-      // CRITICAL FIX: Always append content to message.content, regardless of block_id
-      // This ensures that cached_content + new chunks are all in message.content
+      // Pending chunks received during joining/syncing are NEW content generated
+      // AFTER cached_content was captured, so they should always be appended
       const newMessages = new Map(this.state.messages)
       const updatedMessage: UnifiedMessage = {
         ...existingMessage,
@@ -674,7 +771,6 @@ export class TaskStateMachine {
         updatedMessage.reasoningContent = chunk.result.reasoning_content
       }
 
-      // Handle blocks
       // Handle blocks
       // CRITICAL: Always call mergeBlocksFromPendingChunk and update result.blocks
       // This ensures text blocks are created for ClaudeCode executor
@@ -694,7 +790,6 @@ export class TaskStateMachine {
       } else {
         // CRITICAL FIX: Always update blocks even when no chunk.result
         // This handles ClaudeCode executor which sends text content without block_id
-        // The mergeBlocksFromPendingChunk method will create text blocks to maintain chronological order
         updatedMessage.result = {
           ...existingMessage.result,
           blocks: mergedBlocks,
@@ -984,20 +1079,28 @@ export class TaskStateMachine {
    * Handle CHAT_START event
    */
   private handleChatStartEvent(event: Extract<Event, { type: 'CHAT_START' }>): void {
-    const aiMessageId = generateMessageId('ai', event.subtaskId)
-    const initialResult = event.shellType ? { shell_type: event.shellType } : undefined
+    // Queue chat:start in buffering states to prevent premature streaming transition
+    // before recover() fetches cached_content. Without this guard, cached_content is lost
+    // because isStreaming becomes true and blocks the recovery useEffect.
+    if (this.isBufferingState()) {
+      this.pendingStarts.push({
+        subtaskId: event.subtaskId,
+        shellType: event.shellType,
+        messageId: event.messageId,
+      })
+      return
+    }
 
+    const aiMessageId = generateMessageId('ai', event.subtaskId)
     const newMessages = new Map(this.state.messages)
-    newMessages.set(aiMessageId, {
-      id: aiMessageId,
-      type: 'ai',
-      status: 'streaming',
-      content: '',
-      timestamp: Date.now(),
-      subtaskId: event.subtaskId,
-      messageId: event.messageId, // Set messageId from chat:start event for proper ordering
-      result: initialResult,
-    })
+    newMessages.set(
+      aiMessageId,
+      this.createAiMessage({
+        subtaskId: event.subtaskId,
+        messageId: event.messageId,
+        shellType: event.shellType,
+      })
+    )
 
     this.state = {
       ...this.state,
@@ -1027,15 +1130,11 @@ export class TaskStateMachine {
   private handleChatChunkEvent(event: Extract<Event, { type: 'CHAT_CHUNK' }>): void {
     const aiMessageId = generateMessageId('ai', event.subtaskId)
 
-    // If in idle/joining/syncing state, queue the chunk for later processing
+    // If in buffering state, queue the chunk for later processing
     // This handles the race condition where chunks arrive before sync completes
     // CRITICAL FIX: Also queue chunks when in 'idle' state, because after page refresh,
     // WebSocket reconnects and starts receiving chunks before recover() is called
-    if (
-      this.state.status === 'idle' ||
-      this.state.status === 'joining' ||
-      this.state.status === 'syncing'
-    ) {
+    if (this.isBufferingState()) {
       this.pendingChunks.push({
         subtaskId: event.subtaskId,
         content: event.content,
