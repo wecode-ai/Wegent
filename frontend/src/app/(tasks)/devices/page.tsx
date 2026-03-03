@@ -4,6 +4,7 @@
 
 'use client'
 
+import '@wecode/i18n' // side-effect import to merge wecode translations
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -25,15 +26,16 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { DeviceInfo } from '@/apis/devices'
 import { getToken } from '@/apis/user'
-import { Monitor, Loader2, Cloud } from 'lucide-react'
+import { Monitor, Loader2 } from 'lucide-react'
 import { getSocketUrl } from '@/lib/runtime-config'
 import {
   DeviceCard,
   DevicesPageHeader,
   DeviceSection,
-  DeviceSetupGuide,
 } from '@/features/devices/components'
 import { useDeviceHandlers } from '@/features/devices/hooks'
+import { CloudDeviceSection } from '@wecode/components/devices/CloudDeviceSection'
+import { DeviceSetupGuide } from '@wecode/components/devices/DeviceSetupGuide'
 
 // Helper function to sort devices by priority
 function sortDevices(devices: DeviceInfo[]): DeviceInfo[] {
@@ -154,9 +156,6 @@ export default function DevicesPage() {
               onAddDevice={() => setShowSetupGuide(true)}
             />
 
-            {/* Instructions */}
-            <p className="text-text-muted text-sm mb-6">{t('instructions')}</p>
-
             {/* Error message */}
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
@@ -178,12 +177,16 @@ export default function DevicesPage() {
                   backendUrl={backendUrl}
                   authToken={authToken}
                   guideUrl={guideUrl}
+                  onDeviceCreated={refreshDevices}
+                  onClose={() => setShowSetupGuide(false)}
+                  showCloseButton={devices.length > 0}
+                  cloudDeviceCount={sortedDevices.filter(d => d.device_type === 'cloud').length}
                 />
               </div>
             )}
 
-            {/* Device sections */}
-            {sortedDevices.length > 0 && (
+            {/* Device sections - hide when showing setup guide */}
+            {sortedDevices.length > 0 && !showSetupGuide && (
               <div className="space-y-6">
                 {/* Local Devices */}
                 <DeviceSection
@@ -205,23 +208,14 @@ export default function DevicesPage() {
                 </DeviceSection>
 
                 {/* Cloud Devices */}
-                <DeviceSection
-                  title={t('cloud_devices_section')}
-                  icon={Cloud}
-                  devices={sortedDevices}
-                  type="cloud"
-                  emptyMessage={t('cloud_devices_coming_soon')}
-                >
-                  {device => (
-                    <DeviceCard
-                      device={device}
-                      onStartTask={handlers.handleStartTask}
-                      onSetDefault={handlers.handleSetDefault}
-                      onDelete={handlers.handleDeleteDevice}
-                      onCancelTask={handlers.handleCancelTask}
-                    />
-                  )}
-                </DeviceSection>
+                <CloudDeviceSection
+                  cloudDevices={sortedDevices.filter(d => d.device_type === 'cloud')}
+                  onDeviceCreated={refreshDevices}
+                  onDeleteDevice={handlers.handleDeleteDevice}
+                  onSetDefault={handlers.handleSetDefault}
+                  onStartTask={handlers.handleStartTask}
+                  onCancelTask={handlers.handleCancelTask}
+                />
               </div>
             )}
           </div>

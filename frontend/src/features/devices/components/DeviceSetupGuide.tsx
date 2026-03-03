@@ -14,6 +14,7 @@ import { Monitor, Cloud } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { LocalExecutorGuide } from './LocalExecutorGuide'
+import { CloudDeviceCreateSection } from './CloudDeviceCreateSection'
 
 export interface DeviceSetupGuideProps {
   backendUrl: string
@@ -82,13 +83,7 @@ export function DeviceSetupGuide({ backendUrl, authToken, guideUrl }: DeviceSetu
         {deviceType === 'local' ? (
           <LocalExecutorGuide backendUrl={backendUrl} authToken={authToken} guideUrl={guideUrl} />
         ) : (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <Cloud className="w-12 h-12 text-text-muted mb-4" />
-            <h3 className="text-lg font-semibold mb-2">{t('cloud_coming_soon_title')}</h3>
-            <p className="text-sm text-text-muted max-w-md">
-              {t('cloud_coming_soon_description')}
-            </p>
-          </div>
+          <CloudDeviceCreateSection />
         )}
       </div>
     </div>
