@@ -22,7 +22,7 @@ declare global {
 }
 
 // Use browser build from dist which properly exports to window.noVNC
-const NOVNC_CDN_URL = 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.6.0/dist/rfb.min.js'
+const NOVNC_CDN_URL = 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.6.0/dist/novnc.min.js'
 
 /**
  * Dynamically load a script by URL
