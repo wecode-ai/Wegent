@@ -5,3 +5,4 @@
 export { CloudDeviceVncPanel } from './CloudDeviceVncPanel'
 export { VncViewer } from './VncViewer'
 export { VncToggle } from './VncToggle'
+export { DeviceVncPanel } from './DeviceVncPanel'

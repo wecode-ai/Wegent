@@ -24,11 +24,11 @@ import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { teamService } from '@/features/tasks/service/teamService'
-import { Monitor, WifiOff, X } from 'lucide-react'
+import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
-import { CloudDeviceVncPanel, VncViewer } from '@wecode/components/cloud-device'
-import { cloudDeviceApis } from '@wecode/apis'
+import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
+import { useDeviceVncState } from '@wecode/hooks'
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
@@ -53,9 +53,11 @@ export default function DeviceChatPage() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
-  // VNC panel state
-  const [isVncOpen, setIsVncOpen] = useState(false)
-  const [sandboxId, setSandboxId] = useState<string | null>(null)
+  // VNC panel state using wecode hook
+  const { isCloudDevice, isVncOpen, sandboxId, setIsVncOpen, handleToggleVnc } = useDeviceVncState({
+    selectedDevice,
+    selectedDeviceId,
+  })
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -78,36 +80,6 @@ export default function DeviceChatPage() {
       }
     }
   }, [devices, selectedDeviceId, setSelectedDeviceId])
-
-  // Determine if current device is a cloud device
-  const isCloudDevice = selectedDevice?.device_type === 'cloud'
-
-  // Fetch sandbox_id when a cloud device is selected
-  useEffect(() => {
-    if (!isCloudDevice || !selectedDeviceId || selectedDevice?.status === 'offline') {
-      setSandboxId(null)
-      setIsVncOpen(false)
-      return
-    }
-
-    let cancelled = false
-    cloudDeviceApis
-      .getCloudDeviceStatus(selectedDeviceId)
-      .then(status => {
-        if (!cancelled && status.sandbox_id) {
-          setSandboxId(status.sandbox_id)
-          // Auto-open VNC panel when sandbox_id is available
-          setIsVncOpen(true)
-        }
-      })
-      .catch(() => {
-        // Silently handle - VNC toggle won't show if fetch fails
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [selectedDeviceId, isCloudDevice, selectedDevice?.status])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
@@ -149,10 +121,6 @@ export default function DeviceChatPage() {
     clearAllStreams()
     // Close VNC panel when switching devices
     setIsVncOpen(false)
-  }
-
-  const handleToggleVnc = () => {
-    setIsVncOpen(prev => !prev)
   }
 
   // Get current task title for top navigation
@@ -250,21 +218,12 @@ export default function DeviceChatPage() {
 
             {/* VNC Panel */}
             {showVncPanel && (
-              <div className="w-1/2 flex flex-col min-h-0 border-l border-border">
-                {/* VNC panel header */}
-                <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface">
-                  <h3 className="text-sm font-medium text-text-primary">{t('vnc_panel_title')}</h3>
-                  <button
-                    onClick={() => setIsVncOpen(false)}
-                    className="w-6 h-6 flex items-center justify-center rounded hover:bg-hover text-text-muted hover:text-text-primary transition-colors"
-                    title={t('vnc_close')}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                {/* VNC viewer */}
-                <VncViewer deviceId={selectedDeviceId} />
-              </div>
+              <DeviceVncPanel
+                deviceId={selectedDeviceId}
+                onClose={() => setIsVncOpen(false)}
+                title={t('vnc_panel_title')}
+                closeLabel={t('vnc_close')}
+              />
             )}
           </div>
         ) : (

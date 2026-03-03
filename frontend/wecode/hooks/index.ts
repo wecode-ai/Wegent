@@ -8,3 +8,9 @@
 
 export { useEvaluationPagination } from './useEvaluationPagination'
 export { useAsyncData } from './useAsyncData'
+
+/**
+ * Cloud device hooks
+ */
+
+export { useDeviceVncState } from './useDeviceVncState'
