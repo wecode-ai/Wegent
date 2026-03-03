@@ -13,8 +13,6 @@ from wecode.service.mcp_providers.providers.weibo import WeiboMCPProvider
 MCPProviderRegistry.register_plugin(WeiboMCPProvider())
 
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
-
-# import wecode.api.device_router_patch  # noqa: F401  patch app.services.device_router to replace API key placeholders for device task dispatch
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
@@ -23,8 +21,7 @@ import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.qu
 import wecode.api.user_service_patch  # noqa: F401  patch app.services.user without modifying source
 import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
 import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProvider with factory
-
-# import wecode.service.device_service_patch  # noqa: F401  patch DeviceService to aggregate cloud devices
+import wecode.service.device_service_patch  # noqa: F401  patch DeviceService to aggregate cloud devices
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
 import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProvider with factory
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
