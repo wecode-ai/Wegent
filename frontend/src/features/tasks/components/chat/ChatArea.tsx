@@ -612,6 +612,118 @@ function ChatAreaContent({
     [chatState]
   )
 
+  // Callback when user clicks re-edit on an AI message
+  // Finds the corresponding user message from the state machine messages and restores its prompt + attachments to the input
+  const handleReEdit = useCallback(
+    async (aiMsg: import('../message/MessageBubble').Message) => {
+      if (!aiMsg.subtaskId) return
+
+      // Locate the AI message in the state machine to get its messageId (shared with the user message)
+      const stateMessages = taskState?.messages
+      if (!stateMessages) return
+
+      const aiStateMsg = stateMessages.get(`ai-${aiMsg.subtaskId}`)
+      if (!aiStateMsg) return
+
+      // Find the corresponding user message using the following strategy:
+      // 1. Primary: match by shared messageId (works for messages loaded from backend)
+      // 2. Fallback: use Map insertion order - find the last user message that appears
+      //    before the AI message in the Map (works for live-session messages that have no messageId yet)
+      let userStateMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+
+      if (aiStateMsg.messageId != null) {
+        // Primary lookup: match by shared messageId
+        for (const msg of stateMessages.values()) {
+          if (msg.type === 'user' && msg.messageId === aiStateMsg.messageId) {
+            userStateMsg = msg
+            break
+          }
+        }
+      }
+
+      if (!userStateMsg) {
+        // Fallback: iterate the Map in insertion order; track the last user message seen
+        // before we reach the target AI message entry
+        let lastUserMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+        for (const [key, msg] of stateMessages.entries()) {
+          if (key === `ai-${aiMsg.subtaskId}`) {
+            // Reached the AI message - the previous user message is the one we want
+            if (lastUserMsg) {
+              userStateMsg = lastUserMsg
+            }
+            break
+          }
+          if (msg.type === 'user') {
+            lastUserMsg = msg
+          }
+        }
+      }
+
+      if (!userStateMsg) return
+
+      // Restore text prompt to input
+      if (userStateMsg.content) {
+        chatState.setTaskInputMessage(userStateMsg.content)
+      }
+
+      // Clear any existing draft attachments and contexts before restoring the original ones
+      // so the restored set exactly matches the original user message
+      chatState.resetAttachment()
+      chatState.setSelectedContexts([])
+
+      // Restore all contexts (attachments and knowledge bases) from the user message
+      const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
+
+      // Restore attachment contexts
+      const attachmentContexts = rawContexts.filter(c => c.context_type === 'attachment')
+      for (const ctx of attachmentContexts) {
+        try {
+          const detail = await getAttachment(ctx.id)
+          chatState.addExistingAttachment({
+            id: detail.id,
+            filename: detail.filename,
+            file_size: detail.file_size,
+            mime_type: detail.mime_type,
+            status: detail.status,
+            text_length: detail.text_length ?? null,
+            error_message: detail.error_message ?? null,
+            error_code: detail.error_code ?? null,
+            subtask_id: detail.subtask_id ?? null,
+            file_extension: detail.file_extension,
+            created_at: detail.created_at,
+          })
+        } catch (error) {
+          console.error('Failed to restore attachment for re-edit:', error)
+        }
+      }
+
+      // Restore knowledge base and table contexts
+      const restoredContextItems: ContextItem[] = []
+      for (const ctx of rawContexts) {
+        if (ctx.context_type === 'knowledge_base') {
+          restoredContextItems.push({
+            id: ctx.id,
+            name: ctx.name,
+            type: 'knowledge_base',
+            document_count: ctx.document_count ?? undefined,
+          })
+        } else if (ctx.context_type === 'table') {
+          restoredContextItems.push({
+            id: ctx.id,
+            name: ctx.name,
+            type: 'table',
+            document_id: 0,
+            source_config: ctx.source_config ?? undefined,
+          })
+        }
+      }
+      if (restoredContextItems.length > 0) {
+        chatState.setSelectedContexts(restoredContextItems)
+      }
+    },
+    [taskState, chatState]
+  )
+
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
@@ -833,6 +945,7 @@ function ChatAreaContent({
               onContextReselect={handleContextReselect}
               hideGroupChatOptions={taskType === 'knowledge'}
               onUseAsReference={handleUseAsReference}
+              onReEdit={handleReEdit}
             />
           </div>
         </div>
