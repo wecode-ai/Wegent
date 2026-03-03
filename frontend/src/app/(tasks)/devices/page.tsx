@@ -337,11 +337,31 @@ export default function DevicesPage() {
 
             {/* Empty state with installation guide */}
             {!isLoading && devices.length === 0 && (
-              <>
+              <div className="space-y-8">
                 <LocalExecutorGuide
                   backendUrl={backendUrl}
                   authToken={authToken}
                   guideUrl={guideUrl}
+                />
+
+                {/* Divider with "OR" */}
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-border"></div>
+                  </div>
+                  <div className="relative bg-base px-4 text-sm font-medium text-text-muted">
+                    {t('or')}
+                  </div>
+                </div>
+
+                {/* Cloud Device Section */}
+                <CloudDeviceSection
+                  cloudDevices={[]}
+                  onDeviceCreated={refreshDevices}
+                  onDeleteDevice={handleDeleteDevice}
+                  onSetDefault={handleSetDefault}
+                  onStartTask={handleStartTask}
+                  onCancelTask={handleCancelTask}
                 />
 
                 {/* Help section */}
@@ -374,7 +394,7 @@ export default function DevicesPage() {
                     </div>
                   </div>
                 )}
-              </>
+              </div>
             )}
 
             {/* Installation guide when triggered by Add Device button */}
