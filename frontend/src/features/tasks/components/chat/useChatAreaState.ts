@@ -260,14 +260,14 @@ export function useChatAreaState({
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   // Compute effective maxAttachments for image/video modes
-  // Priority: external value (from model config) -> default (1 for image/video, undefined otherwise)
+  // Priority: external value (from model config) -> default (2 for image/video, undefined otherwise)
   const effectiveMaxAttachments = useMemo(() => {
     if (taskType === 'image' || taskType === 'video') {
       // Normalize and clamp external value from model config
       if (typeof externalMaxAttachments === 'number' && Number.isFinite(externalMaxAttachments)) {
         return Math.min(10, Math.max(1, Math.floor(externalMaxAttachments)))
       }
-      return 1
+      return 2 // Default to 2 for image/video modes when not configured
     }
     return undefined
   }, [taskType, externalMaxAttachments])

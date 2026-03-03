@@ -329,6 +329,7 @@
   },
   "upload": {
     "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
+    "image_tooltip": "Supported file types: Images (JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nUpload reference images for generation",
     "wait_for_upload": "Please wait for file upload to complete"
   },
   "clarification_toggle": {
