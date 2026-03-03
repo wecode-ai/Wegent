@@ -824,9 +824,6 @@ const MessageBubble = memo(
         }
       }
 
-      // Check if this message has video_config (video generation parameters)
-      const videoConfig = message.result?.video_config
-
       // Build content elements
       const contentElements = (message.content?.split('\n') || []).map((line, idx) => {
         if (line.startsWith('__PROMPT_TRUNCATED__:')) {
@@ -857,16 +854,6 @@ const MessageBubble = memo(
         // Pass disabled={isStreaming} to avoid metadata fetching during streaming
         return <SmartTextLine key={idx} text={line} disabled={isStreaming} />
       })
-
-      // Render with VideoConfigBadge if video_config is present
-      if (videoConfig) {
-        return (
-          <>
-            {contentElements}
-            <VideoConfigBadge config={videoConfig} />
-          </>
-        )
-      }
 
       return contentElements
     }
@@ -1600,6 +1587,10 @@ const MessageBubble = memo(
                 </div>
               )}
             </div>
+            {/* Video config badge - displayed outside the message bubble */}
+            {isUserTypeMessage && msg.result?.video_config && (
+              <VideoConfigBadge config={msg.result.video_config} />
+            )}
           </div>
         </div>
       </ShareTokenProvider>

@@ -342,21 +342,32 @@ function ChatAreaContent({
   ])
 
   // Build generate params for video/image generation tasks
+  // Include model name for display in user message bubble
   const generateParams = useMemo(() => {
     if (taskType === 'video') {
       return {
         resolution: selectedResolution,
         ratio: selectedRatio,
         duration: selectedDuration,
+        model: videoModelSelection.selectedModel?.name,
       }
     }
     if (taskType === 'image') {
       return {
         size: selectedImageSize,
+        model: imageModelSelection.selectedModel?.name,
       }
     }
     return undefined
-  }, [taskType, selectedResolution, selectedRatio, selectedDuration, selectedImageSize])
+  }, [
+    taskType,
+    selectedResolution,
+    selectedRatio,
+    selectedDuration,
+    selectedImageSize,
+    videoModelSelection.selectedModel?.name,
+    imageModelSelection.selectedModel?.name,
+  ])
 
   // Stream handlers (send message, retry, cancel, stop)
   const streamHandlers = useChatStreamHandlers({

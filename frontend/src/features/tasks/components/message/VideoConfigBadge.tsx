@@ -4,7 +4,6 @@
 
 'use client'
 
-import { Video } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export interface VideoConfigBadgeProps {
@@ -18,9 +17,9 @@ export interface VideoConfigBadgeProps {
 
 /**
  * Badge component to display video generation configuration parameters.
- * Shows model name, aspect ratio, duration, and resolution in a compact format.
+ * Shows model name, aspect ratio, duration, and resolution as plain text below the message.
  *
- * Example output: 🎬 Video Generation doubao-seedance-1-5-pro-251215 | 16:9 | 10s | 1080p
+ * Example output: 视频生成 SeeDance2.0 | 16:9 | 5S | 1080P
  */
 export function VideoConfigBadge({ config }: VideoConfigBadgeProps) {
   const { t } = useTranslation('chat')
@@ -29,20 +28,16 @@ export function VideoConfigBadge({ config }: VideoConfigBadgeProps) {
   const parts = [
     config.model,
     config.ratio,
-    config.duration ? `${config.duration}s` : null,
-    config.resolution,
+    config.duration ? `${config.duration}S` : null,
+    config.resolution?.toUpperCase(),
   ].filter(Boolean)
 
   // Don't render if no parameters are available
   if (parts.length === 0) return null
 
   return (
-    <div className="flex items-center gap-1.5 mt-2 text-xs">
-      <Video className="h-3.5 w-3.5 text-text-muted flex-shrink-0" />
-      <span className="font-medium text-text-secondary">
-        {t('messages.video_generation') || 'Video Generation'}
-      </span>
-      <span className="text-text-muted">{parts.join(' | ')}</span>
+    <div className="mt-2 text-sm text-text-muted">
+      {t('messages.video_generation') || '视频生成'} {parts.join(' | ')}
     </div>
   )
 }
