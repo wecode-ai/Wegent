@@ -193,8 +193,8 @@
       "bonus_agent": "附加题 - Agent/工作流",
       "bonus_multimodal": "附加题 - 多模态交付物"
     },
-    "supplementary_notes": "补充说明",
-    "supplementary_notes_files": "补充说明文件",
+    "supplementary_notes": "作答说明",
+    "supplementary_notes_files": "作答说明文件",
     "submit_success": "答案提交成功",
     "view": "查看答案",
     "new_version_available": "此题目有新版本可用，您可能需要重新作答。",

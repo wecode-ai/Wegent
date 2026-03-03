@@ -377,15 +377,7 @@ function GraderAnswerContent() {
 
     const elements: React.ReactNode[] = []
 
-    // Render exam attachments
-    const examAttachments = renderExamAttachments(
-      contentData.attachments as Record<string, unknown>
-    )
-    if (examAttachments) {
-      elements.push(<div key="examAttachments">{examAttachments}</div>)
-    }
-
-    // Render supplementary notes files
+    // Render supplementary notes files first (before exam attachments)
     const supplementaryNotesFiles = contentData.supplementaryNotesFiles as
       | EvalAttachment[]
       | undefined
@@ -393,11 +385,19 @@ function GraderAnswerContent() {
       elements.push(
         <div key="supplementaryNotesFiles">
           <h4 className="mb-2 text-sm font-medium text-text-secondary">
-            {t('answers.supplementary_notes') || 'Supplementary Notes'}
+            {t('answers.supplementary_notes') || 'Answer Notes'}
           </h4>
           {renderAttachmentList(supplementaryNotesFiles, 'supplementaryNotes')}
         </div>
       )
+    }
+
+    // Render exam attachments (after supplementary notes)
+    const examAttachments = renderExamAttachments(
+      contentData.attachments as Record<string, unknown>
+    )
+    if (examAttachments) {
+      elements.push(<div key="examAttachments">{examAttachments}</div>)
     }
 
     if (elements.length > 0) {
