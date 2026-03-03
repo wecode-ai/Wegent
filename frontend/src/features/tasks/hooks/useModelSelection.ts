@@ -253,9 +253,11 @@ export function useModelSelection({
     setIsLoading(true)
     setError(null)
     try {
+      // Include config for image/video models to get type-specific config (imageConfig/videoConfig)
+      const shouldIncludeConfig = modelCategoryType === 'image' || modelCategoryType === 'video'
       const response = await modelApis.getUnifiedModels(
         undefined,
-        false,
+        shouldIncludeConfig,
         'all',
         undefined,
         modelCategoryType

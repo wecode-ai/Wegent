@@ -30,6 +30,7 @@ class TestImageGenerationConfig:
         assert config.output_format == "jpeg"
         assert config.watermark is False
         assert config.optimize_prompt_mode == "standard"
+        assert config.max_reference_images == 1
 
     def test_custom_values(self):
         """Test setting custom values."""
@@ -43,6 +44,7 @@ class TestImageGenerationConfig:
             output_format="png",
             watermark=True,
             optimize_prompt_mode="fast",
+            max_reference_images=5,
         )
 
         assert config.size == "3K"
@@ -52,6 +54,7 @@ class TestImageGenerationConfig:
         assert config.output_format == "png"
         assert config.watermark is True
         assert config.optimize_prompt_mode == "fast"
+        assert config.max_reference_images == 5
 
     def test_max_images_minimum_value(self):
         """Test max_images minimum value validation (ge=1)."""
@@ -102,6 +105,48 @@ class TestImageGenerationConfig:
             config = ImageGenerationConfig(max_images=value)
             assert config.max_images == value
 
+    def test_max_reference_images_minimum_value(self):
+        """Test max_reference_images minimum value validation (ge=1)."""
+        from app.schemas.generation import ImageGenerationConfig
+
+        # Valid minimum value
+        config = ImageGenerationConfig(max_reference_images=1)
+        assert config.max_reference_images == 1
+
+        # Invalid value below minimum
+        with pytest.raises(ValidationError) as exc_info:
+            ImageGenerationConfig(max_reference_images=0)
+
+        errors = exc_info.value.errors()
+        assert len(errors) == 1
+        assert errors[0]["loc"] == ("max_reference_images",)
+        assert "greater than or equal to 1" in errors[0]["msg"]
+
+    def test_max_reference_images_maximum_value(self):
+        """Test max_reference_images maximum value validation (le=10)."""
+        from app.schemas.generation import ImageGenerationConfig
+
+        # Valid maximum value
+        config = ImageGenerationConfig(max_reference_images=10)
+        assert config.max_reference_images == 10
+
+        # Invalid value above maximum
+        with pytest.raises(ValidationError) as exc_info:
+            ImageGenerationConfig(max_reference_images=11)
+
+        errors = exc_info.value.errors()
+        assert len(errors) == 1
+        assert errors[0]["loc"] == ("max_reference_images",)
+        assert "less than or equal to 10" in errors[0]["msg"]
+
+    def test_max_reference_images_valid_range(self):
+        """Test max_reference_images accepts values in valid range."""
+        from app.schemas.generation import ImageGenerationConfig
+
+        for value in [1, 3, 5, 10]:
+            config = ImageGenerationConfig(max_reference_images=value)
+            assert config.max_reference_images == value
+
     def test_size_various_formats(self):
         """Test size field accepts various formats."""
         from app.schemas.generation import ImageGenerationConfig
@@ -135,6 +180,7 @@ class TestImageGenerationConfig:
             output_format=None,
             watermark=None,
             optimize_prompt_mode=None,
+            max_reference_images=None,
         )
 
         assert config.size is None
@@ -144,6 +190,7 @@ class TestImageGenerationConfig:
         assert config.output_format is None
         assert config.watermark is None
         assert config.optimize_prompt_mode is None
+        assert config.max_reference_images is None
 
     def test_model_dump(self):
         """Test model serialization."""
@@ -246,10 +293,6 @@ class TestVideoGenerationConfig:
         assert config.resolution is None
         assert config.fps is None
         assert config.max_duration is None
-
-
-class TestModelSpecWithImageConfig:
-    """Tests for ModelSpec with imageConfig field."""
 
 
 class TestModelSpecWithImageConfig:

@@ -109,10 +109,15 @@ export default function AttachmentButton({
     [disabled, isFileAccepted, onFileSelect]
   )
 
-  // Tooltip content
-  const tooltipContent = t('chat:upload.tooltip', {
-    maxSize: MAX_FILE_SIZE / (1024 * 1024),
-  })
+  // Tooltip content - use image-specific tooltip when accept is image/*
+  const isImageOnly = accept === 'image/*'
+  const tooltipContent = isImageOnly
+    ? t('chat:upload.image_tooltip', {
+        maxSize: MAX_FILE_SIZE / (1024 * 1024),
+      })
+    : t('chat:upload.tooltip', {
+        maxSize: MAX_FILE_SIZE / (1024 * 1024),
+      })
 
   return (
     <div onDragOver={handleDragOver} onDrop={handleDrop}>
