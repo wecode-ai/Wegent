@@ -688,51 +688,11 @@ def create_socketio_asgi_app():
     register_device_namespace(sio)
     _logger.info("Device namespace registered during ASGI app creation")
 
-    # VNC WebSocket path pattern: /api/cloud-devices/{device_id}/vnc-ws
-    import re
+    # Create VNC interceptor wrapper for FastAPI
+    # This intercepts VNC WebSocket connections before they reach FastAPI
+    from wecode.api.vnc_websocket_middleware import create_vnc_interceptor_app
 
-    _vnc_ws_pattern = re.compile(r"^/api/cloud-devices/([^/]+)/vnc-ws$")
-
-    async def _handle_vnc_ws(scope, receive, send):
-        """Handle VNC WebSocket proxy at the ASGI level."""
-        from wecode.api.cloud_devices import vnc_websocket_proxy
-
-        path = scope.get("path", "")
-        _logger.info(f"[VNC-WS] Handling WebSocket for path={path}")
-        match = _vnc_ws_pattern.match(path)
-        if not match:
-            # Should not happen, but fallback
-            await _fastapi_app(scope, receive, send)
-            return
-
-        device_id = match.group(1)
-
-        # Extract token from query string
-        import urllib.parse
-
-        qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
-        params = urllib.parse.parse_qs(qs)
-        token = params.get("token", [""])[0]
-
-        # Create a FastAPI WebSocket object from the ASGI scope
-        from fastapi import WebSocket
-
-        websocket = WebSocket(scope, receive, send)
-
-        # Call the endpoint handler directly
-        await vnc_websocket_proxy(websocket, device_id, token)
-
-    # Wrapper ASGI app that intercepts VNC WebSocket before Socket.IO
-    async def vnc_interceptor_app(scope, receive, send):
-        """Intercept VNC WebSocket connections before they reach Socket.IO."""
-        if scope["type"] == "websocket":
-            path = scope.get("path", "")
-            if _vnc_ws_pattern.match(path):
-                _logger.info(f"[VNC Interceptor] Handling VNC WebSocket: {path}")
-                await _handle_vnc_ws(scope, receive, send)
-                return
-        # For all other requests, forward to FastAPI
-        await _fastapi_app(scope, receive, send)
+    vnc_interceptor_app = create_vnc_interceptor_app(_fastapi_app)
 
     # Create Socket.IO ASGI app with the VNC interceptor as other_asgi_app
     # This ensures Socket.IO handles /socket.io/* and everything else goes to vnc_interceptor_app
