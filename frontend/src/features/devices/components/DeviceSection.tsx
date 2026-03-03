@@ -11,7 +11,6 @@
 
 import { LucideIcon } from 'lucide-react'
 import { DeviceInfo } from '@/apis/devices'
-import { useTranslation } from '@/hooks/useTranslation'
 
 export interface DeviceSectionProps {
   title: string
@@ -52,8 +51,6 @@ export function DeviceSection({
   type,
   children,
 }: DeviceSectionProps) {
-  const { t } = useTranslation('devices')
-
   // Filter devices by type if specified
   const filteredDevices = type
     ? devices.filter(device => (device.device_type || 'local') === type)
