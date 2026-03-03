@@ -1704,7 +1704,8 @@ const MessageBubble = memo(
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
       prevProps.isRegenerating === nextProps.isRegenerating &&
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
-      prevProps.onReEdit === nextProps.onReEdit
+      prevProps.onReEdit === nextProps.onReEdit &&
+      prevProps.taskType === nextProps.taskType
 
     return shouldSkipRender
   }
