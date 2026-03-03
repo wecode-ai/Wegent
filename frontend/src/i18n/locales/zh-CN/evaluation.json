@@ -303,6 +303,17 @@
     "conflict_error": "检测到冲突但无法加载服务器版本",
     "no_group_teams": "暂无可用的组智能体，请创建组智能体用于评分。",
     "all_teams_shown": "显示所有可用智能体",
+    "publish_hint": "发布评分报告",
+    "publish_disabled_hint": "请先编辑并保存报告后再发布",
+    "publish_dialog_title": "发布评分报告",
+    "publish_dialog_description": "发布前请查看报告内容。您还可以附加一个文件作为最终报告。",
+    "report_preview": "报告预览",
+    "attachment_optional": "附件（可选）",
+    "attachment_hint": "上传文件作为最终报告。如果未提供，将使用编辑的报告内容。",
+    "selected_file": "已选择文件",
+    "confirm_publish": "确认发布",
+    "publishing": "发布中...",
+    "publish_error_no_report": "请先编辑并保存报告，或等待 AI 评分完成。",
     "auto_trigger": "自动触发",
     "auto_trigger_description": "配置何时自动触发 AI 评分。",
     "enable_auto_trigger": "启用自动评分",
@@ -469,6 +480,11 @@
       "title": "提交成功",
       "description": "考核材料已提交成功。",
       "close": "关闭"
+    },
+    "time_warning": {
+      "title": "考试即将结束",
+      "description": "距离考试结束还有 {{minutes}} 分钟，请尽快完成作答并准备提交。",
+      "hint": "建议：检查是否已完成所有必传项（作答说明、考核报告、交互记录），确认无误后及时提交。"
     },
     "exam_method": {
       "title": "考评方式",

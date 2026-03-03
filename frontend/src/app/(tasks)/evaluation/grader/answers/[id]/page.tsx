@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import {
   ArrowLeft,
@@ -17,7 +17,6 @@ import {
   Download,
   FileText,
   ClipboardList,
-  Upload,
   CheckCircle,
   Loader2,
   Eye,
@@ -26,6 +25,8 @@ import {
   User,
   AlertTriangle,
   RefreshCw,
+  Send,
+  Clock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -131,19 +132,21 @@ function GraderAnswerContent() {
   const [executing, setExecuting] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [uploading, setUploading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedReport, setEditedReport] = useState('')
   const [editedReportVersion, setEditedReportVersion] = useState<number>(1)
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
   const [showReportPreview, setShowReportPreview] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Conflict resolution dialog state
   const [conflictDialogOpen, setConflictDialogOpen] = useState(false)
   const [conflictServerVersion, setConflictServerVersion] = useState<number>(1)
   const [conflictServerReport, setConflictServerReport] = useState('')
   const [pendingSaveContent, setPendingSaveContent] = useState('')
+
+  // Publish dialog state
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
+  const [publishAttachment, setPublishAttachment] = useState<File | null>(null)
 
   const loadData = useCallback(
     async (options?: { skipEditedReportUpdate?: boolean }) => {
@@ -537,6 +540,30 @@ function GraderAnswerContent() {
     }
   }
 
+  // Extract error message from various error formats
+  const extractErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+      // Check if message is a JSON string (from nested detail object)
+      try {
+        const parsed = JSON.parse(error.message)
+        if (parsed.message) {
+          return parsed.message
+        }
+        if (parsed.detail && typeof parsed.detail === 'object' && parsed.detail.message) {
+          return parsed.detail.message
+        }
+      } catch {
+        // Not JSON, use message directly
+        return error.message
+      }
+      return error.message
+    }
+    if (typeof error === 'string') {
+      return error
+    }
+    return String(error)
+  }
+
   const handleSaveReport = async (content?: string, version?: number) => {
     if (!gradingTask) {
       return
@@ -562,9 +589,16 @@ function GraderAnswerContent() {
       })
       setIsEditing(false)
       loadData()
-    } catch (error) {
-      // Check for 409 conflict error
-      if (error instanceof Error && error.message.includes('modified by another user')) {
+    } catch (error: unknown) {
+      const errorMessage = extractErrorMessage(error)
+
+      // Check for 409 conflict error - check both the message and the raw error structure
+      const isConflictError =
+        errorMessage.includes('modified by another user') ||
+        (error instanceof Error && error.message.includes('modified by another user')) ||
+        (error instanceof Error && error.message.includes('"current_version"'))
+
+      if (isConflictError) {
         // Parse error details from the error message or re-fetch to get current data
         try {
           const currentTask = await getGraderTask(gradingTask.id)
@@ -589,7 +623,7 @@ function GraderAnswerContent() {
       } else {
         toast({
           title: t('errors.save_failed'),
-          description: error instanceof Error ? error.message : '',
+          description: errorMessage,
           variant: 'destructive',
         })
       }
@@ -628,29 +662,67 @@ function GraderAnswerContent() {
     })
   }
 
-  const handlePublish = async () => {
+  // Check if task can be published (has human report or is completed)
+  const canPublish = (task: GradingTask): boolean => {
+    const humanContent = getHumanReportContent(task.report_data)
+    const hasHumanReport = !!humanContent && humanContent.trim().length > 0
+    const isCompleted = task.status === GradingTaskStatus.COMPLETED
+    const isPendingOrFailed =
+      task.status === GradingTaskStatus.PENDING || task.status === GradingTaskStatus.FAILED
+    return isCompleted || (isPendingOrFailed && hasHumanReport)
+  }
+
+  // Check if task has any report content (AI or human)
+  const hasAnyReport = (task: GradingTask): boolean => {
+    const aiContent = getAIReportContent(task.report_data)
+    const humanContent = getHumanReportContent(task.report_data)
+    return !!(aiContent?.trim() || humanContent?.trim())
+  }
+
+  const handlePublishClick = () => {
     if (!gradingTask) return
 
-    // Check if human report exists
-    const humanContent = getHumanReportContent(gradingTask.report_data)
-    if (!humanContent || !humanContent.trim()) {
+    // Check if task can be published
+    if (!canPublish(gradingTask)) {
       toast({
         title: t('grading.publish_error') || 'Cannot Publish',
         description:
-          t('grading.publish_error_no_human_report') ||
-          'Please edit and save a human report before publishing.',
+          t('grading.publish_error_no_report') ||
+          'Please edit and save a report, or wait for AI grading to complete.',
         variant: 'destructive',
       })
       return
     }
 
+    // Open publish dialog
+    setPublishAttachment(null)
+    setPublishDialogOpen(true)
+  }
+
+  const handleConfirmPublish = async () => {
+    if (!gradingTask) return
+
     setPublishing(true)
     try {
-      await publishGraderTask(gradingTask.id)
+      if (publishAttachment) {
+        // Upload file and publish with attachment
+        const uploadResponse = await graderUploadReportFile(gradingTask.id, publishAttachment)
+        await graderPublishTaskWithAttachment(gradingTask.id, {
+          key: uploadResponse.key,
+          filename: uploadResponse.filename,
+          size: uploadResponse.file_size,
+          contentType: uploadResponse.content_type,
+        })
+      } else {
+        // Publish without attachment
+        await publishGraderTask(gradingTask.id)
+      }
+
       toast({
         title: t('grading.publish_success'),
         description: '',
       })
+      setPublishDialogOpen(false)
       loadData()
     } catch (_error) {
       toast({
@@ -660,44 +732,6 @@ function GraderAnswerContent() {
       })
     } finally {
       setPublishing(false)
-    }
-  }
-
-  // Handle file upload and publish with attachment
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file || !gradingTask) return
-
-    setUploading(true)
-    try {
-      // Upload file through backend proxy
-      const uploadResponse = await graderUploadReportFile(gradingTask.id, file)
-
-      // Publish with attachment
-      await graderPublishTaskWithAttachment(gradingTask.id, {
-        key: uploadResponse.key,
-        filename: uploadResponse.filename,
-        size: uploadResponse.file_size,
-        contentType: uploadResponse.content_type,
-      })
-
-      toast({
-        title: t('grading.publish_success'),
-        description: '',
-      })
-      loadData()
-    } catch (_error) {
-      toast({
-        title: t('errors.save_failed'),
-        description: '',
-        variant: 'destructive',
-      })
-    } finally {
-      setUploading(false)
-      // Reset file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
     }
   }
 
@@ -851,30 +885,29 @@ function GraderAnswerContent() {
         <div className="flex items-center gap-2">
           {gradingTask && (
             <>
-              {/* AI Grading Status */}
-              <Badge variant={getStatusBadgeVariant(gradingTask.status)}>
-                {getStatusLabel(gradingTask.status, 'grading', t)}
-              </Badge>
-
-              {/* Human Report Status */}
+              {/* Task Status - Unified display */}
               {(() => {
                 const { hasHumanReport, isPublished } = getHumanReportStatus(
                   gradingTask.report_data
                 )
-                if (isPublished) {
-                  return (
-                    <Badge variant="success">
-                      {t('grading.human_report_published') || 'Published'}
-                    </Badge>
-                  )
+
+                // Published state - show single unified status
+                if (gradingTask.status === GradingTaskStatus.PUBLISHED || isPublished) {
+                  return <Badge variant="success">{t('grading.status.published')}</Badge>
                 }
+
+                // Has human report draft - show draft status
                 if (hasHumanReport) {
                   return (
                     <Badge variant="warning">{t('grading.human_report_draft') || 'Draft'}</Badge>
                   )
                 }
+
+                // AI grading status for other states
                 return (
-                  <Badge variant="secondary">{t('grading.no_human_report') || 'No Report'}</Badge>
+                  <Badge variant={getStatusBadgeVariant(gradingTask.status)}>
+                    {getStatusLabel(gradingTask.status, 'grading', t)}
+                  </Badge>
                 )
               })()}
             </>
@@ -969,49 +1002,53 @@ function GraderAnswerContent() {
                 {/* Manual Report Management - Always Available */}
                 <Button
                   variant="outline"
-                  onClick={() => {
+                  onClick={async () => {
                     if (!isEditing) {
-                      // Entering edit mode - initialize editedReport from current data
-                      if (gradingTask?.report_data) {
-                        const humanContent = getHumanReportContent(gradingTask.report_data)
-                        const aiContent = getAIReportContent(gradingTask.report_data)
-                        setEditedReport(humanContent || aiContent || '')
-                      } else {
-                        setEditedReport('')
+                      // Entering edit mode - refresh task data to get latest version
+                      try {
+                        const freshTask = await getGraderTask(gradingTask.id)
+                        setGradingTask(freshTask)
+                        // Initialize editedReport from fresh data
+                        if (freshTask.report_data) {
+                          const humanContent = getHumanReportContent(freshTask.report_data)
+                          const aiContent = getAIReportContent(freshTask.report_data)
+                          setEditedReport(humanContent || aiContent || '')
+                        } else {
+                          setEditedReport('')
+                        }
+                        // Initialize version for optimistic locking from fresh data
+                        setEditedReportVersion(freshTask.version || 1)
+                      } catch {
+                        // Fallback to current data if refresh fails
+                        if (gradingTask?.report_data) {
+                          const humanContent = getHumanReportContent(gradingTask.report_data)
+                          const aiContent = getAIReportContent(gradingTask.report_data)
+                          setEditedReport(humanContent || aiContent || '')
+                        } else {
+                          setEditedReport('')
+                        }
+                        setEditedReportVersion(gradingTask?.version || 1)
                       }
-                      // Initialize version for optimistic locking
-                      setEditedReportVersion(gradingTask?.version || 1)
                     }
                     setIsEditing(!isEditing)
                   }}
-                  disabled={publishing || uploading}
+                  disabled={publishing}
                 >
                   <Edit className="mr-2 h-4 w-4" />
                   {isEditing ? t('actions.cancel') : t('grading.edit_report')}
                 </Button>
 
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  accept=".md,.txt,.markdown"
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading || isEditing}
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  {uploading ? '...' : t('grading.upload_report')}
-                </Button>
-
                 {gradingTask.status !== GradingTaskStatus.PUBLISHED && (
                   <Button
                     variant="primary"
-                    onClick={handlePublish}
-                    disabled={publishing || isEditing}
-                    title={t('grading.publish_ai_as_final_hint')}
+                    onClick={handlePublishClick}
+                    disabled={publishing || isEditing || !canPublish(gradingTask)}
+                    title={
+                      canPublish(gradingTask)
+                        ? t('grading.publish_hint') || 'Publish the grading report'
+                        : t('grading.publish_disabled_hint') ||
+                          'Please edit and save a report before publishing'
+                    }
                   >
                     <CheckCircle className="mr-2 h-4 w-4" />
                     {publishing ? '...' : t('grading.publish')}
@@ -1021,34 +1058,45 @@ function GraderAnswerContent() {
             </div>
           </CardHeader>
           <CardContent>
+            {/* Status Alerts - Compact notice style */}
             {gradingTask.status === GradingTaskStatus.RUNNING && (
-              <div className="py-8 text-center">
-                <p className="text-text-secondary">{t('grading.status.running')}...</p>
+              <div className="mb-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/50 px-4 py-3 text-sm text-blue-700 dark:border-blue-900 dark:bg-blue-900/20 dark:text-blue-300">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>{t('grading.status.running')}...</span>
               </div>
             )}
-            {gradingTask.status === GradingTaskStatus.PENDING && (
-              <div className="py-8 text-center">
-                <p className="text-text-secondary">{t('grading.status.pending')}</p>
-              </div>
-            )}
+            {gradingTask.status === GradingTaskStatus.PENDING &&
+              !getHumanReportStatus(gradingTask.report_data).hasHumanReport && (
+                <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                  <Clock className="h-4 w-4" />
+                  <span>{t('grading.status.pending')}</span>
+                </div>
+              )}
             {gradingTask.status === GradingTaskStatus.FAILED && (
-              <div className="py-8 text-center">
-                <p className="text-red-500">{t('grading.status.failed')}</p>
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50/50 px-4 py-3 dark:border-red-900 dark:bg-red-900/20">
+                <div className="flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span className="font-medium">{t('grading.status.failed')}</span>
+                </div>
                 {gradingTask.error_message && (
-                  <p className="mt-2 text-sm text-text-secondary">{gradingTask.error_message}</p>
+                  <p className="mt-1 pl-6 text-sm text-red-600/80 dark:text-red-400/80">
+                    {gradingTask.error_message}
+                  </p>
                 )}
-                <p className="mt-2 text-sm text-text-secondary">{t('grading.retry_hint')}</p>
-                {gradingTask.task_id > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-4"
-                    onClick={() => router.push(`/chat?taskId=${gradingTask.task_id}`)}
-                    title={t('grading.view_execution_task_hint')}
-                  >
-                    {t('grading.view_execution_task')}
-                  </Button>
-                )}
+                <div className="mt-2 flex items-center gap-2 pl-6">
+                  <span className="text-xs text-text-muted">{t('grading.retry_hint')}</span>
+                  {gradingTask.task_id > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => router.push(`/chat?taskId=${gradingTask.task_id}`)}
+                      title={t('grading.view_execution_task_hint')}
+                    >
+                      {t('grading.view_execution_task')}
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
             {/* Report Content - Always show editing interface */}
@@ -1196,6 +1244,95 @@ function GraderAnswerContent() {
             >
               <Save className="mr-2 h-4 w-4" />
               {t('grading.conflict_overwrite') || 'Overwrite'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Publish Dialog */}
+      <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {t('grading.publish_dialog_title') || 'Publish Grading Report'}
+            </DialogTitle>
+            <DialogDescription>
+              {t('grading.publish_dialog_description') ||
+                'Review the report content before publishing. You can also attach an additional file as the final report.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Report Preview */}
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <h4 className="mb-2 text-sm font-medium">
+                {t('grading.report_preview') || 'Report Preview'}
+              </h4>
+              <div className="max-h-48 overflow-auto text-sm text-text-secondary">
+                {(() => {
+                  const aiContent = gradingTask ? getAIReportContent(gradingTask.report_data) : ''
+                  const humanContent = gradingTask
+                    ? getHumanReportContent(gradingTask.report_data)
+                    : ''
+                  const content = humanContent || aiContent
+                  if (content) {
+                    return (
+                      <div className="markdown-content">
+                        <EnhancedMarkdown
+                          source={content.slice(0, 500) + (content.length > 500 ? '...' : '')}
+                          theme={theme === 'dark' ? 'dark' : 'light'}
+                        />
+                      </div>
+                    )
+                  }
+                  return <p>{t('grading.no_report_data')}</p>
+                })()}
+              </div>
+            </div>
+
+            {/* Attachment Upload */}
+            <div className="space-y-2">
+              <Label htmlFor="attachment">
+                {t('grading.attachment_optional') || 'Attachment (Optional)'}
+              </Label>
+              <input
+                type="file"
+                id="attachment"
+                onChange={e => setPublishAttachment(e.target.files?.[0] || null)}
+                className="block w-full text-sm text-text-secondary file:mr-4 file:rounded file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-primary/90"
+                accept=".md,.txt,.markdown,.pdf,.doc,.docx"
+              />
+              <p className="text-xs text-text-muted">
+                {t('grading.attachment_hint') ||
+                  'Upload a file to use as the final report. If not provided, the edited report will be used.'}
+              </p>
+              {publishAttachment && (
+                <p className="text-sm text-text-secondary">
+                  {t('grading.selected_file') || 'Selected'}: {publishAttachment.name} (
+                  {(publishAttachment.size / 1024).toFixed(1)} KB)
+                </p>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              variant="outline"
+              onClick={() => setPublishDialogOpen(false)}
+              className="w-full sm:w-auto"
+            >
+              {t('actions.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleConfirmPublish}
+              disabled={publishing || (!hasAnyReport(gradingTask!) && !publishAttachment)}
+              className="w-full sm:w-auto"
+            >
+              <Send className="mr-2 h-4 w-4" />
+              {publishing
+                ? t('grading.publishing') || 'Publishing...'
+                : t('grading.confirm_publish') || 'Confirm Publish'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -25,6 +25,8 @@ export interface ExamDataResponse {
   questions: Question[]
   /** User's existing answer if already submitted */
   userAnswer: (Omit<Answer, 'content_data'> & { content_data: ExamAnswerContent }) | null
+  /** All answers for all questions (for multi-question exam support) */
+  allAnswers?: Record<string, Answer>
   /** Exam session status with timing information */
   session: ExamSessionStatus
 }

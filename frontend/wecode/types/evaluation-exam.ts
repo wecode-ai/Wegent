@@ -134,6 +134,7 @@ export interface ExamDataResponse {
   }
   questions: ExamQuestion[]
   userAnswer: ExamAnswer | null
+  allAnswers?: Record<string, ExamAnswer>
   session: ExamSessionStatus
 }
 

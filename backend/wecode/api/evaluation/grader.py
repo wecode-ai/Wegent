@@ -213,6 +213,7 @@ def _convert_task_to_schema(
         started_at=task.started_at,
         completed_at=task.completed_at,
         published_at=task.published_at,
+        version=task.version,
         question_title=question_title,
         respondent_name=respondent_name,
         topic_id=topic_id,
@@ -954,7 +955,8 @@ def publish_grader_task(
     """
     Publish a grading report to the respondent.
 
-    The task must be in COMPLETED status.
+    The task must be in COMPLETED status or PENDING status with a human report.
+    This allows manual grading when no AI grading bot is configured.
     """
     topic_service = get_topic_service()
     question_service = get_question_service()
@@ -968,10 +970,30 @@ def publish_grader_task(
             detail="Grading task not found",
         )
 
-    if task.status != GradingTaskStatus.COMPLETED:
+    # Allow publishing if task is COMPLETED, or PENDING/FAILED with a human report
+    # This supports manual-only grading scenarios
+    report_data = task.report_data or {}
+    has_human_report = bool(
+        report_data.get("human_report", {}).get("content")
+        or report_data.get("human_report", {}).get("s3_path")
+    )
+
+    # Task already published - cannot publish again
+    if task.status == GradingTaskStatus.PUBLISHED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Can only publish completed grading tasks",
+            detail="Task is already published",
+        )
+
+    # Allow publishing if task is COMPLETED, or PENDING/FAILED with a human report
+    allowed_statuses = [GradingTaskStatus.COMPLETED]
+    if has_human_report:
+        allowed_statuses.extend([GradingTaskStatus.PENDING, GradingTaskStatus.FAILED])
+
+    if task.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only publish completed grading tasks or tasks with a human report",
         )
 
     question = question_service.get(db, task.question_id)

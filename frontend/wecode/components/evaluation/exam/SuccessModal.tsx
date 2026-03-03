@@ -51,16 +51,16 @@ export function SuccessModal({ isOpen, onClose }: SuccessModalProps) {
           <CheckCircleIcon className="text-green-500" />
         </div>
         <h3 className="text-2xl font-extrabold text-gray-900 mb-2">
-          {t('grading:exam.success.title', '提交成功')}
+          {t('exam.success.title')}
         </h3>
         <p className="text-base text-gray-500 mb-8">
-          {t('grading:exam.success.description', '考核材料已提交成功。')}
+          {t('exam.success.description')}
         </p>
         <button
           onClick={onClose}
           className="px-8 py-3 rounded-2xl bg-gray-100 text-base font-medium text-gray-700 hover:bg-gray-200 transition"
         >
-          {t('common:actions.close', '关闭')}
+          {t('exam.success.close')}
         </button>
       </div>
     </div>

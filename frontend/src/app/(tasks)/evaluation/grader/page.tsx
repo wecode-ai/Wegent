@@ -570,9 +570,31 @@ function GraderDashboardContent() {
                     <TableCell>{task.question_title || `Question #${task.question_id}`}</TableCell>
                     <TableCell>{task.respondent_name || `User #${task.respondent_id}`}</TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(task.status)}>
-                        {getStatusLabel(task.status, 'grading', t)}
-                      </Badge>
+                      {(() => {
+                        // Check if task has human report
+                        const reportData = task.report_data || {}
+                        const humanReport = reportData.human_report as
+                          | { content?: string; s3_path?: string }
+                          | undefined
+                        const hasHumanReport = !!(humanReport?.content || humanReport?.s3_path)
+                        const isDraft =
+                          hasHumanReport &&
+                          (task.status === GradingTaskStatus.PENDING ||
+                            task.status === GradingTaskStatus.FAILED)
+
+                        if (isDraft) {
+                          return (
+                            <Badge variant="warning">
+                              {t('grading.human_report_draft') || 'Draft'}
+                            </Badge>
+                          )
+                        }
+                        return (
+                          <Badge variant={getStatusBadgeVariant(task.status)}>
+                            {getStatusLabel(task.status, 'grading', t)}
+                          </Badge>
+                        )
+                      })()}
                     </TableCell>
                     <TableCell className="text-text-secondary">
                       {task.submitted_at
@@ -582,6 +604,7 @@ function GraderDashboardContent() {
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         {/* AI Grading Actions - Only show when grading bot is configured */}
+                        {/* AI Grading Actions - Only show when grading bot is configured and no human report exists */}
                         {task.team_id > 0 && task.status === GradingTaskStatus.PENDING && (
                           <Button
                             variant="outline"
@@ -607,30 +630,49 @@ function GraderDashboardContent() {
                               <RotateCcw className="h-4 w-4" />
                             </Button>
                           )}
-                        {(task.status === GradingTaskStatus.COMPLETED ||
-                          task.status === GradingTaskStatus.PUBLISHED) && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleViewReport(task)}
-                              title={t('grading.view_report')}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            {task.status === GradingTaskStatus.COMPLETED && (
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={() => handlePublishSingle(task.id)}
-                                disabled={publishing}
-                                title={t('grading.publish')}
-                              >
-                                <Send className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </>
-                        )}
+                        {(() => {
+                          // Check if task can show report or be published
+                          const reportData = task.report_data || {}
+                          const humanReport = reportData.human_report as
+                            | { content?: string; s3_path?: string }
+                            | undefined
+                          const hasHumanReport = !!(humanReport?.content || humanReport?.s3_path)
+                          const canPublish =
+                            task.status === GradingTaskStatus.COMPLETED ||
+                            ((task.status === GradingTaskStatus.PENDING ||
+                              task.status === GradingTaskStatus.FAILED) &&
+                              hasHumanReport)
+                          const showReport =
+                            task.status === GradingTaskStatus.COMPLETED ||
+                            task.status === GradingTaskStatus.PUBLISHED ||
+                            hasHumanReport
+
+                          return (
+                            <>
+                              {showReport && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleViewReport(task)}
+                                  title={t('grading.view_report')}
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {canPublish && task.status !== GradingTaskStatus.PUBLISHED && (
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={() => handlePublishSingle(task.id)}
+                                  disabled={publishing}
+                                  title={t('grading.publish')}
+                                >
+                                  <Send className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </>
+                          )
+                        })()}
                         <Button
                           variant="ghost"
                           size="sm"

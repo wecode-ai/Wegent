@@ -303,6 +303,17 @@
     "conflict_error": "Conflict detected but failed to load server version",
     "no_group_teams": "No group teams available. Please create a group team for grading.",
     "all_teams_shown": "Showing all available teams",
+    "publish_hint": "Publish the grading report",
+    "publish_disabled_hint": "Please edit and save a report before publishing",
+    "publish_dialog_title": "Publish Grading Report",
+    "publish_dialog_description": "Review the report content before publishing. You can also attach a file as the final report.",
+    "report_preview": "Report Preview",
+    "attachment_optional": "Attachment (Optional)",
+    "attachment_hint": "Upload a file to use as the final report. If not provided, the edited report will be used.",
+    "selected_file": "Selected file",
+    "confirm_publish": "Confirm Publish",
+    "publishing": "Publishing...",
+    "publish_error_no_report": "Please edit and save a report, or wait for AI grading to complete.",
     "auto_trigger": "Auto Trigger",
     "auto_trigger_description": "Configure when to automatically trigger AI grading.",
     "enable_auto_trigger": "Enable auto grading",
@@ -469,6 +480,11 @@
       "title": "Submission Successful",
       "description": "Assessment materials have been submitted successfully.",
       "close": "Close"
+    },
+    "time_warning": {
+      "title": "Exam Ending Soon",
+      "description": "There are {{minutes}} minutes remaining until the exam ends. Please complete your answers and prepare to submit.",
+      "hint": "Recommendation: Check if all required items are completed (answer notes, assessment report, interaction records), and submit promptly after confirmation."
     },
     "exam_method": {
       "title": "Assessment Method",

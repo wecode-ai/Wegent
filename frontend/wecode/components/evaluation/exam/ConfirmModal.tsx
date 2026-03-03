@@ -38,20 +38,20 @@ export function ConfirmModal({
   if (!isOpen) return null
 
   const items = [
-    ['考生姓名', participantName || '未填写'],
-    ['选择题目', selectedTopicTitle || '未选择'],
+    [t('exam.confirm.participant_name'), participantName || t('exam.confirm.not_filled')],
+    [t('exam.confirm.selected_topic'), selectedTopicTitle || t('exam.confirm.not_selected')],
     [
-      '作答说明',
+      t('exam.confirm.supplementary_notes'),
       supplementaryNotesLength > 0
-        ? `${supplementaryNotesLength} 字`
+        ? t('exam.confirm.character_count', { count: supplementaryNotesLength })
         : supplementaryNotesFilesCount > 0
-          ? `已上传 ${supplementaryNotesFilesCount} 个文件`
-          : '未填写',
+          ? t('exam.confirm.file_count', { count: supplementaryNotesFilesCount })
+          : t('exam.confirm.not_filled'),
     ],
-    ['交互记录', `${interactionFilesCount} 个文件`],
-    ['产出结果', `${mainFilesCount} 个文件`],
-    ['附加题一', hasBonusAgent ? '已提供' : '未提供'],
-    ['附加题二', hasBonusMultimodal ? '已提供' : '未提供'],
+    [t('exam.confirm.interaction_record'), t('exam.confirm.file_count', { count: interactionFilesCount })],
+    [t('exam.confirm.main_report'), t('exam.confirm.file_count', { count: mainFilesCount })],
+    [t('exam.confirm.bonus_1'), hasBonusAgent ? t('exam.confirm.provided') : t('exam.confirm.not_provided')],
+    [t('exam.confirm.bonus_2'), hasBonusMultimodal ? t('exam.confirm.provided') : t('exam.confirm.not_provided')],
   ]
 
   return (
@@ -65,10 +65,10 @@ export function ConfirmModal({
         onClick={e => e.stopPropagation()}
       >
         <h3 className="text-xl font-extrabold text-gray-900 mb-1">
-          {t('grading:exam.confirm.title', '确认提交')}
+          {t('exam.confirm.title')}
         </h3>
         <p className="text-base text-gray-500 mb-6">
-          {t('grading:exam.confirm.description', '请确认以下提交内容无误')}
+          {t('exam.confirm.description')}
         </p>
 
         <div className="space-y-3 mb-8">
@@ -90,13 +90,13 @@ export function ConfirmModal({
             onClick={onClose}
             className="flex-1 px-5 py-3 rounded-2xl border border-gray-200 text-base font-medium text-gray-700 hover:bg-gray-50 transition"
           >
-            {t('common:actions.cancel', '返回修改')}
+            {t('exam.confirm.cancel')}
           </button>
           <button
             onClick={onConfirm}
             className="flex-1 px-5 py-3 rounded-2xl bg-[#DF2029] hover:bg-[#c81d25] text-white text-base font-bold transition shadow-lg shadow-red-200/50"
           >
-            {t('common:actions.confirm', '确认提交')}
+            {t('exam.confirm.confirm')}
           </button>
         </div>
       </div>

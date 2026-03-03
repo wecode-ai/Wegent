@@ -69,7 +69,7 @@ const EXAM_DATA = {
     {
       icon: 'upload',
       label: '提交要求',
-      text: '现场由本人导出/分享可体现交互过程的记录（文本/链接），以及最终产出结果',
+      text: '请按要求提交作答说明、AI交互过程记录及产出报告/方案；如选答附加题，可补充提交 Agent或多模态交付物等相关材料',
     },
     {
       icon: 'shield',
@@ -439,7 +439,7 @@ export default function AIAssessment2026Page() {
     }
   }, [])
 
-  // Load existing answer data
+  // Load existing answer data for all questions
   useEffect(() => {
     async function loadExistingAnswer() {
       if (dataLoadedRef.current || !examSession) return
@@ -447,13 +447,61 @@ export default function AIAssessment2026Page() {
 
       try {
         const data = await getExamData(1)
-        if (data.userAnswer?.content_data) {
+
+        // Load answers for all questions from allAnswers
+        if (data.allAnswers && Object.keys(data.allAnswers).length > 0) {
+          setQuestionData(prevQuestionData => {
+            const newQuestionData: typeof prevQuestionData = { ...prevQuestionData }
+
+            Object.entries(data.allAnswers!).forEach(
+              ([questionIdStr, answerData]: [string, unknown]) => {
+                const questionId = parseInt(questionIdStr, 10)
+                const content = (
+                  answerData as {
+                    content_data?: {
+                      selectedTopicId?: number
+                      supplementaryNotes?: string
+                      attachments?: Record<string, unknown>
+                      supplementaryNotesFiles?: unknown[]
+                    }
+                  }
+                ).content_data
+
+                if (content && content.selectedTopicId) {
+                  // Load supplementary notes: prefer text content over files
+                  const loadedNotes = content.supplementaryNotes || ''
+
+                  newQuestionData[questionId] = {
+                    attachments: {
+                      main: (content.attachments?.main as ExamAttachment[]) || [],
+                      interaction: (content.attachments?.interaction as ExamAttachment[]) || [],
+                      bonusAgent:
+                        (content.attachments?.bonusAgent as { files?: ExamAttachment[] })?.files ||
+                        [],
+                      bonusMultimodal:
+                        (content.attachments?.bonusMultimodal as ExamAttachment[]) || [],
+                    },
+                    supplementaryNotesFiles:
+                      (content.supplementaryNotesFiles as ExamAttachment[]) || [],
+                    supplementaryNotes: loadedNotes,
+                    linkValues: {
+                      bonusAgent:
+                        (content.attachments?.bonusAgent as { link?: string })?.link || '',
+                    },
+                  }
+                }
+              }
+            )
+
+            return newQuestionData
+          })
+        }
+        // Fallback: also check userAnswer for backward compatibility
+        else if (data.userAnswer?.content_data) {
           const content = data.userAnswer.content_data
           const questionId = content.selectedTopicId
 
           if (questionId) {
-            // Load supplementary notes: prefer text content over files
-            // If text notes exist, use them; otherwise keep empty for user to fill
             const loadedNotes = content.supplementaryNotes || ''
 
             setQuestionData(prev => ({
@@ -629,7 +677,7 @@ export default function AIAssessment2026Page() {
       if (notesToSave.trim()) {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
         const randomStr = Math.random().toString(36).substring(2, 6)
-        const filename = `补充说明_${timestamp}_${randomStr}.txt`
+        const filename = `作答说明_${timestamp}_${randomStr}.txt`
 
         const textResponse = await uploadTextAsFile(
           notesToSave,
@@ -703,7 +751,7 @@ export default function AIAssessment2026Page() {
       try {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
         const randomStr = Math.random().toString(36).substring(2, 6)
-        const filename = `补充说明_${timestamp}_${randomStr}.txt`
+        const filename = `作答说明_${timestamp}_${randomStr}.txt`
 
         const textResponse = await uploadTextAsFile(
           currentData.supplementaryNotes,
@@ -806,7 +854,7 @@ export default function AIAssessment2026Page() {
       if (currentData.supplementaryNotes.trim()) {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
         const randomStr = Math.random().toString(36).substring(2, 6)
-        const filename = `补充说明_${timestamp}_${randomStr}.txt`
+        const filename = `作答说明_${timestamp}_${randomStr}.txt`
 
         const textResponse = await uploadTextAsFile(
           currentData.supplementaryNotes,
