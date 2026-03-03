@@ -20,11 +20,6 @@
     "mail_email": "邮箱账号",
     "mail_email_placeholder": "例如: zhangsan",
     "mail_email_hint": "无需输入 @staff.sina.com.cn 后缀",
-    "mail_password": "邮箱密码",
-    "quick_setup_title": "创建云设备",
-    "quick_setup_description": "系统将自动创建虚拟机并配置 Executor，首次使用需要 1-3 分钟",
-    "created_title": "云设备创建成功",
-    "created_description": "您的云设备已就绪，可以开始使用",
-    "start_using": "开始使用"
+    "mail_password": "邮箱密码"
   }
 }

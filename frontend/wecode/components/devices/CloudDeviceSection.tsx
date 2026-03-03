@@ -45,8 +45,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { cloudDeviceApis } from '@wecode/apis/cloud-devices'
-import { useCloudDevice } from '@wecode/hooks/useCloudDevice'
+import { cloudDeviceApis, CloudDeviceConfig } from '@wecode/apis/cloud-devices'
 import type { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { VersionBadge } from '@/features/devices/components/VersionBadge'
@@ -70,22 +69,37 @@ export function CloudDeviceSection({
   onCancelTask,
 }: CloudDeviceSectionProps) {
   const { t } = useTranslation('wecode')
-  const { config: cloudConfig, createDevice, isCreating } = useCloudDevice()
+  const [isCreating, setIsCreating] = useState(false)
   const [deviceToDelete, setDeviceToDelete] = useState<DeviceInfo | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showCreateConfirm, setShowCreateConfirm] = useState(false)
+  const [cloudConfig, setCloudConfig] = useState<CloudDeviceConfig | null>(null)
   const [mailEnabled, setMailEnabled] = useState(false)
   const [mailEmail, setMailEmail] = useState('')
   const [mailpassword, setMailpassword] = useState('')
 
+  // Fetch cloud device configuration
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const config = await cloudDeviceApis.getCloudDeviceConfig()
+        setCloudConfig(config)
+      } catch (error) {
+        console.error('Failed to fetch cloud device config:', error)
+      }
+    }
+    fetchConfig()
+  }, [])
+
   const handleCreateCloudDevice = useCallback(async () => {
     setShowCreateConfirm(false)
+    setIsCreating(true)
     try {
       const body =
         mailEnabled && mailEmail && mailpassword
           ? { mail_email: mailEmail, mail_password: mailpassword }
           : undefined
-      await createDevice(body)
+      await cloudDeviceApis.createCloudDevice(body)
       toast.success(t('cloud_device.create_success'))
       onDeviceCreated()
     } catch (error: unknown) {
@@ -100,11 +114,12 @@ export function CloudDeviceSection({
         toast.error(t('cloud_device.create_error'))
       }
     } finally {
+      setIsCreating(false)
       setMailEnabled(false)
       setMailEmail('')
       setMailpassword('')
     }
-  }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword, createDevice])
+  }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deviceToDelete) return

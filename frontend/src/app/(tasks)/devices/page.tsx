@@ -55,20 +55,6 @@ import { toast } from 'sonner'
 import { getSocketUrl } from '@/lib/runtime-config'
 import { LocalExecutorGuide } from '@wecode/components/devices/LocalExecutorGuide'
 import { CloudDeviceSection } from '@wecode/components/devices/CloudDeviceSection'
-import { DeviceTypeSelector } from '@wecode/components/devices/DeviceTypeSelector'
-import { CloudDeviceQuickSetup } from '@wecode/components/devices/CloudDeviceQuickSetup'
-import { useCloudDevice } from '@wecode/hooks/useCloudDevice'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
 
 // Device type constants matching backend DeviceType enum
 const DEVICE_TYPE = {
@@ -205,63 +191,6 @@ export default function DevicesPage() {
   // Guide visibility state (for showing installation guide when devices exist)
   const [showGuide, setShowGuide] = useState(false)
 
-  // Add device flow state (for showing device type selector when devices exist)
-  const [showAddDeviceFlow, setShowAddDeviceFlow] = useState(false)
-
-  // Cloud device creation dialog state
-  const [showCloudDeviceDialog, setShowCloudDeviceDialog] = useState(false)
-
-  // Init flow state for empty device page
-  type InitFlowState = 'select-type' | 'setup-local' | 'setup-cloud' | 'complete'
-  const [initFlowState, setInitFlowState] = useState<InitFlowState>('select-type')
-
-  // Fetch cloud device configuration for init flow
-  const { config: cloudConfig, createDevice, isCreating } = useCloudDevice()
-
-  // Mail configuration state for cloud device creation
-  const [mailEnabled, setMailEnabled] = useState(false)
-  const [mailEmail, setMailEmail] = useState('')
-  const [mailpassword, setMailpassword] = useState('')
-
-  // Handle cloud device creation
-  const handleCreateCloudDevice = useCallback(async () => {
-    try {
-      const body =
-        mailEnabled && mailEmail && mailpassword
-          ? { mail_email: mailEmail, mail_password: mailpassword }
-          : undefined
-      await createDevice(body)
-      toast.success(t('wecode:cloud_device.create_success'))
-      setShowCloudDeviceDialog(false)
-      setShowAddDeviceFlow(false)
-      setMailEnabled(false)
-      setMailEmail('')
-      setMailpassword('')
-      refreshDevices()
-    } catch (error: unknown) {
-      const apiError = error as { status?: number; message?: string }
-      if (apiError?.status === 400) {
-        toast.error(
-          t('wecode:cloud_device.limit_reached', {
-            max: cloudConfig?.max_devices_per_user || 1,
-          })
-        )
-      } else if (apiError?.status === 503) {
-        toast.error(t('wecode:cloud_device.not_configured'))
-      } else {
-        toast.error(t('wecode:cloud_device.create_error'))
-      }
-    }
-  }, [
-    mailEnabled,
-    mailEmail,
-    mailpassword,
-    createDevice,
-    t,
-    cloudConfig,
-    refreshDevices,
-  ])
-
   // Load collapsed state from localStorage
   useEffect(() => {
     const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
@@ -360,11 +289,20 @@ export default function DevicesPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setShowAddDeviceFlow(true)}
+                    onClick={() => setShowGuide(!showGuide)}
                     className="flex items-center gap-2"
                   >
-                    <Plus className="w-4 h-4" />
-                    {t('add_device')}
+                    {showGuide ? (
+                      <>
+                        <ChevronUp className="w-4 h-4" />
+                        {t('hide_guide')}
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        {t('add_device')}
+                      </>
+                    )}
                   </Button>
                 )}
                 <Button
@@ -400,43 +338,15 @@ export default function DevicesPage() {
             {/* Empty state with installation guide */}
             {!isLoading && devices.length === 0 && (
               <>
-                {/* Show device type selector by default, or if cloud is explicitly enabled */}
-                {initFlowState === 'select-type' &&
-                  (cloudConfig === null || cloudConfig?.enabled !== false) && (
-                    <DeviceTypeSelector
-                      onSelectLocal={() => setInitFlowState('setup-local')}
-                      onSelectCloud={() => setShowCloudDeviceDialog(true)}
-                      cloudEnabled={cloudConfig?.enabled !== false}
-                    />
-                  )}
+                <LocalExecutorGuide
+                  backendUrl={backendUrl}
+                  authToken={authToken}
+                  guideUrl={guideUrl}
+                />
 
-                {/* Show local device guide only if cloud is explicitly disabled or user selected local */}
-                {(initFlowState === 'setup-local' ||
-                  (initFlowState === 'select-type' && cloudConfig?.enabled === false)) && (
-                  <>
-                    {cloudConfig?.enabled !== false && (
-                      <div className="mb-4">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setInitFlowState('select-type')}
-                          className="flex items-center gap-2"
-                        >
-                          ← {t('init_flow.back_to_selection')}
-                        </Button>
-                      </div>
-                    )}
-                    <LocalExecutorGuide
-                      backendUrl={backendUrl}
-                      authToken={authToken}
-                      guideUrl={guideUrl}
-                    />
-                  </>
-                )}
-
-                {/* Help section - show for all states */}
+                {/* Help section */}
                 {(communityUrl || faqUrl) && (
-                  <div className="flex justify-center mt-6">
+                  <div className="flex justify-center">
                     <div className="flex items-center gap-4 text-sm text-text-muted">
                       <span>{t('need_help')}</span>
                       {communityUrl && (
@@ -467,137 +377,9 @@ export default function DevicesPage() {
               </>
             )}
 
-            {/* Add Device Flow - show device type selector */}
-            {showAddDeviceFlow && sortedDevices.length > 0 && (
-              <div className="mb-6">
-                <DeviceTypeSelector
-                  onSelectLocal={() => {
-                    setShowAddDeviceFlow(false)
-                    setShowGuide(true)
-                  }}
-                  onSelectCloud={() => {
-                    setShowAddDeviceFlow(false)
-                    setShowCloudDeviceDialog(true)
-                  }}
-                  cloudEnabled={cloudConfig?.enabled !== false}
-                />
-              </div>
-            )}
-
-            {/* Cloud Device Creation Dialog */}
-            <Dialog
-              open={showCloudDeviceDialog}
-              onOpenChange={open => {
-                setShowCloudDeviceDialog(open)
-                if (!open) {
-                  setMailEnabled(false)
-                  setMailEmail('')
-                  setMailpassword('')
-                }
-              }}
-            >
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t('wecode:cloud_device.create_confirm_title')}</DialogTitle>
-                  <DialogDescription>
-                    {t('wecode:cloud_device.create_confirm_message')}
-                    <br />
-                    <span className="text-yellow-600 dark:text-yellow-500">
-                      {t('wecode:cloud_device.create_confirm_note')}
-                    </span>
-                  </DialogDescription>
-                </DialogHeader>
-
-                {/* Mail skill section */}
-                <div className="space-y-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="mail-enable"
-                      checked={mailEnabled}
-                      onCheckedChange={checked => setMailEnabled(checked === true)}
-                    />
-                    <Label htmlFor="mail-enable" className="text-sm font-medium cursor-pointer">
-                      {t('wecode:cloud_device.mail_enable')}
-                    </Label>
-                  </div>
-                  {mailEnabled && (
-                    <div className="space-y-3 pl-6">
-                      <div className="space-y-1">
-                        <Label htmlFor="mail-email" className="text-sm">
-                          {t('wecode:cloud_device.mail_email')}
-                        </Label>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id="mail-email"
-                            value={mailEmail}
-                            onChange={e => setMailEmail(e.target.value)}
-                            placeholder={t('wecode:cloud_device.mail_email_placeholder')}
-                            className="flex-1"
-                          />
-                          <span className="text-sm text-text-muted whitespace-nowrap">
-                            @staff.sina.com.cn
-                          </span>
-                        </div>
-                        <p className="text-xs text-text-muted">
-                          {t('wecode:cloud_device.mail_email_hint')}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="mail-password" className="text-sm">
-                          {t('wecode:cloud_device.mail_password')}
-                        </Label>
-                        <Input
-                          id="mail-password"
-                          type="password"
-                          value={mailpassword}
-                          onChange={e => setMailpassword(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <DialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowCloudDeviceDialog(false)}
-                    disabled={isCreating}
-                  >
-                    {t('common:actions.cancel')}
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={handleCreateCloudDevice}
-                    disabled={isCreating}
-                  >
-                    {isCreating ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        {t('wecode:cloud_device.creating')}
-                      </>
-                    ) : (
-                      t('wecode:cloud_device.create')
-                    )}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-
-            {/* Installation guide when triggered by selector */}
+            {/* Installation guide when triggered by Add Device button */}
             {showGuide && sortedDevices.length > 0 && (
               <div className="mb-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-semibold">{t('device_setup_title')}</h3>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowGuide(false)}
-                    className="flex items-center gap-2"
-                  >
-                    <ChevronUp className="w-4 h-4" />
-                    {t('hide_guide')}
-                  </Button>
-                </div>
                 <LocalExecutorGuide
                   backendUrl={backendUrl}
                   authToken={authToken}
@@ -606,28 +388,17 @@ export default function DevicesPage() {
               </div>
             )}
 
-            {/* Device List - hide when showing add device flow */}
-            {!showAddDeviceFlow && sortedDevices.length > 0 && (
+            {/* Local Devices Section */}
+            {sortedDevices.length > 0 && (
               <div className="space-y-6">
                 {/* Local Devices */}
                 <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <Monitor className="w-5 h-5 text-text-secondary" />
-                      <h3 className="text-sm font-medium text-text-secondary">
-                        {t('local_devices_section')}
-                      </h3>
-                      <span className="text-xs text-text-muted">({localDevices.length})</span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowGuide(true)}
-                      className="flex items-center gap-2"
-                    >
-                      <Plus className="w-4 h-4" />
-                      {t('add_local_device')}
-                    </Button>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Monitor className="w-5 h-5 text-text-secondary" />
+                    <h3 className="text-sm font-medium text-text-secondary">
+                      {t('local_devices_section')}
+                    </h3>
+                    <span className="text-xs text-text-muted">({localDevices.length})</span>
                   </div>
                   {localDevices.length > 0 ? (
                     <div className="grid gap-4">
@@ -664,9 +435,9 @@ export default function DevicesPage() {
               </div>
             )}
           </div>
-          </div>
         </div>
       </div>
+    </div>
   )
 }
 

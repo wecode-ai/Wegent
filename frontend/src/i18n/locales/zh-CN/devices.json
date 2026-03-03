@@ -83,9 +83,7 @@
     "updateAvailable": "有新版本可用"
   },
   "add_device": "添加设备",
-  "add_local_device": "添加本地设备",
   "hide_guide": "收起指南",
-  "device_setup_title": "设备配置",
   "auth_mode_token": "会话 Token",
   "auth_mode_apikey": "API Key",
   "select_apikey": "选择 API Key",
@@ -107,19 +105,5 @@
   "local_devices_section": "本地设备",
   "cloud_devices_section": "云端设备",
   "no_local_devices": "暂无本地设备连接。请使用上方指南添加设备。",
-  "cloud_devices_coming_soon": "云端设备支持即将推出。",
-  "init_flow": {
-    "select_type_title": "选择设备类型",
-    "select_type_description": "开始使用 Wegent 需要一个执行设备",
-    "local_device": "本地设备",
-    "local_device_desc": "在您的电脑上安装 Executor，完全控制执行环境",
-    "local_device_benefits": "数据完全本地化|自定义配置|免费使用",
-    "cloud_device": "云设备",
-    "cloud_device_desc": "一键创建云端 AI 设备，立即开始使用",
-    "cloud_device_benefits": "无需安装|1-3 分钟即可使用|预配置环境",
-    "setup_local_device": "设置本地设备",
-    "setup_cloud_device": "创建云设备",
-    "recommended": "推荐",
-    "back_to_selection": "返回选择"
-  }
+  "cloud_devices_coming_soon": "云端设备支持即将推出。"
 }
