@@ -13,6 +13,7 @@
 import '@wecode/i18n' // side-effect import to load wecode translations
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -70,6 +71,7 @@ export function CloudDeviceSection({
   onCancelTask,
 }: CloudDeviceSectionProps) {
   const { t } = useTranslation('wecode')
+  const { user } = useUser()
   const [isCreating, setIsCreating] = useState(false)
   const [deviceToDelete, setDeviceToDelete] = useState<DeviceInfo | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -78,6 +80,13 @@ export function CloudDeviceSection({
   const [mailEnabled, setMailEnabled] = useState(false)
   const [mailEmail, setMailEmail] = useState('')
   const [mailpassword, setMailpassword] = useState('')
+
+  // Set default email when user data is available or dialog opens
+  useEffect(() => {
+    if (showCreateConfirm && user?.user_name && !mailEmail) {
+      setMailEmail(user.user_name)
+    }
+  }, [showCreateConfirm, user?.user_name, mailEmail])
 
   // Fetch cloud device configuration
   useEffect(() => {
@@ -116,11 +125,12 @@ export function CloudDeviceSection({
       }
     } finally {
       setIsCreating(false)
+      // Reset to defaults after creation
       setMailEnabled(false)
-      setMailEmail('')
+      setMailEmail(user?.user_name || '')
       setMailpassword('')
     }
-  }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword])
+  }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword, user?.user_name])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deviceToDelete) return
@@ -238,8 +248,9 @@ export function CloudDeviceSection({
         onOpenChange={open => {
           setShowCreateConfirm(open)
           if (!open) {
+            // Reset to defaults when closing dialog
             setMailEnabled(false)
-            setMailEmail('')
+            setMailEmail(user?.user_name || '')
             setMailpassword('')
           }
         }}
