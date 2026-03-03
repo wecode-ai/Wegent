@@ -102,22 +102,9 @@ function ChatAreaContent({
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
 
-  // Chat area state (team, repo, branch, model, input, toggles, etc.)
-  const chatState = useChatAreaState({
-    teams,
-    taskType,
-    selectedTeamForNewTask,
-    initialKnowledgeBase,
-  })
-
-  // Skill selector state - fetches available skills and manages selection
-  const skillSelector = useSkillSelector({
-    team: chatState.selectedTeam,
-    enabled: true,
-  })
-
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
+  // NOTE: Must be called before useChatAreaState to provide maxAttachments
   const videoModelSelection = useModelSelection({
     teamId: null,
     taskId: null,
@@ -128,12 +115,51 @@ function ChatAreaContent({
 
   // Image model selection state - only enabled for image mode
   // Uses unified useModelSelection hook with modelCategoryType='image'
+  // NOTE: Must be called before useChatAreaState to provide maxAttachments
   const imageModelSelection = useModelSelection({
     teamId: null,
     taskId: null,
     selectedTeam: null,
     disabled: taskType !== 'image',
     modelCategoryType: 'image',
+  })
+
+  // Compute maxAttachments from selected model's imageConfig
+  // This value is passed to useChatAreaState for attachment upload limits
+  const maxAttachmentsFromModel = useMemo(() => {
+    if (taskType === 'image') {
+      const imageConfig = imageModelSelection.selectedModel?.config?.imageConfig as
+        | { max_reference_images?: number }
+        | undefined
+      return imageConfig?.max_reference_images
+    }
+    // Video mode can also use reference images, use same field if available
+    if (taskType === 'video') {
+      const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
+        | { max_reference_images?: number }
+        | undefined
+      return videoConfig?.max_reference_images
+    }
+    return undefined
+  }, [
+    taskType,
+    imageModelSelection.selectedModel?.config,
+    videoModelSelection.selectedModel?.config,
+  ])
+
+  // Chat area state (team, repo, branch, model, input, toggles, etc.)
+  const chatState = useChatAreaState({
+    teams,
+    taskType,
+    selectedTeamForNewTask,
+    initialKnowledgeBase,
+    maxAttachments: maxAttachmentsFromModel,
+  })
+
+  // Skill selector state - fetches available skills and manages selection
+  const skillSelector = useSkillSelector({
+    team: chatState.selectedTeam,
+    enabled: true,
   })
 
   // Video mode specific state - resolution, aspect ratio, and duration
