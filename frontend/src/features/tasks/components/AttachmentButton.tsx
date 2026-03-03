@@ -17,6 +17,8 @@ interface AttachmentButtonProps {
   onFileSelect: (files: File | File[]) => void
   /** Whether the button is disabled */
   disabled?: boolean
+  /** Override the accepted file types (e.g. image-only for generation modes) */
+  accept?: string
 }
 
 /**
@@ -27,6 +29,7 @@ interface AttachmentButtonProps {
 export default function AttachmentButton({
   onFileSelect,
   disabled = false,
+  accept,
 }: AttachmentButtonProps) {
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -74,8 +77,8 @@ export default function AttachmentButton({
     [disabled, onFileSelect]
   )
 
-  // Build accept string for file input
-  const acceptString = SUPPORTED_EXTENSIONS.join(',')
+  // Build accept string for file input - use override if provided
+  const acceptString = accept ?? SUPPORTED_EXTENSIONS.join(',')
 
   // Tooltip content
   const tooltipContent = t('chat:upload.tooltip', {

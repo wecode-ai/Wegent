@@ -381,6 +381,16 @@ export function ChatInputControls({
           />
         )}
 
+        {/* Reference image upload button - show for image and video generation modes,
+            placed between the mode toggle and the model selector */}
+        {isGenerationMode && (
+          <AttachmentButton
+            onFileSelect={onFileSelect}
+            disabled={isLoading || isStreaming}
+            accept="image/*"
+          />
+        )}
+
         {/* Video Mode Controls - show when taskType is 'video' */}
         {isVideoMode && (
           <>
@@ -442,11 +452,6 @@ export function ChatInputControls({
               />
             )}
           </>
-        )}
-
-        {/* Reference image upload button - show for image and video generation modes */}
-        {isGenerationMode && (
-          <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
 
         {/* Non-generation mode controls (chat, code, etc.) */}

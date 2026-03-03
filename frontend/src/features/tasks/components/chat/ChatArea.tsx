@@ -625,8 +625,10 @@ function ChatAreaContent({
       const aiStateMsg = stateMessages.get(`ai-${aiMsg.subtaskId}`)
       if (!aiStateMsg) return
 
-      // Find the corresponding user message: prefer matching by shared messageId,
-      // fall back to the user message with the closest timestamp before the AI message
+      // Find the corresponding user message using the following strategy:
+      // 1. Primary: match by shared messageId (works for messages loaded from backend)
+      // 2. Fallback: use Map insertion order - find the last user message that appears
+      //    before the AI message in the Map (works for live-session messages that have no messageId yet)
       let userStateMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
 
       if (aiStateMsg.messageId != null) {
@@ -640,17 +642,19 @@ function ChatAreaContent({
       }
 
       if (!userStateMsg) {
-        // Fallback: find the user message with the largest timestamp that is still
-        // earlier than the AI message (i.e., the user turn that triggered this AI response)
-        let bestTimestamp = -Infinity
-        for (const msg of stateMessages.values()) {
-          if (
-            msg.type === 'user' &&
-            msg.timestamp < aiStateMsg.timestamp &&
-            msg.timestamp > bestTimestamp
-          ) {
-            bestTimestamp = msg.timestamp
-            userStateMsg = msg
+        // Fallback: iterate the Map in insertion order; track the last user message seen
+        // before we reach the target AI message entry
+        let lastUserMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+        for (const [key, msg] of stateMessages.entries()) {
+          if (key === `ai-${aiMsg.subtaskId}`) {
+            // Reached the AI message - the previous user message is the one we want
+            if (lastUserMsg) {
+              userStateMsg = lastUserMsg
+            }
+            break
+          }
+          if (msg.type === 'user') {
+            lastUserMsg = msg
           }
         }
       }
@@ -662,14 +666,16 @@ function ChatAreaContent({
         chatState.setTaskInputMessage(userStateMsg.content)
       }
 
-      // Clear any existing draft attachments before restoring the original ones
+      // Clear any existing draft attachments and contexts before restoring the original ones
       // so the restored set exactly matches the original user message
       chatState.resetAttachment()
+      chatState.setSelectedContexts([])
 
-      // Restore attachment contexts (contexts is stored as unknown[] in UnifiedMessage)
+      // Restore all contexts (attachments and knowledge bases) from the user message
       const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
-      const attachmentContexts = rawContexts.filter(c => c.context_type === 'attachment')
 
+      // Restore attachment contexts
+      const attachmentContexts = rawContexts.filter(c => c.context_type === 'attachment')
       for (const ctx of attachmentContexts) {
         try {
           const detail = await getAttachment(ctx.id)
@@ -689,6 +695,30 @@ function ChatAreaContent({
         } catch (error) {
           console.error('Failed to restore attachment for re-edit:', error)
         }
+      }
+
+      // Restore knowledge base and table contexts
+      const restoredContextItems: ContextItem[] = []
+      for (const ctx of rawContexts) {
+        if (ctx.context_type === 'knowledge_base') {
+          restoredContextItems.push({
+            id: ctx.id,
+            name: ctx.name,
+            type: 'knowledge_base',
+            document_count: ctx.document_count ?? undefined,
+          })
+        } else if (ctx.context_type === 'table') {
+          restoredContextItems.push({
+            id: ctx.id,
+            name: ctx.name,
+            type: 'table',
+            document_id: 0,
+            source_config: ctx.source_config ?? undefined,
+          })
+        }
+      }
+      if (restoredContextItems.length > 0) {
+        chatState.setSelectedContexts(restoredContextItems)
       }
     },
     [taskState, chatState]
