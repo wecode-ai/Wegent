@@ -122,12 +122,13 @@ export function KnowledgeBaseCard({
         <div className="flex items-center gap-1">
           {canCreateGroupChat && onCreateGroupChat && (
             <button
-              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100"
               onClick={e => {
                 e.stopPropagation()
                 onCreateGroupChat()
               }}
               title={t('knowledge:document.groupChat.create')}
+              aria-label={t('knowledge:document.groupChat.create')}
             >
               <MessageSquarePlus className="w-4 h-4" />
             </button>

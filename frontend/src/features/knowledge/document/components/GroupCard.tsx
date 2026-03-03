@@ -24,6 +24,14 @@ export function GroupCard({
 }: GroupCardProps) {
   const { t } = useTranslation()
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Ignore keyboard events from interactive child elements (buttons)
+    // to prevent Enter/Space from bubbling up and triggering the card click
+    if (
+      e.target instanceof HTMLElement &&
+      (e.target.tagName === 'BUTTON' || e.target.closest('[role="button"]'))
+    ) {
+      return
+    }
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       onClick()
@@ -64,23 +72,27 @@ export function GroupCard({
         <div className="flex items-center gap-1">
           {canCreateGroupChat && onCreateGroupChat && (
             <button
-              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100"
               onClick={e => {
                 e.stopPropagation()
                 onCreateGroupChat()
               }}
+              onKeyDown={e => e.stopPropagation()}
               title={t('knowledge:document.groupChat.create')}
+              aria-label={t('knowledge:document.groupChat.create')}
             >
               <MessageSquarePlus className="w-4 h-4" />
             </button>
           )}
           <button
-            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+            className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100"
             onClick={e => {
               e.stopPropagation()
               onClick()
             }}
+            onKeyDown={e => e.stopPropagation()}
             title={t('common:actions.view')}
+            aria-label={t('common:actions.view')}
           >
             <ArrowRight className="w-4 h-4" />
           </button>
