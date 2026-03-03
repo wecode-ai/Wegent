@@ -4,16 +4,25 @@
 
 'use client'
 
-import { Users, ArrowRight } from 'lucide-react'
+import { Users, ArrowRight, MessageSquarePlus } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { Group } from '@/types/group'
 
 interface GroupCardProps {
   group: Group
   onClick: () => void
+  onCreateGroupChat?: () => void
+  canCreateGroupChat?: boolean
 }
 
-export function GroupCard({ group, onClick }: GroupCardProps) {
+export function GroupCard({
+  group,
+  onClick,
+  onCreateGroupChat,
+  canCreateGroupChat = false,
+}: GroupCardProps) {
+  const { t } = useTranslation()
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
@@ -46,13 +55,36 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
         {group.description && <p className="line-clamp-2">{group.description}</p>}
       </div>
 
-      {/* Bottom section - member count */}
+      {/* Bottom section - member count and actions */}
       <div className="flex items-center justify-between mt-auto pt-2 flex-shrink-0">
         <span className="text-xs text-text-muted flex items-center gap-1">
           <Users className="w-3 h-3" />
           {group.member_count || 0}
         </span>
-        <ArrowRight className="w-4 h-4 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+        <div className="flex items-center gap-1">
+          {canCreateGroupChat && onCreateGroupChat && (
+            <button
+              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+              onClick={e => {
+                e.stopPropagation()
+                onCreateGroupChat()
+              }}
+              title={t('knowledge:document.groupChat.create')}
+            >
+              <MessageSquarePlus className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+            onClick={e => {
+              e.stopPropagation()
+              onClick()
+            }}
+            title={t('common:actions.view')}
+          >
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </Card>
   )

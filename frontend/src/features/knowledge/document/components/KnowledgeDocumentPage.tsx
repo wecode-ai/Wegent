@@ -17,7 +17,6 @@ import {
   BookOpen,
   FolderOpen,
   Building2,
-  MessageSquarePlus,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
@@ -789,9 +788,19 @@ function GroupKnowledgeContent({
       </div>
 
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {filteredGroups.map(group => (
-          <GroupCard key={group.name} group={group} onClick={() => handleGroupSelect(group)} />
-        ))}
+        {filteredGroups.map(group => {
+          const role = group.my_role
+          const canChat = role === 'Owner' || role === 'Maintainer' || role === 'Developer'
+          return (
+            <GroupCard
+              key={group.name}
+              group={group}
+              onClick={() => handleGroupSelect(group)}
+              onCreateGroupChat={canChat ? () => onCreateGroupChat(group) : undefined}
+              canCreateGroupChat={canChat}
+            />
+          )
+        })}
       </div>
 
       {/* No results message */}
@@ -874,15 +883,6 @@ function GroupKnowledgeBaseList({
         </button>
         <Users className="w-5 h-5 text-primary flex-shrink-0" />
         <h2 className="font-medium text-base text-text-primary">{groupDisplayName}</h2>
-        {canCreateGroupChat && (
-          <button
-            onClick={() => onCreateGroupChat(group)}
-            className="ml-auto flex items-center gap-1.5 text-sm text-text-secondary hover:text-primary hover:bg-primary/10 rounded-md px-3 py-1.5 transition-colors"
-          >
-            <MessageSquarePlus className="w-4 h-4" />
-            <span>{t('knowledge:document.groupChat.create')}</span>
-          </button>
-        )}
       </div>
 
       {/* Content - centered */}
