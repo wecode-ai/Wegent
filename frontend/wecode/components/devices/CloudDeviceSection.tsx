@@ -244,6 +244,7 @@ export function CloudDeviceSection({
 
       {/* Create confirmation dialog */}
       <Dialog
+        key={showCreateConfirm ? 'open' : 'closed'}
         open={showCreateConfirm}
         onOpenChange={open => {
           setShowCreateConfirm(open)
