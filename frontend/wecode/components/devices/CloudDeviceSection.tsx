@@ -143,9 +143,6 @@ export function CloudDeviceSection({
 
   // Check if any device is being created
   const hasCreatingDevice = cloudDevices.some(device => {
-    // Check if device status is explicitly 'creating'
-    if (device.status === 'creating') return true
-
     // Check if device is offline and was recently created (within 3 minutes)
     if (device.status === 'offline' && device.cloud_config?.createdAt) {
       const createdAt = new Date(device.cloud_config.createdAt)
