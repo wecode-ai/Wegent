@@ -169,6 +169,17 @@ class ModelAggregationService:
                 if model_crd.spec.protocol:
                     config = {**config, "protocol": model_crd.spec.protocol}
 
+            elif model_category_type == "image":
+                if model_crd.spec.imageConfig:
+                    config = {
+                        **config,
+                        "imageConfig": model_crd.spec.imageConfig.model_dump(
+                            exclude_none=True
+                        ),
+                    }
+                if model_crd.spec.protocol:
+                    config = {**config, "protocol": model_crd.spec.protocol}
+
             return {
                 "provider": env.get("model"),
                 "model_id": env.get("model_id"),
