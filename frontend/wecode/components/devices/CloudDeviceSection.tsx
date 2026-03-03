@@ -37,7 +37,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Cloud, Plus, Loader2, Trash2, Play, Star, MoreVertical, Monitor } from 'lucide-react'
+import { Cloud, Plus, Loader2, Trash2, Play, Star, MoreVertical } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -374,31 +374,6 @@ function CloudDeviceCard({
   const isOnline = device.status === 'online' || device.status === 'busy'
   const slotsAvailable = device.slot_max === 0 || device.slot_used < device.slot_max
   const canStartTask = isOnline && slotsAvailable
-  const [vncUrl, setVncUrl] = useState<string | null>(null)
-
-  // Fetch VNC URL for online cloud devices
-  useEffect(() => {
-    if (!isOnline) {
-      setVncUrl(null)
-      return
-    }
-
-    let cancelled = false
-    cloudDeviceApis
-      .getCloudDeviceStatus(device.device_id)
-      .then(status => {
-        if (!cancelled && status.vnc_url) {
-          setVncUrl(status.vnc_url)
-        }
-      })
-      .catch(() => {
-        // Silently ignore - VNC button simply won't appear
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [device.device_id, isOnline])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -495,19 +470,6 @@ function CloudDeviceCard({
               )}
             </Tooltip>
           </TooltipProvider>
-          {vncUrl && (
-            <Button variant="default" size="sm" asChild>
-              <a
-                href={vncUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2"
-              >
-                <Monitor className="w-4 h-4" />
-                {t('devices:vnc_open_desktop')}
-              </a>
-            </Button>
-          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
