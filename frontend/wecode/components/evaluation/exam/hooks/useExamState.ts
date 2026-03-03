@@ -3,7 +3,6 @@ import type { ExamAttachment } from '@wecode/types/evaluation-exam'
 
 export interface QuestionState {
   supplementaryNotes: string
-  supplementaryNotesFiles: ExamAttachment[]
   mainFiles: ExamAttachment[]
   interactionFiles: ExamAttachment[]
   bonusAgentLink: string
@@ -19,7 +18,6 @@ export interface ExamState {
 
 const createInitialQuestionState = (): QuestionState => ({
   supplementaryNotes: '',
-  supplementaryNotesFiles: [],
   mainFiles: [],
   interactionFiles: [],
   bonusAgentLink: '',
@@ -236,51 +234,6 @@ export function useExamState() {
   )
 
   /**
-   * Set supplementary notes files for current question.
-   * @param files - Array of file attachments
-   */
-  const setSupplementaryNotesFiles = useCallback(
-    (files: ExamAttachment[]) => {
-      const questionId = state.selectedQuestionId
-      if (questionId === null) return
-      updateQuestionState(questionId, { supplementaryNotesFiles: files })
-    },
-    [state.selectedQuestionId, updateQuestionState]
-  )
-
-  /**
-   * Add supplementary notes files for current question.
-   * @param files - Array of file attachments to add
-   */
-  const addSupplementaryNotesFiles = useCallback(
-    (files: ExamAttachment[]) => {
-      const questionId = state.selectedQuestionId
-      if (questionId === null) return
-      const current = state.questionStates[questionId] ?? createInitialQuestionState()
-      updateQuestionState(questionId, {
-        supplementaryNotesFiles: [...current.supplementaryNotesFiles, ...files],
-      })
-    },
-    [state.selectedQuestionId, state.questionStates, updateQuestionState]
-  )
-
-  /**
-   * Remove a supplementary notes file by index for current question.
-   * @param index - Index of file to remove
-   */
-  const removeSupplementaryNotesFile = useCallback(
-    (index: number) => {
-      const questionId = state.selectedQuestionId
-      if (questionId === null) return
-      const current = state.questionStates[questionId] ?? createInitialQuestionState()
-      updateQuestionState(questionId, {
-        supplementaryNotesFiles: current.supplementaryNotesFiles.filter((_, i) => i !== index),
-      })
-    },
-    [state.selectedQuestionId, state.questionStates, updateQuestionState]
-  )
-
-  /**
    * Check if the exam is ready to submit.
    * Requires: participant name, selected question, and at least one main file.
    */
@@ -297,9 +250,6 @@ export function useExamState() {
     setParticipantName,
     setSelectedQuestionId,
     setSupplementaryNotes,
-    setSupplementaryNotesFiles,
-    addSupplementaryNotesFiles,
-    removeSupplementaryNotesFile,
     addMainFiles,
     removeMainFile,
     addInteractionFiles,
