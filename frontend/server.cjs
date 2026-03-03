@@ -17,7 +17,7 @@ const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
 const httpProxy = require('http-proxy');
-const WebSocket = require('ws');
+const { createVncProxy } = require('./wecode/server/vnc-proxy.cjs');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.HOSTNAME || 'localhost';
@@ -63,128 +63,8 @@ if (dev) {
   });
 }
 
-// WebSocket server for VNC proxy (noServer mode - we handle upgrades manually)
-const vncWss = new WebSocket.Server({ noServer: true });
-
-/**
- * Handle VNC WebSocket proxy connection.
- *
- * 1. Extracts deviceId from path and token from query string
- * 2. Fetches VNC config from backend (wss_url + signature)
- * 3. Opens upstream connection to Nevis VNC WebSocket
- * 4. Bidirectionally proxies binary data between client and upstream
- */
-function handleVncProxy(req, socket, head) {
-  const { pathname, query } = parse(req.url, true);
-  const match = pathname.match(/^\/vnc-proxy\/([^/]+)$/);
-  if (!match) {
-    socket.destroy();
-    return;
-  }
-
-  const deviceId = decodeURIComponent(match[1]);
-  const token = query.token;
-
-  if (!token) {
-    socket.destroy();
-    return;
-  }
-
-  // Fetch VNC config from backend
-  const configUrl = `${BACKEND_URL}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`;
-  const http = configUrl.startsWith('https') ? require('https') : require('http');
-
-  const configReq = http.get(configUrl, {
-    headers: { 'Authorization': `Bearer ${token}` },
-  }, (configRes) => {
-    let body = '';
-    configRes.on('data', (chunk) => { body += chunk; });
-    configRes.on('end', () => {
-      if (configRes.statusCode !== 200) {
-        console.error(`[VNC Proxy] Backend config error: ${configRes.statusCode} ${body}`);
-        socket.destroy();
-        return;
-      }
-
-      let config;
-      try {
-        config = JSON.parse(body);
-      } catch {
-        console.error('[VNC Proxy] Invalid config JSON from backend');
-        socket.destroy();
-        return;
-      }
-
-      const { wss_url, signature } = config;
-      if (!wss_url || !signature) {
-        console.error('[VNC Proxy] Missing wss_url or signature in config');
-        socket.destroy();
-        return;
-      }
-
-      // Connect to upstream Nevis VNC WebSocket
-      const upstream = new WebSocket(wss_url, {
-        headers: { 'X-Signature': signature },
-        perMessageDeflate: false,
-      });
-
-      upstream.on('open', () => {
-        console.log(`[VNC Proxy] Upstream connected for device=${deviceId}`);
-
-        // Accept the client WebSocket upgrade
-        vncWss.handleUpgrade(req, socket, head, (clientWs) => {
-          // Forward client -> upstream
-          clientWs.on('message', (data) => {
-            if (upstream.readyState === WebSocket.OPEN) {
-              upstream.send(data);
-            }
-          });
-
-          // Forward upstream -> client
-          upstream.on('message', (data) => {
-            if (clientWs.readyState === WebSocket.OPEN) {
-              clientWs.send(data);
-            }
-          });
-
-          // Clean close propagation
-          clientWs.on('close', () => {
-            if (upstream.readyState === WebSocket.OPEN) {
-              upstream.close();
-            }
-          });
-
-          upstream.on('close', () => {
-            if (clientWs.readyState === WebSocket.OPEN) {
-              clientWs.close();
-            }
-          });
-
-          // Error handling
-          clientWs.on('error', (err) => {
-            console.error(`[VNC Proxy] Client error: ${err.message}`);
-            upstream.close();
-          });
-
-          upstream.on('error', (err) => {
-            console.error(`[VNC Proxy] Upstream error: ${err.message}`);
-            clientWs.close();
-          });
-        });
-      });
-
-      upstream.on('error', (err) => {
-        console.error(`[VNC Proxy] Upstream connection failed: ${err.message}`);
-        socket.destroy();
-      });
-    });
-  });
-
-  configReq.on('error', (err) => {
-    console.error(`[VNC Proxy] Config request failed: ${err.message}`);
-    socket.destroy();
-  });
-}
+// VNC WebSocket proxy for cloud devices (internal network feature)
+const vncProxy = createVncProxy(BACKEND_URL);
 
 app.prepare().then(() => {
   const server = createServer((req, res) => {
@@ -219,8 +99,8 @@ app.prepare().then(() => {
       console.log(`[Proxy WS Upgrade] ${req.url}`);
       proxy.ws(req, socket, head);
     } else if (pathname.startsWith('/vnc-proxy/')) {
-      // VNC WebSocket proxy
-      handleVncProxy(req, socket, head);
+      // VNC WebSocket proxy (cloud devices)
+      vncProxy.handleUpgrade(req, socket, head);
     } else {
       // Close other WebSocket connections
       socket.destroy();
