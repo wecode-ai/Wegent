@@ -9,7 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { ChatSloganItem } from '@/types/api'
 
 interface SloganDisplayProps {
-  slogan: ChatSloganItem | null
+  slogan?: ChatSloganItem | null
 }
 
 /**
