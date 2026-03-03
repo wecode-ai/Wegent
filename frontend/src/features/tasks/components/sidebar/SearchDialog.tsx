@@ -125,7 +125,12 @@ export default function SearchDialog({
     handleCloseSearchDialog()
     setSelectedTask(task)
     // Navigate to task with taskId parameter
-    const targetPath = task.task_type === 'code' ? paths.code.getHref() : paths.chat.getHref()
+    let targetPath = paths.chat.getHref() // default to chat
+    if (task.task_type === 'code') {
+      targetPath = paths.code.getHref()
+    } else if (task.task_type === 'video' || task.task_type === 'image') {
+      targetPath = paths.generate.getHref()
+    }
     router.push(`${targetPath}?taskId=${task.id}`)
   }
 
