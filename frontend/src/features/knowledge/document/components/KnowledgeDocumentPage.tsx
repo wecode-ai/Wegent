@@ -17,6 +17,7 @@ import {
   BookOpen,
   FolderOpen,
   Building2,
+  MessageSquarePlus,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
@@ -32,6 +33,7 @@ import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
 import { ShareLinkDialog } from '../../permission/components/ShareLinkDialog'
+import { CreateGroupChatFromKnowledgeDialog } from './CreateGroupChatFromKnowledgeDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { listGroups } from '@/apis/groups'
 import { userApis } from '@/apis/user'
@@ -107,6 +109,13 @@ export function KnowledgeDocumentPage() {
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
   const [sharingKb, setSharingKb] = useState<KnowledgeBase | null>(null)
+
+  // Group chat dialog state
+  const [showGroupChatDialog, setShowGroupChatDialog] = useState(false)
+  const [groupChatContext, setGroupChatContext] = useState<{
+    group: Group
+    knowledgeBaseName?: string
+  } | null>(null)
 
   // Organization namespace (fetched from API)
   const [orgNamespace, setOrgNamespace] = useState<string | null>(null)
@@ -383,6 +392,10 @@ export function KnowledgeDocumentPage() {
             onDeleteKb={setDeletingKb}
             onShareKb={setSharingKb}
             onCreateKb={(groupName, kbType) => handleCreateKb(groupName, kbType)}
+            onCreateGroupChat={(group, knowledgeBaseName) => {
+              setGroupChatContext({ group, knowledgeBaseName })
+              setShowGroupChatDialog(true)
+            }}
           />
         )}
 
@@ -449,6 +462,20 @@ export function KnowledgeDocumentPage() {
         kbId={sharingKb?.id || 0}
         kbName={sharingKb?.name || ''}
       />
+
+      {groupChatContext && (
+        <CreateGroupChatFromKnowledgeDialog
+          open={showGroupChatDialog}
+          onOpenChange={open => {
+            setShowGroupChatDialog(open)
+            if (!open) {
+              setGroupChatContext(null)
+            }
+          }}
+          group={groupChatContext.group}
+          knowledgeBaseName={groupChatContext.knowledgeBaseName}
+        />
+      )}
     </div>
   )
 }
@@ -650,6 +677,7 @@ interface GroupKnowledgeContentProps {
   onDeleteKb: (kb: KnowledgeBase) => void
   onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (groupName: string, kbType: KnowledgeBaseType) => void
+  onCreateGroupChat: (group: Group, knowledgeBaseName?: string) => void
 }
 
 function GroupKnowledgeContent({
@@ -663,6 +691,7 @@ function GroupKnowledgeContent({
   onDeleteKb,
   onShareKb,
   onCreateKb,
+  onCreateGroupChat,
 }: GroupKnowledgeContentProps) {
   const { t } = useTranslation()
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
@@ -737,6 +766,7 @@ function GroupKnowledgeContent({
         onDeleteKb={onDeleteKb}
         onShareKb={onShareKb}
         onCreateKb={kbType => onCreateKb(selectedGroup.name, kbType)}
+        onCreateGroupChat={onCreateGroupChat}
       />
     )
   }
@@ -785,6 +815,7 @@ interface GroupKnowledgeBaseListProps {
   onDeleteKb: (kb: KnowledgeBase) => void
   onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (kbType: KnowledgeBaseType) => void
+  onCreateGroupChat: (group: Group, knowledgeBaseName?: string) => void
 }
 
 function GroupKnowledgeBaseList({
@@ -796,6 +827,7 @@ function GroupKnowledgeBaseList({
   onDeleteKb,
   onShareKb,
   onCreateKb,
+  onCreateGroupChat,
 }: GroupKnowledgeBaseListProps) {
   const { t } = useTranslation()
   const { knowledgeBases, loading, refresh } = useKnowledgeBases({
@@ -810,6 +842,8 @@ function GroupKnowledgeBaseList({
   const canCreate = groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   const canEdit = groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   const canDelete = groupRole === 'Owner' || groupRole === 'Maintainer'
+  const canCreateGroupChat =
+    groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
 
   // Refresh when refreshKey changes
   useEffect(() => {
@@ -840,6 +874,15 @@ function GroupKnowledgeBaseList({
         </button>
         <Users className="w-5 h-5 text-primary flex-shrink-0" />
         <h2 className="font-medium text-base text-text-primary">{groupDisplayName}</h2>
+        {canCreateGroupChat && (
+          <button
+            onClick={() => onCreateGroupChat(group)}
+            className="ml-auto flex items-center gap-1.5 text-sm text-text-secondary hover:text-primary hover:bg-primary/10 rounded-md px-3 py-1.5 transition-colors"
+          >
+            <MessageSquarePlus className="w-4 h-4" />
+            <span>{t('knowledge:document.groupChat.create')}</span>
+          </button>
+        )}
       </div>
 
       {/* Content - centered */}
@@ -980,9 +1023,13 @@ function GroupKnowledgeBaseList({
                 onEdit={canEdit ? () => onEditKb(kb) : undefined}
                 onDelete={canDelete ? () => onDeleteKb(kb) : undefined}
                 onShare={() => onShareKb(kb)}
+                onCreateGroupChat={
+                  canCreateGroupChat ? () => onCreateGroupChat(group, kb.name) : undefined
+                }
                 canEdit={canEdit}
                 canDelete={canDelete}
                 canShare={true}
+                canCreateGroupChat={canCreateGroupChat}
               />
             ))}
           </div>

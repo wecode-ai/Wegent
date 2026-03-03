@@ -13,6 +13,7 @@ import {
   BookOpen,
   FolderOpen,
   Share2,
+  MessageSquarePlus,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -24,9 +25,11 @@ interface KnowledgeBaseCardProps {
   onEdit?: () => void
   onDelete?: () => void
   onShare?: () => void
+  onCreateGroupChat?: () => void
   canEdit?: boolean
   canDelete?: boolean
   canShare?: boolean
+  canCreateGroupChat?: boolean
 }
 
 export function KnowledgeBaseCard({
@@ -35,9 +38,11 @@ export function KnowledgeBaseCard({
   onEdit,
   onDelete,
   onShare,
+  onCreateGroupChat,
   canEdit = true,
   canDelete = true,
   canShare = false,
+  canCreateGroupChat = false,
 }: KnowledgeBaseCardProps) {
   const { t } = useTranslation()
 
@@ -115,6 +120,18 @@ export function KnowledgeBaseCard({
         </div>
         {/* Action icons */}
         <div className="flex items-center gap-1">
+          {canCreateGroupChat && onCreateGroupChat && (
+            <button
+              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+              onClick={e => {
+                e.stopPropagation()
+                onCreateGroupChat()
+              }}
+              title={t('knowledge:document.groupChat.create')}
+            >
+              <MessageSquarePlus className="w-4 h-4" />
+            </button>
+          )}
           {canShare && onShare && (
             <button
               className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
