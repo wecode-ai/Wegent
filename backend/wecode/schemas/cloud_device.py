@@ -86,6 +86,20 @@ class NevisSandboxStatus(BaseModel):
         from_attributes = True
 
 
+class VncConfigResponse(BaseModel):
+    """Response schema for VNC connection configuration.
+
+    Provides the WebSocket URL and authentication signature needed
+    to establish a proxied VNC connection through server.cjs.
+    """
+
+    wss_url: str = Field(..., description="Upstream Nevis VNC WebSocket URL")
+    signature: str = Field(
+        ..., description="X-Signature header value for upstream auth"
+    )
+    sandbox_id: str = Field(..., description="Nevis sandbox ID")
+
+
 class CloudDeviceLimitError(BaseModel):
     """Error response when cloud device limit is reached."""
 

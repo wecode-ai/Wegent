@@ -46,9 +46,12 @@
   "plugin_browser_description": "让 Agent 能够操作浏览器，实现网页自动化",
   "vnc_title": "桌面",
   "vnc_open_desktop": "打开桌面",
-  "vnc_loading": "正在加载桌面...",
-  "vnc_error": "加载桌面查看器失败",
+  "vnc_loading": "正在连接桌面...",
+  "vnc_error": "连接桌面失败",
   "vnc_close": "关闭桌面面板",
+  "vnc_disconnected": "桌面连接已断开",
+  "vnc_reconnect": "重新连接",
+  "vnc_panel_title": "远程桌面",
   "slots_full": "任务槽已满",
   "slots_full_hint": "所有任务槽已被占用，请等待当前任务完成后再试"
 }

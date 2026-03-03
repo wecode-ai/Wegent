@@ -43,6 +43,7 @@
     "@heroicons/react": "^2.2.0",
     "@hookform/resolvers": "^5.2.2",
     "@mermaid-js/parser": "^0.6.3",
+    "@novnc/novnc": "^1.6.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/context-zone": "^2.2.0",
     "@opentelemetry/core": "^2.2.0",
@@ -117,6 +118,7 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^1.1.2",
+    "ws": "^8.19.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {

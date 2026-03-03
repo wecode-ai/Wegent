@@ -29,6 +29,7 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
+    '@novnc/novnc',
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
@@ -45,6 +46,14 @@ const nextConfig = {
             ...config.resolve.alias,
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
           }
+
+          // Handle noVNC CommonJS module properly
+          config.module = config.module || {}
+          config.module.rules = config.module.rules || []
+          config.module.rules.push({
+            test: /node_modules\/@novnc\/novnc/,
+            type: 'javascript/esm',
+          })
 
           // Handle chunk loading issues
           config.optimization = {
