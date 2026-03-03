@@ -29,7 +29,6 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
-    '@novnc/novnc',
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
@@ -47,14 +46,12 @@ const nextConfig = {
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
           }
 
-          // Configure @novnc/novnc module type to fix ES module import issues
-          config.module = config.module || {}
-          config.module.rules = config.module.rules || []
-          config.module.rules.push({
-            test: /\.js$/,
-            include: /node_modules[\\/]@novnc[\\/]novnc/,
-            type: 'javascript/auto',
-          })
+          // Configure @novnc/novnc as external to avoid webpack parsing issues
+          // with top-level await in the library
+          config.externals = config.externals || []
+          if (Array.isArray(config.externals)) {
+            config.externals.push('@novnc/novnc')
+          }
 
           // Handle chunk loading issues
           config.optimization = {
