@@ -150,57 +150,6 @@ export function CreateGroupChatFromKnowledgeDialog({
     }
   }
 
-  // Bind knowledge bases to the newly created group chat task
-  const bindKnowledgeBases = async (taskId: number) => {
-    try {
-      if (knowledgeBaseName) {
-        // KB-level creation: bind the specific knowledge base
-        await taskKnowledgeBaseApi.bindKnowledgeBase(
-          taskId,
-          knowledgeBaseName,
-          knowledgeBaseNamespace || 'default'
-        )
-        return
-      }
-
-      // Group-level creation: bind all knowledge bases in the group
-      // Use provided KBs or fetch them from the API
-      let kbsToBinding = knowledgeBases
-      if (!kbsToBinding || kbsToBinding.length === 0) {
-        const response = await listKnowledgeBases('group', group.name)
-        kbsToBinding = response.items
-      }
-
-      if (!kbsToBinding || kbsToBinding.length === 0) return
-
-      const results = await Promise.allSettled(
-        kbsToBinding.map(kb =>
-          taskKnowledgeBaseApi.bindKnowledgeBase(taskId, kb.name, kb.namespace || 'default')
-        )
-      )
-
-      const failed = results.filter(r => r.status === 'rejected').length
-      if (failed > 0) {
-        console.error(
-          `[CreateGroupChatFromKnowledge] Failed to bind ${failed}/${kbsToBinding.length} knowledge bases`
-        )
-        toast({
-          title: t('document.groupChat.bindKbPartialFail', {
-            failed,
-            total: kbsToBinding.length,
-          }),
-          variant: 'destructive',
-        })
-      }
-    } catch (error) {
-      console.error('[CreateGroupChatFromKnowledge] Failed to bind knowledge bases:', error)
-      toast({
-        title: t('document.groupChat.bindKbFailed'),
-        variant: 'destructive',
-      })
-    }
-  }
-
   const resetForm = () => {
     setTitle(defaultTitle)
     setSelectedTeamId('')
@@ -214,8 +163,15 @@ export function CreateGroupChatFromKnowledgeDialog({
 
     setIsCreating(true)
 
+    // Capture props in local variables to ensure they're available after async operations
+    const kbName = knowledgeBaseName
+    const kbNamespace = knowledgeBaseNamespace
+    const kbList = knowledgeBases
+    const groupName = group.name
+
     try {
-      void sendMessage(
+      // Await sendMessage to get the real task ID from the server
+      const realTaskId = await sendMessage(
         {
           message: t('common:groupChat.create.initialMessage'),
           team_id: selectedTeam.id,
@@ -232,43 +188,6 @@ export function CreateGroupChatFromKnowledgeDialog({
           immediateTaskId: -Date.now(),
           currentUserId: user?.id,
           currentUserName: user?.user_name,
-          onMessageSent: async (
-            _localMessageId: string,
-            realTaskId: number,
-            _subtaskId: number
-          ) => {
-            // Bind knowledge bases FIRST, before closing dialog or navigating
-            // This ensures all props (knowledgeBaseName, etc.) are still valid
-            // and the component is still mounted
-            await bindKnowledgeBases(realTaskId)
-
-            // Close dialog and reset form
-            onOpenChange(false)
-            resetForm()
-
-            // Refresh task list
-            refreshTasks()
-
-            // Set selected task before navigation
-            setSelectedTask({
-              id: realTaskId,
-              title: title,
-              team_id: selectedTeam?.id || 0,
-              is_group_chat: true,
-            } as Task)
-
-            // Navigate to the new group chat
-            router.push(`/chat?taskId=${realTaskId}`)
-
-            // Show success toast
-            toast({
-              title: t('common:groupChat.create.success'),
-              description: t('common:groupChat.create.successDesc'),
-            })
-
-            // Add group members in the background after navigation
-            void addGroupMembersToChat(realTaskId)
-          },
           onError: error => {
             toast({
               title: t('common:groupChat.create.failed'),
@@ -279,6 +198,91 @@ export function CreateGroupChatFromKnowledgeDialog({
           },
         }
       )
+
+      if (!realTaskId || realTaskId < 0) {
+        console.error('[CreateGroupChatFromKnowledge] Invalid task ID returned:', realTaskId)
+        toast({
+          title: t('common:groupChat.create.failed'),
+          variant: 'destructive',
+        })
+        setIsCreating(false)
+        return
+      }
+
+      // Bind knowledge bases using the real task ID
+      // Use local variables to avoid stale closure issues
+      try {
+        if (kbName) {
+          // KB-level creation: bind the specific knowledge base
+          await taskKnowledgeBaseApi.bindKnowledgeBase(realTaskId, kbName, kbNamespace || 'default')
+        } else {
+          // Group-level creation: bind all knowledge bases in the group
+          let kbsToBind = kbList
+          if (!kbsToBind || kbsToBind.length === 0) {
+            const response = await listKnowledgeBases('group', groupName)
+            kbsToBind = response.items
+          }
+
+          if (kbsToBind && kbsToBind.length > 0) {
+            const results = await Promise.allSettled(
+              kbsToBind.map(kb =>
+                taskKnowledgeBaseApi.bindKnowledgeBase(
+                  realTaskId,
+                  kb.name,
+                  kb.namespace || 'default'
+                )
+              )
+            )
+
+            const failed = results.filter(r => r.status === 'rejected').length
+            if (failed > 0) {
+              console.error(
+                `[CreateGroupChatFromKnowledge] Failed to bind ${failed}/${kbsToBind.length} knowledge bases`
+              )
+              toast({
+                title: t('document.groupChat.bindKbPartialFail', {
+                  failed,
+                  total: kbsToBind.length,
+                }),
+                variant: 'destructive',
+              })
+            }
+          }
+        }
+      } catch (bindError) {
+        console.error('[CreateGroupChatFromKnowledge] Failed to bind knowledge bases:', bindError)
+        toast({
+          title: t('document.groupChat.bindKbFailed'),
+          variant: 'destructive',
+        })
+      }
+
+      // Close dialog and reset form
+      onOpenChange(false)
+      resetForm()
+
+      // Refresh task list
+      refreshTasks()
+
+      // Set selected task before navigation
+      setSelectedTask({
+        id: realTaskId,
+        title: title,
+        team_id: selectedTeam?.id || 0,
+        is_group_chat: true,
+      } as Task)
+
+      // Navigate to the new group chat
+      router.push(`/chat?taskId=${realTaskId}`)
+
+      // Show success toast
+      toast({
+        title: t('common:groupChat.create.success'),
+        description: t('common:groupChat.create.successDesc'),
+      })
+
+      // Add group members in the background after navigation
+      void addGroupMembersToChat(realTaskId)
     } catch (error) {
       console.error('[CreateGroupChatFromKnowledge] Failed to create group chat:', error)
       toast({
