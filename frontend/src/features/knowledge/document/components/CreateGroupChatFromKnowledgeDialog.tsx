@@ -32,7 +32,10 @@ import { ModelSelector, type Model } from '@/features/tasks/components/selector'
 import { useUser } from '@/features/common/UserContext'
 import { listGroupMembers } from '@/apis/groups'
 import { taskMemberApi } from '@/apis/task-member'
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
+import { listKnowledgeBases } from '@/apis/knowledge'
 import type { Group } from '@/types/group'
+import type { KnowledgeBase } from '@/types/knowledge'
 import type { Team, Task } from '@/types/api'
 
 interface CreateGroupChatFromKnowledgeDialogProps {
@@ -40,6 +43,9 @@ interface CreateGroupChatFromKnowledgeDialogProps {
   onOpenChange: (open: boolean) => void
   group: Group
   knowledgeBaseName?: string
+  knowledgeBaseNamespace?: string
+  /** All knowledge bases in the group (used for group-level creation to bind all KBs) */
+  knowledgeBases?: KnowledgeBase[]
 }
 
 export function CreateGroupChatFromKnowledgeDialog({
@@ -47,6 +53,8 @@ export function CreateGroupChatFromKnowledgeDialog({
   onOpenChange,
   group,
   knowledgeBaseName,
+  knowledgeBaseNamespace,
+  knowledgeBases,
 }: CreateGroupChatFromKnowledgeDialogProps) {
   const { t } = useTranslation('knowledge')
   const { toast } = useToast()
@@ -142,6 +150,57 @@ export function CreateGroupChatFromKnowledgeDialog({
     }
   }
 
+  // Bind knowledge bases to the newly created group chat task
+  const bindKnowledgeBases = async (taskId: number) => {
+    try {
+      if (knowledgeBaseName) {
+        // KB-level creation: bind the specific knowledge base
+        await taskKnowledgeBaseApi.bindKnowledgeBase(
+          taskId,
+          knowledgeBaseName,
+          knowledgeBaseNamespace || 'default'
+        )
+        return
+      }
+
+      // Group-level creation: bind all knowledge bases in the group
+      // Use provided KBs or fetch them from the API
+      let kbsToBinding = knowledgeBases
+      if (!kbsToBinding || kbsToBinding.length === 0) {
+        const response = await listKnowledgeBases('group', group.name)
+        kbsToBinding = response.items
+      }
+
+      if (!kbsToBinding || kbsToBinding.length === 0) return
+
+      const results = await Promise.allSettled(
+        kbsToBinding.map(kb =>
+          taskKnowledgeBaseApi.bindKnowledgeBase(taskId, kb.name, kb.namespace || 'default')
+        )
+      )
+
+      const failed = results.filter(r => r.status === 'rejected').length
+      if (failed > 0) {
+        console.error(
+          `[CreateGroupChatFromKnowledge] Failed to bind ${failed}/${kbsToBinding.length} knowledge bases`
+        )
+        toast({
+          title: t('document.groupChat.bindKbPartialFail', {
+            failed,
+            total: kbsToBinding.length,
+          }),
+          variant: 'destructive',
+        })
+      }
+    } catch (error) {
+      console.error('[CreateGroupChatFromKnowledge] Failed to bind knowledge bases:', error)
+      toast({
+        title: t('document.groupChat.bindKbFailed'),
+        variant: 'destructive',
+      })
+    }
+  }
+
   const resetForm = () => {
     setTitle(defaultTitle)
     setSelectedTeamId('')
@@ -204,6 +263,9 @@ export function CreateGroupChatFromKnowledgeDialog({
 
             // Add group members in the background after navigation
             await addGroupMembersToChat(realTaskId)
+
+            // Bind knowledge bases to the group chat
+            await bindKnowledgeBases(realTaskId)
           },
           onError: error => {
             toast({

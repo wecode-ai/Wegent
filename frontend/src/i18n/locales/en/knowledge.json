@@ -421,7 +421,9 @@
       "addingMembers": "Adding group members...",
       "addMembersSuccess": "Successfully added {{count}} group members",
       "addMembersPartialFail": "Some members failed to add ({{failed}}/{{total}}). You can add them manually in the group chat.",
-      "addMembersFailed": "Failed to add group members. You can add them manually in the group chat."
+      "addMembersFailed": "Failed to add group members. You can add them manually in the group chat.",
+      "bindKbPartialFail": "Some knowledge bases failed to bind ({{failed}}/{{total}})",
+      "bindKbFailed": "Failed to bind knowledge bases"
     }
   },
   "add_repository": "Add Repository",

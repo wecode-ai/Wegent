@@ -114,6 +114,8 @@ export function KnowledgeDocumentPage() {
   const [groupChatContext, setGroupChatContext] = useState<{
     group: Group
     knowledgeBaseName?: string
+    knowledgeBaseNamespace?: string
+    knowledgeBases?: KnowledgeBase[]
   } | null>(null)
 
   // Organization namespace (fetched from API)
@@ -391,8 +393,13 @@ export function KnowledgeDocumentPage() {
             onDeleteKb={setDeletingKb}
             onShareKb={setSharingKb}
             onCreateKb={(groupName, kbType) => handleCreateKb(groupName, kbType)}
-            onCreateGroupChat={(group, knowledgeBaseName) => {
-              setGroupChatContext({ group, knowledgeBaseName })
+            onCreateGroupChat={(group, kbInfo, allKbs) => {
+              setGroupChatContext({
+                group,
+                knowledgeBaseName: kbInfo?.name,
+                knowledgeBaseNamespace: kbInfo?.namespace,
+                knowledgeBases: allKbs,
+              })
               setShowGroupChatDialog(true)
             }}
           />
@@ -473,6 +480,8 @@ export function KnowledgeDocumentPage() {
           }}
           group={groupChatContext.group}
           knowledgeBaseName={groupChatContext.knowledgeBaseName}
+          knowledgeBaseNamespace={groupChatContext.knowledgeBaseNamespace}
+          knowledgeBases={groupChatContext.knowledgeBases}
         />
       )}
     </div>
@@ -676,7 +685,11 @@ interface GroupKnowledgeContentProps {
   onDeleteKb: (kb: KnowledgeBase) => void
   onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (groupName: string, kbType: KnowledgeBaseType) => void
-  onCreateGroupChat: (group: Group, knowledgeBaseName?: string) => void
+  onCreateGroupChat: (
+    group: Group,
+    kbInfo?: { name: string; namespace: string },
+    allKbs?: KnowledgeBase[]
+  ) => void
 }
 
 function GroupKnowledgeContent({
@@ -824,7 +837,11 @@ interface GroupKnowledgeBaseListProps {
   onDeleteKb: (kb: KnowledgeBase) => void
   onShareKb: (kb: KnowledgeBase) => void
   onCreateKb: (kbType: KnowledgeBaseType) => void
-  onCreateGroupChat: (group: Group, knowledgeBaseName?: string) => void
+  onCreateGroupChat: (
+    group: Group,
+    kbInfo?: { name: string; namespace: string },
+    allKbs?: KnowledgeBase[]
+  ) => void
 }
 
 function GroupKnowledgeBaseList({
@@ -1024,7 +1041,9 @@ function GroupKnowledgeBaseList({
                 onDelete={canDelete ? () => onDeleteKb(kb) : undefined}
                 onShare={() => onShareKb(kb)}
                 onCreateGroupChat={
-                  canCreateGroupChat ? () => onCreateGroupChat(group, kb.name) : undefined
+                  canCreateGroupChat
+                    ? () => onCreateGroupChat(group, { name: kb.name, namespace: kb.namespace })
+                    : undefined
                 }
                 canEdit={canEdit}
                 canDelete={canDelete}

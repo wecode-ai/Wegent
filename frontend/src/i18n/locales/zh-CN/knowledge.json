@@ -421,7 +421,9 @@
       "addingMembers": "正在添加组成员...",
       "addMembersSuccess": "已成功添加 {{count}} 位组成员",
       "addMembersPartialFail": "部分成员添加失败（{{failed}}/{{total}}），可在群聊中手动添加",
-      "addMembersFailed": "添加组成员失败，可在群聊中手动添加"
+      "addMembersFailed": "添加组成员失败，可在群聊中手动添加",
+      "bindKbPartialFail": "部分知识库关联失败（{{failed}}/{{total}}）",
+      "bindKbFailed": "关联知识库失败"
     }
   },
   "add_repository": "添加仓库",
