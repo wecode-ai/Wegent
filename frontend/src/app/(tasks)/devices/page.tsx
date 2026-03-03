@@ -284,27 +284,6 @@ export default function DevicesPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {/* Add Device button - only show when devices exist */}
-                {sortedDevices.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowGuide(!showGuide)}
-                    className="flex items-center gap-2"
-                  >
-                    {showGuide ? (
-                      <>
-                        <ChevronUp className="w-4 h-4" />
-                        {t('hide_guide')}
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="w-4 h-4" />
-                        {t('add_device')}
-                      </>
-                    )}
-                  </Button>
-                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -335,91 +314,51 @@ export default function DevicesPage() {
               </div>
             )}
 
-            {/* Empty state with installation guide */}
-            {!isLoading && devices.length === 0 && (
-              <div className="space-y-8">
-                <LocalExecutorGuide
-                  backendUrl={backendUrl}
-                  authToken={authToken}
-                  guideUrl={guideUrl}
-                />
-
-                {/* Divider with "OR" */}
-                <div className="relative flex items-center justify-center">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-border"></div>
-                  </div>
-                  <div className="relative bg-base px-4 text-sm font-medium text-text-muted">
-                    {t('or')}
-                  </div>
-                </div>
-
-                {/* Cloud Device Section */}
-                <CloudDeviceSection
-                  cloudDevices={[]}
-                  onDeviceCreated={refreshDevices}
-                  onDeleteDevice={handleDeleteDevice}
-                  onSetDefault={handleSetDefault}
-                  onStartTask={handleStartTask}
-                  onCancelTask={handleCancelTask}
-                />
-
-                {/* Help section */}
-                {(communityUrl || faqUrl) && (
-                  <div className="flex justify-center">
-                    <div className="flex items-center gap-4 text-sm text-text-muted">
-                      <span>{t('need_help')}</span>
-                      {communityUrl && (
-                        <a
-                          href={communityUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
-                        >
-                          <MessageCircleQuestion className="w-4 h-4" />
-                          {t('join_community')}
-                        </a>
-                      )}
-                      {faqUrl && (
-                        <a
-                          href={faqUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                          {t('view_faq')}
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Installation guide when triggered by Add Device button */}
-            {showGuide && sortedDevices.length > 0 && (
-              <div className="mb-6">
-                <LocalExecutorGuide
-                  backendUrl={backendUrl}
-                  authToken={authToken}
-                  guideUrl={guideUrl}
-                />
-              </div>
-            )}
-
-            {/* Local Devices Section */}
-            {sortedDevices.length > 0 && (
+            {/* Device sections - always show when not loading */}
+            {!isLoading && (
               <div className="space-y-6">
-                {/* Local Devices */}
+                {/* Local Devices Section */}
                 <div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Monitor className="w-5 h-5 text-text-secondary" />
-                    <h3 className="text-sm font-medium text-text-secondary">
-                      {t('local_devices_section')}
-                    </h3>
-                    <span className="text-xs text-text-muted">({localDevices.length})</span>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Monitor className="w-5 h-5 text-text-secondary" />
+                      <h3 className="text-sm font-medium text-text-secondary">
+                        {t('local_devices_section')}
+                      </h3>
+                      <span className="text-xs text-text-muted">({localDevices.length})</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowGuide(!showGuide)}
+                      className="flex items-center gap-2"
+                    >
+                      {showGuide ? (
+                        <>
+                          <ChevronUp className="w-4 h-4" />
+                          {t('hide_guide')}
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4" />
+                          {t('add_device')}
+                        </>
+                      )}
+                    </Button>
                   </div>
+
+                  {/* Installation guide when triggered by Add Device button */}
+                  {showGuide && (
+                    <div className="mb-4">
+                      <LocalExecutorGuide
+                        backendUrl={backendUrl}
+                        authToken={authToken}
+                        guideUrl={guideUrl}
+                      />
+                    </div>
+                  )}
+
+                  {/* Local device list or empty state */}
                   {localDevices.length > 0 ? (
                     <div className="grid gap-4">
                       {localDevices.map(device => (
@@ -452,6 +391,37 @@ export default function DevicesPage() {
                   onStartTask={handleStartTask}
                   onCancelTask={handleCancelTask}
                 />
+
+                {/* Help section - only show when no devices at all */}
+                {devices.length === 0 && (communityUrl || faqUrl) && (
+                  <div className="flex justify-center pt-4">
+                    <div className="flex items-center gap-4 text-sm text-text-muted">
+                      <span>{t('need_help')}</span>
+                      {communityUrl && (
+                        <a
+                          href={communityUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
+                        >
+                          <MessageCircleQuestion className="w-4 h-4" />
+                          {t('join_community')}
+                        </a>
+                      )}
+                      {faqUrl && (
+                        <a
+                          href={faqUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-text-secondary hover:text-primary transition-colors"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          {t('view_faq')}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
