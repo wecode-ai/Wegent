@@ -5,6 +5,7 @@ import { Loader2, RefreshCw, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getToken } from '@/apis/user'
 import { getSocketUrl } from '@/lib/runtime-config'
+import { loadRFB } from './rfb-loader'
 import '@wecode/i18n'
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -17,7 +18,8 @@ interface VncViewerProps {
 export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
   const { t } = useTranslation('devices')
   const containerRef = useRef<HTMLDivElement>(null)
-  const rfbRef = useRef<InstanceType<typeof import('@novnc/novnc/lib/rfb').default> | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rfbRef = useRef<any>(null)
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [errorMessage, setErrorMessage] = useState<string>('')
 
@@ -43,7 +45,7 @@ export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
     try {
       // Dynamic import for SSR safety
       // Use require-style import to handle CommonJS/ESM interop
-      const RFB = (await import('@novnc/novnc/lib/rfb')).default
+      const RFB = await loadRFB()
 
       const token = getToken()
       if (!token) {
@@ -80,7 +82,8 @@ export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
         setStatus('connected')
       })
 
-      rfb.addEventListener('disconnect', e => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rfb.addEventListener('disconnect', (e: any) => {
         const clean = e.detail?.clean ?? false
         if (clean) {
           setStatus('disconnected')
@@ -91,7 +94,8 @@ export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
         rfbRef.current = null
       })
 
-      rfb.addEventListener('securityfailure', e => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rfb.addEventListener('securityfailure', (e: any) => {
         setStatus('error')
         setErrorMessage(e.detail?.reason || 'Security failure')
         rfbRef.current = null
