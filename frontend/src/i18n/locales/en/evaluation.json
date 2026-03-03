@@ -193,8 +193,8 @@
       "bonus_agent": "Bonus - Agent/Workflow",
       "bonus_multimodal": "Bonus - Multimodal Deliverables"
     },
-    "supplementary_notes": "Supplementary Notes",
-    "supplementary_notes_files": "Supplementary Notes Files",
+    "supplementary_notes": "Answer Notes",
+    "supplementary_notes_files": "Answer Notes Files",
     "submit_success": "Answer submitted successfully",
     "view": "View Answer",
     "new_version_available": "A new version of this question is available. You may want to re-answer.",
