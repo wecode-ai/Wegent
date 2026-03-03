@@ -18,7 +18,7 @@
     "save": "Save",
     "cancel": "Cancel",
     "re_edit": "Re-edit",
-    "re_edit_tooltip": "Restore original input to chat box"
+    "re_edit_tooltip": "Re-edit"
   },
   "edit": {
     "tooltip": "Edit message",

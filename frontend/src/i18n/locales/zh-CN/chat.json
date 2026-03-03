@@ -18,7 +18,7 @@
     "save": "保存",
     "cancel": "取消",
     "re_edit": "重新编辑",
-    "re_edit_tooltip": "将原始输入填入聊天框"
+    "re_edit_tooltip": "重新编辑"
   },
   "edit": {
     "tooltip": "编辑消息",

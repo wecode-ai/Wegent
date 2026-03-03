@@ -623,16 +623,38 @@ function ChatAreaContent({
       if (!stateMessages) return
 
       const aiStateMsg = stateMessages.get(`ai-${aiMsg.subtaskId}`)
-      if (!aiStateMsg || aiStateMsg.messageId == null) return
+      if (!aiStateMsg) return
 
-      // Find the corresponding user message: same messageId, type 'user'
+      // Find the corresponding user message: prefer matching by shared messageId,
+      // fall back to the user message with the closest timestamp before the AI message
       let userStateMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
-      for (const msg of stateMessages.values()) {
-        if (msg.type === 'user' && msg.messageId === aiStateMsg.messageId) {
-          userStateMsg = msg
-          break
+
+      if (aiStateMsg.messageId != null) {
+        // Primary lookup: match by shared messageId
+        for (const msg of stateMessages.values()) {
+          if (msg.type === 'user' && msg.messageId === aiStateMsg.messageId) {
+            userStateMsg = msg
+            break
+          }
         }
       }
+
+      if (!userStateMsg) {
+        // Fallback: find the user message with the largest timestamp that is still
+        // earlier than the AI message (i.e., the user turn that triggered this AI response)
+        let bestTimestamp = -Infinity
+        for (const msg of stateMessages.values()) {
+          if (
+            msg.type === 'user' &&
+            msg.timestamp < aiStateMsg.timestamp &&
+            msg.timestamp > bestTimestamp
+          ) {
+            bestTimestamp = msg.timestamp
+            userStateMsg = msg
+          }
+        }
+      }
+
       if (!userStateMsg) return
 
       // Restore text prompt to input
