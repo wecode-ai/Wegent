@@ -20,6 +20,11 @@
     "mail_email": "Email Account",
     "mail_email_placeholder": "e.g. zhangsan",
     "mail_email_hint": "No need to enter @staff.sina.com.cn suffix",
-    "mail_password": "Email Password"
+    "mail_password": "Email Password",
+    "quick_setup_title": "Create Cloud Device",
+    "quick_setup_description": "The system will automatically create a VM and configure Executor. First-time setup takes 1-3 minutes.",
+    "created_title": "Cloud Device Created Successfully",
+    "created_description": "Your cloud device is ready to use",
+    "start_using": "Start Using"
   }
 }

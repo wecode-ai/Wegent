@@ -83,7 +83,9 @@
     "updateAvailable": "Update Available"
   },
   "add_device": "Add Device",
+  "add_local_device": "Add Local Device",
   "hide_guide": "Hide Guide",
+  "device_setup_title": "Device Setup",
   "auth_mode_token": "Session Token",
   "auth_mode_apikey": "API Key",
   "select_apikey": "Select API Key",
@@ -105,5 +107,19 @@
   "local_devices_section": "Local Devices",
   "cloud_devices_section": "Cloud Devices",
   "no_local_devices": "No local devices connected. Add a device using the guide above.",
-  "cloud_devices_coming_soon": "Cloud device support coming soon."
+  "cloud_devices_coming_soon": "Cloud device support coming soon.",
+  "init_flow": {
+    "select_type_title": "Choose Device Type",
+    "select_type_description": "You need an execution device to start using Wegent",
+    "local_device": "Local Device",
+    "local_device_desc": "Install Executor on your computer with full control over the environment",
+    "local_device_benefits": "Fully local data|Custom configuration|Free to use",
+    "cloud_device": "Cloud Device",
+    "cloud_device_desc": "One-click cloud AI device creation, start immediately",
+    "cloud_device_benefits": "No installation|Ready in 1-3 minutes|Pre-configured environment",
+    "setup_local_device": "Set Up Local Device",
+    "setup_cloud_device": "Create Cloud Device",
+    "recommended": "Recommended",
+    "back_to_selection": "Back to Selection"
+  }
 }
