@@ -42,7 +42,8 @@
     "copy": "Copy",
     "copied": "Copied",
     "loadMore": "Load More",
-    "configure": "Configure"
+    "configure": "Configure",
+    "download": "Download"
   },
   "common": {
     "yes": "Yes",

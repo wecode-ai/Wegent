@@ -713,8 +713,8 @@ export default function AIAssessment2026Page() {
           selectedTopic + 1,
           'supplementaryNotes'
         )
+        // Replace old supplementaryNotesFiles with the new one (keep only latest)
         updatedSupplementaryNotesFiles = [
-          ...updatedSupplementaryNotesFiles,
           {
             key: textResponse.key,
             filename: textResponse.filename,
@@ -763,6 +763,32 @@ export default function AIAssessment2026Page() {
     if (topicIndex !== null) {
       try {
         await selectExamQuestion(1, topicIndex + 1)
+        // Load existing data for the newly selected question
+        const data = await getExamData(1)
+        if (data.userAnswer?.content_data) {
+          const content = data.userAnswer.content_data
+          const questionId = topicIndex + 1
+
+          // Load supplementary notes: prefer text content over files
+          const loadedNotes = content.supplementaryNotes || ''
+
+          setQuestionData(prev => ({
+            ...prev,
+            [questionId]: {
+              attachments: {
+                main: content.attachments?.main || [],
+                interaction: content.attachments?.interaction || [],
+                bonusAgent: content.attachments?.bonusAgent?.files || [],
+                bonusMultimodal: content.attachments?.bonusMultimodal || [],
+              },
+              supplementaryNotesFiles: content.supplementaryNotesFiles || [],
+              supplementaryNotes: loadedNotes,
+              linkValues: {
+                bonusAgent: content.attachments?.bonusAgent?.link || '',
+              },
+            },
+          }))
+        }
       } catch (error) {
         console.error('Failed to select question:', error)
       }
@@ -776,7 +802,7 @@ export default function AIAssessment2026Page() {
     const currentData = questionData[selectedTopic + 1]
 
     try {
-      let _supplementaryNotesFiles: ExamAttachment[] = []
+      let _supplementaryNotesFiles: ExamAttachment[] = currentData.supplementaryNotesFiles || []
       if (currentData.supplementaryNotes.trim()) {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
         const randomStr = Math.random().toString(36).substring(2, 6)
@@ -790,8 +816,8 @@ export default function AIAssessment2026Page() {
           selectedTopic + 1,
           'supplementaryNotes'
         )
+        // Replace old supplementaryNotesFiles with the new one (keep only latest)
         _supplementaryNotesFiles = [
-          ...(currentData.supplementaryNotesFiles || []),
           {
             key: textResponse.key,
             filename: textResponse.filename,
