@@ -52,7 +52,7 @@ const nextConfig = {
           config.module.rules = config.module.rules || []
           config.module.rules.push({
             test: /node_modules\/@novnc\/novnc/,
-            type: 'javascript/auto',
+            type: 'javascript/esm',
           })
 
           // Handle chunk loading issues
