@@ -77,7 +77,7 @@ export function CloudDeviceSection({
   const [isDeleting, setIsDeleting] = useState(false)
   const [showCreateConfirm, setShowCreateConfirm] = useState(false)
   const [cloudConfig, setCloudConfig] = useState<CloudDeviceConfig | null>(null)
-  const [mailEnabled, setMailEnabled] = useState(false)
+  const [mailEnabled, setMailEnabled] = useState(true)
   const [mailEmail, setMailEmail] = useState('')
   const [mailpassword, setMailpassword] = useState('')
 
@@ -126,7 +126,7 @@ export function CloudDeviceSection({
     } finally {
       setIsCreating(false)
       // Reset to defaults after creation
-      setMailEnabled(false)
+      setMailEnabled(true)
       setMailEmail(user?.user_name || '')
       setMailpassword('')
     }
@@ -250,7 +250,7 @@ export function CloudDeviceSection({
           setShowCreateConfirm(open)
           if (!open) {
             // Reset to defaults when closing dialog
-            setMailEnabled(false)
+            setMailEnabled(true)
             setMailEmail(user?.user_name || '')
             setMailpassword('')
           }
