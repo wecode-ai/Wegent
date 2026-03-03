@@ -72,7 +72,8 @@ export function GroupCard({
         <div className="flex items-center gap-1">
           {canCreateGroupChat && onCreateGroupChat && (
             <button
-              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100"
+              type="button"
+              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
               onClick={e => {
                 e.stopPropagation()
                 onCreateGroupChat()
@@ -85,7 +86,8 @@ export function GroupCard({
             </button>
           )}
           <button
-            className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100"
+            type="button"
+            className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
             onClick={e => {
               e.stopPropagation()
               onClick()
