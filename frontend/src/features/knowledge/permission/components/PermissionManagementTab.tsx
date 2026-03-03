@@ -198,9 +198,15 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Maintainer">{t('document.permission.role.Maintainer')}</SelectItem>
-                      <SelectItem value="Developer">{t('document.permission.role.Developer')}</SelectItem>
-                      <SelectItem value="Reporter">{t('document.permission.role.Reporter')}</SelectItem>
+                      <SelectItem value="Maintainer">
+                        {t('document.permission.role.Maintainer')}
+                      </SelectItem>
+                      <SelectItem value="Developer">
+                        {t('document.permission.role.Developer')}
+                      </SelectItem>
+                      <SelectItem value="Reporter">
+                        {t('document.permission.role.Reporter')}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <Button
@@ -370,17 +376,20 @@ function PermissionGroup({
             </div>
             {editingId === user.id ? (
               <div className="flex items-center gap-2">
-                <Select
-                  value={editingRole}
-                  onValueChange={v => setEditingRole(v as MemberRole)}
-                >
+                <Select value={editingRole} onValueChange={v => setEditingRole(v as MemberRole)}>
                   <SelectTrigger className="w-28 h-11 min-w-[44px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Maintainer">{t('document.permission.role.Maintainer')}</SelectItem>
-                    <SelectItem value="Developer">{t('document.permission.role.Developer')}</SelectItem>
-                    <SelectItem value="Reporter">{t('document.permission.role.Reporter')}</SelectItem>
+                    <SelectItem value="Maintainer">
+                      {t('document.permission.role.Maintainer')}
+                    </SelectItem>
+                    <SelectItem value="Developer">
+                      {t('document.permission.role.Developer')}
+                    </SelectItem>
+                    <SelectItem value="Reporter">
+                      {t('document.permission.role.Reporter')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <Button

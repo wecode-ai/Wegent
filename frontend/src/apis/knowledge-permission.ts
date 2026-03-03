@@ -106,9 +106,12 @@ export const knowledgePermissionApi = {
     // Transform pending requests - use role if available, fallback to permission_level
     const pending = pendingResponse.requests.map(r => {
       // Use requested_role if available (valid MemberRole), otherwise undefined
-      const role = r.requested_role as MemberRole || undefined
+      const role = (r.requested_role as MemberRole) || undefined
       // Keep legacy permission_level as separate value
-      const permissionLevel = r.requested_permission_level.toLowerCase() as 'view' | 'edit' | 'manage'
+      const permissionLevel = r.requested_permission_level.toLowerCase() as
+        | 'view'
+        | 'edit'
+        | 'manage'
       return {
         id: r.id,
         user_id: r.user_id,

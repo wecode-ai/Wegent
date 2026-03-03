@@ -16,7 +16,9 @@
     "retry": "重试",
     "edit": "编辑",
     "save": "保存",
-    "cancel": "取消"
+    "cancel": "取消",
+    "re_edit": "重新编辑",
+    "re_edit_tooltip": "将原始输入填入聊天框"
   },
   "edit": {
     "tooltip": "编辑消息",
@@ -30,7 +32,7 @@
   },
   "regenerate": {
     "failed": "重新生成失败",
-    "tooltip": "重新生成回复",
+    "tooltip": "再次生成",
     "select_model": "选择模型",
     "select_model_desc": "选择用于重新生成的模型"
   },
@@ -512,7 +514,9 @@
     "no_task_id": "没有可用的任务 ID"
   },
   "generate": {
-    "mode_selector": "生成类型"
+    "mode_selector": "生成类型",
+    "max_attachments": "最多可上传 {{count}} 个附件作为参考图",
+    "attachment_limit_reached": "已达到附件数量上限"
   },
   "video": {
     "title": "视频生成",
