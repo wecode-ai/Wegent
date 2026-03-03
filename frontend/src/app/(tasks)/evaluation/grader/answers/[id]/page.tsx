@@ -231,7 +231,7 @@ function GraderAnswerContent() {
       const prefixedFilename = generatePrefixedFilename(attachment, slot, fileIndex)
       await downloadEvaluationFile(attachment.key, prefixedFilename)
       toast({
-        title: t('common:actions.download') + ' ' + t('common:success'),
+        title: t('actions.download') + ' ' + t('common:success'),
         description: attachment.filename,
       })
     } catch (_error) {

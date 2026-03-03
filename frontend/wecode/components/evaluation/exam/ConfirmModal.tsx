@@ -40,18 +40,18 @@ export function ConfirmModal({
   const items = [
     ['考生姓名', participantName || '未填写'],
     ['选择题目', selectedTopicTitle || '未选择'],
-    ['考核报告', `${mainFilesCount} 个文件`],
-    ['交互记录', `${interactionFilesCount} 个文件`],
-    ['附加题一', hasBonusAgent ? '已提供' : '未提供'],
-    ['附加题二', hasBonusMultimodal ? '已提供' : '未提供'],
     [
-      '补充说明',
+      '作答说明',
       supplementaryNotesLength > 0
         ? `${supplementaryNotesLength} 字`
         : supplementaryNotesFilesCount > 0
           ? `已上传 ${supplementaryNotesFilesCount} 个文件`
           : '未填写',
     ],
+    ['交互记录', `${interactionFilesCount} 个文件`],
+    ['产出结果', `${mainFilesCount} 个文件`],
+    ['附加题一', hasBonusAgent ? '已提供' : '未提供'],
+    ['附加题二', hasBonusMultimodal ? '已提供' : '未提供'],
   ]
 
   return (

@@ -449,7 +449,7 @@
       "bonus_2": "附加题二",
       "provided": "已提供",
       "not_provided": "未提供",
-      "supplementary_notes": "补充说明",
+      "supplementary_notes": "作答说明",
       "character_count": "{{count}} 字",
       "cancel": "返回修改",
       "confirm": "确认提交"
