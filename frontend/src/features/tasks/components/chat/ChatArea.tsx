@@ -141,9 +141,64 @@ function ChatAreaContent({
   const [selectedResolution, setSelectedResolution] = useState('1080p')
   const [selectedRatio, setSelectedRatio] = useState('16:9')
   const [selectedDuration, setSelectedDuration] = useState(5)
-  const availableResolutions = useMemo(() => ['720p', '1080p', '2K', '4K'], [])
-  const availableRatios = useMemo(() => ['16:9', '9:16', '1:1', '4:3', '3:4'], [])
-  const availableDurations = useMemo(() => [5, 10], [])
+
+  // Derive available options and defaults from selected video model's config
+  const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
+    | {
+        resolution?: string
+        ratio?: string
+        duration?: number
+        capabilities?: {
+          aspect_ratios?: { value: string }[]
+          resolutions?: { label: string }[]
+          durations_sec?: number[]
+        }
+      }
+    | undefined
+  const videoCapabilities = videoConfig?.capabilities
+
+  const availableResolutions = useMemo(() => {
+    if (videoCapabilities?.resolutions?.length) {
+      return videoCapabilities.resolutions.map(r => r.label)
+    }
+    return ['480p', '720p', '1080p']
+  }, [videoCapabilities?.resolutions])
+
+  const availableRatios = useMemo(() => {
+    if (videoCapabilities?.aspect_ratios?.length) {
+      return videoCapabilities.aspect_ratios.map(r => r.value)
+    }
+    return ['16:9', '9:16', '1:1', '4:3', '3:4']
+  }, [videoCapabilities?.aspect_ratios])
+
+  const availableDurations = useMemo(() => {
+    if (videoCapabilities?.durations_sec?.length) {
+      return videoCapabilities.durations_sec
+    }
+    return [5, 10]
+  }, [videoCapabilities?.durations_sec])
+
+  // When video model changes, apply model's recommended defaults
+  const videoModelName = videoModelSelection.selectedModel?.name
+  useEffect(() => {
+    if (!videoConfig) return
+    if (videoConfig.resolution && availableResolutions.includes(videoConfig.resolution)) {
+      setSelectedResolution(videoConfig.resolution)
+    } else if (availableResolutions.length) {
+      setSelectedResolution(availableResolutions[0])
+    }
+    if (videoConfig.ratio && availableRatios.includes(videoConfig.ratio)) {
+      setSelectedRatio(videoConfig.ratio)
+    } else if (availableRatios.length) {
+      setSelectedRatio(availableRatios[0])
+    }
+    if (videoConfig.duration && availableDurations.includes(videoConfig.duration)) {
+      setSelectedDuration(videoConfig.duration)
+    } else if (availableDurations.length) {
+      setSelectedDuration(availableDurations[0])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoModelName])
 
   // Image mode specific state - image size
   const [selectedImageSize, setSelectedImageSize] = useState('2048x2048')

@@ -47,6 +47,7 @@ export interface Model {
   region?: ModelRegion
   isAdvanced?: boolean
   namespace?: string
+  config?: Record<string, unknown>
 }
 
 /** Special constant for default model option */
@@ -124,6 +125,7 @@ function unifiedToModel(unified: UnifiedModel): Model {
     displayName: unified.displayName,
     type: unified.type,
     isAdvanced: unified.isAdvanced ?? false,
+    config: unified.config,
   }
 }
 
