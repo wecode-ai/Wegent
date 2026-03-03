@@ -47,6 +47,15 @@ const nextConfig = {
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
           }
 
+          // Configure @novnc/novnc module type to fix ES module import issues
+          config.module = config.module || {}
+          config.module.rules = config.module.rules || []
+          config.module.rules.push({
+            test: /\.js$/,
+            include: /node_modules[\\/]@novnc[\\/]novnc/,
+            type: 'javascript/auto',
+          })
+
           // Handle chunk loading issues
           config.optimization = {
             ...config.optimization,
