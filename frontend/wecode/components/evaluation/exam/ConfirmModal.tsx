@@ -17,7 +17,8 @@ interface ConfirmModalProps {
   hasBonusAgent: boolean
   hasBonusMultimodal: boolean
   supplementaryNotesLength: number
-  supplementaryNotesFilesCount: number
+  /** @deprecated This field is no longer used, kept for backward compatibility */
+  supplementaryNotesFilesCount?: number
 }
 
 export function ConfirmModal({
@@ -31,7 +32,7 @@ export function ConfirmModal({
   hasBonusAgent,
   hasBonusMultimodal,
   supplementaryNotesLength,
-  supplementaryNotesFilesCount,
+  supplementaryNotesFilesCount = 0,
 }: ConfirmModalProps) {
   const { t } = useTranslation('evaluation')
 

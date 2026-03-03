@@ -7,12 +7,10 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
-import { FileText, Download, X } from 'lucide-react'
 import { useUser } from '@/features/common/UserContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getExamData, submitExamAnswer, updateExamAttachments } from '@wecode/api/evaluation-exam'
-import { downloadEvaluationFile } from '@wecode/api/evaluation-shared'
 import { useExamTimer } from './hooks/useExamTimer'
 import { useExamState } from './hooks/useExamState'
 import { TopicCard } from './TopicCard'
@@ -77,7 +75,6 @@ export function ExamPage() {
     setParticipantName,
     setSelectedQuestionId,
     setSupplementaryNotes,
-    removeSupplementaryNotesFile,
     addMainFiles,
     removeMainFile,
     addInteractionFiles,
@@ -196,25 +193,15 @@ export function ExamPage() {
   ]
 
   /**
-   * Format file size for display
-   */
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / 1048576).toFixed(1)} MB`
-  }
-
-  /**
    * Calculate total file count for current question
    */
   const getTotalFileCount = () => {
-    const slotFiles =
+    return (
       state.mainFiles.length +
       state.interactionFiles.length +
       state.bonusAgentFiles.length +
       state.bonusMultimodalFiles.length
-    const supplementaryFiles = state.supplementaryNotesFiles.length
-    return slotFiles + supplementaryFiles
+    )
   }
 
   /**
@@ -241,7 +228,6 @@ export function ExamPage() {
             },
             bonusMultimodal: attachments.bonusMultimodal,
           },
-          supplementaryNotesFiles: state.supplementaryNotesFiles,
         },
       })
     } catch (error) {
@@ -257,7 +243,6 @@ export function ExamPage() {
 
     if (!state.selectedQuestionId) return
 
-    // Real-time save to backend
     try {
       await updateExamAttachments(topicId, {
         selectedQuestionId: state.selectedQuestionId,
@@ -271,7 +256,6 @@ export function ExamPage() {
             },
             bonusMultimodal: state.bonusMultimodalFiles,
           },
-          supplementaryNotesFiles: state.supplementaryNotesFiles,
         },
       })
     } catch (error) {
@@ -290,7 +274,6 @@ export function ExamPage() {
           participantName: state.participantName,
           selectedTopicId: state.selectedQuestionId,
           supplementaryNotes: state.supplementaryNotes,
-          supplementaryNotesFiles: state.supplementaryNotesFiles,
           attachments: {
             main: state.mainFiles,
             interaction: state.interactionFiles,
@@ -552,7 +535,6 @@ export function ExamPage() {
               }
             }}
             onAttachmentsUpdate={handleAttachmentsUpdate}
-            currentTotalCount={state.supplementaryNotesFiles.length}
             disabled={isCompleted}
           />
         )}
@@ -586,74 +568,6 @@ export function ExamPage() {
               <div className="flex justify-end mt-2">
                 <span className="text-sm text-gray-400">{state.supplementaryNotes.length} 字</span>
               </div>
-
-              {/* Supplementary Notes File Display */}
-              {state.supplementaryNotesFiles.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  <p className="text-sm text-gray-500">已上传的补充说明文件：</p>
-                  {state.supplementaryNotesFiles.map((file, index) => (
-                    <div
-                      key={file.key}
-                      className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
-                    >
-                      <FileText className="h-5 w-5 text-gray-400 flex-shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-gray-700">
-                          {file.filename}
-                        </p>
-                        {file.size && (
-                          <p className="text-xs text-gray-400">{formatFileSize(file.size)}</p>
-                        )}
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => downloadEvaluationFile(file.key, file.filename)}
-                          className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-gray-200 transition"
-                          title="下载"
-                        >
-                          <Download className="h-4 w-4 text-gray-500" />
-                        </button>
-                        {!isCompleted && (
-                          <button
-                            onClick={async () => {
-                              removeSupplementaryNotesFile(index)
-                              // Real-time update to backend
-                              if (state.selectedQuestionId) {
-                                try {
-                                  const newFiles = state.supplementaryNotesFiles.filter(
-                                    (_, i) => i !== index
-                                  )
-                                  await updateExamAttachments(topicId, {
-                                    selectedQuestionId: state.selectedQuestionId,
-                                    content_data: {
-                                      attachments: {
-                                        main: state.mainFiles,
-                                        interaction: state.interactionFiles,
-                                        bonusAgent: {
-                                          link: state.bonusAgentLink,
-                                          files: state.bonusAgentFiles,
-                                        },
-                                        bonusMultimodal: state.bonusMultimodalFiles,
-                                      },
-                                      supplementaryNotesFiles: newFiles,
-                                    },
-                                  })
-                                } catch (error) {
-                                  console.error('Failed to delete supplementary file:', error)
-                                }
-                              }
-                            }}
-                            className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-red-50 transition text-destructive hover:text-destructive"
-                            title="删除"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </section>
         )}
@@ -774,7 +688,7 @@ export function ExamPage() {
         hasBonusAgent={state.bonusAgentFiles.length > 0 || state.bonusAgentLink !== ''}
         hasBonusMultimodal={state.bonusMultimodalFiles.length > 0}
         supplementaryNotesLength={state.supplementaryNotes.length}
-        supplementaryNotesFilesCount={state.supplementaryNotesFiles.length}
+        supplementaryNotesFilesCount={0}
       />
 
       <SuccessModal isOpen={showSuccessModal} onClose={() => setShowSuccessModal(false)} />
