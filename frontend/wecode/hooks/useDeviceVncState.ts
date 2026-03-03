@@ -41,8 +41,7 @@ export function useDeviceVncState({ selectedDevice, selectedDeviceId }: UseDevic
       .then(status => {
         if (!cancelled && status.sandbox_id) {
           setSandboxId(status.sandbox_id)
-          // Auto-open VNC panel when sandbox_id is available
-          setIsVncOpen(true)
+          // Don't auto-open VNC panel - let user click to open
         }
       })
       .catch(() => {

@@ -16,6 +16,7 @@
     "create_error": "Failed to create cloud device",
     "delete_success": "Cloud device deleted",
     "delete_error": "Failed to delete cloud device",
+    "creating_notice": "Cloud device is being created, will be ready in 1-3 minutes. Please wait...",
     "mail_enable": "Enable Mail Skill",
     "mail_email": "Email Account",
     "mail_email_placeholder": "e.g. zhangsan",
