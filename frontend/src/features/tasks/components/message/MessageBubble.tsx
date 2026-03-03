@@ -185,6 +185,8 @@ export interface MessageBubbleProps {
   onRegenerate?: (msg: Message, model: Model) => void
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
+  /** Callback when user wants to use a generated image as reference for follow-up generation */
+  onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
   /** Share token for public access to attachments (no login required) */
   shareToken?: string
 }
@@ -309,6 +311,7 @@ const MessageBubble = memo(
     isLastAiMessage,
     onRegenerate,
     isRegenerating,
+    onUseAsReference,
     shareToken,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
@@ -1408,6 +1411,7 @@ const MessageBubble = memo(
                         theme={theme}
                         blocks={msg.result.blocks}
                         annotations={msg.result?.annotations}
+                        onUseAsReference={onUseAsReference}
                       />
                       <SourceReferences sources={msg.sources || msg.result?.sources || []} />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
@@ -1648,7 +1652,8 @@ const MessageBubble = memo(
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
-      prevProps.isRegenerating === nextProps.isRegenerating
+      prevProps.isRegenerating === nextProps.isRegenerating &&
+      prevProps.onUseAsReference === nextProps.onUseAsReference
 
     return shouldSkipRender
   }

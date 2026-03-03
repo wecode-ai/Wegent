@@ -23,6 +23,8 @@ interface MixedContentViewProps {
   theme: 'light' | 'dark'
   blocks?: MessageBlock[] // NEW: Block-based rendering support
   annotations?: GeminiAnnotation[]
+  /** Optional callback when user wants to use a generated image as reference for follow-up */
+  onUseAsReference?: (item: import('../ImageGallery').ImageItem) => void
 }
 
 /**
@@ -40,6 +42,7 @@ const MixedContentView = memo(function MixedContentView({
   theme,
   blocks,
   annotations,
+  onUseAsReference,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
@@ -311,6 +314,7 @@ const MixedContentView = memo(function MixedContentView({
                     url,
                     attachmentId: item.imageAttachmentIds?.[i],
                   }))}
+                  onUseAsReference={onUseAsReference}
                 />
               ) : null}
             </div>

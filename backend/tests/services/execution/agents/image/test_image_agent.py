@@ -19,6 +19,18 @@ import pytest
 from shared.models import EventType, ExecutionRequest
 
 
+def _make_no_followup_intent():
+    """Return a mock ImageIntentResult indicating no follow-up history."""
+    from app.services.execution.agents.image.intent_analyzer import ImageIntentResult
+
+    return ImageIntentResult(
+        merged_prompt="A beautiful sunset over the ocean",
+        should_use_image=False,
+        reference_image=None,
+        is_followup=False,
+    )
+
+
 class TestImageAgent:
     """Tests for ImageAgent."""
 
@@ -39,6 +51,17 @@ class TestImageAgent:
         emitter.emit_start = AsyncMock()
         emitter.emit = AsyncMock()
         return emitter
+
+    @pytest.fixture
+    def mock_intent_analyzer(self):
+        """Mock ImageIntentAnalyzer to prevent DB access in tests."""
+        with patch(
+            "app.services.execution.agents.image.image_agent.ImageIntentAnalyzer"
+        ) as mock_cls:
+            mock_instance = AsyncMock()
+            mock_instance.analyze = AsyncMock(return_value=_make_no_followup_intent())
+            mock_cls.return_value = mock_instance
+            yield mock_instance
 
     @pytest.fixture
     def sample_request(self):
@@ -64,7 +87,7 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_normal_flow(
-        self, mock_session_manager, mock_emitter, sample_request
+        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
     ):
         """Test normal execution flow."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -133,7 +156,7 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_with_cancellation(
-        self, mock_session_manager, mock_emitter, sample_request
+        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
     ):
         """Test execution with cancellation."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -163,7 +186,7 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_with_cancel_event_set(
-        self, mock_session_manager, mock_emitter, sample_request
+        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
     ):
         """Test execution when cancel event is already set."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -189,7 +212,7 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_with_provider_error(
-        self, mock_session_manager, mock_emitter, sample_request
+        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
     ):
         """Test execution with provider error."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -228,7 +251,7 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_with_no_images_generated(
-        self, mock_session_manager, mock_emitter, sample_request
+        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
     ):
         """Test execution when no images are generated."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -268,7 +291,7 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_with_base64_image(
-        self, mock_session_manager, mock_emitter, sample_request
+        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
     ):
         """Test execution with base64 encoded image result."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -322,7 +345,7 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_with_multiple_images(
-        self, mock_session_manager, mock_emitter, sample_request
+        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
     ):
         """Test execution with multiple images generated."""
         from app.services.execution.agents.image.image_agent import ImageAgent

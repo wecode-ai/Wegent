@@ -9,10 +9,11 @@ Analyzes user intent in multi-turn video generation conversations
 to merge prompts and determine image usage.
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Literal, Optional
+
+from ..base_intent_analyzer import BaseIntentAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ Rules:
 Output JSON only."""
 
 
-class VideoIntentAnalyzer:
+class VideoIntentAnalyzer(BaseIntentAnalyzer):
     """Analyzes video generation intent for follow-up messages."""
 
     async def analyze(
@@ -154,38 +155,28 @@ class VideoIntentAnalyzer:
         Returns:
             VideoIntentResult from LLM analysis
         """
-        from openai import AsyncOpenAI
-
         prompt = INTENT_PROMPT.format(
             previous_prompt=prev_prompt,
             current_prompt=current_prompt,
             has_image=str(has_image).lower(),
         )
 
-        client = AsyncOpenAI(
-            api_key=model_config.get("api_key"),
-            base_url=model_config.get("base_url"),
-        )
+        result = await self._call_llm_json(prompt, model_config)
 
-        try:
-            response = await client.chat.completions.create(
-                model=model_config.get("model_id", "gpt-4o-mini"),
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                response_format={"type": "json_object"},
-            )
-
-            result = json.loads(response.choices[0].message.content)
-
-            return VideoIntentResult(
-                merged_prompt=result.get("merged_prompt", current_prompt),
-                should_use_image=result.get("should_use_image", False),
-                image_mode=result.get("image_mode"),
-            )
-        except Exception as e:
-            logger.error(f"[VideoIntentAnalyzer] LLM call failed: {e}")
+        if result is None:
             return VideoIntentResult(
                 merged_prompt=f"{prev_prompt}\n\n{current_prompt}",
                 should_use_image=has_image,
                 image_mode="reference" if has_image else None,
             )
+
+        return VideoIntentResult(
+            merged_prompt=result.get("merged_prompt", current_prompt),
+            should_use_image=result.get("should_use_image", False),
+            image_mode=(
+                result.get("image_mode")
+                if result.get("image_mode")
+                in ("first_frame", "last_frame", "reference")
+                else None
+            ),
+        )

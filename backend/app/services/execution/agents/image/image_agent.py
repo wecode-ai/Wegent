@@ -7,12 +7,12 @@ Image generation agent.
 
 Handles image generation workflow:
 1. Parse request and extract image config
-2. Call image generation provider
-3. Upload result as attachment
-4. Emit events via emitter
+2. Analyze intent for follow-up messages (using secondary LLM)
+3. Call image generation provider (with optional reference image)
+4. Upload result as attachment
+5. Emit events via emitter
 """
 
-import asyncio
 import logging
 import time
 import uuid
@@ -22,6 +22,7 @@ from shared.models import EventType, ExecutionEvent, ExecutionRequest
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
+from .intent_analyzer import ImageIntentAnalyzer, ImageIntentResult
 from .providers import get_image_provider
 
 logger = logging.getLogger(__name__)
@@ -49,9 +50,10 @@ class ImageAgent(PollingAgent):
 
         Workflow:
         1. Emit START event
-        2. Call image generation provider
-        3. Upload result as attachment
-        4. Emit DONE event with image result
+        2. Analyze intent for follow-ups (using secondary model)
+        3. Call image generation provider (with reference image if follow-up)
+        4. Upload result as attachment
+        5. Emit DONE event with image result
         """
         from app.services.chat.storage.session import session_manager
 
@@ -103,24 +105,80 @@ class ImageAgent(PollingAgent):
             protocol = model_config.get("protocol") or "seedream"
             provider = get_image_provider(protocol, model_config)
 
-            # Extract prompt
-            prompt = (
-                request.prompt
-                if isinstance(request.prompt, str)
-                else str(request.prompt)
-            )
+            # Normalize prompt.
+            # request.prompt can be either:
+            # - str
+            # - OpenAI Responses API vision content list:
+            #   [{"type":"input_text","text":"..."}, {"type":"input_image","image_url":"data:..."}]
+            prompt_text, prompt_images = self._normalize_prompt(request.prompt)
 
-            # Extract reference images from attachments if any
-            reference_images = self._extract_reference_images(request)
+            # Step 1: Extract reference images explicitly provided by user (highest priority)
+            # Sources:
+            # 1) Attachments list (legacy)
+            # 2) Vision content blocks in request.prompt
+            user_reference_images = [
+                *self._extract_reference_images(request),
+                *prompt_images,
+            ]
 
-            # Generate images
+            prompt = prompt_text
+
+            # Step 2: Run intent analysis for follow-up if no explicit user reference images
+            # and there is prior task history to analyze.
+            intent_result: ImageIntentResult | None = None
+            if not user_reference_images and request.task_id:
+                intent_result = await self._analyze_intent(request)
+                final_prompt = (
+                    intent_result.merged_prompt if intent_result.is_followup else prompt
+                )
+
+                # Use reference image from intent analysis when user didn't specify one
+                reference_images = (
+                    [intent_result.reference_image]
+                    if intent_result.should_use_image and intent_result.reference_image
+                    else []
+                )
+            else:
+                # User explicitly provided attachments - skip intent analysis
+                final_prompt = prompt
+                reference_images = user_reference_images
+
+            # Debug logs for prompt merge and provider params
+            # Note: Do NOT log full base64 strings; only log a safe preview.
+            prompt_preview = final_prompt.replace("\n", " ")
+            if len(prompt_preview) > 500:
+                prompt_preview = prompt_preview[:500] + "..."
+
+            ref_previews: list[str] = []
+            for ref in reference_images[:3]:
+                if not isinstance(ref, str):
+                    ref_previews.append(str(type(ref)))
+                    continue
+                if ref.startswith("data:"):
+                    ref_previews.append("data_url")
+                elif ref.startswith("http://") or ref.startswith("https://"):
+                    ref_previews.append(ref[:120])
+                else:
+                    ref_previews.append(f"non_url:{ref[:120]}")
+
             logger.info(
-                f"[{self.name}] Generating image: task_id={task_id}, "
-                f"provider={provider.name}"
+                "[%s] Image generation request: task_id=%s, provider=%s, "
+                "is_followup=%s, should_use_image=%s, user_ref_count=%d, ref_count=%d, "
+                "image_config=%s, prompt_preview=%s, ref_previews=%s",
+                self.name,
+                task_id,
+                provider.name,
+                getattr(intent_result, "is_followup", False),
+                getattr(intent_result, "should_use_image", False),
+                len(user_reference_images),
+                len(reference_images),
+                model_config.get("imageConfig"),
+                prompt_preview,
+                ref_previews,
             )
 
             result = await provider.generate(
-                prompt=prompt,
+                prompt=final_prompt,
                 reference_images=reference_images,
             )
 
@@ -202,19 +260,112 @@ class ImageAgent(PollingAgent):
             await session_manager.unregister_stream(subtask_id)
 
     def _extract_reference_images(self, request: ExecutionRequest) -> List[str]:
-        """Extract reference images from request attachments."""
-        reference_images = []
+        """Extract reference images from request.attachments (legacy input).
 
-        # Check if there are attachments in the request
+        NOTE:
+        - Newer chat flows may provide images via `request.prompt` vision blocks instead.
+          Those are handled by `_normalize_prompt()`.
+        """
+        reference_images: list[str] = []
+
         if request.attachments:
             for att in request.attachments:
-                # Check if it's an image attachment
                 if att.get("mime_type", "").startswith("image/"):
                     url = att.get("url") or att.get("content")
                     if url:
                         reference_images.append(url)
 
         return reference_images
+
+    def _normalize_prompt(
+        self,
+        prompt: str | list[dict],
+    ) -> tuple[str, list[str]]:
+        """Normalize ExecutionRequest.prompt to plain text + reference images.
+
+        Returns:
+            (prompt_text, images)
+
+        Rules:
+        - For vision content list: concatenate all input_text blocks
+        - Extract input_image.image_url as reference images
+        - If text contains our context wrapper, prefer the actual user question part
+        """
+        if isinstance(prompt, str):
+            return self._extract_user_question(prompt), []
+
+        if not isinstance(prompt, list):
+            # Defensive fallback
+            return self._extract_user_question(str(prompt)), []
+
+        text_parts: list[str] = []
+        images: list[str] = []
+
+        for block in prompt:
+            if not isinstance(block, dict):
+                continue
+
+            if block.get("type") == "input_text":
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text)
+
+            if block.get("type") == "input_image":
+                image_url = block.get("image_url")
+                if isinstance(image_url, str) and image_url.strip():
+                    images.append(image_url)
+
+        combined_text = "\n".join(text_parts).strip()
+        combined_text = self._extract_user_question(combined_text)
+        return combined_text, images
+
+    def _extract_user_question(self, text: str) -> str:
+        """Extract user-visible question from a context-wrapped prompt.
+
+        The chat context preprocessor may build prompts like:
+        "<attachment>...metadata...</attachment>\n\n[User Question]:\n<message>"
+
+        Seedream applies sensitive-text filters; passing attachment metadata (URLs, paths)
+        increases false positives. Prefer only the real user question if the marker exists.
+        """
+        if not isinstance(text, str):
+            return str(text)
+
+        marker = "[User Question]:"
+        if marker in text:
+            after = text.split(marker, 1)[1]
+            return after.lstrip("\n").strip()
+
+        return text.strip()
+
+    async def _analyze_intent(self, request: ExecutionRequest) -> ImageIntentResult:
+        """Run ImageIntentAnalyzer for multi-turn follow-up detection.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            ImageIntentResult with merged_prompt, should_use_image, reference_image, is_followup
+        """
+        model_config = request.model_config or {}
+        secondary_model_config = model_config.get("secondary_model_config")
+
+        # Use normalized prompt text to avoid leaking attachment metadata into intent analysis.
+        prompt_text, _prompt_images = self._normalize_prompt(request.prompt)
+        current_prompt = prompt_text
+
+        # Build exclusion list: current assistant subtask + user subtask
+        exclude_ids = [
+            sid for sid in [request.subtask_id, request.user_subtask_id] if sid
+        ]
+
+        analyzer = ImageIntentAnalyzer()
+        return await analyzer.analyze(
+            task_id=request.task_id,
+            current_prompt=current_prompt,
+            secondary_model_config=secondary_model_config,
+            exclude_subtask_ids=exclude_ids,
+        )
 
     async def _emit_image_block(
         self,
