@@ -612,6 +612,66 @@ function ChatAreaContent({
     [chatState]
   )
 
+  // Callback when user clicks re-edit on an AI message
+  // Finds the corresponding user message from the state machine messages and restores its prompt + attachments to the input
+  const handleReEdit = useCallback(
+    async (aiMsg: import('../message/MessageBubble').Message) => {
+      if (!aiMsg.subtaskId) return
+
+      // Locate the AI message in the state machine to get its messageId (shared with the user message)
+      const stateMessages = taskState?.messages
+      if (!stateMessages) return
+
+      const aiStateMsg = stateMessages.get(`ai-${aiMsg.subtaskId}`)
+      if (!aiStateMsg || aiStateMsg.messageId == null) return
+
+      // Find the corresponding user message: same messageId, type 'user'
+      let userStateMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+      for (const msg of stateMessages.values()) {
+        if (msg.type === 'user' && msg.messageId === aiStateMsg.messageId) {
+          userStateMsg = msg
+          break
+        }
+      }
+      if (!userStateMsg) return
+
+      // Restore text prompt to input
+      if (userStateMsg.content) {
+        chatState.setTaskInputMessage(userStateMsg.content)
+      }
+
+      // Clear any existing draft attachments before restoring the original ones
+      // so the restored set exactly matches the original user message
+      chatState.resetAttachment()
+
+      // Restore attachment contexts (contexts is stored as unknown[] in UnifiedMessage)
+      const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
+      const attachmentContexts = rawContexts.filter(c => c.context_type === 'attachment')
+
+      for (const ctx of attachmentContexts) {
+        try {
+          const detail = await getAttachment(ctx.id)
+          chatState.addExistingAttachment({
+            id: detail.id,
+            filename: detail.filename,
+            file_size: detail.file_size,
+            mime_type: detail.mime_type,
+            status: detail.status,
+            text_length: detail.text_length ?? null,
+            error_message: detail.error_message ?? null,
+            error_code: detail.error_code ?? null,
+            subtask_id: detail.subtask_id ?? null,
+            file_extension: detail.file_extension,
+            created_at: detail.created_at,
+          })
+        } catch (error) {
+          console.error('Failed to restore attachment for re-edit:', error)
+        }
+      }
+    },
+    [taskState, chatState]
+  )
+
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
@@ -833,6 +893,7 @@ function ChatAreaContent({
               onContextReselect={handleContextReselect}
               hideGroupChatOptions={taskType === 'knowledge'}
               onUseAsReference={handleUseAsReference}
+              onReEdit={handleReEdit}
             />
           </div>
         </div>

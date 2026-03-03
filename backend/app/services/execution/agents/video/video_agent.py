@@ -98,12 +98,33 @@ class VideoAgent(PollingAgent):
         )
 
         try:
-            # Step 1: Intent analysis for follow-ups
-            intent_result = await self._analyze_intent(
-                request=request,
-                emitter=emitter,
-                video_block_id=video_block_id,
-            )
+            # Step 0: Extract user-provided reference images (highest priority)
+            # If user explicitly uploaded reference images, skip intent analysis
+            user_reference_images = self._extract_reference_images(request)
+            prompt_text, prompt_images = self._normalize_prompt(request.prompt)
+            user_reference_images.extend(prompt_images)
+
+            # Step 1: Intent analysis for follow-ups (only when no user-uploaded images)
+            if not user_reference_images and request.task_id:
+                intent_result = await self._analyze_intent(
+                    request=request,
+                    emitter=emitter,
+                    video_block_id=video_block_id,
+                )
+                final_prompt = intent_result.merged_prompt
+                reference_image = intent_result.reference_image
+                image_mode = intent_result.image_mode
+            else:
+                # User explicitly provided attachments - use them directly
+                final_prompt = prompt_text or (
+                    request.prompt if isinstance(request.prompt, str) else ""
+                )
+                reference_image = (
+                    user_reference_images[0] if user_reference_images else None
+                )
+                image_mode = (
+                    "first_frame"  # Default mode for user-uploaded reference images
+                )
 
             # Step 2: Get video provider based on protocol
             # Use 'or' to handle both missing key and None value
@@ -124,9 +145,9 @@ class VideoAgent(PollingAgent):
             )
 
             job_id = await provider.create_job(
-                prompt=intent_result.merged_prompt,
-                reference_image=intent_result.reference_image,
-                image_mode=intent_result.image_mode,
+                prompt=final_prompt,
+                reference_image=reference_image,
+                image_mode=image_mode,
             )
 
             logger.info(
@@ -256,6 +277,84 @@ class VideoAgent(PollingAgent):
 
         finally:
             await session_manager.unregister_stream(subtask_id)
+
+    def _extract_reference_images(self, request: ExecutionRequest) -> list[str]:
+        """Extract reference images from request.attachments (user-uploaded files).
+
+        NOTE:
+        - Newer chat flows may provide images via request.prompt vision blocks instead.
+          Those are handled by _normalize_prompt().
+        """
+        reference_images: list[str] = []
+
+        if request.attachments:
+            for att in request.attachments:
+                if att.get("mime_type", "").startswith("image/"):
+                    url = att.get("url") or att.get("content")
+                    if url:
+                        reference_images.append(url)
+
+        return reference_images
+
+    def _normalize_prompt(
+        self,
+        prompt: str | list[dict],
+    ) -> tuple[str, list[str]]:
+        """Normalize ExecutionRequest.prompt to plain text + reference images.
+
+        Returns:
+            (prompt_text, images)
+
+        Rules:
+        - For vision content list: concatenate all input_text blocks
+        - Extract input_image.image_url as reference images
+        - If text contains our context wrapper, prefer the actual user question part
+        """
+        if isinstance(prompt, str):
+            return self._extract_user_question(prompt), []
+
+        if not isinstance(prompt, list):
+            return self._extract_user_question(str(prompt)), []
+
+        text_parts: list[str] = []
+        images: list[str] = []
+
+        for block in prompt:
+            if not isinstance(block, dict):
+                continue
+
+            if block.get("type") == "input_text":
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    text_parts.append(text)
+
+            if block.get("type") == "input_image":
+                image_url = block.get("image_url")
+                if isinstance(image_url, str) and image_url.strip():
+                    images.append(image_url)
+
+        combined_text = "\n".join(text_parts).strip()
+        combined_text = self._extract_user_question(combined_text)
+        return combined_text, images
+
+    def _extract_user_question(self, text: str) -> str:
+        """Extract user-visible question from a context-wrapped prompt.
+
+        The chat context preprocessor may build prompts like:
+        "<attachment>...metadata...</attachment>\n\n[User Question]:\n<message>"
+
+        Seedance applies sensitive-text filters; passing attachment metadata (URLs, paths)
+        increases false positives. Prefer only the real user question if the marker exists.
+        """
+        if not isinstance(text, str):
+            return str(text)
+
+        marker = "[User Question]:"
+        if marker in text:
+            after = text.split(marker, 1)[1]
+            return after.lstrip("\n").strip()
+
+        return text.strip()
 
     async def _analyze_intent(
         self,

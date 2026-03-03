@@ -16,7 +16,9 @@
     "retry": "Retry",
     "edit": "Edit",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "re_edit": "Re-edit",
+    "re_edit_tooltip": "Restore original input to chat box"
   },
   "edit": {
     "tooltip": "Edit message",
@@ -30,7 +32,7 @@
   },
   "regenerate": {
     "failed": "Failed to regenerate response",
-    "tooltip": "Regenerate response",
+    "tooltip": "Regenerate",
     "select_model": "Select Model",
     "select_model_desc": "Choose a model for regeneration"
   },
@@ -534,7 +536,9 @@
     "no_task_id": "No task ID available"
   },
   "generate": {
-    "mode_selector": "Generation Type"
+    "mode_selector": "Generation Type",
+    "max_attachments": "Upload up to {{count}} attachments as reference",
+    "attachment_limit_reached": "Attachment limit reached"
   },
   "video": {
     "title": "Video Generation",
