@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "TURBOPACK=1 next dev --turbopack",
     "dev:proxy": "node server.cjs",
-    "build": "NODE_OPTIONS='--max-old-space-size=2048' next build",
+    "build": "node scripts/build-novnc.js && NODE_OPTIONS='--max-old-space-size=2048' next build",
     "start": "next start",
     "start:proxy": "NODE_ENV=production node server.cjs",
     "lint": "next lint",

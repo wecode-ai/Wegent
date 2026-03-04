@@ -29,7 +29,10 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
-    '@novnc/novnc',
+    // Note: @novnc/novnc is NOT included here. It ships CJS with top-level await
+    // which is incompatible with webpack's module system. Instead, noVNC is
+    // pre-built into public/novnc/rfb.min.js and loaded at runtime via <script> tag.
+    // See scripts/build-novnc.js and rfb-loader.ts for details.
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
@@ -46,19 +49,6 @@ const nextConfig = {
             ...config.resolve.alias,
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
           }
-
-          // Enable top-level await for @novnc/novnc
-          config.experiments = config.experiments || {}
-          config.experiments.topLevelAwait = true
-
-          // Configure @novnc/novnc to be treated as ESM
-          config.module = config.module || {}
-          config.module.rules = config.module.rules || []
-          config.module.rules.push({
-            test: /\.js$/,
-            include: /node_modules[\\/]@novnc[\\/]novnc/,
-            type: 'javascript/esm',
-          })
 
           // Handle chunk loading issues
           config.optimization = {

@@ -5,8 +5,12 @@
 /**
  * Client-side noVNC RFB loader
  *
- * Uses webpack to bundle noVNC. This requires @novnc/novnc to be
- * properly configured in webpack with topLevelAwait experiment enabled.
+ * Loads the pre-built noVNC bundle (public/novnc/rfb.min.js) via <script> tag
+ * at runtime. This avoids webpack trying to bundle noVNC, which ships CJS
+ * with top-level await — a combination incompatible with webpack's module system.
+ *
+ * The bundle exposes `window.noVNC` as the RFB constructor.
+ * Built by: scripts/build-novnc.js
  */
 
 'use client'
@@ -15,8 +19,22 @@
 let RFBCache: any = null
 
 /**
- * Load the noVNC RFB class.
- * Uses webpack's topLevelAwait experiment to handle noVNC's async initialization.
+ * Extract the RFB constructor from the loaded noVNC module.
+ * The bundle may expose it directly or as {default: RFB, __esModule: true}.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractRFB(mod: any): any {
+  if (!mod) return null
+  // If it's a CJS-style module with __esModule flag, use .default
+  if (mod.__esModule && mod.default) return mod.default
+  // If it's already a constructor function, use it directly
+  if (typeof mod === 'function') return mod
+  // Fallback: try .default anyway
+  return mod.default || mod
+}
+
+/**
+ * Load the noVNC RFB class via pre-built bundle.
  *
  * @returns Promise<RFB constructor>
  */
@@ -25,25 +43,34 @@ export async function loadRFB() {
     return RFBCache
   }
 
-  try {
-    // Use normal import - webpack with topLevelAwait will handle this
-    // Note: In development mode with Turbopack, this may show 'exports is not defined'
-    // warning in console, but it doesn't affect functionality. Production builds work correctly.
-    const novnc = await import('@novnc/novnc/lib/rfb')
-    RFBCache = novnc.default || novnc
+  // Check if already loaded (e.g., from a previous call that completed while we waited)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const existing = extractRFB((window as any).noVNC)
+  if (existing) {
+    RFBCache = existing
     return RFBCache
-  } catch (error) {
-    // Suppress 'exports is not defined' warning in development mode
-    if (error instanceof Error && error.message.includes('exports is not defined')) {
-      console.warn(
-        '[VNC] Expected warning in dev mode with Turbopack, functionality is not affected'
-      )
-      // Return cached value if available, or re-throw for retry
-      if (RFBCache) return RFBCache
-    }
-    console.error('[VNC] Failed to load noVNC RFB:', error)
-    throw new Error(
-      'Failed to load VNC library: ' + (error instanceof Error ? error.message : String(error))
-    )
   }
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = '/novnc/rfb.min.js'
+    script.async = true
+
+    script.onload = () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const RFB = extractRFB((window as any).noVNC)
+      if (RFB) {
+        RFBCache = RFB
+        resolve(RFB)
+      } else {
+        reject(new Error('noVNC bundle loaded but window.noVNC is not defined'))
+      }
+    }
+
+    script.onerror = () => {
+      reject(new Error('Failed to load noVNC bundle from /novnc/rfb.min.js'))
+    }
+
+    document.head.appendChild(script)
+  })
 }
