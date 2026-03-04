@@ -113,6 +113,18 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         if hasattr(message, "text") and message.text:
             content = message.text.content.strip() if message.text.content else ""
 
+        # For richText messages, also extract text parts
+        message_type = getattr(message, "message_type", None)
+        if message_type == "richText" and hasattr(message, "get_text_list"):
+            text_parts = message.get_text_list() or []
+            if text_parts and not content:
+                content = " ".join(text_parts).strip()
+
+        # Extract image download codes from picture/richText messages
+        image_download_codes: list[str] = []
+        if hasattr(message, "get_image_list"):
+            image_download_codes = message.get_image_list() or []
+
         # Extract sender info
         sender_id = getattr(message, "sender_id", "") or ""
         sender_nick = getattr(message, "sender_nick", None)
@@ -131,9 +143,17 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             "at_users": getattr(message, "at_users", []),
         }
 
+        if image_download_codes:
+            extra_data["image_download_codes"] = image_download_codes
+
         # Include callback_data if it was attached to the message
         if hasattr(message, "_wegent_callback_data"):
             extra_data["callback_data"] = message._wegent_callback_data
+
+        # Include pre-downloaded images if they were attached
+        images: list[dict[str, str]] = []
+        if hasattr(message, "_wegent_images"):
+            images = message._wegent_images
 
         return MessageContext(
             content=content,
@@ -144,6 +164,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             is_mention=is_in_at_list,
             raw_message=message,
             extra_data=extra_data,
+            images=images,
         )
 
     async def resolve_user(
@@ -436,6 +457,60 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             "callback_data": callback_data,
         }
 
+    async def _download_dingtalk_images(
+        self, download_codes: list[str]
+    ) -> list[dict[str, str]]:
+        """Download images from DingTalk using download codes.
+
+        Args:
+            download_codes: List of DingTalk image download codes
+
+        Returns:
+            List of image dicts with mime_type and base64_data
+        """
+        import base64
+
+        import requests
+
+        images: list[dict[str, str]] = []
+        for download_code in download_codes:
+            try:
+                # Use DingTalk SDK to get temporary download URL
+                download_url = self.get_image_download_url(download_code)
+                if not download_url:
+                    self.logger.warning(
+                        "[DingTalkHandler] Failed to get download URL for code: %s",
+                        download_code[:20],
+                    )
+                    continue
+
+                # Download the image
+                response = requests.get(download_url, timeout=30)
+                response.raise_for_status()
+
+                # Determine MIME type from response headers or default to image/png
+                content_type = response.headers.get("Content-Type", "image/png")
+                # Strip parameters like charset
+                mime_type = content_type.split(";")[0].strip()
+                if not mime_type.startswith("image/"):
+                    mime_type = "image/png"
+
+                base64_data = base64.b64encode(response.content).decode("utf-8")
+                images.append(
+                    {"mime_type": mime_type, "base64_data": base64_data}
+                )
+                self.logger.info(
+                    "[DingTalkHandler] Downloaded image: mime=%s, size=%d bytes",
+                    mime_type,
+                    len(response.content),
+                )
+            except Exception as e:
+                self.logger.error(
+                    "[DingTalkHandler] Failed to download image: %s", e
+                )
+                continue
+        return images
+
     async def _process_with_channel_handler(
         self, incoming_message: ChatbotMessage, callback_data: Dict[str, Any]
     ) -> bool:
@@ -458,6 +533,15 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         # We need to store it so create_callback_info can access it
         if not hasattr(incoming_message, "_wegent_callback_data"):
             incoming_message._wegent_callback_data = callback_data
+
+        # Download images from DingTalk before parsing
+        # parse_message is called twice (here and in handle_message),
+        # so we attach downloaded images to the message object
+        image_download_codes = incoming_message.get_image_list() or []
+        if image_download_codes:
+            images = await self._download_dingtalk_images(image_download_codes)
+            if images:
+                incoming_message._wegent_images = images
 
         # Parse message into MessageContext, including callback_data in extra_data
         message_context = self._channel_handler.parse_message(incoming_message)
