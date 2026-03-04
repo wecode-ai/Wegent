@@ -177,7 +177,12 @@ export default function DevicesPage() {
                   backendUrl={backendUrl}
                   authToken={authToken}
                   guideUrl={guideUrl}
-                  onDeviceCreated={refreshDevices}
+                  onDeviceCreated={() => {
+                    refreshDevices()
+                    if (devices.length > 0) {
+                      setShowSetupGuide(false)
+                    }
+                  }}
                   onClose={() => setShowSetupGuide(false)}
                   showCloseButton={devices.length > 0}
                   cloudDeviceCount={sortedDevices.filter(d => d.device_type === 'cloud').length}
