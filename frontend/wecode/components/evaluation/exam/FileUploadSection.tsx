@@ -67,7 +67,7 @@ const UPLOAD_SLOTS = [
   },
   {
     key: 'bonusAgent',
-    label: '附加题一：Agent / 工作流',
+    label: '附加题一：Agent / Skill',
     hint: '支持图片、PDF、文档等格式，最多可上传 20 个文件',
     maxFiles: 20,
     accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.pptx,.ppt,.html',

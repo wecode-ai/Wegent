@@ -404,7 +404,7 @@
       "main_report_hint": "支持 PDF、Word、TXT 等格式，最多可上传 20 个文件",
       "interaction": "交互过程记录",
       "interaction_hint": "支持 PDF、图片、文本等格式，最多可上传 20 个文件",
-      "bonus_agent": "附加题一：Agent / 工作流",
+      "bonus_agent": "附加题一：Agent / Skill",
       "bonus_agent_hint": "支持图片、PDF、文档等格式，最多可上传 20 个文件",
       "bonus_agent_link": "Agent 分享链接",
       "bonus_agent_link_placeholder": "粘贴可访问/可运行的 Agent 分享链接",
