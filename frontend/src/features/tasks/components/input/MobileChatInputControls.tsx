@@ -225,14 +225,12 @@ export function MobileChatInputControls({
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
-        {/* Context (Knowledge base) */}
-        {isChatShell(selectedTeam) && (
-          <ChatContextInput
-            selectedContexts={selectedContexts}
-            onContextsChange={setSelectedContexts}
-            excludeKnowledgeBaseId={knowledgeBaseId}
-          />
-        )}
+        {/* Context (Knowledge base) - available for all shell types (KB retrieval supported via MCP) */}
+        <ChatContextInput
+          selectedContexts={selectedContexts}
+          onContextsChange={setSelectedContexts}
+          excludeKnowledgeBaseId={knowledgeBaseId}
+        />
 
         {/* Skill Selector - show when skills are available */}
         {/* Skill selection is read-only after task creation (hasMessages) */}

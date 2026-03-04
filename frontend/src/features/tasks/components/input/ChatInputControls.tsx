@@ -457,14 +457,12 @@ export function ChatInputControls({
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
           <>
-            {/* Context Selection - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
-              <ChatContextInput
-                selectedContexts={selectedContexts}
-                onContextsChange={setSelectedContexts}
-                excludeKnowledgeBaseId={knowledgeBaseId}
-              />
-            )}
+            {/* Context Selection - available for all shell types (KB retrieval supported via MCP) */}
+            <ChatContextInput
+              selectedContexts={selectedContexts}
+              onContextsChange={setSelectedContexts}
+              excludeKnowledgeBaseId={knowledgeBaseId}
+            />
 
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
