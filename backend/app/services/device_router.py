@@ -15,7 +15,7 @@ Refactored version:
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ async def route_task_to_device(
     user: User,
     auth_token: str = "",
     user_subtask: Optional[Subtask] = None,
+    message: Optional[Union[str, list]] = None,
 ) -> bool:
     """
     Route a task to a local device for execution.
@@ -59,6 +60,8 @@ async def route_task_to_device(
         user: User object
         auth_token: JWT token for API calls
         user_subtask: Optional user subtask for context retrieval
+        message: Optional explicit message/prompt (e.g. vision content).
+                 When provided, overrides subtask.prompt in the execution request.
 
     Returns:
         True if task was successfully routed to device
@@ -113,7 +116,7 @@ async def route_task_to_device(
         task=task,
         user=user,
         team=team,
-        message=local_subtask.prompt or "",
+        message=message if message is not None else (local_subtask.prompt or ""),
     )
 
     # Dispatch task via ExecutionDispatcher
@@ -142,7 +145,7 @@ async def route_task_to_device_unified(
     subtask: Subtask,
     team: Kind,
     user: User,
-    message: str = "",
+    message: Union[str, list] = "",
     auth_token: str = "",
 ) -> bool:
     """

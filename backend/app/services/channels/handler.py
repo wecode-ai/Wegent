@@ -16,9 +16,9 @@ implement channel-specific message parsing while sharing common processing logic
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, Generic, Optional, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
 from sqlalchemy.orm import Session
 
@@ -82,6 +82,8 @@ class MessageContext:
     is_mention: bool  # Whether the bot was mentioned (for group chats)
     raw_message: Any  # Original message object from the channel SDK
     extra_data: Dict[str, Any]  # Channel-specific extra data
+    images: List[Dict[str, str]] = field(default_factory=list)
+    # Each image dict: {"mime_type": "image/png", "base64_data": "iVBOR..."}
 
 
 @dataclass
@@ -490,7 +492,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             f"content_preview={message_context.content[:50] if message_context.content else 'empty'}"
         )
 
-        if not message_context.content:
+        if not message_context.content and not message_context.images:
             self.logger.warning(
                 f"[{self._channel_type.value}Handler] Empty message content, skipping"
             )
@@ -1342,6 +1344,27 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if response:
             await self.send_text_reply(message_context, response)
 
+    @staticmethod
+    def _build_vision_content(
+        text: str, images: List[Dict[str, str]]
+    ) -> list[dict[str, Any]]:
+        """Build OpenAI Responses API vision content from text and images.
+
+        Args:
+            text: Text content (may be empty for image-only messages)
+            images: List of image dicts with mime_type and base64_data
+
+        Returns:
+            List of content items in OpenAI Responses API vision format
+        """
+        content: list[dict[str, Any]] = []
+        if text:
+            content.append({"type": "input_text", "text": text})
+        for img in images:
+            data_uri = f"data:{img['mime_type']};base64,{img['base64_data']}"
+            content.append({"type": "input_image", "image_url": data_uri})
+        return content
+
     async def _create_and_process_chat(
         self,
         user: User,
@@ -1368,12 +1391,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
+        # Use text for DB storage; fallback to "[图片]" for image-only messages
+        display_text = message or "[图片]"
         params = TaskCreationParams(
-            message=message,
+            message=display_text,
             title=(
-                f"{self._channel_type.value}: {message[:30]}..."
-                if len(message) > 30
-                else f"{self._channel_type.value}: {message}"
+                f"{self._channel_type.value}: {display_text[:30]}..."
+                if len(display_text) > 30
+                else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
             task_type="chat",
@@ -1472,15 +1497,21 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         task_room = f"task_{task_id}"
 
-        # Append IM channel context hint to help AI understand available commands
-        message_with_hint = message + IM_CHANNEL_CONTEXT_HINT
+        # Build message for AI: vision content if images present, otherwise text
+        text_with_hint = (message or "") + IM_CHANNEL_CONTEXT_HINT
+        if message_context.images:
+            ai_message = self._build_vision_content(
+                text_with_hint, message_context.images
+            )
+        else:
+            ai_message = text_with_hint
 
         await trigger_ai_response_unified(
             task=trigger_data["task"],
             assistant_subtask=trigger_data["assistant_subtask"],
             team=trigger_data["team"],
             user=trigger_data["user"],
-            message=message_with_hint,
+            message=ai_message,
             payload=self._build_chat_payload(params, override_model_name),
             task_room=task_room,
             namespace=None,
@@ -1555,17 +1586,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
+        # Use text for DB storage; fallback to "[图片]" for image-only messages
+        display_text = message or "[图片]"
+
         # Get model for device mode (uses default Claude if user hasn't selected one)
         override_model_name, override_model_type = (
             await self._get_device_mode_model_override(db, user)
         )
 
         params = TaskCreationParams(
-            message=message,
+            message=display_text,
             title=(
-                f"{self._channel_type.value}: {message[:30]}..."
-                if len(message) > 30
-                else f"{self._channel_type.value}: {message}"
+                f"{self._channel_type.value}: {display_text[:30]}..."
+                if len(display_text) > 30
+                else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
             task_type="task",
@@ -1635,6 +1669,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 offset=0,
             )
 
+        # Build message for device: vision content if images present
+        if message_context.images:
+            device_message = self._build_vision_content(
+                message or "", message_context.images
+            )
+        else:
+            device_message = None  # Let route_task_to_device use subtask.prompt
+
         try:
             await route_task_to_device(
                 db=db,
@@ -1645,6 +1687,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 team=team,
                 user=user,
                 user_subtask=result.user_subtask,
+                message=device_message,
             )
 
             # Save callback info
@@ -1681,17 +1724,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
+        # Use text for DB storage; fallback to "[图片]" for image-only messages
+        display_text = message or "[图片]"
+
         # Get user's model selection
         override_model_name, override_model_type = await self._get_user_model_override(
             user.id
         )
 
         params = TaskCreationParams(
-            message=message,
+            message=display_text,
             title=(
-                f"{self._channel_type.value}: {message[:30]}..."
-                if len(message) > 30
-                else f"{self._channel_type.value}: {message}"
+                f"{self._channel_type.value}: {display_text[:30]}..."
+                if len(display_text) > 30
+                else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
             task_type="task",
