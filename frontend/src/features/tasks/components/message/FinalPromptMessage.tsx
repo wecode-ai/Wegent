@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useContext } from 'react'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/hooks/use-toast'
-import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { ChatStreamContext } from '../../contexts/chatStreamContext'
 import { Textarea } from '@/components/ui/textarea'
 
 interface FinalPromptMessageProps {
@@ -31,6 +31,11 @@ interface FinalPromptMessageProps {
    */
   isPendingConfirmation?: boolean
   onStageConfirmed?: () => void
+  /**
+   * Read-only mode for shared task page (no authentication required).
+   * When true, only shows the copy prompt button and hides actions requiring auth.
+   */
+  readOnly?: boolean
 }
 
 export default function FinalPromptMessage({
@@ -41,12 +46,16 @@ export default function FinalPromptMessage({
   taskId = null,
   isPendingConfirmation = false,
   onStageConfirmed,
+  readOnly = false,
 }: FinalPromptMessageProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
   const { theme } = useTheme()
   const router = useRouter()
-  const { sendMessage } = useChatStreamContext()
+  // Use useContext directly to avoid throwing error when outside ChatStreamProvider
+  // This supports read-only mode in shared task page
+  const chatStreamContext = useContext(ChatStreamContext)
+  const sendMessage = chatStreamContext?.sendMessage ?? null
   const [copied, setCopied] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedPrompt, setEditedPrompt] = useState(data.final_prompt)
@@ -55,7 +64,8 @@ export default function FinalPromptMessage({
   const [hasConfirmed, setHasConfirmed] = useState(false)
 
   // Single source of truth: isPendingConfirmation from pipeline_stage_info.is_pending_confirmation
-  const showPipelineActions = isPendingConfirmation
+  // In readOnly mode (shared task page), never show pipeline actions
+  const showPipelineActions = !readOnly && isPendingConfirmation && sendMessage !== null
 
   const handleCopy = async () => {
     try {
@@ -123,7 +133,7 @@ export default function FinalPromptMessage({
       return
     }
 
-    if (!taskId || !selectedTeam) {
+    if (!taskId || !selectedTeam || !sendMessage) {
       toast({
         variant: 'destructive',
         title: t('pipeline.no_task_id'),
@@ -248,33 +258,40 @@ export default function FinalPromptMessage({
           {copied ? t('clarification.copied') : t('clarification.copy_prompt')}
         </Button>
 
-        {showPipelineActions ? (
-          <Button
-            variant="default"
-            onClick={handleContinueToNextStage}
-            disabled={isConfirming || hasConfirmed}
-            className="bg-primary hover:bg-primary/90"
-          >
-            {isConfirming || hasConfirmed ? (
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+        {/* Hide auth-required actions in readOnly mode (shared task page) */}
+        {!readOnly && (
+          <>
+            {showPipelineActions ? (
+              <Button
+                variant="default"
+                onClick={handleContinueToNextStage}
+                disabled={isConfirming || hasConfirmed}
+                className="bg-primary hover:bg-primary/90"
+              >
+                {isConfirming || hasConfirmed ? (
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Check className="w-4 h-4 mr-2" />
+                )}
+                {hasConfirmed ? t('pipeline.stage_confirming') : t('pipeline.confirm_stage')}
+              </Button>
             ) : (
-              <Check className="w-4 h-4 mr-2" />
+              <Button variant="secondary" onClick={handleCreateTask}>
+                <Plus className="w-4 h-4 mr-2" />
+                {t('clarification.create_task')}
+              </Button>
             )}
-            {hasConfirmed ? t('pipeline.stage_confirming') : t('pipeline.confirm_stage')}
-          </Button>
-        ) : (
-          <Button variant="secondary" onClick={handleCreateTask}>
-            <Plus className="w-4 h-4 mr-2" />
-            {t('clarification.create_task')}
-          </Button>
+          </>
         )}
       </div>
 
       {/* Hint */}
       <div className="text-xs text-text-tertiary italic">
-        {showPipelineActions
-          ? t('pipeline.confirmation_hint')
-          : t('clarification.final_prompt_hint')}
+        {readOnly
+          ? t('clarification.readonly_hint') || t('clarification.final_prompt_hint')
+          : showPipelineActions
+            ? t('pipeline.confirmation_hint')
+            : t('clarification.final_prompt_hint')}
       </div>
     </div>
   )

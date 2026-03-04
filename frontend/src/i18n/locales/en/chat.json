@@ -280,6 +280,7 @@
     "copy_prompt": "Copy Prompt",
     "create_task": "Create New Task with This Prompt",
     "final_prompt_hint": "This is the refined requirement based on your answers. You can copy it or create a new code task directly.",
+    "readonly_hint": "This is a shared task. You can copy the prompt to use it in your own chat.",
     "answers_submitted": "Answers submitted",
     "waiting_response": "Waiting for response...",
     "my_answers": "My Answers",
