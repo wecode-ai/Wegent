@@ -382,6 +382,8 @@ export interface ExamSession {
   started_at: string | null
   submit_count: number
   selected_question_id: number | null
+  remaining_seconds: number
+  is_overtime: boolean
 }
 
 export interface ExamTopicInfo {

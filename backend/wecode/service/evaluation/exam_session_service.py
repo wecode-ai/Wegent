@@ -239,6 +239,26 @@ class ExamSessionService:
         }
 
     @staticmethod
+    def get_sessions_status_batch(
+        sessions: list[EvalExamSession],
+    ) -> dict[int, dict[str, Any]]:
+        """Calculate status for multiple sessions in batch.
+
+        This is more efficient than calling get_session_status() in a loop
+        when processing many sessions.
+
+        Args:
+            sessions: List of exam sessions
+
+        Returns:
+            Dictionary mapping user_id to session status
+        """
+        return {
+            session.user_id: ExamSessionService.get_session_status(session)
+            for session in sessions
+        }
+
+    @staticmethod
     def record_submission(db: Session, session: EvalExamSession) -> None:
         """Record a submission (multiple allowed)."""
         session.last_submitted_at = datetime.now(timezone.utc)

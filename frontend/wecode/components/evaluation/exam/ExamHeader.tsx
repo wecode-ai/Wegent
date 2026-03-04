@@ -4,6 +4,7 @@
 
 'use client'
 
+import { ExamTimerDisplay } from '../common/ExamTimerDisplay'
 import { Icon } from './ExamIcons'
 
 interface ProgressStep {
@@ -18,13 +19,6 @@ interface ExamHeaderProps {
   timeLeft: number
   timerColor: string
   showTimer: boolean
-  isOvertime?: boolean
-}
-
-function formatTime(s: number, isOvertime = false): string {
-  const absSeconds = Math.abs(s)
-  const sign = isOvertime ? '+' : ''
-  return `${sign}${String(Math.floor(absSeconds / 60)).padStart(2, '0')}:${String(absSeconds % 60).padStart(2, '0')}`
 }
 
 export function ExamHeader({
@@ -34,7 +28,6 @@ export function ExamHeader({
   timeLeft,
   timerColor,
   showTimer,
-  isOvertime = false,
 }: ExamHeaderProps) {
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-gray-100">
@@ -62,12 +55,12 @@ export function ExamHeader({
             ))}
           </div>
           {showTimer && (
-            <div
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-[1rem] font-mono font-bold ${timerColor} ${timeLeft <= 5 * 60 && !isOvertime ? 'animate-[timerPulse_1s_ease-in-out_infinite]' : ''}`}
-            >
-              <Icon name="clock" size={16} />
-              <span>{formatTime(timeLeft, isOvertime)}</span>
-            </div>
+            <ExamTimerDisplay
+              initialRemainingSeconds={timeLeft}
+              phase="exam"
+              size="lg"
+              colorClass={timerColor}
+            />
           )}
         </div>
       </div>

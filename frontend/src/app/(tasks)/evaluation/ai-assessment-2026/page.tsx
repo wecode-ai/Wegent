@@ -262,10 +262,7 @@ export default function AIAssessment2026Page() {
     ]
   }, [selectedTopic, questionData, submitCount])
 
-  const timerColor = useMemo(
-    () => getTimerColorClass(timeLeft, isOvertime),
-    [timeLeft, isOvertime]
-  )
+  const timerColor = useMemo(() => getTimerColorClass(timeLeft, isOvertime), [timeLeft, isOvertime])
 
   const currentQuestionData = selectedTopic !== null ? questionData[selectedTopic + 1] : null
   const hasMainReport = (currentQuestionData?.attachments.main.length ?? 0) > 0
@@ -522,7 +519,6 @@ export default function AIAssessment2026Page() {
         timeLeft={timeLeft}
         timerColor={timerColor}
         showTimer={showTimer}
-        isOvertime={isOvertime}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-10">
