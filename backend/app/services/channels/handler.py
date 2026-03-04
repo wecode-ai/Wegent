@@ -1282,18 +1282,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            slot_info = await device_service.get_device_slot_usage_async(
-                db, user.id, device_id
-            )
-            if slot_info["used"] >= slot_info["max"]:
-                await self.send_text_reply(
-                    message_context,
-                    f"❌ 设备 **{device_selection.device_name}** 槽位已满 "
-                    f"({slot_info['used']}/{slot_info['max']})\n\n"
-                    "请等待当前任务完成或选择其他设备",
-                )
-                return
-
             team = self._get_default_team(db, user.id)
             if not team:
                 await self.send_text_reply(
