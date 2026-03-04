@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   FileText,
@@ -29,14 +29,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -46,6 +38,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { DataTable, type Column } from '@wecode/components/evaluation/common/DataTable'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
   graderListReports,
@@ -56,6 +49,8 @@ import {
 } from '@wecode/api/evaluation-grader'
 import { GradingTaskStatus, type GradingTask } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
+
+const REPORTS_PER_PAGE = 20
 
 function GraderReportsContent() {
   const router = useRouter()
@@ -72,7 +67,6 @@ function GraderReportsContent() {
   const [reports, setReports] = useState<GradingTask[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [loadingReports, setLoadingReports] = useState(false)
   const [topicFilter, setTopicFilter] = useState<string>(initialTopicId ?? 'all')
   const [searchQuery, setSearchQuery] = useState<string>(initialSearch ?? '')
   const [page, setPage] = useState(1)
@@ -95,12 +89,12 @@ function GraderReportsContent() {
 
   // Load published reports
   const loadReports = useCallback(async () => {
-    setLoadingReports(true)
+    setLoading(true)
     try {
       const params: { page: number; limit: number; status: number; topic_id?: number } = {
         page,
-        limit: 20,
-        status: GradingTaskStatus.PUBLISHED, // Only show published reports
+        limit: REPORTS_PER_PAGE,
+        status: GradingTaskStatus.PUBLISHED,
       }
       if (topicFilter !== 'all') {
         params.topic_id = parseInt(topicFilter)
@@ -115,7 +109,6 @@ function GraderReportsContent() {
         variant: 'destructive',
       })
     } finally {
-      setLoadingReports(false)
       setLoading(false)
     }
   }, [page, topicFilter, toast, t])
@@ -157,7 +150,6 @@ function GraderReportsContent() {
   const handleDownloadReport = async (taskId: number) => {
     setDownloading(taskId)
     try {
-      // Download report file through backend proxy
       await graderDownloadReportFile(taskId)
     } catch (_error) {
       toast({
@@ -188,16 +180,94 @@ function GraderReportsContent() {
   }
 
   // Filter reports by search query (client-side for now)
-  const filteredReports = searchQuery
-    ? reports.filter(
-        report =>
-          report.question_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          report.topic_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          report.respondent_name?.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : reports
+  const filteredReports = useMemo(() => {
+    if (!searchQuery) return reports
+    return reports.filter(
+      report =>
+        report.question_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        report.topic_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        report.respondent_name?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  }, [reports, searchQuery])
 
-  if (loading) {
+  // Define table columns
+  const columns: Column<GradingTask>[] = useMemo(
+    () => [
+      {
+        key: 'id',
+        title: t('common.id'),
+        className: 'font-mono text-xs text-text-muted',
+        render: (report: GradingTask) => `#${report.id}`,
+      },
+      {
+        key: 'topic',
+        title: t('topics.topic_name'),
+        render: (report: GradingTask) => (
+          <div className="flex items-center gap-2">
+            <BookOpen className="h-4 w-4 text-text-muted" />
+            {report.topic_name || '-'}
+          </div>
+        ),
+      },
+      {
+        key: 'question',
+        title: t('questions.question_title'),
+        render: (report: GradingTask) => report.question_title || `Question #${report.question_id}`,
+      },
+      {
+        key: 'user',
+        title: t('permissions.user'),
+        render: (report: GradingTask) => (
+          <div className="flex items-center gap-2">
+            <User className="h-4 w-4 text-text-muted" />
+            {report.respondent_name || `User #${report.respondent_id}`}
+          </div>
+        ),
+      },
+      {
+        key: 'published_at',
+        title: t('grading.published_at'),
+        render: (report: GradingTask) => (
+          <div className="flex items-center gap-2 text-sm text-text-secondary">
+            <Calendar className="h-4 w-4" />
+            {formatDate(report.published_at || '')}
+          </div>
+        ),
+      },
+      {
+        key: 'actions',
+        title: t('actions.view'),
+        className: 'text-right',
+        render: (report: GradingTask) => (
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleViewReport(report)}
+              title={t('grading.view_report')}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleDownloadReport(report.id)}
+              disabled={downloading === report.id}
+              title={t('actions.download')}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleViewAnswer(report.answer_id)}>
+              {t('answers.view')}
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [t, downloading]
+  )
+
+  if (loading && reports.length === 0) {
     return (
       <div className="container mx-auto max-w-6xl px-4 py-8">
         <Skeleton className="mb-6 h-10 w-64" />
@@ -220,9 +290,7 @@ function GraderReportsContent() {
               <FileText className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-text-primary">
-                {t('grader.all_reports')}
-              </h1>
+              <h1 className="text-xl font-semibold text-text-primary">{t('grader.all_reports')}</h1>
               <p className="text-sm text-text-secondary">
                 {total} {t('grading.status.published').toLowerCase()}
               </p>
@@ -269,108 +337,21 @@ function GraderReportsContent() {
           </div>
 
           {/* Reports table */}
-          {loadingReports ? (
-            <div className="space-y-2">
-              {[...Array(5)].map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          ) : filteredReports.length === 0 ? (
-            <div className="py-8 text-center">
-              <FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />
-              <p className="text-text-secondary">{t('grading.no_tasks')}</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('common.id')}</TableHead>
-                  <TableHead>{t('topics.topic_name')}</TableHead>
-                  <TableHead>{t('questions.question_title')}</TableHead>
-                  <TableHead>{t('permissions.user')}</TableHead>
-                  <TableHead>{t('grading.published_at')}</TableHead>
-                  <TableHead className="text-right">{t('actions.view')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredReports.map(report => (
-                  <TableRow key={report.id}>
-                    <TableCell className="font-mono text-xs text-text-muted">
-                      #{report.id}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <BookOpen className="h-4 w-4 text-text-muted" />
-                        {report.topic_name || '-'}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {report.question_title || `Question #${report.question_id}`}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4 text-text-muted" />
-                        {report.respondent_name || `User #${report.respondent_id}`}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-sm text-text-secondary">
-                        <Calendar className="h-4 w-4" />
-                        {formatDate(report.published_at || '')}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleViewReport(report)}
-                          title={t('grading.view_report')}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDownloadReport(report.id)}
-                          disabled={downloading === report.id}
-                          title={t('actions.download')}
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleViewAnswer(report.answer_id)}
-                        >
-                          {t('answers.view')}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-
-          {/* Pagination */}
-          {total > 20 && (
-            <div className="mt-6 flex justify-center gap-2">
-              <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                {t('common.previous')}
-              </Button>
-              <span className="flex items-center px-4 text-sm text-text-secondary">
-                {t('common.page')} {page} / {Math.ceil(total / 20)}
-              </span>
-              <Button
-                variant="outline"
-                disabled={page >= Math.ceil(total / 20)}
-                onClick={() => setPage(page + 1)}
-              >
-                {t('common.next')}
-              </Button>
-            </div>
-          )}
+          <DataTable
+            columns={columns}
+            data={filteredReports}
+            total={searchQuery ? filteredReports.length : total}
+            page={page}
+            pageSize={REPORTS_PER_PAGE}
+            loading={loading}
+            emptyMessage={t('grading.no_tasks')}
+            emptyIcon={<FileText className="mx-auto mb-4 h-12 w-12 text-text-muted" />}
+            onPageChange={setPage}
+            previousText={t('common.previous')}
+            nextText={t('common.next')}
+            pageText={t('common.page')}
+            rowKey={(report: GradingTask) => report.id}
+          />
         </CardContent>
       </Card>
 
