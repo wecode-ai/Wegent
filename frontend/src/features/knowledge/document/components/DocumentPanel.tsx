@@ -6,15 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  ArrowLeft,
-  PanelRightClose,
-  PanelRightOpen,
-  BookOpen,
-  Plus,
-  FileText,
-  Shield,
-} from 'lucide-react'
+import { ArrowLeft, PanelRightClose, PanelRightOpen, Plus, FileText, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList } from './DocumentList'
@@ -198,17 +190,29 @@ export function DocumentPanel({
   // When collapsed, show a floating button to expand
   if (isCollapsed) {
     return (
-      <div className="fixed right-4 top-1/2 -translate-y-1/2 z-40">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={toggleCollapsed}
-          className="h-24 w-10 flex flex-col items-center justify-center gap-2 rounded-lg shadow-lg border-border bg-surface hover:bg-hover"
-          title={t('chatPage.showDocuments')}
-        >
-          <PanelRightOpen className="w-4 h-4" />
-          <BookOpen className="w-4 h-4" />
-        </Button>
+      <div className="fixed right-4 top-2 sm:top-3 z-40">
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-[0px_6px_8px_0px_rgba(51,51,51,0.06)] relative">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleCollapsed}
+            className="h-8 w-8 p-0 rounded-full hover:bg-hover"
+            title={t('chatPage.showDocuments')}
+          >
+            <PanelRightOpen className="w-4 h-4" />
+          </Button>
+          {onNewChat && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onNewChat}
+              className="h-8 w-8 p-0 rounded-full hover:bg-hover"
+              title={t('chatPage.newNote')}
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
       </div>
     )
   }
