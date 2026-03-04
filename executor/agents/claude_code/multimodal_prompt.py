@@ -10,8 +10,27 @@ Anthropic Messages API format, and creates async generators for
 the Claude SDK's multimodal query path.
 """
 
+import base64
+import logging
+import os
 import re
+import uuid
+from datetime import datetime
 from typing import Any, AsyncGenerator, Union
+
+logger = logging.getLogger(__name__)
+
+
+# MIME type to file extension mapping
+_MIME_TO_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+    "image/svg+xml": ".svg",
+}
 
 
 def is_vision_prompt(prompt: Union[str, list]) -> bool:
@@ -136,6 +155,54 @@ async def create_multimodal_query(
             "content": anthropic_content,
         },
     }
+
+
+def save_vision_images(
+    prompt: list[dict[str, Any]],
+    task_id: str = "",
+) -> list[str]:
+    """Save base64 images from vision prompt to disk.
+
+    Images are saved to ~/.wegent-executor/docs/pics/<task_id>/.
+    The WEGENT_EXECUTOR_HOME env var is respected.
+
+    Args:
+        prompt: List of OpenAI Responses API content blocks.
+        task_id: Task ID for organizing images into subdirectories.
+
+    Returns:
+        List of saved file paths.
+    """
+    from executor.config.config import WEGENT_EXECUTOR_HOME
+
+    month_dir = datetime.now().strftime("%Y%m")
+    pics_dir = os.path.join(WEGENT_EXECUTOR_HOME, "docs", "pics", month_dir)
+    os.makedirs(pics_dir, exist_ok=True)
+
+    saved_paths: list[str] = []
+    for block in prompt:
+        if block.get("type") != "input_image":
+            continue
+
+        image_url = block.get("image_url", "")
+        media_type, data = _parse_data_uri(image_url)
+        ext = _MIME_TO_EXT.get(media_type, ".png")
+        prefix = f"{task_id}_" if task_id else ""
+        filename = f"{prefix}{uuid.uuid4().hex[:12]}{ext}"
+        filepath = os.path.join(pics_dir, filename)
+
+        try:
+            image_bytes = base64.b64decode(data)
+            with open(filepath, "wb") as f:
+                f.write(image_bytes)
+            saved_paths.append(filepath)
+            logger.info(
+                "[multimodal] Saved image: %s (%d bytes)", filepath, len(image_bytes)
+            )
+        except Exception as e:
+            logger.error("[multimodal] Failed to save image: %s", e)
+
+    return saved_paths
 
 
 def _parse_data_uri(data_uri: str) -> tuple[str, str]:

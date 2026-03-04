@@ -40,6 +40,7 @@ from executor.agents.claude_code.multimodal_prompt import (
     convert_openai_to_anthropic_content,
     create_multimodal_query,
     is_vision_prompt,
+    save_vision_images,
 )
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import (
@@ -745,6 +746,12 @@ class ClaudeCodeAgent(Agent):
             )
 
             if is_vision_prompt(prompt):
+                # Save images to disk before sending to SDK
+                saved_paths = save_vision_images(prompt, task_id=self.task_id)
+                if saved_paths:
+                    logger.info(
+                        f"Saved {len(saved_paths)} images to disk: {saved_paths}"
+                    )
                 anthropic_content = convert_openai_to_anthropic_content(prompt)
                 await self.client.query(
                     create_multimodal_query(anthropic_content),

@@ -5,6 +5,9 @@
 """Tests for multimodal prompt utility functions."""
 
 import asyncio
+import base64
+import os
+import tempfile
 
 import pytest
 
@@ -14,6 +17,7 @@ from executor.agents.claude_code.multimodal_prompt import (
     convert_openai_to_anthropic_content,
     create_multimodal_query,
     is_vision_prompt,
+    save_vision_images,
 )
 
 
@@ -199,3 +203,69 @@ class TestParseDataUri:
         media_type, data = _parse_data_uri("")
         assert media_type == "image/png"
         assert data == ""
+
+
+# --- save_vision_images ---
+
+
+class TestSaveVisionImages:
+    def test_saves_png_image(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "executor.config.config.WEGENT_EXECUTOR_HOME",
+            str(tmp_path),
+        )
+        png_data = base64.b64encode(b"\x89PNG\r\n\x1a\nfakedata").decode()
+        prompt = [
+            {"type": "input_text", "text": "describe this"},
+            {"type": "input_image", "image_url": f"data:image/png;base64,{png_data}"},
+        ]
+        paths = save_vision_images(prompt, task_id="42")
+        assert len(paths) == 1
+        assert paths[0].endswith(".png")
+        assert os.path.exists(paths[0])
+        # Path format: <home>/docs/pics/YYYYMM/42_<uuid>.png
+        assert "docs/pics/" in paths[0]
+        assert "/42_" in paths[0]
+        with open(paths[0], "rb") as f:
+            assert f.read() == base64.b64decode(png_data)
+
+    def test_saves_multiple_images(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "executor.config.config.WEGENT_EXECUTOR_HOME",
+            str(tmp_path),
+        )
+        img = base64.b64encode(b"fakeimg").decode()
+        prompt = [
+            {"type": "input_image", "image_url": f"data:image/jpeg;base64,{img}"},
+            {"type": "input_image", "image_url": f"data:image/png;base64,{img}"},
+        ]
+        paths = save_vision_images(prompt, task_id="99")
+        assert len(paths) == 2
+        assert paths[0].endswith(".jpg")
+        assert paths[1].endswith(".png")
+
+    def test_skips_non_image_blocks(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "executor.config.config.WEGENT_EXECUTOR_HOME",
+            str(tmp_path),
+        )
+        prompt = [{"type": "input_text", "text": "hello"}]
+        paths = save_vision_images(prompt)
+        assert paths == []
+
+    def test_no_task_id_omits_prefix(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            "executor.config.config.WEGENT_EXECUTOR_HOME",
+            str(tmp_path),
+        )
+        img = base64.b64encode(b"data").decode()
+        prompt = [
+            {"type": "input_image", "image_url": f"data:image/png;base64,{img}"},
+        ]
+        paths = save_vision_images(prompt)
+        assert len(paths) == 1
+        assert "docs/pics/" in paths[0]
+        # No task_id prefix — filename is just <uuid>.png
+        filename = os.path.basename(paths[0])
+        assert "_" not in filename.split(".")[0]  # no underscore prefix
+        assert os.path.exists(paths[0])
