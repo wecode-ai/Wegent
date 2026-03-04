@@ -40,7 +40,7 @@ type DeviceType = 'local' | 'cloud'
  */
 export function DeviceSetupGuide({ backendUrl, authToken, guideUrl, onDeviceCreated, onClose, showCloseButton, cloudDeviceCount = 0 }: DeviceSetupGuideProps) {
   const { t } = useTranslation('devices')
-  const [deviceType, setDeviceType] = useState<DeviceType>('cloud')
+  const [deviceType, setDeviceType] = useState<DeviceType>('local')
 
   return (
     <div className="bg-surface border border-border rounded-lg overflow-hidden">
@@ -76,9 +76,6 @@ export function DeviceSetupGuide({ backendUrl, authToken, guideUrl, onDeviceCrea
           >
             <Cloud className="w-4 h-4" />
             {t('cloud_device')}
-            <span className="px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 rounded-full">
-              {t('recommended')}
-            </span>
             {deviceType === 'cloud' && (
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
             )}
