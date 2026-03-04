@@ -59,6 +59,9 @@ export default function DeviceChatPage() {
     selectedDeviceId,
   })
 
+  // VNC fullscreen state
+  const [isVncFullscreen, setIsVncFullscreen] = useState(false)
+
   // Load collapsed state from localStorage
   useEffect(() => {
     const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
@@ -119,8 +122,9 @@ export default function DeviceChatPage() {
     // Clear any existing task when selecting a new device
     setSelectedTask(null)
     clearAllStreams()
-    // Close VNC panel when switching devices
+    // Close VNC panel and reset fullscreen when switching devices
     setIsVncOpen(false)
+    setIsVncFullscreen(false)
   }
 
   // Get current task title for top navigation
@@ -197,10 +201,14 @@ export default function DeviceChatPage() {
         {/* Chat area or placeholder */}
         {selectedDeviceId || selectedTaskDetail ? (
           <div className="flex flex-1 min-h-0">
-            {/* Chat area - width adjusts based on VNC panel */}
+            {/* Chat area - width adjusts based on VNC panel and fullscreen state */}
             <div
-              className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
-              style={{ width: showVncPanel ? '50%' : '100%' }}
+              className="transition-all duration-300 ease-in-out flex flex-col min-h-0 overflow-hidden"
+              style={{
+                width: showVncPanel ? (isVncFullscreen ? '0%' : '50%') : '100%',
+                opacity: showVncPanel && isVncFullscreen ? 0 : 1,
+                pointerEvents: showVncPanel && isVncFullscreen ? 'none' : 'auto',
+              }}
             >
               <ChatArea
                 teams={teams}
@@ -223,6 +231,10 @@ export default function DeviceChatPage() {
                 onClose={() => setIsVncOpen(false)}
                 title={t('vnc_panel_title')}
                 closeLabel={t('vnc_close')}
+                isFullscreen={isVncFullscreen}
+                onToggleFullscreen={() => setIsVncFullscreen(v => !v)}
+                fullscreenLabel={t('vnc_fullscreen')}
+                exitFullscreenLabel={t('vnc_exit_fullscreen')}
               />
             )}
           </div>
