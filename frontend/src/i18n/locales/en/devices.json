@@ -104,7 +104,7 @@
   "creating": "Creating...",
   "local_devices_section": "Local Devices",
   "cloud_devices_section": "Cloud Devices",
-  "no_local_devices": "No local devices connected. Add a device using the guide above.",
+  "no_local_devices": "No local devices connected. Add a device using the button above.",
   "cloud_devices_coming_soon": "Cloud device support coming soon.",
   "select_device_type": "Select Device Type",
   "select_device_type_description": "Choose the type of device you want to add",
