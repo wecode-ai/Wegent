@@ -6,7 +6,6 @@
  * Device components barrel export.
  */
 
-
 export * from './DeviceCard'
 export * from './DevicesPageHeader'
 export * from './DeviceSection'
