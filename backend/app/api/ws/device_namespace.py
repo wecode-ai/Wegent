@@ -665,8 +665,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
             executor_version=payload.executor_version,
         )
 
-        # Update session with device_id
+        # Update session with device_id and device_name
         session["device_id"] = payload.device_id
+        session["device_name"] = payload.name
         session["registered"] = True
         await self.save_session(sid, session)
 
@@ -712,12 +713,29 @@ class DeviceNamespace(socketio.AsyncNamespace):
             return {"error": "Device ID mismatch"}
 
         # Refresh Redis TTL and update running_task_ids
-        await device_service.refresh_device_heartbeat(
+        success = await device_service.refresh_device_heartbeat(
             user_id,
             payload.device_id,
             payload.running_task_ids,
             payload.executor_version,
         )
+
+        if not success:
+            # Redis key expired, recreate it to recover from ghost-offline state
+            device_name = session.get("device_name", f"device-{payload.device_id[:8]}")
+            logger.warning(
+                f"[Device WS] Heartbeat recovery: recreating Redis key for "
+                f"user={user_id}, device={payload.device_id}"
+            )
+            await device_service.set_device_online(
+                user_id=user_id,
+                device_id=payload.device_id,
+                socket_id=sid,
+                name=device_name,
+                executor_version=payload.executor_version,
+            )
+            # Re-broadcast device online event
+            await self._broadcast_device_online(user_id, payload.device_id, device_name)
 
         # Database operation: quick in, quick out
         _update_device_heartbeat(user_id, payload.device_id)
