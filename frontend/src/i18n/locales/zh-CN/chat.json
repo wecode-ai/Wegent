@@ -48,7 +48,19 @@
     "connecting": "连接中...",
     "disconnected": "连接断开",
     "reconnecting": "正在重连...（第 {{count}} 次尝试）",
-    "reconnected": "已重新连接"
+    "reconnected": "已重新连接",
+    "connection_error_title": "连接失败",
+    "connection_error_config": "配置错误：请检查 WebSocket 连接地址是否正确",
+    "connection_error_timeout": "连接超时：请检查网络连接或后端服务是否正常运行",
+    "connection_error_refused": "连接被拒绝：请确认后端服务已启动",
+    "connection_error_generic": "连接失败：请检查网络连接或刷新页面重试",
+    "troubleshoot_title": "故障排查",
+    "troubleshoot_check_backend": "1. 检查后端服务是否运行：访问 {{healthUrl}}",
+    "troubleshoot_check_socket_url": "2. 检查 WebSocket 连接地址配置 ({{socketUrl}})",
+    "troubleshoot_check_network": "3. 检查网络连接：确认防火墙未阻止 WebSocket 连接",
+    "troubleshoot_restart_services": "4. 重启服务",
+    "show_details": "显示详情",
+    "hide_details": "隐藏详情"
   },
   "messages": {
     "assistant": "AI 助手",
