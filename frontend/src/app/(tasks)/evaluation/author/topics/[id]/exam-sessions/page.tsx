@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { ExamTimerDisplay } from '@wecode/components/evaluation/common/ExamTimerDisplay'
 import {
   getTopicExamSessions,
   resetUserExamSession,
@@ -86,6 +87,13 @@ function SessionCard({ session, onReset, onPhaseChange, onForceEnd }: SessionCar
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {session.current_phase === 'exam' && (
+              <ExamTimerDisplay
+                initialRemainingSeconds={session.remaining_seconds}
+                phase={session.current_phase}
+                size="sm"
+              />
+            )}
             {getPhaseBadge(session.current_phase)}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
