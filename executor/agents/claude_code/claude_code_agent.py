@@ -35,6 +35,12 @@ from executor.agents.claude_code.mode_strategy import (
     ExecutionModeStrategy,
     ModeStrategyFactory,
 )
+from executor.agents.claude_code.multimodal_prompt import (
+    append_text_to_vision_prompt,
+    convert_openai_to_anthropic_content,
+    create_multimodal_query,
+    is_vision_prompt,
+)
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import (
     process_response,
@@ -656,20 +662,47 @@ class ClaudeCodeAgent(Agent):
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
             user_selected_skills = self.task_data.user_selected_skills
-            if user_selected_skills:
-                skill_emphasis = self._build_skill_emphasis_prompt(user_selected_skills)
-                prompt = skill_emphasis + "\n\n" + prompt
-                logger.info(
-                    f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
-                )
-
-            if self.options.get("cwd"):
-                prompt = (
-                    prompt + "\nCurrent working directory: " + self.options.get("cwd")
-                )
-                git_url = self.task_data.git_url
-                if git_url:
-                    prompt = prompt + "\n project url:" + git_url
+            if is_vision_prompt(prompt):
+                # Vision content: append text to the text block in the list
+                if user_selected_skills:
+                    skill_emphasis = self._build_skill_emphasis_prompt(
+                        user_selected_skills
+                    )
+                    prompt = append_text_to_vision_prompt(
+                        prompt, skill_emphasis, prepend=True
+                    )
+                    logger.info(
+                        f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                    )
+                if self.options.get("cwd"):
+                    cwd_text = "\nCurrent working directory: " + self.options.get(
+                        "cwd"
+                    )
+                    git_url = self.task_data.git_url
+                    if git_url:
+                        cwd_text += "\n project url:" + git_url
+                    prompt = append_text_to_vision_prompt(
+                        prompt, cwd_text, prepend=False
+                    )
+            else:
+                # Plain text prompt
+                if user_selected_skills:
+                    skill_emphasis = self._build_skill_emphasis_prompt(
+                        user_selected_skills
+                    )
+                    prompt = skill_emphasis + "\n\n" + prompt
+                    logger.info(
+                        f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                    )
+                if self.options.get("cwd"):
+                    prompt = (
+                        prompt
+                        + "\nCurrent working directory: "
+                        + self.options.get("cwd")
+                    )
+                    git_url = self.task_data.git_url
+                    if git_url:
+                        prompt = prompt + "\n project url:" + git_url
 
             progress = 75
             # Update current progress
@@ -704,13 +737,23 @@ class ClaudeCodeAgent(Agent):
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
+            prompt_length = (
+                len(prompt) if isinstance(prompt, str) else len(str(prompt))
+            )
             logger.info(
-                f"Sending query with prompt (length: {len(self.prompt)}) for session_id: {self.session_id}"
+                f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
 
-            await self.client.query(prompt, session_id=self.session_id)
+            if is_vision_prompt(prompt):
+                anthropic_content = convert_openai_to_anthropic_content(prompt)
+                await self.client.query(
+                    create_multimodal_query(anthropic_content),
+                    session_id=self.session_id,
+                )
+            else:
+                await self.client.query(prompt, session_id=self.session_id)
 
-            logger.info(f"Waiting for response for prompt: {prompt}")
+            logger.info(f"Waiting for response for session_id: {self.session_id}")
 
             # Process and handle the response using the external processor
             result = await process_response(
