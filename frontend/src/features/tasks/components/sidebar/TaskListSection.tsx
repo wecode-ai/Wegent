@@ -181,6 +181,9 @@ export default function TaskListSection({
         targetPath = '/devices/chat'
       } else if (task.task_type === 'code') {
         targetPath = paths.code.getHref()
+      } else if (task.task_type === 'video' || task.task_type === 'image') {
+        // Video and image generation tasks navigate to generate page
+        targetPath = paths.generate.getHref()
       } else if (task.task_type === 'chat') {
         targetPath = paths.chat.getHref()
       } else {

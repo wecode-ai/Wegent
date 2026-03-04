@@ -65,6 +65,9 @@ class TaskCreationParams:
     pipeline_bot_ids: Optional[List[int]] = None
     # Device ID for local device execution (saved at task creation to avoid race condition)
     device_id: Optional[str] = None
+    # Video generation parameters (user-selected at generation time)
+    # Used to save video_config to user subtask.result for display
+    generate_params: Optional[Dict[str, Any]] = None
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -386,6 +389,7 @@ def create_user_subtask(
     message: str,
     next_message_id: int,
     parent_id: int,
+    video_config: Optional[Dict[str, Any]] = None,
 ) -> Subtask:
     """
     Create a USER subtask for the chat message.
@@ -400,10 +404,16 @@ def create_user_subtask(
         message: User message content
         next_message_id: Message ID for this subtask
         parent_id: Parent message ID
+        video_config: Optional video generation config (model, resolution, ratio, duration)
 
     Returns:
         Created Subtask
     """
+    # Build result with video_config if provided
+    result = None
+    if video_config:
+        result = {"video_config": video_config}
+
     user_subtask = Subtask(
         user_id=subtask_user_id,
         task_id=task_id,
@@ -420,7 +430,7 @@ def create_user_subtask(
         parent_id=parent_id,
         error_message="",
         completed_at=datetime.now(),
-        result=None,
+        result=result,
         sender_type=SenderType.USER,
         sender_user_id=sender_user_id,
     )
@@ -705,6 +715,20 @@ async def create_task_and_subtasks(
 
     next_message_id, parent_id = get_next_message_id(db, task_id, subtask_user_id)
 
+    # Build video_config for video generation tasks
+    # This stores the user-selected generation params in the user subtask for display
+    video_config = None
+    if params.task_type == "video" and params.generate_params:
+        video_config = {
+            "model": params.model_id,
+            "resolution": params.generate_params.get("resolution"),
+            "ratio": params.generate_params.get("ratio"),
+            "duration": params.generate_params.get("duration"),
+        }
+        logger.info(
+            f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
+        )
+
     # Create USER subtask (always created)
     user_subtask = create_user_subtask(
         db=db,
@@ -716,6 +740,7 @@ async def create_task_and_subtasks(
         message=message,
         next_message_id=next_message_id,
         parent_id=parent_id,
+        video_config=video_config,
     )
 
     # Create ASSISTANT subtask only if AI should be triggered

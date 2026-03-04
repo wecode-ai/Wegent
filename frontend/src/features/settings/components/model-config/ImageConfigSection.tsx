@@ -23,6 +23,7 @@ export interface ImageConfigState {
   imageOutputFormat: 'jpeg' | 'png'
   imageWatermark: boolean
   imageMaxImages: number | undefined
+  imageMaxReferenceImages: number | undefined
 }
 
 export interface ImageConfigSectionProps {
@@ -68,7 +69,7 @@ export const ImageConfigSection: React.FC<ImageConfigSectionProps> = ({ config, 
 
         <div className="space-y-2">
           <Label htmlFor="image_max_images" className="text-sm font-medium">
-            {t('common:models.image_max_images', '最大图片数')}
+            {t('common:models.image_max_images', '最大生成图片数')}
           </Label>
           <Input
             id="image_max_images"
@@ -82,6 +83,28 @@ export const ImageConfigSection: React.FC<ImageConfigSectionProps> = ({ config, 
           />
           <p className="text-xs text-text-muted">
             {t('common:models.image_max_images_hint', '单次请求最多生成的图片数量')}
+          </p>
+        </div>
+      </div>
+
+      {/* Reference image settings */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="image_max_reference_images" className="text-sm font-medium">
+            {t('common:models.image_max_reference_images', '最大参考图数')}
+          </Label>
+          <Input
+            id="image_max_reference_images"
+            type="number"
+            min={1}
+            max={10}
+            value={config.imageMaxReferenceImages ?? 1}
+            onChange={e => onChange({ imageMaxReferenceImages: parseInt(e.target.value) || 1 })}
+            placeholder="1-10"
+            className="bg-base"
+          />
+          <p className="text-xs text-text-muted">
+            {t('common:models.image_max_reference_images_hint', '用户单次上传的最大参考图片数量')}
           </p>
         </div>
       </div>
@@ -165,6 +188,7 @@ export function getDefaultImageConfig(): ImageConfigState {
     imageOutputFormat: 'png',
     imageWatermark: false,
     imageMaxImages: undefined,
+    imageMaxReferenceImages: 1,
   }
 }
 
@@ -178,6 +202,7 @@ export function toImageGenerationConfig(state: ImageConfigState): ImageGeneratio
     output_format: state.imageOutputFormat,
     watermark: state.imageWatermark,
     max_images: state.imageMaxImages,
+    max_reference_images: state.imageMaxReferenceImages,
   }
 }
 
@@ -191,6 +216,7 @@ export function fromImageGenerationConfig(config: ImageGenerationConfig): ImageC
     imageOutputFormat: config.output_format || 'png',
     imageWatermark: config.watermark ?? false,
     imageMaxImages: config.max_images,
+    imageMaxReferenceImages: config.max_reference_images ?? 1,
   }
 }
 

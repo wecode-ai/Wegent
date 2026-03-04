@@ -188,9 +188,7 @@ export function DeviceSelector({ className, disabled, filterType }: DeviceSelect
                         <span className="flex-1 truncate">{device.name}</span>
                         {/* Processing indicator */}
                         {device.slot_used > 0 && (
-                          <span className="text-xs text-text-muted">
-                            {device.slot_used}
-                          </span>
+                          <span className="text-xs text-text-muted">{device.slot_used}</span>
                         )}
                         {device.is_default && (
                           <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />

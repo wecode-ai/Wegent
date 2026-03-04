@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw } from 'lucide-react'
+import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -150,6 +150,10 @@ export interface BubbleToolsProps {
   isRegenerating?: boolean
   /** Optional render prop for custom regenerate button with popover */
   renderRegenerateButton?: (defaultButton: React.ReactNode, tooltipText: string) => React.ReactNode
+  /** Handler for re-edit button click - restores original user input to chat box */
+  onReEditClick?: () => void
+  /** Whether re-edit button should be shown */
+  showReEdit?: boolean
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -165,6 +169,8 @@ const BubbleTools = ({
   showRegenerate,
   isRegenerating,
   renderRegenerateButton,
+  onReEditClick,
+  showReEdit,
 }: BubbleToolsProps) => {
   const { t } = useTranslation()
 
@@ -177,6 +183,23 @@ const BubbleTools = ({
         tooltip={t('chat:actions.copy') || 'Copy'}
         className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
       />
+      {/* Re-edit button - restores original user message to input box */}
+      {showReEdit && onReEditClick && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              onClick={onReEditClick}
+              className="h-11 min-w-[44px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+            >
+              <History className="h-3.5 w-3.5 text-text-muted" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {t('chat:actions.re_edit_tooltip') || 'Restore original input to chat box'}
+          </TooltipContent>
+        </Tooltip>
+      )}
       {/* Regenerate button - only shown when showRegenerate is true */}
       {showRegenerate &&
         (() => {

@@ -47,6 +47,7 @@ export interface Model {
   region?: ModelRegion
   isAdvanced?: boolean
   namespace?: string
+  config?: Record<string, unknown>
 }
 
 /** Special constant for default model option */
@@ -124,6 +125,7 @@ function unifiedToModel(unified: UnifiedModel): Model {
     displayName: unified.displayName,
     type: unified.type,
     isAdvanced: unified.isAdvanced ?? false,
+    config: unified.config,
   }
 }
 
@@ -251,9 +253,11 @@ export function useModelSelection({
     setIsLoading(true)
     setError(null)
     try {
+      // Include config for image/video models to get type-specific config (imageConfig/videoConfig)
+      const shouldIncludeConfig = modelCategoryType === 'image' || modelCategoryType === 'video'
       const response = await modelApis.getUnifiedModels(
         undefined,
-        false,
+        shouldIncludeConfig,
         'all',
         undefined,
         modelCategoryType

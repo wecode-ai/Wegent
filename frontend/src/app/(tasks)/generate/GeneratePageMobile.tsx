@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -34,12 +34,26 @@ import { ChatArea } from '@/features/tasks/components/chat'
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
 
+const GENERATE_MODE_STORAGE_KEY = 'wegent_generate_last_mode'
+
+function isGenerateMode(value: unknown): value is GenerateMode {
+  return value === 'video' || value === 'image'
+}
+
 export function GeneratePageMobile() {
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Generation mode state - video or image
-  const [generateMode, setGenerateMode] = useState<GenerateMode>('video')
+  // Priority:
+  // 1) Existing task's task_type (synced in useEffect below)
+  // 2) Last user selection from localStorage
+  // 3) Default to 'video'
+  const [generateMode, setGenerateMode] = useState<GenerateMode>(() => {
+    if (typeof window === 'undefined') return 'video'
+    const saved = localStorage.getItem(GENERATE_MODE_STORAGE_KEY)
+    return isGenerateMode(saved) ? saved : 'video'
+  })
 
   // Filter teams based on current generation mode
   // Teams with empty bind_mode support all modes
@@ -53,6 +67,14 @@ export function GeneratePageMobile() {
   // Task context for refreshing task list
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
     useTaskContext()
+
+  // Sync generate mode from task detail when entering from history (taskId in URL)
+  useEffect(() => {
+    const taskType = selectedTaskDetail?.task_type
+    if (taskType === 'video' || taskType === 'image') {
+      setGenerateMode(taskType)
+    }
+  }, [selectedTaskDetail?.id, selectedTaskDetail?.task_type])
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -100,6 +122,13 @@ export function GeneratePageMobile() {
     return await refreshTeams()
   }
 
+  const handleGenerateModeChange = useCallback((mode: GenerateMode) => {
+    setGenerateMode(mode)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(GENERATE_MODE_STORAGE_KEY, mode)
+    }
+  }, [])
+
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Mobile sidebar - use TaskSidebar's built-in MobileSidebar component */}
@@ -137,7 +166,7 @@ export function GeneratePageMobile() {
           showRepositorySelector={false}
           taskType={generateMode}
           onRefreshTeams={handleRefreshTeams}
-          onGenerateModeChange={setGenerateMode}
+          onGenerateModeChange={handleGenerateModeChange}
         />
       </div>
       {/* Search Dialog - rendered at page level for global shortcut support */}

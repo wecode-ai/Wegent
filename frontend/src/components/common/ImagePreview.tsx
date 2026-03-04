@@ -251,7 +251,10 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
       <div className="max-w-[90vw] max-h-[90vh] overflow-auto">
         {/* Show loading state while waiting for blob */}
         {shouldWaitForBlob ? (
-          <div className="flex items-center justify-center bg-muted animate-pulse rounded-lg" style={{ minWidth: 300, minHeight: 200 }}>
+          <div
+            className="flex items-center justify-center bg-muted animate-pulse rounded-lg"
+            style={{ minWidth: 300, minHeight: 200 }}
+          >
             <span className="text-text-secondary text-sm">Loading image...</span>
           </div>
         ) : (
@@ -377,8 +380,9 @@ export default function ImagePreview({
         {/* Image thumbnail - only render when ready */}
         {!shouldWaitForBlob && (
           <span
-            className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${isLoading ? 'opacity-0' : 'opacity-100'
-              }`}
+            className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${
+              isLoading ? 'opacity-0' : 'opacity-100'
+            }`}
             onClick={handleImageClick}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
