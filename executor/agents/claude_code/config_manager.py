@@ -362,7 +362,7 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
             kb_mcp_url = f"{task_data.backend_url}/mcp/kb-retrieval/sse"
             kb_retrieval_mcp = {
                 "wegent-kb-retrieval": {
-                    "type": "streamable-http",
+                    "type": "http",
                     "url": kb_mcp_url,
                     "headers": {
                         "Authorization": f"Bearer {task_data.auth_token}",

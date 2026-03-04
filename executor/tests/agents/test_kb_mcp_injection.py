@@ -41,7 +41,7 @@ class TestClaudeCodeKBMCPInjection:
         mcp_servers = options.get("mcp_servers", {})
         assert "wegent-kb-retrieval" in mcp_servers
         kb_config = mcp_servers["wegent-kb-retrieval"]
-        assert kb_config["type"] == "streamable-http"
+        assert kb_config["type"] == "http"
         assert "/mcp/kb-retrieval/sse" in kb_config["url"]
         assert "Bearer test-token-123" in kb_config["headers"]["Authorization"]
         assert kb_config["timeout"] == 300
