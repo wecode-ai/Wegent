@@ -272,6 +272,7 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     )
     return {}
 
+
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
@@ -354,6 +355,32 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                 bot_config["mcp_servers"] = mcp_servers
             logger.info(
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
+            )
+
+        # Add KB retrieval MCP server when knowledge bases are selected
+        if task_data.knowledge_base_ids:
+            kb_mcp_url = f"{task_data.backend_url}/mcp/kb-retrieval/sse"
+            kb_retrieval_mcp = {
+                "wegent-kb-retrieval": {
+                    "type": "streamable-http",
+                    "url": kb_mcp_url,
+                    "headers": {
+                        "Authorization": f"Bearer {task_data.auth_token}",
+                    },
+                    "timeout": 300,
+                }
+            }
+            if "mcp_servers" not in bot_config or bot_config["mcp_servers"] is None:
+                bot_config["mcp_servers"] = {}
+            mcp_servers = bot_config["mcp_servers"]
+            if isinstance(mcp_servers, dict):
+                mcp_servers.update(kb_retrieval_mcp)
+            elif isinstance(mcp_servers, list):
+                mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
+                mcp_servers.update(kb_retrieval_mcp)
+                bot_config["mcp_servers"] = mcp_servers
+            logger.info(
+                f"Added KB retrieval MCP server for {len(task_data.knowledge_base_ids)} knowledge bases at {kb_mcp_url}"
             )
 
         for key in valid_options:
