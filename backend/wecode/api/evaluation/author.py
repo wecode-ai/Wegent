@@ -1105,8 +1105,14 @@ def get_topic_exam_sessions(
     )
 
     # Build simplified session list without redundant topic data
+    # Use batch processing for better performance with many sessions
+    exam_session_service = get_exam_session_service()
+    session_objects = [s for s, _ in sessions]
+    sessions_status = exam_session_service.get_sessions_status_batch(session_objects)
+
     session_list = []
     for session, user in sessions:
+        session_status = sessions_status.get(session.user_id, {})
         session_list.append(
             {
                 "user_id": session.user_id,
@@ -1118,6 +1124,8 @@ def get_topic_exam_sessions(
                 ),
                 "submit_count": session.submit_count,
                 "selected_question_id": session.selected_question_id or None,
+                "remaining_seconds": session_status.get("remaining_seconds", 0),
+                "is_overtime": session_status.get("is_overtime", False),
             }
         )
 

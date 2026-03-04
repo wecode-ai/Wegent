@@ -12,6 +12,7 @@ import type {
   GitBranch,
   Attachment,
   SubtaskContextBrief,
+  TaskType,
 } from '@/types/api'
 import {
   Bot,
@@ -44,6 +45,7 @@ import { GeminiAnnotations } from '../chat/GeminiAnnotations'
 import CollapsibleMessage from './CollapsibleMessage'
 import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
+import VideoConfigBadge from './VideoConfigBadge'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
@@ -90,6 +92,13 @@ export interface Message {
       thumbnail?: string | null // Base64 encoded thumbnail
       duration?: number | null // Video duration in seconds
       is_placeholder?: boolean // True when video is still being generated
+    }
+    /** Video generation config (stored in user message subtask for display) */
+    video_config?: {
+      model?: string
+      resolution?: string
+      ratio?: string
+      duration?: number
     }
   }
   /** @deprecated Use contexts instead */
@@ -185,8 +194,14 @@ export interface MessageBubbleProps {
   onRegenerate?: (msg: Message, model: Model) => void
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
+  /** Callback when user wants to use a generated image as reference for follow-up generation */
+  onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
+  /** Callback when user clicks re-edit button - restores original user input to input box */
+  onReEdit?: (msg: Message) => void
   /** Share token for public access to attachments (no login required) */
   shareToken?: string
+  /** Current task type to determine which model category to show in regenerate popover */
+  taskType?: TaskType
 }
 
 // Component for rendering a paragraph with hover action button
@@ -281,6 +296,28 @@ const ParagraphWithAction = ({
   )
 }
 
+/** Determine whether the Re-edit button should be shown for an AI message. */
+function canShowReEdit(
+  msg: Message,
+  isGroupChat: boolean | undefined,
+  onReEdit: ((msg: Message) => void) | undefined
+): boolean {
+  if (!onReEdit || isGroupChat) return false
+  // Must have a valid subtaskId to support re-edit
+  if (!msg.subtaskId) return false
+  const isCompleted =
+    msg.subtaskStatus === 'COMPLETED' ||
+    msg.subtaskStatus === 'CANCELLED' ||
+    msg.status === 'completed'
+  const isNotRunning =
+    msg.subtaskStatus !== 'RUNNING' &&
+    msg.subtaskStatus !== 'PENDING' &&
+    msg.subtaskStatus !== 'PROCESSING' &&
+    msg.status !== 'streaming' &&
+    msg.status !== 'pending'
+  return isCompleted && isNotRunning
+}
+
 const MessageBubble = memo(
   function MessageBubble({
     msg,
@@ -309,7 +346,10 @@ const MessageBubble = memo(
     isLastAiMessage,
     onRegenerate,
     isRegenerating,
+    onUseAsReference,
+    onReEdit,
     shareToken,
+    taskType,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -707,8 +747,11 @@ const MessageBubble = memo(
                   isLoading={isRegenerating}
                   trigger={defaultButton}
                   tooltipText={tooltipText}
+                  taskType={taskType}
                 />
               )}
+              showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
+              onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
             />
           )}
         </>
@@ -816,7 +859,8 @@ const MessageBubble = memo(
         }
       }
 
-      return (message.content?.split('\n') || []).map((line, idx) => {
+      // Build content elements
+      const contentElements = (message.content?.split('\n') || []).map((line, idx) => {
         if (line.startsWith('__PROMPT_TRUNCATED__:')) {
           const lineMatch = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/)
           if (lineMatch) {
@@ -845,6 +889,8 @@ const MessageBubble = memo(
         // Pass disabled={isStreaming} to avoid metadata fetching during streaming
         return <SmartTextLine key={idx} text={line} disabled={isStreaming} />
       })
+
+      return contentElements
     }
     // Helper function to parse Markdown clarification questions
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
@@ -1408,6 +1454,7 @@ const MessageBubble = memo(
                         theme={theme}
                         blocks={msg.result.blocks}
                         annotations={msg.result?.annotations}
+                        onUseAsReference={onUseAsReference}
                       />
                       <SourceReferences sources={msg.sources || msg.result?.sources || []} />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
@@ -1475,8 +1522,11 @@ const MessageBubble = memo(
                               isLoading={isRegenerating}
                               trigger={defaultButton}
                               tooltipText={tooltipText}
+                              taskType={taskType}
                             />
                           )}
+                          showReEdit={canShowReEdit(msg, isGroupChat, onReEdit)}
+                          onReEditClick={onReEdit ? () => onReEdit(msg) : undefined}
                         />
                       )}
                     </>
@@ -1576,6 +1626,10 @@ const MessageBubble = memo(
                 </div>
               )}
             </div>
+            {/* Video config badge - displayed outside the message bubble */}
+            {isUserTypeMessage && msg.result?.video_config && (
+              <VideoConfigBadge config={msg.result.video_config} />
+            )}
           </div>
         </div>
       </ShareTokenProvider>
@@ -1648,7 +1702,10 @@ const MessageBubble = memo(
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
-      prevProps.isRegenerating === nextProps.isRegenerating
+      prevProps.isRegenerating === nextProps.isRegenerating &&
+      prevProps.onUseAsReference === nextProps.onUseAsReference &&
+      prevProps.onReEdit === nextProps.onReEdit &&
+      prevProps.taskType === nextProps.taskType
 
     return shouldSkipRender
   }

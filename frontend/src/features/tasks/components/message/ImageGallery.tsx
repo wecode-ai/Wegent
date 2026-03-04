@@ -17,7 +17,7 @@
 
 import React, { useState, useCallback } from 'react'
 import Image from 'next/image'
-import { Download, Maximize2, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Download, Maximize2, X, ChevronLeft, ChevronRight, ImagePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -30,9 +30,11 @@ export interface ImageItem {
 export interface ImageGalleryProps {
   images: ImageItem[]
   className?: string
+  /** Optional callback when user wants to use an image as reference for follow-up generation */
+  onUseAsReference?: (item: ImageItem) => void
 }
 
-export function ImageGallery({ images, className }: ImageGalleryProps) {
+export function ImageGallery({ images, className, onUseAsReference }: ImageGalleryProps) {
   const { t } = useTranslation('chat')
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
@@ -151,6 +153,21 @@ export function ImageGallery({ images, className }: ImageGalleryProps) {
               >
                 <Maximize2 className="h-5 w-5 text-white" />
               </button>
+
+              {/* Use as reference button (shown only when callback provided) - 44px touch target */}
+              {onUseAsReference && image.attachmentId && (
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation()
+                    onUseAsReference(image)
+                  }}
+                  className="h-11 w-11 min-w-[44px] flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                  title={t('image.use_as_reference', 'Use as reference')}
+                >
+                  <ImagePlus className="h-5 w-5 text-white" />
+                </button>
+              )}
             </div>
 
             {/* Image size badge (if available) */}

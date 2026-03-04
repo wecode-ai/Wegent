@@ -52,6 +52,8 @@
   "vnc_disconnected": "桌面连接已断开",
   "vnc_reconnect": "重新连接",
   "vnc_panel_title": "远程桌面",
+  "vnc_fullscreen": "全屏",
+  "vnc_exit_fullscreen": "退出全屏",
   "slots_full": "任务槽已满",
   "slots_full_hint": "所有任务槽已被占用，请等待当前任务完成后再试"
 }

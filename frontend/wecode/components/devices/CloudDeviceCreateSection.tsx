@@ -3,15 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Cloud device create button for header placement.
+ * Cloud device creation section component.
  *
- * This component is designed to be placed in the page header,
- * separate from the CloudDeviceSection.
+ * Provides a button and dialog for creating new cloud devices with optional Mail Skill configuration.
+ * This component is extracted for reuse in the DeviceSetupGuide and CloudDeviceSection.
  */
 
 'use client'
 
-import '@wecode/i18n'
+import '@wecode/i18n' // side-effect import to load wecode translations
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -26,24 +26,35 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Cloud, Loader2 } from 'lucide-react'
+import { Cloud, Plus, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cloudDeviceApis, CloudDeviceConfig } from '@wecode/apis/cloud-devices'
 
-interface CloudDeviceCreateButtonProps {
+interface CloudDeviceCreateSectionProps {
   onDeviceCreated: () => void
+  currentDeviceCount?: number
 }
 
-export function CloudDeviceCreateButton({ onDeviceCreated }: CloudDeviceCreateButtonProps) {
+/**
+ * Cloud device creation section component.
+ *
+ * Features:
+ * - Fetches cloud device configuration on mount
+ * - Shows create button (disabled if user reached limit)
+ * - Create dialog with Mail Skill configuration (optional email + password fields)
+ * - Error handling (limit reached, service not configured, generic errors)
+ * - Loading states (button disabled during creation)
+ */
+export function CloudDeviceCreateSection({ onDeviceCreated, currentDeviceCount = 0 }: CloudDeviceCreateSectionProps) {
   const { t } = useTranslation('wecode')
-  const [isCreating, setIsCreating] = useState(false)
-  const [showConfirm, setShowConfirm] = useState(false)
   const [cloudConfig, setCloudConfig] = useState<CloudDeviceConfig | null>(null)
+  const [showCreateConfirm, setShowCreateConfirm] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
   const [mailEnabled, setMailEnabled] = useState(false)
   const [mailEmail, setMailEmail] = useState('')
   const [mailpassword, setMailpassword] = useState('')
 
-  // Fetch cloud device configuration
+  // Fetch cloud device configuration on mount
   useEffect(() => {
     const fetchConfig = async () => {
       try {
@@ -56,8 +67,9 @@ export function CloudDeviceCreateButton({ onDeviceCreated }: CloudDeviceCreateBu
     fetchConfig()
   }, [])
 
-  const handleCreate = useCallback(async () => {
-    setShowConfirm(false)
+  // Create cloud device handler
+  const handleCreateCloudDevice = useCallback(async () => {
+    setShowCreateConfirm(false)
     setIsCreating(true)
     try {
       const body =
@@ -86,29 +98,40 @@ export function CloudDeviceCreateButton({ onDeviceCreated }: CloudDeviceCreateBu
     }
   }, [t, onDeviceCreated, cloudConfig, mailEnabled, mailEmail, mailpassword])
 
-  // Don't render if cloud devices are not enabled or user cannot create
-  if (!cloudConfig?.enabled || !cloudConfig?.can_create) {
+  // Permission checks - compare current device count with max allowed
+  const canCreateMore =
+    cloudConfig?.can_create !== false &&
+    (!cloudConfig || currentDeviceCount < cloudConfig.max_devices_per_user)
+
+  // Hide if not enabled
+  if (cloudConfig && !cloudConfig.enabled) {
     return null
   }
 
   return (
-    <>
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      <Cloud className="w-12 h-12 text-primary mb-4" />
+      <h3 className="text-lg font-semibold mb-2">{t('cloud_device.create_confirm_title')}</h3>
+      <p className="text-sm text-text-muted max-w-md mb-6">{t('cloud_device.description')}</p>
       <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setShowConfirm(true)}
-        disabled={isCreating}
+        variant="primary"
+        onClick={() => setShowCreateConfirm(true)}
+        disabled={isCreating || !canCreateMore}
         className="flex items-center gap-2"
       >
-        {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
+        {isCreating ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <Plus className="w-4 h-4" />
+        )}
         {t('cloud_device.create')}
       </Button>
 
       {/* Create confirmation dialog */}
       <Dialog
-        open={showConfirm}
+        open={showCreateConfirm}
         onOpenChange={open => {
-          setShowConfirm(open)
+          setShowCreateConfirm(open)
           if (!open) {
             setMailEnabled(false)
             setMailEmail('')
@@ -132,23 +155,23 @@ export function CloudDeviceCreateButton({ onDeviceCreated }: CloudDeviceCreateBu
           <div className="space-y-3 py-2">
             <div className="flex items-center gap-2">
               <Checkbox
-                id="header-mail-enable"
+                id="mail-enable"
                 checked={mailEnabled}
                 onCheckedChange={checked => setMailEnabled(checked === true)}
               />
-              <Label htmlFor="header-mail-enable" className="text-sm font-medium cursor-pointer">
+              <Label htmlFor="mail-enable" className="text-sm font-medium cursor-pointer">
                 {t('cloud_device.mail_enable')}
               </Label>
             </div>
             {mailEnabled && (
               <div className="space-y-3 pl-6">
                 <div className="space-y-1">
-                  <Label htmlFor="header-mail-email" className="text-sm">
+                  <Label htmlFor="mail-email" className="text-sm">
                     {t('cloud_device.mail_email')}
                   </Label>
                   <div className="flex items-center gap-2">
                     <Input
-                      id="header-mail-email"
+                      id="mail-email"
                       value={mailEmail}
                       onChange={e => setMailEmail(e.target.value)}
                       placeholder={t('cloud_device.mail_email_placeholder')}
@@ -161,11 +184,11 @@ export function CloudDeviceCreateButton({ onDeviceCreated }: CloudDeviceCreateBu
                   <p className="text-xs text-text-muted">{t('cloud_device.mail_email_hint')}</p>
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="header-mail-password" className="text-sm">
+                  <Label htmlFor="mail-password" className="text-sm">
                     {t('cloud_device.mail_password')}
                   </Label>
                   <Input
-                    id="header-mail-password"
+                    id="mail-password"
                     type="password"
                     value={mailpassword}
                     onChange={e => setMailpassword(e.target.value)}
@@ -175,16 +198,18 @@ export function CloudDeviceCreateButton({ onDeviceCreated }: CloudDeviceCreateBu
             )}
           </div>
 
+          {/* Dialog footer with Cancel/Create buttons */}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowConfirm(false)}>
+            <Button variant="outline" onClick={() => setShowCreateConfirm(false)}>
               {t('common:actions.cancel')}
             </Button>
-            <Button variant="primary" onClick={handleCreate}>
+            <Button variant="primary" onClick={handleCreateCloudDevice} disabled={isCreating}>
+              {isCreating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               {t('cloud_device.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   )
 }

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ClipboardList,
@@ -24,7 +24,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -33,14 +32,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -51,6 +42,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { EvaluationPageLayout } from '@wecode/components/evaluation/common/EvaluationPageLayout'
+import { DataTable, type Column } from '@wecode/components/evaluation/common/DataTable'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import {
   graderListTasks,
@@ -66,6 +58,8 @@ import {
 import { GradingTaskStatus, type GradingTask, getStatusLabel } from '@wecode/types/evaluation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDateTime } from '@/utils/dateTime'
+
+const TASKS_PER_PAGE = 20
 
 function GraderTasksContent() {
   const router = useRouter()
@@ -83,7 +77,6 @@ function GraderTasksContent() {
   const [tasks, setTasks] = useState<GradingTask[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [loadingTasks, setLoadingTasks] = useState(false)
   const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set())
   const [statusFilter, setStatusFilter] = useState<string>(initialStatus ?? 'all')
   const [topicFilter, setTopicFilter] = useState<string>(initialTopicId ?? 'all')
@@ -109,11 +102,11 @@ function GraderTasksContent() {
 
   // Load tasks with filters
   const loadTasks = useCallback(async () => {
-    setLoadingTasks(true)
+    setLoading(true)
     try {
       const params: { page: number; limit: number; status?: number; topic_id?: number } = {
         page,
-        limit: 20,
+        limit: TASKS_PER_PAGE,
       }
       if (statusFilter !== 'all') {
         params.status = parseInt(statusFilter)
@@ -131,7 +124,6 @@ function GraderTasksContent() {
         variant: 'destructive',
       })
     } finally {
-      setLoadingTasks(false)
       setLoading(false)
     }
   }, [page, statusFilter, topicFilter, toast, t])
@@ -153,24 +145,6 @@ function GraderTasksContent() {
     const newUrl = params.toString() ? `?${params.toString()}` : '/evaluation/grader/tasks'
     router.replace(newUrl, { scroll: false })
   }, [statusFilter, topicFilter, searchQuery, router])
-
-  const handleSelectTask = (taskId: number, checked: boolean) => {
-    const newSelected = new Set(selectedTasks)
-    if (checked) {
-      newSelected.add(taskId)
-    } else {
-      newSelected.delete(taskId)
-    }
-    setSelectedTasks(newSelected)
-  }
-
-  const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedTasks(new Set(tasks.map(task => task.id)))
-    } else {
-      setSelectedTasks(new Set())
-    }
-  }
 
   const handleExecuteSingle = async (taskId: number) => {
     setExecuting(true)
@@ -339,7 +313,121 @@ function GraderTasksContent() {
     loadTasks()
   }
 
-  if (loading) {
+  // Define table columns
+  const columns: Column<GradingTask>[] = useMemo(
+    () => [
+      {
+        key: 'id',
+        title: t('common.id'),
+        className: 'font-mono text-xs text-text-muted',
+        render: (task: GradingTask) => `#${task.id}`,
+      },
+      {
+        key: 'topic',
+        title: t('topics.topic_name'),
+        render: (task: GradingTask) => (
+          <span className="text-text-secondary">{task.topic_name || '-'}</span>
+        ),
+      },
+      {
+        key: 'question',
+        title: t('questions.question_title'),
+        render: (task: GradingTask) => task.question_title || `Question #${task.question_id}`,
+      },
+      {
+        key: 'user',
+        title: t('permissions.user'),
+        render: (task: GradingTask) => task.respondent_name || `User #${task.respondent_id}`,
+      },
+      {
+        key: 'status',
+        title: t('common.status'),
+        render: (task: GradingTask) => (
+          <Badge
+            variant={getStatusBadgeVariant(task.status)}
+            className="flex w-fit items-center gap-1"
+          >
+            {getStatusIcon(task.status)}
+            {getStatusLabel(task.status, 'grading', t)}
+          </Badge>
+        ),
+      },
+      {
+        key: 'submitted_at',
+        title: t('answers.submitted_at'),
+        render: (task: GradingTask) => (
+          <span className="text-text-secondary">
+            {task.submitted_at ? formatDateTime(new Date(task.submitted_at).getTime()) : '-'}
+          </span>
+        ),
+      },
+      {
+        key: 'actions',
+        title: t('actions.view'),
+        className: 'text-right',
+        render: (task: GradingTask) => (
+          <div className="flex items-center justify-end gap-2">
+            {/* AI Grading Actions */}
+            {task.team_id > 0 && task.status === GradingTaskStatus.PENDING && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleExecuteSingle(task.id)}
+                disabled={executing}
+                title={t('grading.execute')}
+              >
+                <Play className="h-4 w-4" />
+              </Button>
+            )}
+            {task.team_id > 0 &&
+              (task.status === GradingTaskStatus.FAILED ||
+                task.status === GradingTaskStatus.RUNNING ||
+                task.status === GradingTaskStatus.COMPLETED) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleRetrySingle(task.id)}
+                  disabled={executing}
+                  title={t('grading.retry')}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </Button>
+              )}
+            {(task.status === GradingTaskStatus.COMPLETED ||
+              task.status === GradingTaskStatus.PUBLISHED) && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleViewReport(task)}
+                  title={t('grading.view_report')}
+                >
+                  <Eye className="h-4 w-4" />
+                </Button>
+                {task.status === GradingTaskStatus.COMPLETED && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => handlePublishSingle(task.id)}
+                    disabled={publishing}
+                    title={t('grading.publish')}
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                )}
+              </>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => handleViewAnswer(task.answer_id)}>
+              {t('answers.view')}
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [t, executing, publishing]
+  )
+
+  if (loading && tasks.length === 0) {
     return (
       <div className="container mx-auto max-w-6xl px-4 py-8">
         <Skeleton className="mb-6 h-10 w-64" />
@@ -449,148 +537,25 @@ function GraderTasksContent() {
           </div>
 
           {/* Tasks table */}
-          {loadingTasks ? (
-            <div className="space-y-2">
-              {[...Array(5)].map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          ) : tasks.length === 0 ? (
-            <div className="py-8 text-center">
-              <ClipboardList className="mx-auto mb-4 h-12 w-12 text-text-muted" />
-              <p className="text-text-secondary">{t('grading.no_tasks')}</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12">
-                    <Checkbox
-                      checked={selectedTasks.size === tasks.length && tasks.length > 0}
-                      onCheckedChange={handleSelectAll}
-                    />
-                  </TableHead>
-                  <TableHead>{t('common.id')}</TableHead>
-                  <TableHead>{t('topics.topic_name')}</TableHead>
-                  <TableHead>{t('questions.question_title')}</TableHead>
-                  <TableHead>{t('permissions.user')}</TableHead>
-                  <TableHead>{t('common.status')}</TableHead>
-                  <TableHead>{t('answers.submitted_at')}</TableHead>
-                  <TableHead className="text-right">{t('actions.view')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tasks.map(task => (
-                  <TableRow key={task.id}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selectedTasks.has(task.id)}
-                        onCheckedChange={checked => handleSelectTask(task.id, checked as boolean)}
-                      />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-text-muted">#{task.id}</TableCell>
-                    <TableCell className="text-text-secondary">{task.topic_name || '-'}</TableCell>
-                    <TableCell>{task.question_title || `Question #${task.question_id}`}</TableCell>
-                    <TableCell>{task.respondent_name || `User #${task.respondent_id}`}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={getStatusBadgeVariant(task.status)}
-                        className="flex w-fit items-center gap-1"
-                      >
-                        {getStatusIcon(task.status)}
-                        {getStatusLabel(task.status, 'grading', t)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-text-secondary">
-                      {task.submitted_at
-                        ? formatDateTime(new Date(task.submitted_at).getTime())
-                        : '-'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {/* AI Grading Actions - Only show when grading bot is configured */}
-                        {task.team_id > 0 && task.status === GradingTaskStatus.PENDING && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleExecuteSingle(task.id)}
-                            disabled={executing}
-                            title={t('grading.execute')}
-                          >
-                            <Play className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {task.team_id > 0 &&
-                          (task.status === GradingTaskStatus.FAILED ||
-                            task.status === GradingTaskStatus.RUNNING ||
-                            task.status === GradingTaskStatus.COMPLETED) && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleRetrySingle(task.id)}
-                              disabled={executing}
-                              title={t('grading.retry')}
-                            >
-                              <RotateCcw className="h-4 w-4" />
-                            </Button>
-                          )}
-                        {(task.status === GradingTaskStatus.COMPLETED ||
-                          task.status === GradingTaskStatus.PUBLISHED) && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleViewReport(task)}
-                              title={t('grading.view_report')}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            {task.status === GradingTaskStatus.COMPLETED && (
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={() => handlePublishSingle(task.id)}
-                                disabled={publishing}
-                                title={t('grading.publish')}
-                              >
-                                <Send className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleViewAnswer(task.answer_id)}
-                        >
-                          {t('answers.view')}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-
-          {/* Pagination */}
-          {total > 20 && (
-            <div className="mt-6 flex justify-center gap-2">
-              <Button variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                {t('common.previous')}
-              </Button>
-              <span className="flex items-center px-4 text-sm text-text-secondary">
-                {t('common.page')} {page} / {Math.ceil(total / 20)}
-              </span>
-              <Button
-                variant="outline"
-                disabled={page >= Math.ceil(total / 20)}
-                onClick={() => setPage(page + 1)}
-              >
-                {t('common.next')}
-              </Button>
-            </div>
-          )}
+          <DataTable
+            columns={columns}
+            data={tasks}
+            total={total}
+            page={page}
+            pageSize={TASKS_PER_PAGE}
+            loading={loading}
+            emptyMessage={t('grading.no_tasks')}
+            emptyIcon={<ClipboardList className="mx-auto mb-4 h-12 w-12 text-text-muted" />}
+            onPageChange={setPage}
+            previousText={t('common.previous')}
+            nextText={t('common.next')}
+            pageText={t('common.page')}
+            rowKey={(task: GradingTask) => task.id}
+            selectable={true}
+            selectedIds={selectedTasks}
+            onSelectionChange={setSelectedTasks}
+            selectAllText={t('common.select_all')}
+          />
         </CardContent>
       </Card>
 

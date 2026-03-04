@@ -293,9 +293,9 @@ export function LocalExecutorGuide({ backendUrl, authToken, guideUrl }: LocalExe
   const activeApiKeys = apiKeys.filter(key => key.is_active)
 
   return (
-    <div className="flex flex-col items-center justify-center py-8">
+    <div className="flex flex-col items-center justify-center">
       {/* Main card */}
-      <div className="w-full max-w-2xl bg-surface border border-border rounded-xl p-6 shadow-sm">
+      <div className="w-full max-w-2xl">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">

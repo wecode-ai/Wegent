@@ -1,6 +1,7 @@
 {
   "cloud_device": {
     "title": "云设备",
+    "description": "在云端运行的托管虚拟机，无需安装任何软件，创建后即可使用。",
     "create": "创建云设备",
     "creating": "创建中...",
     "starting": "启动中...",

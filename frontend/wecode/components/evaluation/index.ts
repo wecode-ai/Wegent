@@ -17,6 +17,8 @@ export { EvaluationPageLayout } from './common/EvaluationPageLayout'
 export { StatusBadge } from './common/StatusBadge'
 export { VersionBadge } from './common/VersionBadge'
 export { VisibilityBadge } from './common/VisibilityBadge'
+export { DataTable } from './common/DataTable'
+export type { Column, DataTableProps } from './common/DataTable'
 
 // Author components
 export { TopicCard } from './author/TopicCard'

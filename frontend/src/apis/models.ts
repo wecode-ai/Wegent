@@ -67,6 +67,7 @@ export interface ImageGenerationConfig {
   output_format?: 'jpeg' | 'png'
   watermark?: boolean
   optimize_prompt_mode?: 'standard' | 'fast'
+  max_reference_images?: number // Maximum number of reference images that can be uploaded
 }
 
 // Model CRD Types

@@ -1,6 +1,7 @@
 {
   "cloud_device": {
     "title": "Cloud Devices",
+    "description": "Cloud devices are managed VMs that run your AI agents in the cloud. No installation required — just create and start using.",
     "create": "Create Cloud Device",
     "creating": "Creating...",
     "starting": "Starting...",
