@@ -9,7 +9,7 @@ import { FileText, Loader2, X, Download, Link2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
+import { cn, sanitizeFilename } from '@/lib/utils'
 import {
   uploadEvaluationFile,
   downloadEvaluationFile,
@@ -121,17 +121,23 @@ export function SlotBasedFileUpload({
       const uploadedAttachments: ExamAttachment[] = []
 
       for (const file of filesToUpload) {
-        const fileId = `${file.name}-${Date.now()}-${Math.random()}`
+        // Sanitize filename to remove zero-width and invisible Unicode characters
+        const sanitizedName = sanitizeFilename(file.name)
+        // Create a new File object with sanitized name if different
+        const fileToUpload =
+          sanitizedName !== file.name ? new File([file], sanitizedName, { type: file.type }) : file
+
+        const fileId = `${sanitizedName}-${Date.now()}-${Math.random()}`
 
         setUploadingFiles(prev => {
           const newMap = new Map(prev[slotKey] || new Map())
-          newMap.set(fileId, { file, progress: 0 })
+          newMap.set(fileId, { file: fileToUpload, progress: 0 })
           return { ...prev, [slotKey]: newMap }
         })
 
         try {
           const response = await uploadEvaluationFile(
-            file,
+            fileToUpload,
             FILE_TYPE,
             topicId,
             questionId,
@@ -150,9 +156,9 @@ export function SlotBasedFileUpload({
 
           const newAttachment: ExamAttachment = {
             key: response.key,
-            filename: file.name,
-            size: file.size,
-            content_type: file.type,
+            filename: sanitizedName,
+            size: fileToUpload.size,
+            content_type: fileToUpload.type,
           }
           uploadedAttachments.push(newAttachment)
 

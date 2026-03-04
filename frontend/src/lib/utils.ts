@@ -42,3 +42,23 @@ export function formatUTCDate(dateStr: string | null | undefined, fallback: stri
   if (!date || isNaN(date.getTime())) return fallback
   return date.toLocaleString()
 }
+
+/**
+ * Sanitize filename by removing zero-width and invisible Unicode characters.
+ *
+ * These characters can cause issues with S3 storage and other systems:
+ * - U+200B: Zero Width Space
+ * - U+200C: Zero Width Non-Joiner
+ * - U+200D: Zero Width Joiner
+ * - U+FEFF: Zero Width No-Break Space (BOM)
+ * - U+2060-2064: Word Joiner and invisible operators
+ * - U+206A-206F: Invisible format characters
+ *
+ * @param filename - Original filename
+ * @returns Sanitized filename with invisible characters removed
+ */
+export function sanitizeFilename(filename: string): string {
+  // Pattern to match zero-width and invisible characters
+  // U+200B-U+200D, U+FEFF, U+2060-U+206F
+  return filename.replace(/[\u200B-\u200D\uFEFF\u2060-\u206F]+/g, '')
+}

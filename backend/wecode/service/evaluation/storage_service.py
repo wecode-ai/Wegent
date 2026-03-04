@@ -19,6 +19,7 @@ from minio import Minio
 from minio.error import S3Error
 
 from app.core.config import settings
+from wecode.service.evaluation.utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,9 @@ class EvalStorageService:
 
         # Check if MinIO/S3 is configured
         if settings.ATTACHMENT_STORAGE_BACKEND not in ("minio", "s3"):
-            logger.warning("[Evaluation] MinIO/S3 storage not configured for evaluation module")
+            logger.warning(
+                "[Evaluation] MinIO/S3 storage not configured for evaluation module"
+            )
             return None
 
         if not settings.ATTACHMENT_S3_ENDPOINT:
@@ -273,6 +276,8 @@ class EvalStorageService:
             Storage key if successful
         """
         try:
+            # Sanitize filename to remove zero-width and invisible characters
+            filename = sanitize_filename(filename)
             # URL-encode filename for metadata
             encoded_filename = quote(filename, safe="")
 
@@ -425,7 +430,9 @@ class EvalStorageService:
                 logger.error(f"[Evaluation] Failed to get file info from S3: {e}")
             return None
         except Exception as e:
-            logger.error(f"[Evaluation] Unexpected error getting file info from S3: {e}")
+            logger.error(
+                f"[Evaluation] Unexpected error getting file info from S3: {e}"
+            )
             return None
 
     def delete(self, key: str) -> bool:
@@ -527,7 +534,9 @@ class EvalStorageService:
             logger.error(f"[Evaluation] Failed to generate presigned GET URL: {e}")
             return None
         except Exception as e:
-            logger.error(f"[Evaluation] Unexpected error generating presigned GET URL: {e}")
+            logger.error(
+                f"[Evaluation] Unexpected error generating presigned GET URL: {e}"
+            )
             return None
 
     def get_presigned_put_url(
@@ -561,7 +570,9 @@ class EvalStorageService:
             logger.error(f"[Evaluation] Failed to generate presigned PUT URL: {e}")
             return None
         except Exception as e:
-            logger.error(f"[Evaluation] Unexpected error generating presigned PUT URL: {e}")
+            logger.error(
+                f"[Evaluation] Unexpected error generating presigned PUT URL: {e}"
+            )
             return None
 
     def generate_upload_key(
@@ -587,6 +598,9 @@ class EvalStorageService:
         Returns:
             Generated storage key
         """
+        # Sanitize filename to remove zero-width and invisible characters
+        filename = sanitize_filename(filename)
+
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
         if file_type == "question_content":
