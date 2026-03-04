@@ -154,9 +154,6 @@ export default function DevicesPage() {
               onAddDevice={() => setShowSetupGuide(true)}
             />
 
-            {/* Instructions */}
-            <p className="text-text-muted text-sm mb-6">{t('instructions')}</p>
-
             {/* Error message */}
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
@@ -182,8 +179,8 @@ export default function DevicesPage() {
               </div>
             )}
 
-            {/* Device sections */}
-            {sortedDevices.length > 0 && (
+            {/* Device sections - hide when showing setup guide */}
+            {sortedDevices.length > 0 && !showSetupGuide && (
               <div className="space-y-6">
                 {/* Local Devices */}
                 <DeviceSection

@@ -141,25 +141,8 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
               : d
           )
         }
-        // Add new device (this shouldn't happen often since devices are persisted)
-        return [
-          ...prev,
-          {
-            id: 0, // Will be refreshed on next fetch
-            device_id: data.device_id,
-            name: data.name,
-            status: data.status as DeviceInfo['status'],
-            is_default: false,
-            device_type: 'local' as const,
-            connection_mode: 'websocket' as const,
-            slot_used: 0,
-            slot_max: 0,
-            running_tasks: [],
-            executor_version: null,
-            latest_version: null,
-            update_available: false,
-          },
-        ]
+        refreshDevices()
+        return prev // Return unchanged while refresh is in progress
       })
     }
 
