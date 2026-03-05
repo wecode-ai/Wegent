@@ -257,6 +257,17 @@ def _apply_env_overrides(config: DeviceConfig) -> tuple[DeviceConfig, bool]:
             should_save = True
         config.device_name = env_value
 
+    if os.environ.get("DEVICE_TYPE"):
+        env_value = os.environ["DEVICE_TYPE"].lower()
+        valid_types = {t.value for t in DeviceType}
+        if env_value in valid_types:
+            config.device_type = env_value
+        else:
+            logger.warning(
+                f"Invalid DEVICE_TYPE '{env_value}', must be one of {valid_types}. "
+                "Keeping current value."
+            )
+
     # Logging overrides (don't save, just override)
     if os.environ.get("LOG_LEVEL"):
         config.logging.level = os.environ["LOG_LEVEL"].lower()
