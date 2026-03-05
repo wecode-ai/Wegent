@@ -17,6 +17,7 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from executor.config import config as executor_config
 from executor.config.config import get_wegent_mcp_url
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
@@ -357,8 +358,8 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
             )
 
-        # Add KB retrieval MCP server when knowledge bases are selected
-        if task_data.knowledge_base_ids:
+        # Add KB retrieval MCP server when knowledge bases are selected (local mode only)
+        if task_data.knowledge_base_ids and executor_config.EXECUTOR_MODE == "local":
             kb_mcp_url = f"{task_data.backend_url}/mcp/kb-retrieval/sse"
             kb_retrieval_mcp = {
                 "wegent-kb-retrieval": {

@@ -663,21 +663,24 @@ class ClaudeCodeAgent(Agent):
             prompt = self.prompt
             user_selected_skills = self.task_data.user_selected_skills
 
-            # Inject knowledge base meta prompt if available
-            kb_meta_prompt = self.task_data.kb_meta_prompt
-            if kb_meta_prompt:
-                if is_vision_prompt(prompt):
-                    prompt = append_text_to_vision_prompt(
-                        prompt,
-                        f"<knowledge_base_context>\n{kb_meta_prompt}\n</knowledge_base_context>",
-                        prepend=True,
+            # Inject knowledge base meta prompt if available (local mode only)
+            from executor.config import config as executor_config
+
+            if executor_config.EXECUTOR_MODE == "local":
+                kb_meta_prompt = self.task_data.kb_meta_prompt
+                if kb_meta_prompt:
+                    if is_vision_prompt(prompt):
+                        prompt = append_text_to_vision_prompt(
+                            prompt,
+                            f"<knowledge_base_context>\n{kb_meta_prompt}\n</knowledge_base_context>",
+                            prepend=True,
+                        )
+                    else:
+                        prompt = f"<knowledge_base_context>\n{kb_meta_prompt}\n</knowledge_base_context>\n\n{prompt}"
+                    logger.info(
+                        "Injected kb_meta_prompt into prompt (%d chars)",
+                        len(kb_meta_prompt),
                     )
-                else:
-                    prompt = f"<knowledge_base_context>\n{kb_meta_prompt}\n</knowledge_base_context>\n\n{prompt}"
-                logger.info(
-                    "Injected kb_meta_prompt into prompt (%d chars)",
-                    len(kb_meta_prompt),
-                )
 
             if is_vision_prompt(prompt):
                 # Vision content: append text to the text block in the list

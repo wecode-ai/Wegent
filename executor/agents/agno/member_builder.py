@@ -76,15 +76,6 @@ class MemberBuilder:
                         f"Added system MCP tools for subscription task (member: {member_config.get('name', 'Unnamed')})"
                     )
 
-            # Add KB retrieval MCP server when knowledge bases are selected
-            kb_mcp_tools = await self._setup_kb_retrieval_mcp_tools(task_data)
-            if kb_mcp_tools:
-                all_tools.extend(kb_mcp_tools)
-                logger.info(
-                    f"Added KB retrieval MCP tools for {len(task_data.knowledge_base_ids)} knowledge bases "
-                    f"(member: {member_config.get('name', 'Unnamed')})"
-                )
-
             # Prepare data sources for placeholder replacement
             data_sources = {
                 "agent_config": agent_config,
@@ -163,14 +154,6 @@ class MemberBuilder:
                     logger.info(
                         "Added system MCP tools for subscription task (default member)"
                     )
-
-            # Add KB retrieval MCP server when knowledge bases are selected
-            kb_mcp_tools = await self._setup_kb_retrieval_mcp_tools(task_data)
-            if kb_mcp_tools:
-                all_tools.extend(kb_mcp_tools)
-                logger.info(
-                    f"Added KB retrieval MCP tools for {len(task_data.knowledge_base_ids)} knowledge bases (default member)"
-                )
 
             # Prepare data sources for placeholder replacement
             data_sources = {
@@ -365,89 +348,6 @@ class MemberBuilder:
             # Log full traceback for debugging
             logger.error(
                 f"Failed to setup system MCP tools: {type(e).__name__}: {str(e)}\n"
-                f"Traceback: {traceback.format_exc()}"
-            )
-            return None
-
-    async def _setup_kb_retrieval_mcp_tools(
-        self, task_data: ExecutionRequest
-    ) -> Optional[List[Any]]:
-        """
-        Setup KB retrieval MCP tools when knowledge bases are selected.
-
-        The KB retrieval MCP server provides search/read tools for knowledge bases.
-        It is hosted by Backend and injected when knowledge_base_ids are present.
-
-        Args:
-            task_data: Task data containing knowledge_base_ids, backend_url, auth_token
-
-        Returns:
-            List of MCPTools if successful, None otherwise
-        """
-        import asyncio
-        import traceback
-
-        try:
-            if not task_data.knowledge_base_ids:
-                return None
-
-            if not task_data.backend_url or not task_data.auth_token:
-                logger.warning(
-                    "KB retrieval MCP requires backend_url and auth_token, skipping"
-                )
-                return None
-
-            kb_mcp_url = f"{task_data.backend_url}/mcp/kb-retrieval/sse"
-            kb_mcp_config = {
-                "type": "streamable-http",
-                "url": kb_mcp_url,
-                "headers": {
-                    "Authorization": f"Bearer {task_data.auth_token}",
-                },
-                "timeout": 300,
-            }
-
-            logger.info(
-                f"Attempting to connect to KB retrieval MCP server at {kb_mcp_url} "
-                f"for {len(task_data.knowledge_base_ids)} knowledge bases"
-            )
-
-            mcp_tools = self.mcp_manager._create_streamable_http_tools(kb_mcp_config)
-
-            if mcp_tools:
-                # Retry connection with exponential backoff
-                max_retries = 3
-                retry_delay = 0.5
-
-                for attempt in range(max_retries):
-                    try:
-                        await mcp_tools.connect()
-                        self.mcp_manager.connected_tools.append(mcp_tools)
-                        logger.info(
-                            f"Connected to KB retrieval MCP server (attempt {attempt + 1})"
-                        )
-                        return [mcp_tools]
-                    except Exception as connect_error:
-                        if attempt < max_retries - 1:
-                            logger.warning(
-                                f"Failed to connect to KB retrieval MCP server (attempt {attempt + 1}/{max_retries}): "
-                                f"{type(connect_error).__name__}: {str(connect_error)}"
-                            )
-                            await asyncio.sleep(retry_delay)
-                            retry_delay *= 2
-                        else:
-                            logger.error(
-                                f"Failed to connect to KB retrieval MCP server after {max_retries} attempts: "
-                                f"{type(connect_error).__name__}: {str(connect_error)}\n"
-                                f"Traceback: {traceback.format_exc()}"
-                            )
-                            raise
-
-            return None
-
-        except Exception as e:
-            logger.error(
-                f"Failed to setup KB retrieval MCP tools: {type(e).__name__}: {str(e)}\n"
                 f"Traceback: {traceback.format_exc()}"
             )
             return None

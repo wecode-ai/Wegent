@@ -26,7 +26,7 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { isChatShell } from '../../service/messageService'
+import { isChatShell, isClaudeCode } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -457,12 +457,14 @@ export function ChatInputControls({
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
           <>
-            {/* Context Selection - available for all shell types (KB retrieval supported via MCP) */}
-            <ChatContextInput
-              selectedContexts={selectedContexts}
-              onContextsChange={setSelectedContexts}
-              excludeKnowledgeBaseId={knowledgeBaseId}
-            />
+            {/* Context Selection - available for non-code shell types */}
+            {!isClaudeCode(selectedTeam) && (
+              <ChatContextInput
+                selectedContexts={selectedContexts}
+                onContextsChange={setSelectedContexts}
+                excludeKnowledgeBaseId={knowledgeBaseId}
+              />
+            )}
 
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (

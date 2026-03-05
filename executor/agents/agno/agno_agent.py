@@ -538,15 +538,6 @@ class AgnoAgent(Agent):
             # Prepare prompt
             prompt = self.prompt
 
-            # Inject knowledge base meta prompt if available
-            kb_meta_prompt = self.task_data.kb_meta_prompt
-            if kb_meta_prompt:
-                prompt = f"<knowledge_base_context>\n{kb_meta_prompt}\n</knowledge_base_context>\n\n{prompt}"
-                logger.info(
-                    "Injected kb_meta_prompt into prompt (%d chars)",
-                    len(kb_meta_prompt),
-                )
-
             if self.options.get("cwd"):
                 prompt = (
                     prompt + "\nCurrent working directory: " + self.options.get("cwd")

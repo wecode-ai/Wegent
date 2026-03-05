@@ -27,7 +27,7 @@ import {
 import type { Team, GitRepoInfo, GitBranch as GitBranchType, TaskDetail } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
+import { isChatShell, isClaudeCode, teamRequiresWorkspace } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 
@@ -225,12 +225,14 @@ export function MobileChatInputControls({
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
-        {/* Context (Knowledge base) - available for all shell types (KB retrieval supported via MCP) */}
-        <ChatContextInput
-          selectedContexts={selectedContexts}
-          onContextsChange={setSelectedContexts}
-          excludeKnowledgeBaseId={knowledgeBaseId}
-        />
+        {/* Context (Knowledge base) - available for non-code shell types */}
+        {!isClaudeCode(selectedTeam) && (
+          <ChatContextInput
+            selectedContexts={selectedContexts}
+            onContextsChange={setSelectedContexts}
+            excludeKnowledgeBaseId={knowledgeBaseId}
+          />
+        )}
 
         {/* Skill Selector - show when skills are available */}
         {/* Skill selection is read-only after task creation (hasMessages) */}
