@@ -411,7 +411,20 @@
       "configHint": "These settings are for testing only and will not be saved to the database.",
       "modified": "Modified"
     },
-    "goToSettings": "Go to Settings"
+    "goToSettings": "Go to Settings",
+    "groupChat": {
+      "create": "Create Group Chat",
+      "createForGroup": "Create group chat for group",
+      "createForKb": "Create group chat for knowledge base",
+      "defaultTitle": "{{groupName}} Group Chat",
+      "defaultTitleWithKb": "{{groupName}} - {{kbName}} Group Chat",
+      "addingMembers": "Adding group members...",
+      "addMembersSuccess": "Successfully added {{count}} group members",
+      "addMembersPartialFail": "Some members failed to add ({{failed}}/{{total}}). You can add them manually in the group chat.",
+      "addMembersFailed": "Failed to add group members. You can add them manually in the group chat.",
+      "bindKbPartialFail": "Some knowledge bases failed to bind ({{failed}}/{{total}})",
+      "bindKbFailed": "Failed to bind knowledge bases"
+    }
   },
   "add_repository": "Add Repository",
   "add_repository_desc": "Under maintenance, temporarily unavailable",
