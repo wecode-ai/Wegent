@@ -47,9 +47,9 @@ npm run test:debug
 
 ## Configuration
 
-- Default test URL: `http://localhost:3000`
-- Override with: `./run-tests.sh http://localhost:3002`
-- Or use environment variable: `TEST_BASE_URL=http://localhost:3002 ./run-tests.sh`
+- Default test URL: `https://wegent.intra.weibo.com`
+- Override with: `./run-tests.sh http://localhost:3000`
+- Or use environment variable: `TEST_BASE_URL=http://localhost:3000 ./run-tests.sh`
 
 ## Test Files
 
@@ -70,15 +70,15 @@ npm run test:debug
 ### Examples
 
 ```bash
-# Test localhost (default)
+# Test production environment (default)
 ./run-tests.sh
 
-# Test specific URL
-./run-tests.sh http://localhost:3002
+# Test specific URL (e.g., localhost)
+./run-tests.sh http://localhost:3000
 
 # Test with browser visible
-./run-tests.sh -h http://localhost:3002
+./run-tests.sh -h http://localhost:3000
 
 # Using environment variable
-TEST_BASE_URL=http://localhost:3001 ./run-tests.sh
+TEST_BASE_URL=http://localhost:3000 ./run-tests.sh
 ```
