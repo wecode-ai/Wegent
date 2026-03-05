@@ -31,7 +31,7 @@ async def prepare_knowledge_base_tools(
     context_window: Optional[int] = None,
     skip_prompt_enhancement: bool = False,
     user_name: Optional[str] = None,
-    is_consumer: bool = False,
+    is_consumer: Optional[bool] = None,
 ) -> KnowledgeBaseToolsResult:
     """Prepare knowledge base tools and enhanced system prompt.
 
@@ -44,6 +44,12 @@ async def prepare_knowledge_base_tools(
       build it locally to avoid backend dependency in HTTP mode.
     - When is_consumer=True, kb_ls and kb_head tools are NOT created (Consumer role
       can only use RAG search, not browse documents).
+
+    Args:
+        is_consumer: Whether the user has Consumer role. Callers MUST explicitly
+            pass True or False when knowledge_base_ids is non-empty.
+            Passing None (the default) with non-empty knowledge_base_ids
+            raises ValueError to prevent accidental privilege escalation.
 
     Returns:
         KnowledgeBaseToolsResult(extra_tools, enhanced_system_prompt, kb_meta_prompt)
@@ -59,6 +65,13 @@ async def prepare_knowledge_base_tools(
             extra_tools=extra_tools,
             enhanced_system_prompt=enhanced_system_prompt,
             kb_meta_prompt="",
+        )
+
+    # Callers must explicitly declare consumer status when KBs are present
+    if is_consumer is None:
+        raise ValueError(
+            "is_consumer must be explicitly set to True or False "
+            "when knowledge_base_ids is non-empty."
         )
 
     logger.info(

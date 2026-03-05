@@ -338,6 +338,7 @@ class ChatContext:
             context_window=context_window,
             skip_prompt_enhancement=skip_prompt_enhancement,
             user_name=self._request.user_name,
+            is_consumer=False,  # Consumer detection is handled by Backend, not chat_shell
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result.extra_tools)})
         return result

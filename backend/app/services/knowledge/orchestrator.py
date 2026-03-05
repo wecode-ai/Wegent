@@ -37,6 +37,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     ResourceScope,
 )
+from app.services.knowledge.exceptions import ConsumerAccessDeniedError
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
@@ -618,7 +619,7 @@ class KnowledgeOrchestrator:
             db, knowledge_base_id, user.id
         )
         if has_access and role == ResourceRole.CONSUMER.value:
-            raise ValueError(
+            raise ConsumerAccessDeniedError(
                 "Consumer role cannot view document list. "
                 "You can use this knowledge base via chat only."
             )

@@ -45,6 +45,7 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.exceptions import ConsumerAccessDeniedError
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 from shared.telemetry.decorators import (
     add_span_event,
@@ -381,6 +382,11 @@ def list_documents(
             db=db,
             user=current_user,
             knowledge_base_id=knowledge_base_id,
+        )
+    except ConsumerAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
         )
     except ValueError as e:
         raise HTTPException(
