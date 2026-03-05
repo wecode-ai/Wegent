@@ -302,148 +302,111 @@ class TaskQueryMixin:
         if types is None:
             types = ["online", "offline"]
 
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        type_filter = self._build_type_filter_sql(types)
 
-        # Get all task IDs that are group chats (have members) using resource_members
-        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
-        # Share-copy records are created when users import shared tasks, not for group chat membership
-        member_task_ids_sql = text(
-            """
-            SELECT DISTINCT tm.resource_id
-            FROM resource_members tm
-            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-            WHERE tm.status = 'approved'
-            AND k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND tm.copied_resource_id = 0
-        """
-        )
-        member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
-        member_task_ids = {row[0] for row in member_task_ids_result}
-
-        # Also get task IDs where is_group_chat is explicitly set to true
-        explicit_group_sql = text(
-            """
-            SELECT DISTINCT k.id
-            FROM tasks k
-            WHERE k.kind = 'Task'
+        # Common WHERE clause with all filters pushed to SQL:
+        # - Exclude group chats (resource_members + is_group_chat flag)
+        # - Exclude DELETE status
+        # - Apply type filter (online/offline/subscription)
+        base_where = f"""
+            k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND k.user_id = :user_id
-            AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
+            AND (JSON_EXTRACT(k.json, '$.status.status') IS NULL
+                 OR JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.status.status')) != 'DELETE')
+            AND (JSON_EXTRACT(k.json, '$.spec.is_group_chat') IS NULL
+                 OR JSON_EXTRACT(k.json, '$.spec.is_group_chat') = false)
+            AND k.id NOT IN (
+                SELECT DISTINCT tm.resource_id
+                FROM resource_members tm
+                INNER JOIN tasks t2 ON t2.id = tm.resource_id AND tm.resource_type = 'Task'
+                WHERE tm.status = 'approved'
+                AND t2.kind = 'Task'
+                AND t2.is_active = true
+                AND t2.namespace != 'system'
+                AND tm.copied_resource_id = 0
+            )
+            {type_filter}
         """
-        )
-        explicit_group_result = db.execute(
-            explicit_group_sql, {"user_id": user_id}
-        ).fetchall()
-        explicit_group_ids = {row[0] for row in explicit_group_result}
 
-        # Combine all group task IDs to exclude
-        all_group_task_ids = member_task_ids | explicit_group_ids
+        count_sql = text(f"SELECT COUNT(*) FROM tasks k WHERE {base_where}")
+        total = db.execute(count_sql, {"user_id": user_id}).scalar() or 0
 
-        # Get user's owned tasks (not group chats)
-        count_sql = text(
-            """
-            SELECT COUNT(*)
-            FROM tasks k
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.user_id = :user_id
-        """
-        )
-        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
-
-        # Get task IDs sorted by created_at
         ids_sql = text(
-            """
-            SELECT k.id, k.created_at
+            f"""
+            SELECT k.id
             FROM tasks k
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.user_id = :user_id
+            WHERE {base_where}
             ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
         """
         )
         task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
+            ids_sql, {"user_id": user_id, "limit": limit, "skip": skip}
         ).fetchall()
         task_ids = [row[0] for row in task_id_rows]
 
         if not task_ids:
-            return [], 0
+            return [], total
 
         # Load full task data
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
-        # Filter tasks
-        valid_tasks = self._filter_personal_tasks(tasks, all_group_task_ids, types)
-
-        # Restore original order and apply limit
-        id_to_task = {t.id: t for t in valid_tasks}
-        ordered_tasks = []
-        for tid in task_ids:
-            if tid in id_to_task:
-                ordered_tasks.append(id_to_task[tid])
-                if len(ordered_tasks) >= limit:
-                    break
+        # Restore original order
+        id_to_task = {t.id: t for t in tasks}
+        ordered_tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
 
         # Build lightweight result
         result = build_lite_task_list(db, ordered_tasks, user_id)
 
-        # Recalculate total
-        total = total_result - len(all_group_task_ids) if total_result else 0
-        if total < 0:
-            total = len(ordered_tasks)
+        return result, total
 
-        return result, max(total, len(ordered_tasks))
+    @staticmethod
+    def _build_type_filter_sql(types: List[str]) -> str:
+        """Build SQL WHERE clause fragment for task type filtering.
 
-    def _filter_personal_tasks(
-        self,
-        tasks: List[TaskResource],
-        all_group_task_ids: set,
-        types: List[str],
-    ) -> List[TaskResource]:
-        """Filter personal tasks based on type criteria."""
-        valid_tasks = []
+        Categories:
+        - subscription: labels.type == 'subscription'
+        - offline: labels.type != 'subscription' AND labels.taskType == 'code'
+        - online: everything else (not subscription, not code)
+        """
         include_online = "online" in types
         include_offline = "offline" in types
         include_subscription = "subscription" in types
 
-        for t in tasks:
-            # Skip group chat tasks
-            if t.id in all_group_task_ids:
-                continue
+        if include_online and include_offline and include_subscription:
+            return ""
 
-            task_crd = Task.model_validate(t.json)
-            status = task_crd.status.status if task_crd.status else "PENDING"
-            if status == "DELETE":
-                continue
+        if not include_online and not include_offline and not include_subscription:
+            return "AND 1 = 0"
 
-            # Determine task type from labels
-            labels = task_crd.metadata.labels or {}
-            is_subscription = labels.get("type") == "subscription"
-            task_type_label = labels.get("taskType", "chat")
-            is_code = task_type_label == "code"
+        # Build inclusive OR conditions for each requested type
+        or_parts = []
+        non_sub_cond = (
+            "(JSON_EXTRACT(k.json, '$.metadata.labels.type') IS NULL "
+            "OR JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.type')) != 'subscription')"
+        )
 
-            # Apply type filter
-            if is_subscription:
-                if not include_subscription:
-                    continue
-            elif is_code:
-                if not include_offline:
-                    continue
-            else:
-                if not include_online:
-                    continue
+        if include_subscription:
+            or_parts.append(
+                "JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.type')) = 'subscription'"
+            )
+        if include_online and include_offline:
+            or_parts.append(non_sub_cond)
+        elif include_online:
+            or_parts.append(
+                f"({non_sub_cond} AND "
+                "(JSON_EXTRACT(k.json, '$.metadata.labels.taskType') IS NULL "
+                "OR JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.taskType')) != 'code'))"
+            )
+        elif include_offline:
+            or_parts.append(
+                f"({non_sub_cond} AND "
+                "JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.taskType')) = 'code')"
+            )
 
-            valid_tasks.append(t)
-
-        return valid_tasks
+        return "AND (" + " OR ".join(or_parts) + ")"
 
     def get_new_tasks_since_id(
         self, db: Session, *, user_id: int, since_id: int, limit: int = 50
