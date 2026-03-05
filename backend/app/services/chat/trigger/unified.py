@@ -17,7 +17,7 @@ Key changes from the original trigger_ai_response:
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from app.db.session import SessionLocal
 from app.models.kind import Kind
@@ -40,7 +40,7 @@ async def trigger_ai_response_unified(
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
-    message: str,
+    message: Union[str, list],
     payload: Any,
     task_room: str,
     device_id: Optional[str] = None,
@@ -129,7 +129,7 @@ async def build_execution_request(
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
-    message: str,
+    message: Union[str, list],
     payload: Any = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
