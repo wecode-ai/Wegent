@@ -17,12 +17,14 @@ via the DeviceProviderFactory, allowing for extensibility to support
 different device types (local, cloud, etc.) in the future.
 """
 
+import copy
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
@@ -301,7 +303,8 @@ class DeviceService:
 
         if device_kind:
             # Update existing device (reactivate if soft-deleted)
-            device_json = device_kind.json.copy()
+            # Use deepcopy to ensure SQLAlchemy detects nested JSON changes
+            device_json = copy.deepcopy(device_kind.json)
             device_json["spec"]["displayName"] = name
             # Update device type if provided, otherwise preserve existing value
             if device_type is not None:
@@ -314,6 +317,7 @@ class DeviceService:
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
             device_kind.json = device_json
+            flag_modified(device_kind, "json")
             device_kind.updated_at = datetime.now()
             device_kind.is_active = True
             db.add(device_kind)
@@ -423,7 +427,7 @@ class DeviceService:
                 break
 
         for device_kind in devices:
-            device_json = device_kind.json.copy()
+            device_json = copy.deepcopy(device_kind.json)
             device_type = device_json.get("spec", {}).get(
                 "deviceType", DeviceType.LOCAL.value
             )
@@ -435,6 +439,7 @@ class DeviceService:
                 device_json["spec"]["isDefault"] = False
 
             device_kind.json = device_json
+            flag_modified(device_kind, "json")
             db.add(device_kind)
 
         if found:
