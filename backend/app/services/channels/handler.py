@@ -1333,6 +1333,66 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self.send_text_reply(message_context, response)
 
     @staticmethod
+    def _save_images_as_attachments(
+        db: Session,
+        user_id: int,
+        subtask_id: int,
+        images: List[Dict[str, str]],
+    ) -> None:
+        """Save IM channel images as SubtaskContext attachments for frontend display.
+
+        Converts base64-encoded images from IM channels (DingTalk, etc.) into
+        SubtaskContext attachment records so the frontend can render them.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            subtask_id: User subtask ID to link images to
+            images: List of image dicts with mime_type and base64_data
+        """
+        import base64
+        import uuid
+
+        from app.services.context import context_service
+
+        # Map common MIME types to file extensions
+        mime_to_ext = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "image/bmp": ".bmp",
+        }
+
+        for i, img in enumerate(images):
+            try:
+                mime_type = img.get("mime_type", "image/png")
+                base64_data = img.get("base64_data", "")
+                if not base64_data:
+                    continue
+
+                binary_data = base64.b64decode(base64_data)
+                ext = mime_to_ext.get(mime_type, ".png")
+                filename = f"im_image_{uuid.uuid4().hex[:8]}{ext}"
+
+                context_service.upload_attachment(
+                    db=db,
+                    user_id=user_id,
+                    filename=filename,
+                    binary_data=binary_data,
+                    subtask_id=subtask_id,
+                )
+                logger.info(
+                    f"Saved IM channel image as attachment: "
+                    f"subtask_id={subtask_id}, filename={filename}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to save IM channel image as attachment: {e}",
+                    exc_info=True,
+                )
+
+    @staticmethod
     def _build_vision_content(
         text: str, images: List[Dict[str, str]]
     ) -> list[dict[str, Any]]:
@@ -1437,6 +1497,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"[{self._channel_type.value}Handler] Task created: task_id={result.task.id}, "
                 f"subtask_id={result.assistant_subtask.id}"
             )
+
+            # Save IM channel images as attachments for frontend display
+            if message_context.images:
+                self._save_images_as_attachments(
+                    db=db,
+                    user_id=user.id,
+                    subtask_id=result.user_subtask.id,
+                    images=message_context.images,
+                )
 
             # Extract needed data from ORM objects before closing session
             task_id = result.task.id
@@ -1616,6 +1685,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if not result.assistant_subtask:
             return "创建任务失败，请重试"
 
+        # Save IM channel images as attachments for frontend display
+        if message_context.images:
+            self._save_images_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                images=message_context.images,
+            )
+
         if conversation_id:
             await self._set_conversation_task_id(
                 conversation_id, user.id, result.task.id
@@ -1753,6 +1831,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if not result.assistant_subtask:
             return "创建任务失败，请重试"
+
+        # Save IM channel images as attachments for frontend display
+        if message_context.images:
+            self._save_images_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                images=message_context.images,
+            )
 
         if conversation_id:
             await self._set_conversation_task_id(
