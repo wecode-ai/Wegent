@@ -802,6 +802,21 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         argument = argument.strip().lower()
 
+        # Check if mode is changing; if so, clear conversation cache
+        # so the next message creates a new task with the correct team
+        current_selection = await device_selection_manager.get_selection(user.id)
+        current_mode = current_selection.device_type
+        target_mode_map = {
+            "chat": DeviceType.CHAT,
+            "cloud": DeviceType.CLOUD,
+            "device": DeviceType.LOCAL,
+        }
+        target_mode = target_mode_map.get(argument)
+        if target_mode and target_mode != current_mode:
+            await self._delete_conversation_task_id(
+                message_context.conversation_id, user.id
+            )
+
         # Helper to get current model display name
         async def get_model_display() -> str:
             model_selection = await model_selection_manager.get_selection(user.id)
