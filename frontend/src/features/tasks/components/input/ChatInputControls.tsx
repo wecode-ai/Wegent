@@ -26,7 +26,7 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { isChatShell, isClaudeCode } from '../../service/messageService'
+import { isChatShell } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -317,6 +317,7 @@ export function ChatInputControls({
   if (isMobile) {
     return (
       <MobileChatInputControls
+        taskType={taskType}
         selectedTeam={selectedTeam}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
@@ -457,8 +458,8 @@ export function ChatInputControls({
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
           <>
-            {/* Context Selection - available for non-code shell types */}
-            {!isClaudeCode(selectedTeam) && (
+            {/* Context Selection - hidden for code page (taskType === 'code') */}
+            {taskType !== 'code' && (
               <ChatContextInput
                 selectedContexts={selectedContexts}
                 onContextsChange={setSelectedContexts}
