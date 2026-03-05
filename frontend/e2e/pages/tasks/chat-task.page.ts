@@ -1,29 +1,21 @@
 import { Page, Locator } from '@playwright/test'
-import { BasePage } from '../base.page'
+import { BaseTaskPage } from './base-task.page'
 
 /**
- * Chat Task Page Object
+ * Chat Task Page Object - /chat route
+ * Extends BaseTaskPage with Chat-specific functionality
  */
-export class ChatTaskPage extends BasePage {
-  private readonly chatInput: Locator
-  private readonly sendButton: Locator
-  private readonly messageList: Locator
-  private readonly teamSelector: Locator
-  private readonly newChatButton: Locator
+export class ChatTaskPage extends BaseTaskPage {
+  // Chat-specific locators
+  private readonly webSearchToggle: Locator
+  private readonly exportButton: Locator
 
   constructor(page: Page) {
     super(page)
-    this.chatInput = page.locator(
-      '[data-testid="chat-input"], textarea[placeholder*="message" i], textarea[placeholder*="type" i]'
+    this.webSearchToggle = page.locator('[data-testid="web-search-toggle"]')
+    this.exportButton = page.locator(
+      'button:has-text("Export"), button:has-text("PDF"), [data-testid="export-chat"]'
     )
-    this.sendButton = page.locator(
-      '[data-testid="send-button"], button[type="submit"]:has-text("Send")'
-    )
-    this.messageList = page.locator('[data-testid="message-list"], .message-list')
-    this.teamSelector = page.locator(
-      '[data-testid="team-selector"], [role="combobox"]:has-text("Team")'
-    )
-    this.newChatButton = page.locator('button:has-text("New Chat"), button:has-text("New Task")')
   }
 
   /**
@@ -34,122 +26,40 @@ export class ChatTaskPage extends BasePage {
   }
 
   /**
-   * Start a new chat
-   */
-  async startNewChat(): Promise<void> {
-    await this.newChatButton.click()
-    await this.waitForLoading()
-  }
-
-  /**
-   * Select a team for chat
-   */
-  async selectTeam(teamName: string): Promise<void> {
-    await this.teamSelector.click()
-    await this.page.click(`[role="option"]:has-text("${teamName}")`)
-    await this.waitForLoading()
-  }
-
-  /**
-   * Type message in chat input
-   */
-  async typeMessage(message: string): Promise<void> {
-    await this.chatInput.fill(message)
-  }
-
-  /**
-   * Send message
-   */
-  async sendMessage(message?: string): Promise<void> {
-    if (message) {
-      await this.typeMessage(message)
-    }
-    await this.sendButton.click()
-    await this.waitForLoading()
-  }
-
-  /**
-   * Wait for response message
-   */
-  async waitForResponse(timeout: number = 30000): Promise<void> {
-    await this.page.waitForSelector('[data-testid="message-response"], [data-role="assistant"]', {
-      timeout,
-    })
-  }
-
-  /**
-   * Get all messages
-   */
-  async getMessages(): Promise<string[]> {
-    const messages = this.page.locator('[data-testid="message-content"], .message-content')
-    return await messages.allTextContents()
-  }
-
-  /**
-   * Get message count
-   */
-  async getMessageCount(): Promise<number> {
-    return await this.page.locator('[data-testid="message"], .message').count()
-  }
-
-  /**
-   * Check if chat input is enabled
-   */
-  async isChatInputEnabled(): Promise<boolean> {
-    return await this.chatInput.isEnabled()
-  }
-
-  /**
-   * Clear chat input
-   */
-  async clearChatInput(): Promise<void> {
-    await this.chatInput.clear()
-  }
-
-  /**
-   * Check if on chat page
+   * Check if currently on chat page
    */
   isOnChatPage(): boolean {
     return this.getCurrentUrl().includes('/chat')
   }
 
   /**
-   * Wait for streaming to complete
+   * Toggle web search feature (if available)
    */
-  async waitForStreamingComplete(timeout: number = 60000): Promise<void> {
-    // Wait for streaming indicator to disappear
-    await this.page
-      .waitForSelector('[data-streaming="true"]', { state: 'detached', timeout })
-      .catch(() => {})
-    // Or wait for send button to be enabled again
-    await this.page
-      .waitForSelector('[data-testid="send-button"]:not([disabled])', { timeout })
-      .catch(() => {})
+  async toggleWebSearch(): Promise<void> {
+    if (await this.webSearchToggle.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await this.webSearchToggle.click()
+    }
   }
 
   /**
-   * Cancel current task
+   * Check if web search toggle is available
    */
-  async cancelTask(): Promise<void> {
-    const cancelButton = this.page.locator('button:has-text("Cancel"), button:has-text("Stop")')
-    if (await cancelButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await cancelButton.click()
+  async hasWebSearchToggle(): Promise<boolean> {
+    return await this.webSearchToggle.isVisible().catch(() => false)
+  }
+
+  /**
+   * Export chat as PDF (if available)
+   */
+  async exportChat(): Promise<void> {
+    if (await this.exportButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await this.exportButton.click()
       await this.waitForLoading()
     }
   }
 
   /**
-   * Toggle web search
-   */
-  async toggleWebSearch(): Promise<void> {
-    const webSearchToggle = this.page.locator('[data-testid="web-search-toggle"]')
-    if (await webSearchToggle.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await webSearchToggle.click()
-    }
-  }
-
-  /**
-   * Upload attachment
+   * Upload file attachment
    */
   async uploadAttachment(filePath: string): Promise<void> {
     const fileInput = this.page.locator('input[type="file"]')
@@ -158,13 +68,37 @@ export class ChatTaskPage extends BasePage {
   }
 
   /**
-   * Export chat as PDF
+   * Check if file upload is available
    */
-  async exportPdf(): Promise<void> {
-    const exportButton = this.page.locator('button:has-text("Export"), button:has-text("PDF")')
-    if (await exportButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await exportButton.click()
-      await this.waitForLoading()
+  async hasFileUpload(): Promise<boolean> {
+    const uploadButton = this.page.locator(
+      'button[title*="Upload"], button[title*="Attach"], input[type="file"]'
+    )
+    return await uploadButton.isVisible().catch(() => false)
+  }
+
+  /**
+   * Start a new chat session
+   */
+  async startNewChat(): Promise<void> {
+    if (await this.hasNewTaskButton()) {
+      await this.createNewTask()
     }
+  }
+
+  /**
+   * Send a message and wait for response
+   */
+  async sendMessageAndWaitForResponse(message: string, timeout: number = 30000): Promise<void> {
+    await this.sendMessage(message)
+    await this.waitForResponse(timeout)
+  }
+
+  /**
+   * Get the last message content
+   */
+  async getLastMessage(): Promise<string | null> {
+    const messages = await this.getMessages()
+    return messages.length > 0 ? messages[messages.length - 1] : null
   }
 }
