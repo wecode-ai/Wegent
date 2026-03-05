@@ -411,12 +411,12 @@ def list_documents(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e),
-        )
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.post(
