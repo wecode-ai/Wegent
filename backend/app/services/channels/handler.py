@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
@@ -57,6 +58,7 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +386,45 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             self.logger.warning(
                 f"[{self._channel_type.value}Handler] Default team not found: id={team_id}"
             )
+
+        return team
+
+    def _get_task_mode_team(self, db: Session, user_id: int) -> Optional[Kind]:
+        """Get the default team for task mode (device/cloud execution).
+
+        Uses the DEFAULT_TEAM_TASK config (e.g. "wegent-wework#default") to look up
+        the team by name and namespace, matching the behavior of the PC/Web frontend.
+        Falls back to the channel's default_team_id if not configured.
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            Team Kind object or None
+        """
+        config_value = settings.DEFAULT_TEAM_TASK
+        if not config_value or not config_value.strip():
+            return self._get_default_team(db, user_id)
+
+        parts = config_value.strip().split("#", 1)
+        name = parts[0].strip()
+        namespace = parts[1].strip() if len(parts) > 1 else "default"
+
+        if not name:
+            return self._get_default_team(db, user_id)
+
+        team = kindReader.get_by_name_and_namespace(
+            db, user_id, KindType.TEAM, namespace, name
+        )
+
+        if not team:
+            self.logger.warning(
+                f"[{self._channel_type.value}Handler] Task mode team not found: "
+                f"name={name}, namespace={namespace}, user_id={user_id}. "
+                f"Falling back to channel default team."
+            )
+            return self._get_default_team(db, user_id)
 
         return team
 
@@ -1284,7 +1325,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_default_team(db, user.id)
+            team = self._get_task_mode_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -1313,7 +1354,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_default_team(db, user.id)
+            team = self._get_task_mode_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
