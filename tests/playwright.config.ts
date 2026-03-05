@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import * as path from 'path'
 
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:3000'
+const BASE_URL = process.env.TEST_BASE_URL || 'https://wegent.intra.weibo.com'
 
 // Determine auth file path
 // 1. Use PLAYWRIGHT_AUTH_FILE if set (from run-tests.sh)
@@ -13,7 +13,7 @@ function getAuthFilePath(): string {
   }
 
   // Extract domain from URL
-  const url = process.env.TEST_BASE_URL || 'http://localhost:3000'
+  const url = process.env.TEST_BASE_URL || 'https://wegent.intra.weibo.com'
   const domain = url
     .replace(/^https?:\/\//, '')
     .replace(/[:\/].*$/, '')
