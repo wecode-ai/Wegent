@@ -266,6 +266,7 @@ class DeviceService:
         device_id: str,
         name: str,
         client_ip: Optional[str] = None,
+        device_type: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -278,6 +279,8 @@ class DeviceService:
             device_id: Device unique identifier (stored in Kind.name)
             name: Device display name (stored in spec.displayName)
             client_ip: Device's client IP address (stored in spec.clientIp)
+            device_type: Device type ('local' or 'cloud'). If None, defaults
+                         to 'local' for new devices or preserves existing value.
 
         Returns:
             Kind model instance for the device
@@ -300,8 +303,10 @@ class DeviceService:
             # Update existing device (reactivate if soft-deleted)
             device_json = device_kind.json.copy()
             device_json["spec"]["displayName"] = name
-            # Ensure device type fields are set for backward compatibility
-            if "deviceType" not in device_json["spec"]:
+            # Update device type if provided, otherwise preserve existing value
+            if device_type is not None:
+                device_json["spec"]["deviceType"] = device_type
+            elif "deviceType" not in device_json["spec"]:
                 device_json["spec"]["deviceType"] = DeviceType.LOCAL.value
             if "connectionMode" not in device_json["spec"]:
                 device_json["spec"]["connectionMode"] = "websocket"
@@ -335,6 +340,9 @@ class DeviceService:
             )
             is_first_device = existing_device_count == 0
 
+            # Resolve device type: use provided value, or default to 'local'
+            resolved_device_type = device_type or DeviceType.LOCAL.value
+
             # Create new device CRD
             device_json = {
                 "apiVersion": "agent.wecode.io/v1",
@@ -347,7 +355,7 @@ class DeviceService:
                 "spec": {
                     "deviceId": device_id,
                     "displayName": name,
-                    "deviceType": DeviceType.LOCAL.value,
+                    "deviceType": resolved_device_type,
                     "connectionMode": "websocket",
                     "isDefault": is_first_device,
                     "capabilities": None,
