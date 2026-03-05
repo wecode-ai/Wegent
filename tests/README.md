@@ -48,8 +48,8 @@ npm run test:debug
 ## Configuration
 
 - Default test URL: `https://wegent.intra.weibo.com`
-- Override with: `./run-tests.sh http://localhost:3000`
-- Or use environment variable: `TEST_BASE_URL=http://localhost:3000 ./run-tests.sh`
+- Override with: `./run-tests.sh https://preview-wegent.intra.weibo.com`
+- Or use environment variable: `TEST_BASE_URL=https://preview-wegent.intra.weibo.com ./run-tests.sh`
 
 ## Test Files
 
@@ -64,7 +64,7 @@ npm run test:debug
 | `-d, --debug` | Run tests in debug mode |
 | `-a, --auth` | Force re-authentication (re-scan QR code) |
 | `-i, --install` | Force reinstall dependencies |
-| `URL` | Target URL to test (e.g., `http://localhost:3002`) |
+| `URL` | Target URL to test (e.g., `https://preview-wegent.intra.weibo.com`) |
 | `--help` | Show help message |
 
 ### Examples
@@ -73,12 +73,12 @@ npm run test:debug
 # Test production environment (default)
 ./run-tests.sh
 
-# Test specific URL (e.g., localhost)
-./run-tests.sh http://localhost:3000
+# Test specific URL (e.g., https://preview-wegent.intra.weibo.com)
+./run-tests.sh https://preview-wegent.intra.weibo.com
 
 # Test with browser visible
-./run-tests.sh -h http://localhost:3000
+./run-tests.sh -h https://preview-wegent.intra.weibo.com
 
 # Using environment variable
-TEST_BASE_URL=http://localhost:3000 ./run-tests.sh
+TEST_BASE_URL=https://preview-wegent.intra.weibo.com ./run-tests.sh
 ```
