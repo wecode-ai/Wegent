@@ -57,7 +57,7 @@ interface CapturedRequest {
 test.describe('Chat Image Browser E2E with Mock Model Server', () => {
   let apiClient: ApiClient
   let token: string
-  const testImagePath = path.join(__dirname, '../fixtures/test-image.png')
+  const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
 
   // Created resource IDs for cleanup
   let createdModelId: number | null = null

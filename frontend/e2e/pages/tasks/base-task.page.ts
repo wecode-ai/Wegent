@@ -140,9 +140,18 @@ export abstract class BaseTaskPage extends BasePage {
    * Wait for a response message to appear
    */
   async waitForResponse(timeout: number = 30000): Promise<void> {
-    await this.page.waitForSelector('[data-testid="message"], [data-role="assistant"], .message', {
-      timeout,
-    })
+    // Get current message count first, then wait for a new message to appear
+    const currentCount = await this.getMessageCount()
+    await this.page.waitForFunction(
+      previousCount => {
+        const messages = document.querySelectorAll(
+          '[data-testid="message"], [data-role="assistant"], .message'
+        )
+        return messages.length > previousCount
+      },
+      currentCount,
+      { timeout }
+    )
   }
 
   /**
@@ -212,12 +221,11 @@ export abstract class BaseTaskPage extends BasePage {
    * Wait for streaming/loading to complete
    */
   async waitForStreamingComplete(timeout: number = 60000): Promise<void> {
-    await this.page
-      .waitForSelector('[data-streaming="true"], .streaming', { state: 'detached', timeout })
-      .catch(() => {})
-    await this.page
-      .waitForSelector('[data-testid="send-button"]:not([disabled])', { timeout })
-      .catch(() => {})
+    await this.page.waitForSelector('[data-streaming="true"], .streaming', {
+      state: 'detached',
+      timeout,
+    })
+    await this.page.waitForSelector('[data-testid="send-button"]:not([disabled])', { timeout })
   }
 
   /**

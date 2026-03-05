@@ -145,7 +145,10 @@ export class CodeTaskPage extends BaseTaskPage {
   async isSidebarCollapsed(): Promise<boolean> {
     const sidebar = this.page.locator('[data-testid="task-sidebar"], aside').first()
     const box = await sidebar.boundingBox()
-    return (box?.width ?? 200) < 100
+    if (!box) {
+      throw new Error('Could not get sidebar bounding box - sidebar may not be visible')
+    }
+    return box.width < 100
   }
 
   /**
