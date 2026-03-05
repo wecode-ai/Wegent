@@ -33,12 +33,14 @@ class MemberRole(str, Enum):
     - Maintainer: Can manage members, has manage permission
     - Developer: Can edit content, has edit permission
     - Reporter: Can only view, has view permission
+    - Consumer: Can use KB via RAG in chat, but cannot view document content
     """
 
     OWNER = "Owner"
     MAINTAINER = "Maintainer"
     DEVELOPER = "Developer"
     REPORTER = "Reporter"
+    CONSUMER = "Consumer"
 
 
 class MemberRoleNoOwner(str, Enum):
@@ -50,11 +52,13 @@ class MemberRoleNoOwner(str, Enum):
     - Maintainer: Can manage members, has manage permission
     - Developer: Can edit content, has edit permission
     - Reporter: Can only view, has view permission
+    - Consumer: Can use KB via RAG in chat, but cannot view document content
     """
 
     MAINTAINER = "Maintainer"
     DEVELOPER = "Developer"
     REPORTER = "Reporter"
+    CONSUMER = "Consumer"
 
 
 # =============================================================================

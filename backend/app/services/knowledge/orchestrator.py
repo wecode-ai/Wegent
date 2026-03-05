@@ -601,6 +601,9 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If knowledge base not found or access denied
         """
+        from app.models.resource_member import ResourceRole
+        from app.services.share import knowledge_share_service
+
         # Verify access
         kb = KnowledgeService.get_knowledge_base(
             db=db,
@@ -609,6 +612,16 @@ class KnowledgeOrchestrator:
         )
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
+
+        # Consumer role cannot view document list
+        has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
+            db, knowledge_base_id, user.id
+        )
+        if has_access and role == ResourceRole.CONSUMER.value:
+            raise ValueError(
+                "Consumer role cannot view document list. "
+                "You can use this knowledge base via chat only."
+            )
 
         documents = KnowledgeService.list_documents(
             db=db,

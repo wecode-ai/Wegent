@@ -674,6 +674,20 @@ def get_document_detail_standalone(
             detail="Access denied to this document",
         )
 
+    # Block Consumer role from viewing document content
+    from app.models.resource_member import ResourceRole
+    from app.services.share import knowledge_share_service
+
+    has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
+        db, document.kind_id, current_user.id
+    )
+    if has_access and role == ResourceRole.CONSUMER.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consumer role cannot view document content. "
+            "You can use this knowledge base via chat only.",
+        )
+
     # Get content if requested
     content = None
     content_length = None
@@ -1038,6 +1052,20 @@ async def get_document_detail(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Knowledge base not found or access denied",
+        )
+
+    # Block Consumer role from viewing document content
+    from app.models.resource_member import ResourceRole
+    from app.services.share import knowledge_share_service
+
+    has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
+        db, kb_id, current_user.id
+    )
+    if has_access and role == ResourceRole.CONSUMER.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consumer role cannot view document content. "
+            "You can use this knowledge base via chat only.",
         )
 
     # Validate document belongs to the specified knowledge base

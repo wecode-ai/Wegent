@@ -68,6 +68,7 @@ class UnifiedShareService(ABC):
 
     # Permission hierarchy for comparison (legacy, use ROLE_HIERARCHY)
     PERMISSION_HIERARCHY: Dict[str, int] = {
+        PermissionLevel.USE.value: 0,
         PermissionLevel.VIEW.value: 1,
         PermissionLevel.EDIT.value: 2,
         PermissionLevel.MANAGE.value: 3,
@@ -75,6 +76,7 @@ class UnifiedShareService(ABC):
 
     # Role hierarchy for comparison
     ROLE_HIERARCHY: Dict[str, int] = {
+        ResourceRole.CONSUMER.value: 0,
         ResourceRole.REPORTER.value: 1,
         ResourceRole.DEVELOPER.value: 2,
         ResourceRole.MAINTAINER.value: 3,
@@ -87,10 +89,12 @@ class UnifiedShareService(ABC):
         ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
         ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
         ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
+        ResourceRole.CONSUMER.value: PermissionLevel.USE.value,
     }
 
     # Permission level to role mapping for backward compatibility
     PERMISSION_TO_ROLE: Dict[str, str] = {
+        PermissionLevel.USE.value: ResourceRole.CONSUMER.value,
         PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
         PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
         PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,

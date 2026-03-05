@@ -197,6 +197,7 @@ class KnowledgeShareService(UnifiedShareService):
     def get_permission_priority(level: str) -> int:
         """Get priority value for permission level (higher = more permissions)."""
         priority_map = {
+            PermissionLevel.USE.value: 0,
             PermissionLevel.VIEW.value: 1,
             PermissionLevel.EDIT.value: 2,
             PermissionLevel.MANAGE.value: 3,
@@ -676,6 +677,7 @@ class KnowledgeShareService(UnifiedShareService):
         default_role = getattr(share_link, "default_role", None)
         if not default_role:
             role_mapping = {
+                PermissionLevel.USE.value: ResourceRole.CONSUMER.value,
                 PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
                 PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
                 PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,

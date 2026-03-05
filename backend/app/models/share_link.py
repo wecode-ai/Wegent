@@ -29,6 +29,7 @@ class ResourceType(str, PyEnum):
 class PermissionLevel(str, PyEnum):
     """Permission levels for resource access."""
 
+    USE = "use"  # Can use resource via RAG, but cannot view content
     VIEW = "view"  # Can view resource content
     EDIT = "edit"  # Can modify resource content
     MANAGE = "manage"  # Can manage other users' permissions

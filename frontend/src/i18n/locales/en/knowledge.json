@@ -298,10 +298,12 @@
         "Maintainer": "Maintainer",
         "Developer": "Developer",
         "Reporter": "Reporter",
+        "Consumer": "Consumer",
         "OwnerDescription": "Creator with full permissions (only the creator can have this role)",
         "MaintainerDescription": "Maintainer who can manage members and edit content",
         "DeveloperDescription": "Developer who can edit content",
-        "ReporterDescription": "User who can only view content"
+        "ReporterDescription": "User who can only view content",
+        "ConsumerDescription": "Consumer who can only use the knowledge base via chat, cannot view document content"
       },
       "viewDescription": "Can browse knowledge base content only",
       "editDescription": "Can add, modify, and delete documents",
