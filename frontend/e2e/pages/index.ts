@@ -16,7 +16,9 @@ export { ModelsPage } from './settings/models.page'
 export { TeamsPage } from './settings/teams.page'
 
 // Tasks Pages
+export { BaseTaskPage } from './tasks/base-task.page'
 export { ChatTaskPage } from './tasks/chat-task.page'
+export { CodeTaskPage } from './tasks/code-task.page'
 
 // Groups Pages
 export { GroupsPage } from './groups/group-list.page'

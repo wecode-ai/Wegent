@@ -100,21 +100,45 @@ Coverage data is automatically collected during CI/CD runs. The coverage reports
 ```
 e2e/
 ├── tests/              # Test files
-│   ├── admin/         # Admin panel tests
-│   ├── api/           # API tests
-│   ├── auth/          # Authentication tests
-│   ├── settings/      # Settings page tests
-│   └── tasks/         # Task management tests
-├── pages/             # Page Object Models
-│   ├── auth/          # Auth page objects
-│   ├── admin/         # Admin page objects
-│   └── settings/      # Settings page objects
-├── fixtures/          # Test data and builders
-├── helpers/           # Test utilities
-│   └── coverage.ts    # Coverage collection helper
-├── utils/             # Shared utilities
-└── config/            # Test configuration
+│   ├── admin/          # Admin panel tests
+│   ├── api/            # API tests
+│   ├── auth/           # Authentication tests
+│   ├── chat/           # Chat page tests (/chat route)
+│   ├── code/           # Code page tests (/code route)
+│   ├── integration/    # Integration tests
+│   ├── knowledge/      # Knowledge base tests
+│   ├── performance/    # Performance tests
+│   ├── settings/       # Settings page tests
+│   ├── shared/         # Shared/public task tests
+│   ├── tasks/          # Task management tests
+│   └── visual/         # Visual regression tests
+├── pages/              # Page Object Models
+│   ├── auth/           # Auth page objects
+│   ├── admin/          # Admin page objects
+│   ├── settings/       # Settings page objects
+│   └── tasks/          # Task page objects
+│       ├── base-task.page.ts    # Shared Chat/Code functionality
+│       ├── chat-task.page.ts    # Chat-specific page object
+│       └── code-task.page.ts    # Code-specific page object
+├── fixtures/           # Test data and builders
+├── helpers/            # Test utilities
+│   └── coverage.ts     # Coverage collection helper
+├── utils/              # Shared utilities
+└── config/             # Test configuration
 ```
+
+### Chat vs Code Test Separation
+
+The application has two main task execution routes:
+
+- **`/chat`** - Chat-only interface (no workbench/code editor)
+- **`/code`** - Code interface with Workbench (includes code editor, file explorer)
+
+Tests are organized to match this structure:
+
+- `tests/chat/` - Tests specific to the Chat interface
+- `tests/code/` - Tests specific to the Code interface (Workbench, repo selector, etc.)
+- `pages/tasks/base-task.page.ts` - Shared Page Object for common functionality
 
 ## Page Object Model
 
