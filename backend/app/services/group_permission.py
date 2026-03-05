@@ -66,6 +66,7 @@ def check_group_permission(
         GroupRole.Maintainer: 1,
         GroupRole.Developer: 2,
         GroupRole.Reporter: 3,
+        GroupRole.Consumer: 4,
     }
 
     user_role = get_user_role_in_group(db, user_id, group_name)

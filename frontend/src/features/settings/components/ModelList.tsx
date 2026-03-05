@@ -80,7 +80,7 @@ interface DisplayModel {
 interface ModelListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'Consumer'>
   onEditResource?: (namespace: string) => void
 }
 
