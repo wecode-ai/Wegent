@@ -1332,6 +1332,78 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if response:
             await self.send_text_reply(message_context, response)
 
+    # Mapping from MIME type to file extension for IM channel images
+    _MIME_TO_EXT = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/webp": ".webp",
+    }
+
+    def _persist_im_images_as_attachments(
+        self,
+        db: Session,
+        user_id: int,
+        subtask_id: int,
+        images: List[Dict[str, str]],
+    ) -> List[int]:
+        """Persist IM channel images as SubtaskContext attachments.
+
+        Downloads from IM channels (DingTalk, Feishu, etc.) provide images as
+        base64-encoded data. This method saves them into the subtask_contexts
+        table so they can be displayed when viewing the task on PC/Web.
+
+        Args:
+            db: Database session (must be open, caller handles commit)
+            user_id: Owner user ID
+            subtask_id: User subtask ID to link the images to
+            images: List of image dicts with mime_type and base64_data
+
+        Returns:
+            List of created SubtaskContext IDs
+        """
+        import base64
+
+        from app.services.context.context_service import ContextService
+
+        context_service = ContextService()
+        created_ids: List[int] = []
+
+        for idx, img in enumerate(images):
+            try:
+                binary_data = base64.b64decode(img["base64_data"])
+                mime_type = img.get("mime_type", "image/png")
+                ext = self._MIME_TO_EXT.get(mime_type, ".png")
+                filename = f"im_image_{idx + 1}{ext}"
+
+                context, _ = context_service.upload_attachment(
+                    db=db,
+                    user_id=user_id,
+                    filename=filename,
+                    binary_data=binary_data,
+                    subtask_id=subtask_id,
+                )
+                created_ids.append(context.id)
+                self.logger.info(
+                    "[%sHandler] Persisted IM image as attachment: "
+                    "context_id=%d, subtask_id=%d, size=%d bytes",
+                    self._channel_type.value,
+                    context.id,
+                    subtask_id,
+                    len(binary_data),
+                )
+            except Exception as e:
+                self.logger.error(
+                    "[%sHandler] Failed to persist IM image %d: %s",
+                    self._channel_type.value,
+                    idx,
+                    e,
+                )
+                continue
+
+        return created_ids
+
     @staticmethod
     def _build_vision_content(
         text: str, images: List[Dict[str, str]]
@@ -1438,6 +1510,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"subtask_id={result.assistant_subtask.id}"
             )
 
+            # Persist IM channel images as attachments for PC/Web display
+            if message_context.images:
+                self._persist_im_images_as_attachments(
+                    db=db,
+                    user_id=user.id,
+                    subtask_id=result.user_subtask.id,
+                    images=message_context.images,
+                )
+
             # Extract needed data from ORM objects before closing session
             task_id = result.task.id
             user_subtask_id = result.user_subtask.id
@@ -1485,14 +1566,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         task_room = f"task_{task_id}"
 
-        # Build message for AI: vision content if images present, otherwise text
-        text_with_hint = (message or "") + IM_CHANNEL_CONTEXT_HINT
-        if message_context.images:
-            ai_message = self._build_vision_content(
-                text_with_hint, message_context.images
-            )
-        else:
-            ai_message = text_with_hint
+        # Build message for AI: always use plain text here.
+        # When images exist, they've been persisted as SubtaskContext attachments
+        # above. prepare_contexts_for_chat (called inside trigger_ai_response_unified)
+        # will read them from the DB and inject as vision content automatically,
+        # following the same path as PC-uploaded image attachments.
+        ai_message = (message or "") + IM_CHANNEL_CONTEXT_HINT
 
         await trigger_ai_response_unified(
             task=trigger_data["task"],
@@ -1615,6 +1694,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if not result.assistant_subtask:
             return "创建任务失败，请重试"
+
+        # Persist IM channel images as attachments for PC/Web display
+        if message_context.images:
+            self._persist_im_images_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                images=message_context.images,
+            )
 
         if conversation_id:
             await self._set_conversation_task_id(
@@ -1753,6 +1841,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if not result.assistant_subtask:
             return "创建任务失败，请重试"
+
+        # Persist IM channel images as attachments for PC/Web display
+        if message_context.images:
+            self._persist_im_images_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                images=message_context.images,
+            )
 
         if conversation_id:
             await self._set_conversation_task_id(
