@@ -91,10 +91,22 @@ export abstract class BaseTaskPage extends BasePage {
    * Select a team by name
    */
   async selectTeam(teamName: string): Promise<void> {
+    // Click to open dropdown
     await this.teamSelector.click({ force: true })
-    await this.page.waitForTimeout(300)
-    const option = this.page.locator(`[role="option"]:has-text("${teamName}")`)
+
+    // Wait for dropdown to open with options
+    await this.page.waitForSelector('[role="listbox"], [role="dropdown"], [data-state="open"]', {
+      timeout: 5000,
+    })
+
+    // Wait for the specific option to be visible
+    const option = this.page.locator(`[role="option"]:has-text("${teamName}")`).first()
+
+    // Wait for option to be ready and click
+    await option.waitFor({ state: 'visible', timeout: 10000 })
     await option.click()
+
+    // Wait for selection to complete
     await this.page.waitForTimeout(500)
   }
 

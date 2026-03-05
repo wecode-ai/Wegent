@@ -74,7 +74,7 @@ test.describe('Chat Page - Team Selection', () => {
     }
   })
 
-  test('should display team in selector after creation', async () => {
+  test('should display team in selector after creation', async ({ page }) => {
     const teamData = DataBuilders.team()
     testTeamName = teamData.metadata.name
     await apiClient.createTeam(teamData)
@@ -82,13 +82,13 @@ test.describe('Chat Page - Team Selection', () => {
     await chatPage.navigate()
 
     if (await chatPage.hasTeamSelector()) {
-      await chatPage.page
+      await page
         .locator('[data-testid="team-selector"], [role="combobox"]')
         .first()
         .click({ force: true })
-      await chatPage.page.waitForTimeout(300)
+      await page.waitForTimeout(300)
 
-      const teamOption = chatPage.page.locator(`[role="option"]:has-text("${testTeamName}")`)
+      const teamOption = page.locator(`[role="option"]:has-text("${testTeamName}")`)
       await expect(teamOption).toBeVisible({ timeout: 5000 })
     }
   })
