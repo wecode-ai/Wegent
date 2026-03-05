@@ -19,17 +19,17 @@ test.describe('File Upload and Attachments', () => {
   test('should have file upload button in chat input', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]')
 
-    // File input should exist (even if not visible)
+    // File input should exist for chat functionality
     const count = await fileInput.count()
-    expect(count).toBeGreaterThanOrEqual(0)
+    expect(count).toBeGreaterThan(0)
   })
 
   test('should accept file selection', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]').first()
 
-    // Skip if no file input available
-    const isVisible = await fileInput.isVisible({ timeout: 5000 }).catch(() => false)
-    test.skip(!isVisible, 'File upload not available')
+    // File input must be available for this test
+    const isVisible = await fileInput.isVisible({ timeout: 5000 })
+    expect(isVisible).toBe(true)
 
     const testFilePath = path.join(__dirname, '../fixtures/test-file.txt')
 
@@ -40,58 +40,55 @@ test.describe('File Upload and Attachments', () => {
   test('should display attachment preview after upload', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]').first()
 
-    // Skip if no file input available
-    const isVisible = await fileInput.isVisible({ timeout: 5000 }).catch(() => false)
-    test.skip(!isVisible, 'File upload not available')
+    // File input must be available for this test
+    const isVisible = await fileInput.isVisible({ timeout: 5000 })
+    expect(isVisible).toBe(true)
 
     const testFilePath = path.join(__dirname, '../fixtures/test-file.txt')
 
     await fileInput.setInputFiles(testFilePath)
     await page.waitForTimeout(2000)
 
-    // Check for attachment preview
+    // Check for attachment preview - should be visible after file selection
     const attachmentPreview = page.locator(
       '[data-testid="attachment"], .attachment, [class*="attachment"], [class*="file"]'
     )
-    const hasPreview = await attachmentPreview.isVisible({ timeout: 5000 }).catch(() => false)
-
-    // Preview may or may not be visible depending on implementation
-    expect(typeof hasPreview).toBe('boolean')
+    const hasPreview = await attachmentPreview.isVisible({ timeout: 5000 })
+    expect(hasPreview).toBe(true)
   })
 
   test('should have remove button for uploaded files', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]').first()
 
-    // Skip if no file input available
-    const isVisible = await fileInput.isVisible({ timeout: 5000 }).catch(() => false)
-    test.skip(!isVisible, 'File upload not available')
+    // File input must be available for this test
+    const isVisible = await fileInput.isVisible({ timeout: 5000 })
+    expect(isVisible).toBe(true)
 
     const testFilePath = path.join(__dirname, '../fixtures/test-file.txt')
 
     await fileInput.setInputFiles(testFilePath)
     await page.waitForTimeout(2000)
 
-    // Check for remove button
+    // Check for remove button - should be present for uploaded files
     const removeButton = page.locator(
       'button[title*="Remove"], button[title*="Delete"], button:has-text("×"), button[aria-label*="remove"]'
     )
-    const hasRemoveButton = await removeButton.isVisible({ timeout: 5000 }).catch(() => false)
-
-    // Remove button may or may not be present depending on implementation
-    expect(typeof hasRemoveButton).toBe('boolean')
+    const hasRemoveButton = await removeButton.isVisible({ timeout: 5000 })
+    expect(hasRemoveButton).toBe(true)
   })
 
   test('should support multiple file types', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]').first()
 
-    // Skip if no file input available
-    const isVisible = await fileInput.isVisible({ timeout: 5000 }).catch(() => false)
-    test.skip(!isVisible, 'File upload not available')
+    // File input must be available for this test
+    const isVisible = await fileInput.isVisible({ timeout: 5000 })
+    expect(isVisible).toBe(true)
 
-    // Check accept attribute
+    // Check accept attribute - should allow various file types
     const acceptAttr = await fileInput.getAttribute('accept')
 
-    // accept attribute may or may not be set
-    expect(acceptAttr === null || typeof acceptAttr === 'string').toBe(true)
+    // accept attribute should be set and be a string with file type specifications
+    expect(typeof acceptAttr).toBe('string')
+    expect(acceptAttr?.length).toBeGreaterThan(0)
   })
 })

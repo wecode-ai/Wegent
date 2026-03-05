@@ -93,11 +93,10 @@ test.describe('Admin - User Management', () => {
       .isVisible({ timeout: 10000 })
       .catch(() => false)
 
-    // If no specific content found, at least verify the page loaded
+    // If no specific content found, verify we're on the admin users page
     if (!hasContent) {
-      // Check if page has any visible content
-      const bodyText = await page.locator('body').textContent()
-      expect(bodyText).toBeTruthy()
+      // Check URL contains '/admin/users' to confirm we're on the correct page
+      expect(page.url()).toContain('/admin/users')
     }
   })
 

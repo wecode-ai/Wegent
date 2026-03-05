@@ -16,7 +16,8 @@ test.describe('Code Page', () => {
 
     // Close any onboarding/driver overlay
     const skipButton = page.locator('button:has-text("Skip"), button:has-text("跳过")').first()
-    if (await skipButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    const isSkipVisible = await skipButton.isVisible({ timeout: 3000 })
+    if (isSkipVisible) {
       await skipButton.click()
       await page.waitForTimeout(500)
     }
@@ -33,14 +34,14 @@ test.describe('Code Page', () => {
 
   test('should display task sidebar', async () => {
     const isVisible = await codePage.isSidebarVisible()
-    // Sidebar may be collapsed or in different state
-    expect(typeof isVisible).toBe('boolean')
+    // Sidebar should be visible on the code page
+    expect(isVisible).toBe(true)
   })
 
   test('should display repository selector if available', async () => {
     const hasRepo = await codePage.hasRepoSelector()
-    // Repository selector may or may not be present depending on setup
-    expect(typeof hasRepo).toBe('boolean')
+    // Repository selector should be present on code page
+    expect(hasRepo).toBe(true)
   })
 })
 
@@ -60,7 +61,8 @@ test.describe('Code Page - Team Selection', () => {
 
     // Close any onboarding/driver overlay
     const skipButton = page.locator('button:has-text("Skip"), button:has-text("跳过")').first()
-    if (await skipButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    const isSkipVisible = await skipButton.isVisible({ timeout: 3000 })
+    if (isSkipVisible) {
       await skipButton.click()
       await page.waitForTimeout(500)
     }
@@ -68,7 +70,11 @@ test.describe('Code Page - Team Selection', () => {
 
   test.afterEach(async () => {
     if (testTeamName) {
-      await apiClient.deleteTeam(testTeamName).catch(() => {})
+      try {
+        await apiClient.deleteTeam(testTeamName)
+      } catch {
+        // Ignore cleanup errors
+      }
       testTeamName = ''
     }
   })
@@ -116,7 +122,8 @@ test.describe('Code Page - Workbench', () => {
 
     // Close any onboarding/driver overlay
     const skipButton = page.locator('button:has-text("Skip"), button:has-text("跳过")').first()
-    if (await skipButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    const isSkipVisible = await skipButton.isVisible({ timeout: 3000 })
+    if (isSkipVisible) {
       await skipButton.click()
       await page.waitForTimeout(500)
     }
@@ -145,9 +152,9 @@ test.describe('Code Page - Workbench', () => {
           await codePage.sendMessage('Test code task')
           await page.waitForTimeout(2000)
 
-          // Check for workbench toggle
+          // Check for workbench toggle - should be present when task is selected
           const hasWorkbenchToggle = await codePage.hasWorkbenchToggle()
-          expect(typeof hasWorkbenchToggle).toBe('boolean')
+          expect(hasWorkbenchToggle).toBe(true)
         }
       } catch {
         // If team selection fails, skip this test
@@ -157,7 +164,11 @@ test.describe('Code Page - Workbench', () => {
     }
 
     // Cleanup
-    await apiClient.deleteTeam(teamData.metadata.name).catch(() => {})
+    try {
+      await apiClient.deleteTeam(teamData.metadata.name)
+    } catch {
+      // Ignore cleanup errors
+    }
   })
 
   test('should toggle workbench visibility', async () => {
@@ -184,7 +195,8 @@ test.describe('Code Page - Sidebar Interactions', () => {
 
     // Close any onboarding/driver overlay
     const skipButton = page.locator('button:has-text("Skip"), button:has-text("跳过")').first()
-    if (await skipButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    const isSkipVisible = await skipButton.isVisible({ timeout: 3000 })
+    if (isSkipVisible) {
       await skipButton.click()
       await page.waitForTimeout(500)
     }
@@ -194,13 +206,9 @@ test.describe('Code Page - Sidebar Interactions', () => {
     // Try to find the sidebar with a more flexible selector
     const sidebar = page.locator('aside, [data-testid="task-sidebar"], nav, .sidebar').first()
 
-    // Check if sidebar exists
-    const isVisible = await sidebar.isVisible().catch(() => false)
-    if (!isVisible) {
-      // Sidebar might not be present in this view, skip the test
-      test.skip(!isVisible, 'Sidebar not visible in current view')
-      return
-    }
+    // Check if sidebar exists - sidebar should be visible on code page
+    const isVisible = await sidebar.isVisible()
+    expect(isVisible).toBe(true)
 
     const initialBox = await sidebar.boundingBox()
     await codePage.toggleSidebar()
@@ -237,7 +245,8 @@ test.describe('Code Page - Mobile Responsiveness', () => {
 
     // Close any onboarding/driver overlay
     const skipButton = page.locator('button:has-text("Skip"), button:has-text("跳过")').first()
-    if (await skipButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    const isSkipVisible = await skipButton.isVisible({ timeout: 3000 })
+    if (isSkipVisible) {
       await skipButton.click()
       await page.waitForTimeout(500)
     }
