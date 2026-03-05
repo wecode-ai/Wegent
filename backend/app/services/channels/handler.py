@@ -729,6 +729,16 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                         model_display_name = m.get("displayName") or override_model_name
                         break
 
+            # Clear conversation cache if switching mode or device
+            current_selection = await device_selection_manager.get_selection(user.id)
+            if (
+                current_selection.device_type != DeviceType.LOCAL
+                or current_selection.device_id != matched_device["device_id"]
+            ):
+                await self._delete_conversation_task_id(
+                    message_context.conversation_id, user.id
+                )
+
             await device_selection_manager.set_local_device(
                 user.id,
                 matched_device["device_id"],
