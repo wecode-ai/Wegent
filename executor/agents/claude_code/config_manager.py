@@ -360,9 +360,9 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
 
         # Add KB retrieval MCP server when knowledge bases are selected (local mode only)
         if task_data.knowledge_base_ids and executor_config.EXECUTOR_MODE == "local":
-            kb_mcp_url = f"{task_data.backend_url}/mcp/kb-retrieval/sse"
-            kb_retrieval_mcp = {
-                "wegent-kb-retrieval": {
+            kb_mcp_url = f"{task_data.backend_url}/mcp/knowledge/sse"
+            kb_knowledge_mcp = {
+                "wegent-knowledge": {
                     "type": "http",
                     "url": kb_mcp_url,
                     "headers": {
@@ -375,13 +375,13 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                 bot_config["mcp_servers"] = {}
             mcp_servers = bot_config["mcp_servers"]
             if isinstance(mcp_servers, dict):
-                mcp_servers.update(kb_retrieval_mcp)
+                mcp_servers.update(kb_knowledge_mcp)
             elif isinstance(mcp_servers, list):
                 mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
-                mcp_servers.update(kb_retrieval_mcp)
+                mcp_servers.update(kb_knowledge_mcp)
                 bot_config["mcp_servers"] = mcp_servers
             logger.info(
-                f"Added KB retrieval MCP server for {len(task_data.knowledge_base_ids)} knowledge bases at {kb_mcp_url}"
+                f"Added KB knowledge MCP server for {len(task_data.knowledge_base_ids)} knowledge bases at {kb_mcp_url}"
             )
 
         for key in valid_options:

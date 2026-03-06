@@ -1596,7 +1596,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     f"[DEBUG] _convert_to_bot_dict: Dedicated model without isCustomConfig, returning bind_model format: {agent_config}"
                 )
 
-        # Extract skills and preload_skills from ghost
+        # Extract skills, preload_skills from ghost
         skills = []
         preload_skills = []
         if ghost:

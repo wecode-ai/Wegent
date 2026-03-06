@@ -328,7 +328,7 @@ class TestKbHeadTool:
 
 
 class TestKbRetrievalToolRegistration:
-    """Tests for KB retrieval tool registration."""
+    """Tests for KB retrieval tool registration (now under unified knowledge server)."""
 
     def test_tools_are_registered(self):
         """Test that all 3 KB retrieval tools are registered."""
@@ -339,10 +339,10 @@ class TestKbRetrievalToolRegistration:
         assert "kb_head" in KB_RETRIEVAL_MCP_TOOLS
 
     def test_tools_have_correct_server(self):
-        """Test that tools are registered with correct server name."""
+        """Test that tools are registered with unified knowledge server."""
         from app.mcp_server.tools.decorator import get_registered_mcp_tools
 
-        kb_tools = get_registered_mcp_tools(server="kb_retrieval")
+        kb_tools = get_registered_mcp_tools(server="knowledge")
         tool_names = set(kb_tools.keys())
         assert "knowledge_base_search" in tool_names
         assert "kb_ls" in tool_names

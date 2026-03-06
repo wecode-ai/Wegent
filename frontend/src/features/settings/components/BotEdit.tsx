@@ -631,7 +631,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     botName,
     prompt,
     selectedSkills,
-
     selectedModelNamespace,
   ])
 

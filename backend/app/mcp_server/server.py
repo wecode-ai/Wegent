@@ -4,18 +4,16 @@
 
 """Wegent Backend MCP Server.
 
-This module provides a unified MCP Server for Wegent Backend with three endpoints:
+This module provides a unified MCP Server for Wegent Backend with two endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
-- /mcp/knowledge - Knowledge MCP module root (CRUD management tools)
+- /mcp/knowledge - Unified knowledge MCP module (retrieval + management tools)
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
-- /mcp/kb-retrieval - Knowledge base retrieval tools (search/read, for executor agents)
-  - /mcp/kb-retrieval/sse - KB retrieval MCP streamable HTTP transport endpoint
 New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
 
 The MCP Server uses FastMCP with HTTP Streamable transport and integrates
 with the existing FastAPI application.
 
-The knowledge and kb-retrieval MCP servers use a decorator-based auto-registration system:
+The knowledge MCP server uses a decorator-based auto-registration system:
 - FastAPI endpoints marked with @mcp_tool decorator are automatically registered
 - Parameters and response schemas are extracted from endpoint signatures
 - This eliminates code duplication between REST API and MCP implementations
@@ -53,8 +51,6 @@ SYSTEM_MCP_MOUNT_PATH = "/mcp/system"
 SYSTEM_MCP_TRANSPORT_PATH = "/"
 KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
 KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
-KB_RETRIEVAL_MCP_MOUNT_PATH = "/mcp/kb-retrieval"
-KB_RETRIEVAL_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -194,21 +190,23 @@ _knowledge_tools_registered = False
 def _register_knowledge_tools() -> None:
     """Register knowledge tools from @mcp_tool decorated endpoints.
 
-    This function imports the knowledge tools module to trigger decorator
-    registration, then registers all collected tools to the knowledge MCP server.
+    This function imports both knowledge and kb_retrieval tools modules to trigger
+    decorator registration, then registers all collected tools to the unified
+    knowledge MCP server.
     """
     global _knowledge_tools_registered
     if _knowledge_tools_registered:
         return
 
-    # Import MCP tools module to trigger @mcp_tool decorator registration
+    # Import MCP tools modules to trigger @mcp_tool decorator registration
     # The decorators will add tools to the global registry
     from app.mcp_server.tool_registry import register_tools_to_server
     from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        kb_retrieval,
         knowledge,
     )
 
-    # Register all collected tools to the knowledge server
+    # Register all collected tools to the unified knowledge server
     count = register_tools_to_server(knowledge_mcp_server, "knowledge")
     logger.info(f"[MCP:Knowledge] Registered {count} tools from decorated endpoints")
 
@@ -222,54 +220,6 @@ def ensure_knowledge_tools_registered() -> None:
     all @mcp_tool decorated endpoints as MCP tools.
     """
     _register_knowledge_tools()
-
-
-# ============== KB Retrieval MCP Server ==============
-# Provides knowledge base retrieval tools (search, list docs, read docs)
-# Automatically injected into executor tasks when knowledge bases are selected
-# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
-
-kb_retrieval_mcp_server = FastMCP(
-    "wegent-kb-retrieval-mcp",
-    stateless_http=True,
-    json_response=True,
-    streamable_http_path="/",
-    transport_security=_build_transport_security_settings(),
-)
-
-# Store for KB retrieval MCP request context (used by McpAppSpec)
-_kb_retrieval_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
-    contextvars.ContextVar("_kb_retrieval_request_token_info", default=None)
-)
-
-# Flag to track if tools have been registered
-_kb_retrieval_tools_registered = False
-
-
-def _register_kb_retrieval_tools() -> None:
-    """Register KB retrieval tools from @mcp_tool decorated endpoints.
-
-    This function imports the kb_retrieval tools module to trigger decorator
-    registration, then registers all collected tools to the KB retrieval MCP server.
-    """
-    global _kb_retrieval_tools_registered
-    if _kb_retrieval_tools_registered:
-        return
-
-    from app.mcp_server.tool_registry import register_tools_to_server
-    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
-        kb_retrieval,
-    )
-
-    count = register_tools_to_server(kb_retrieval_mcp_server, "kb_retrieval")
-    logger.info(f"[MCP:KBRetrieval] Registered {count} tools from decorated endpoints")
-
-    _kb_retrieval_tools_registered = True
-
-
-def ensure_kb_retrieval_tools_registered() -> None:
-    """Ensure KB retrieval MCP tools are registered."""
-    _register_kb_retrieval_tools()
 
 
 # ============== Starlette App Factory ==============
@@ -296,18 +246,7 @@ _KNOWLEDGE_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
-_KB_RETRIEVAL_MCP_SPEC = McpAppSpec(
-    name="kb_retrieval",
-    service_name="wegent-kb-retrieval-mcp",
-    mount_path=KB_RETRIEVAL_MCP_MOUNT_PATH,
-    transport_path=KB_RETRIEVAL_MCP_TRANSPORT_PATH,
-    server=kb_retrieval_mcp_server,
-    token_context=_kb_retrieval_request_token_info,
-    log_prefix="KBRetrieval",
-    include_root_metadata=True,
-)
-
-MCP_APP_SPECS = (_SYSTEM_MCP_SPEC, _KNOWLEDGE_MCP_SPEC, _KB_RETRIEVAL_MCP_SPEC)
+MCP_APP_SPECS = (_SYSTEM_MCP_SPEC, _KNOWLEDGE_MCP_SPEC)
 
 
 def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
@@ -326,8 +265,6 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     # Ensure tools are registered before creating the app
     if spec.name == "knowledge":
         ensure_knowledge_tools_registered()
-    elif spec.name == "kb_retrieval":
-        ensure_kb_retrieval_tools_registered()
 
     async def health_check(request: Request) -> JSONResponse:
         return JSONResponse({"status": "healthy", "service": spec.service_name})
@@ -357,8 +294,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     token_info.subtask_id,
                     token_info.user_name,
                 )
-                # Set MCPRequestContext for decorator-based tools (knowledge and kb_retrieval servers)
-                if spec.name in ("knowledge", "kb_retrieval"):
+                # Set MCPRequestContext for decorator-based tools (knowledge server)
+                if spec.name == "knowledge":
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
                         tool_name="",  # Will be set by tool invocation
@@ -444,10 +381,6 @@ def create_mcp_router() -> APIRouter:
     async def knowledge_health():
         return {"status": "healthy", "service": "wegent-knowledge-mcp"}
 
-    @router.get("/mcp/kb-retrieval/health")
-    async def kb_retrieval_health():
-        return {"status": "healthy", "service": "wegent-kb-retrieval-mcp"}
-
     return router, system_app, knowledge_app
 
 
@@ -507,27 +440,6 @@ def get_mcp_knowledge_config(backend_url: str, auth_token: str) -> Dict[str, Any
         url=f"{backend_url}{KNOWLEDGE_MCP_MOUNT_PATH}{KNOWLEDGE_MCP_TRANSPORT_PATH}",
         auth_token=auth_token,
         timeout=300,  # 5 minutes for document operations
-    )
-
-
-def get_mcp_kb_retrieval_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
-    """Get KB retrieval MCP server configuration for executor injection.
-
-    This configuration is injected into executor agents (ClaudeCode, Agno) when
-    knowledge bases are selected for a task, providing search/read tools.
-
-    Args:
-        backend_url: Backend URL (e.g., "http://localhost:8000")
-        auth_token: Authentication token for MCP server
-
-    Returns:
-        MCP server configuration dictionary
-    """
-    return _build_streamable_http_config(
-        name="wegent-kb-retrieval",
-        url=f"{backend_url}{KB_RETRIEVAL_MCP_MOUNT_PATH}{KB_RETRIEVAL_MCP_TRANSPORT_PATH}",
-        auth_token=auth_token,
-        timeout=300,  # 5 minutes for retrieval operations
     )
 
 

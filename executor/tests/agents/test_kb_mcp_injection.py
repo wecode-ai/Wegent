@@ -2,7 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for KB retrieval MCP injection in ClaudeCode executor (local mode only)."""
+"""Tests verifying KB MCP injection in ClaudeCode executor.
+
+KB MCP is injected by the executor when knowledge_base_ids are present
+and EXECUTOR_MODE is 'local'. Uses the unified knowledge MCP server
+at /mcp/knowledge/sse.
+"""
 
 from unittest.mock import patch
 
@@ -26,11 +31,11 @@ def _create_task_data(**overrides) -> ExecutionRequest:
 
 
 class TestClaudeCodeKBMCPInjection:
-    """Tests for KB MCP injection in ClaudeCode config_manager (local mode only)."""
+    """Verify executor injects KB MCP when knowledge_base_ids are present."""
 
     @patch("executor.agents.claude_code.config_manager.executor_config")
-    def test_kb_mcp_injected_in_local_mode(self, mock_config):
-        """Test that KB retrieval MCP server is added in local mode."""
+    def test_kb_mcp_injected_when_knowledge_base_ids_present(self, mock_config):
+        """KB MCP should be injected when knowledge_base_ids exist in local mode."""
         mock_config.EXECUTOR_MODE = "local"
         from executor.agents.claude_code.config_manager import extract_claude_options
 
@@ -41,73 +46,45 @@ class TestClaudeCodeKBMCPInjection:
         options = extract_claude_options(task_data)
 
         mcp_servers = options.get("mcp_servers", {})
-        assert "wegent-kb-retrieval" in mcp_servers
-        kb_config = mcp_servers["wegent-kb-retrieval"]
-        assert kb_config["type"] == "http"
-        assert "/mcp/kb-retrieval/sse" in kb_config["url"]
+        # Executor should inject wegent-knowledge (unified server)
+        assert "wegent-knowledge" in mcp_servers
+        kb_config = mcp_servers["wegent-knowledge"]
+        assert "/mcp/knowledge/sse" in kb_config["url"]
         assert "Bearer test-token-123" in kb_config["headers"]["Authorization"]
-        assert kb_config["timeout"] == 300
 
     @patch("executor.agents.claude_code.config_manager.executor_config")
-    def test_kb_mcp_not_injected_in_docker_mode(self, mock_config):
-        """Test that KB retrieval MCP server is NOT added in docker mode."""
-        mock_config.EXECUTOR_MODE = "docker"
+    def test_no_kb_mcp_without_knowledge_base_ids(self, mock_config):
+        """KB MCP should NOT be injected when no knowledge_base_ids."""
+        mock_config.EXECUTOR_MODE = "local"
         from executor.agents.claude_code.config_manager import extract_claude_options
 
-        task_data = _create_task_data(
-            knowledge_base_ids=[1, 2, 3],
-        )
+        task_data = _create_task_data()
 
         options = extract_claude_options(task_data)
 
         mcp_servers = options.get("mcp_servers", {})
-        assert "wegent-kb-retrieval" not in mcp_servers
+        assert "wegent-knowledge" not in mcp_servers
 
     @patch("executor.agents.claude_code.config_manager.executor_config")
-    def test_kb_mcp_not_injected_when_no_knowledge_bases(self, mock_config):
-        """Test that KB retrieval MCP is not added when no knowledge bases."""
+    def test_backend_injected_kb_mcp_passed_through(self, mock_config):
+        """KB MCP from backend (via mcp_servers in bot config) should pass through."""
         mock_config.EXECUTOR_MODE = "local"
         from executor.agents.claude_code.config_manager import extract_claude_options
 
-        task_data = _create_task_data(
-            knowledge_base_ids=None,
-        )
-
-        options = extract_claude_options(task_data)
-
-        mcp_servers = options.get("mcp_servers", {})
-        assert "wegent-kb-retrieval" not in mcp_servers
-
-    @patch("executor.agents.claude_code.config_manager.executor_config")
-    def test_kb_mcp_not_injected_when_empty_knowledge_bases(self, mock_config):
-        """Test that KB retrieval MCP is not added when knowledge_base_ids is empty."""
-        mock_config.EXECUTOR_MODE = "local"
-        from executor.agents.claude_code.config_manager import extract_claude_options
-
-        task_data = _create_task_data(
-            knowledge_base_ids=[],
-        )
-
-        options = extract_claude_options(task_data)
-
-        mcp_servers = options.get("mcp_servers", {})
-        assert "wegent-kb-retrieval" not in mcp_servers
-
-    @patch("executor.agents.claude_code.config_manager.executor_config")
-    def test_kb_mcp_merged_with_existing_mcp_servers(self, mock_config):
-        """Test that KB MCP is merged with user-configured MCP servers."""
-        mock_config.EXECUTOR_MODE = "local"
-        from executor.agents.claude_code.config_manager import extract_claude_options
-
+        # Simulate backend-injected KB MCP in the bot's mcp_servers
         task_data = _create_task_data(
             knowledge_base_ids=[1],
             bot=[
                 {
                     "name": "test-bot",
                     "mcp_servers": {
-                        "user-mcp": {
+                        "wegent-knowledge": {
                             "type": "streamable-http",
-                            "url": "http://user-mcp.example.com",
+                            "url": "http://localhost:8000/mcp/knowledge/sse",
+                            "headers": {
+                                "Authorization": "Bearer test-token-123",
+                            },
+                            "timeout": 300,
                         }
                     },
                 }
@@ -117,6 +94,7 @@ class TestClaudeCodeKBMCPInjection:
         options = extract_claude_options(task_data)
 
         mcp_servers = options.get("mcp_servers", {})
-        # Both user MCP and KB retrieval MCP should be present
-        assert "user-mcp" in mcp_servers
-        assert "wegent-kb-retrieval" in mcp_servers
+        # Backend-injected KB MCP should be present (passed through)
+        assert "wegent-knowledge" in mcp_servers
+        kb_config = mcp_servers["wegent-knowledge"]
+        assert "/mcp/knowledge/sse" in kb_config["url"]

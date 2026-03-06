@@ -14,8 +14,8 @@ Tools:
 - kb_ls: List documents in a knowledge base
 - kb_head: Read document content with offset/limit pagination
 
-These tools are registered with server="kb_retrieval" and use the
-@mcp_tool decorator for automatic registration.
+These tools are registered with server="knowledge" (unified KB MCP server)
+and use the @mcp_tool decorator for automatic registration.
 """
 
 import asyncio
@@ -40,7 +40,7 @@ MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
         "Returns the most relevant text chunks matching the query. "
         "Use this tool when you need to find specific information in the knowledge base."
     ),
-    server="kb_retrieval",
+    server="knowledge",
     param_descriptions={
         "query": "Search query text describing the information you need",
         "kb_id": "Knowledge base ID to search in",
@@ -127,7 +127,7 @@ def knowledge_base_search(
         "Returns document names, sizes, types, and short summaries. "
         "Use this to explore what content is available before reading specific documents."
     ),
-    server="kb_retrieval",
+    server="knowledge",
     param_descriptions={
         "kb_id": "Knowledge base ID to list documents from",
     },
@@ -202,7 +202,7 @@ def kb_ls(
         "Use has_more flag to check if more content exists. "
         "Use this to read specific documents identified by kb_ls."
     ),
-    server="kb_retrieval",
+    server="knowledge",
     param_descriptions={
         "document_id": "Document ID to read (from kb_ls results)",
         "offset": "Start position in characters (default: 0)",
@@ -296,4 +296,4 @@ def kb_head(
 
 
 # Build tool registry from decorated functions
-KB_RETRIEVAL_MCP_TOOLS = build_mcp_tools_dict(server="kb_retrieval")
+KB_RETRIEVAL_MCP_TOOLS = build_mcp_tools_dict(server="knowledge")
