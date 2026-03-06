@@ -317,25 +317,22 @@ class TaskQueryMixin:
                  OR JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.status.status')) != 'DELETE')
             AND (JSON_EXTRACT(k.json, '$.spec.is_group_chat') IS NULL
                  OR JSON_EXTRACT(k.json, '$.spec.is_group_chat') = false)
-            AND k.id NOT IN (
-                SELECT DISTINCT tm.resource_id
+            AND NOT EXISTS (
+                SELECT 1
                 FROM resource_members tm
-                INNER JOIN tasks t2 ON t2.id = tm.resource_id AND tm.resource_type = 'Task'
-                WHERE tm.status = 'approved'
-                AND t2.kind = 'Task'
-                AND t2.is_active = true
-                AND t2.namespace != 'system'
+                WHERE tm.resource_id = k.id
+                AND tm.resource_type = 'Task'
+                AND tm.status = 'approved'
                 AND tm.copied_resource_id = 0
             )
             {type_filter}
         """
 
-        count_sql = text(f"SELECT COUNT(*) FROM tasks k WHERE {base_where}")
-        total = db.execute(count_sql, {"user_id": user_id}).scalar() or 0
-
+        # Use COUNT(*) OVER() window function to get total count in a single query,
+        # avoiding a separate COUNT query that repeats the same heavy WHERE clause.
         ids_sql = text(
             f"""
-            SELECT k.id
+            SELECT k.id, COUNT(*) OVER() as total_count
             FROM tasks k
             WHERE {base_where}
             ORDER BY k.created_at DESC
@@ -345,10 +342,17 @@ class TaskQueryMixin:
         task_id_rows = db.execute(
             ids_sql, {"user_id": user_id, "limit": limit, "skip": skip}
         ).fetchall()
-        task_ids = [row[0] for row in task_id_rows]
 
-        if not task_ids:
+        if not task_id_rows:
+            if skip == 0:
+                return [], 0
+            # Fallback: get count when offset exceeds total results
+            count_sql = text(f"SELECT COUNT(*) FROM tasks k WHERE {base_where}")
+            total = db.execute(count_sql, {"user_id": user_id}).scalar() or 0
             return [], total
+
+        task_ids = [row[0] for row in task_id_rows]
+        total = task_id_rows[0][1]
 
         # Load full task data
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
