@@ -261,7 +261,7 @@ class KnowledgeShareService(UnifiedShareService):
             group_role = get_effective_role_in_group(db, user_id, kb.namespace)
             if group_role is not None:
                 # Map group role to permission level
-                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view
+                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view, Consumer -> use
                 role_mapping = {
                     "Owner": (
                         ResourceRole.MAINTAINER.value,
@@ -278,6 +278,10 @@ class KnowledgeShareService(UnifiedShareService):
                     "Reporter": (
                         ResourceRole.REPORTER.value,
                         PermissionLevel.VIEW.value,
+                    ),
+                    "Consumer": (
+                        ResourceRole.CONSUMER.value,
+                        PermissionLevel.USE.value,
                     ),
                 }
                 role, perm_level = role_mapping.get(
@@ -482,6 +486,7 @@ class KnowledgeShareService(UnifiedShareService):
                         SchemaPermissionLevel.EDIT,
                     ),
                     "Reporter": (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
+                    "Consumer": (SchemaMemberRole.CONSUMER, SchemaPermissionLevel.USE),
                 }
                 group_role, group_level = role_mapping.get(
                     team_role, (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW)
