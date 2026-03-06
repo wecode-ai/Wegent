@@ -56,7 +56,7 @@ export default function TopNavigation({
     <div
       className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${
         isSidebarCollapsed && isDesktop ? 'pl-24' : ''
-      } ${isRightPanelCollapsed && isDesktop ? 'pr-16' : 'px-4 sm:px-6'}`}
+      } ${isRightPanelCollapsed && isDesktop ? 'pr-20' : 'px-4 sm:px-6'}`}
     >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
       <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
