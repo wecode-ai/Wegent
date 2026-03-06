@@ -302,76 +302,30 @@ class TaskQueryMixin:
         if types is None:
             types = ["online", "offline"]
 
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        # Get all task IDs that are group chats (have members) using resource_members
-        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
-        # Share-copy records are created when users import shared tasks, not for group chat membership
-        member_task_ids_sql = text(
-            """
-            SELECT DISTINCT tm.resource_id
-            FROM resource_members tm
-            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-            WHERE tm.status = 'approved'
-            AND k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND tm.copied_resource_id = 0
-        """
-        )
-        member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
-        member_task_ids = {row[0] for row in member_task_ids_result}
-
-        # Also get task IDs where is_group_chat is explicitly set to true
-        explicit_group_sql = text(
-            """
-            SELECT DISTINCT k.id
-            FROM tasks k
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.user_id = :user_id
-            AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
-        """
-        )
-        explicit_group_result = db.execute(
-            explicit_group_sql, {"user_id": user_id}
-        ).fetchall()
-        explicit_group_ids = {row[0] for row in explicit_group_result}
-
-        # Combine all group task IDs to exclude
-        all_group_task_ids = member_task_ids | explicit_group_ids
-
-        # Get user's owned tasks (not group chats)
-        count_sql = text(
-            """
-            SELECT COUNT(*)
-            FROM tasks k
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.user_id = :user_id
-        """
-        )
-        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
-
-        # Get task IDs sorted by created_at
+        # SQL uses only indexed columns (user_id, kind, is_active, namespace)
+        # plus NOT EXISTS on resource_members indexes.
+        # All JSON-based filtering (status, is_group_chat, type labels) is done
+        # in Python to avoid per-row JSON parsing in MySQL.
         ids_sql = text(
             """
-            SELECT k.id, k.created_at
+            SELECT k.id
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND k.user_id = :user_id
+            AND NOT EXISTS (
+                SELECT 1
+                FROM resource_members tm
+                WHERE tm.resource_id = k.id
+                AND tm.resource_type = 'Task'
+                AND tm.status = 'approved'
+                AND tm.copied_resource_id = 0
+            )
             ORDER BY k.created_at DESC
-            LIMIT :limit OFFSET :skip
         """
         )
-        task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
-        ).fetchall()
+        task_id_rows = db.execute(ids_sql, {"user_id": user_id}).fetchall()
         task_ids = [row[0] for row in task_id_rows]
 
         if not task_ids:
@@ -380,57 +334,50 @@ class TaskQueryMixin:
         # Load full task data
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
-        # Filter tasks
-        valid_tasks = self._filter_personal_tasks(tasks, all_group_task_ids, types)
+        # Restore SQL order
+        id_to_task = {t.id: t for t in tasks}
+        ordered_tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
 
-        # Restore original order and apply limit
-        id_to_task = {t.id: t for t in valid_tasks}
-        ordered_tasks = []
-        for tid in task_ids:
-            if tid in id_to_task:
-                ordered_tasks.append(id_to_task[tid])
-                if len(ordered_tasks) >= limit:
-                    break
+        # Filter in Python: status, is_group_chat, type labels
+        filtered_tasks = self._filter_personal_tasks(ordered_tasks, types)
+
+        total = len(filtered_tasks)
+        paginated_tasks = filtered_tasks[skip : skip + limit]
 
         # Build lightweight result
-        result = build_lite_task_list(db, ordered_tasks, user_id)
+        result = build_lite_task_list(db, paginated_tasks, user_id)
 
-        # Recalculate total
-        total = total_result - len(all_group_task_ids) if total_result else 0
-        if total < 0:
-            total = len(ordered_tasks)
+        return result, total
 
-        return result, max(total, len(ordered_tasks))
-
+    @staticmethod
     def _filter_personal_tasks(
-        self,
         tasks: List[TaskResource],
-        all_group_task_ids: set,
         types: List[str],
     ) -> List[TaskResource]:
-        """Filter personal tasks based on type criteria."""
-        valid_tasks = []
+        """Filter personal tasks in Python based on status, group chat flag, and type."""
         include_online = "online" in types
         include_offline = "offline" in types
         include_subscription = "subscription" in types
 
+        valid_tasks = []
         for t in tasks:
-            # Skip group chat tasks
-            if t.id in all_group_task_ids:
-                continue
-
             task_crd = Task.model_validate(t.json)
+
+            # Skip DELETE status
             status = task_crd.status.status if task_crd.status else "PENDING"
             if status == "DELETE":
                 continue
 
-            # Determine task type from labels
+            # Skip group chat tasks
+            if task_crd.spec.is_group_chat:
+                continue
+
+            # Apply type filter
             labels = task_crd.metadata.labels or {}
             is_subscription = labels.get("type") == "subscription"
             task_type_label = labels.get("taskType", "chat")
             is_code = task_type_label == "code"
 
-            # Apply type filter
             if is_subscription:
                 if not include_subscription:
                     continue
