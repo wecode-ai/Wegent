@@ -69,6 +69,26 @@ from shared.telemetry.decorators import add_span_event, trace_async
 logger = setup_logger("claude_code_agent")
 
 
+def _extract_mcp_server_keys(mcp_servers: Any) -> frozenset:
+    """Extract MCP server names from dict or list format config.
+
+    Args:
+        mcp_servers: MCP servers config (dict, list, or None)
+
+    Returns:
+        Frozenset of server names
+    """
+    if not mcp_servers:
+        return frozenset()
+    if isinstance(mcp_servers, dict):
+        return frozenset(mcp_servers.keys())
+    if isinstance(mcp_servers, list):
+        return frozenset(
+            item.get("name", "") for item in mcp_servers if isinstance(item, dict)
+        )
+    return frozenset()
+
+
 def _extract_claude_agent_attributes(self, *args, **kwargs) -> Dict[str, Any]:
     """Extract trace attributes from ClaudeCodeAgent instance."""
     return {
@@ -617,8 +637,8 @@ class ClaudeCodeAgent(Agent):
                 # Check if MCP servers changed (e.g., KB MCP added for this message)
                 # MCP servers are configured at client creation time and cannot be
                 # changed per-query, so we must recreate the client when they change.
-                current_mcp_keys = frozenset(
-                    self.options.get("mcp_servers", {}).keys()
+                current_mcp_keys = _extract_mcp_server_keys(
+                    self.options.get("mcp_servers")
                 )
                 cached_mcp_keys = SessionManager.get_client_mcp_keys(self.session_id)
                 if current_mcp_keys != cached_mcp_keys:
@@ -885,7 +905,7 @@ class ClaudeCodeAgent(Agent):
         await self.client.connect()
 
         # Store client connection for reuse (with MCP server keys for change detection)
-        current_mcp_keys = frozenset(self.options.get("mcp_servers", {}).keys())
+        current_mcp_keys = _extract_mcp_server_keys(self.options.get("mcp_servers"))
         SessionManager.set_client(self.session_id, self.client, current_mcp_keys)
 
         # Update session_id_map for tracking (for both initial and new sessions)
