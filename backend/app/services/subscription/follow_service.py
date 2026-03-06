@@ -39,6 +39,7 @@ from app.schemas.subscription import InvitationStatus as SchemaInvitationStatus
 from app.schemas.subscription import NotificationLevel as SchemaNotificationLevel
 from app.schemas.subscription import (
     Subscription,
+    SubscriptionExecutionTarget,
     SubscriptionFollowConfig,
     SubscriptionFollowerResponse,
     SubscriptionFollowersListResponse,
@@ -1271,6 +1272,11 @@ class SubscriptionFollowService:
         # Get owner username
         owner = db.query(User).filter(User.id == subscription.user_id).first()
         owner_username = owner.user_name if owner else None
+        execution_target = getattr(
+            subscription_crd.spec,
+            "executionTarget",
+            SubscriptionExecutionTarget(),
+        )
 
         # Get visibility with default
         visibility = getattr(
@@ -1308,6 +1314,7 @@ class SubscriptionFollowService:
             retry_count=subscription_crd.spec.retryCount,
             timeout_seconds=subscription_crd.spec.timeoutSeconds,
             enabled=internal.get("enabled", True),
+            execution_target=execution_target,
             preserve_history=subscription_crd.spec.preserveHistory,
             history_message_count=subscription_crd.spec.historyMessageCount,
             bound_task_id=internal.get("bound_task_id", 0),

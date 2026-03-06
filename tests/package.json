@@ -1,0 +1,17 @@
+{
+  "name": "wegent-integration-tests",
+  "version": "1.0.0",
+  "description": "Integration tests for Wegent using Playwright",
+  "scripts": {
+    "setup-auth": "npx ts-node setup-auth.ts",
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "test:debug": "npx playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  }
+}

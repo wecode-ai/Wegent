@@ -686,14 +686,17 @@ Wegent One-Click Startup Script (Local Development Mode)
 Usage: $0 [options]
 
 Options:
-  -p, --port PORT           Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
-  -e, --executor-image IMG  Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
-  --socket-url URL          Socket direct url (auto-computed from BACKEND_PORT)
-  --init                    Interactive configuration initialization
-  --stop                    Stop all services
-  --restart                 Restart all services
-  --status                  Check service status
-  -h, --help                Show help information
+  -b, --backend-port PORT       Backend API port (default: $DEFAULT_BACKEND_PORT)
+  -c, --chat-shell-port PORT    Chat Shell port (default: $DEFAULT_CHAT_SHELL_PORT)
+  -m, --executor-manager-port PORT  Executor Manager port (default: $DEFAULT_EXECUTOR_MANAGER_PORT)
+  -p, --port PORT               Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
+  -e, --executor-image IMG      Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
+  --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
+  --init                        Interactive configuration initialization
+  --stop                        Stop all services
+  --restart                     Restart all services
+  --status                      Check service status
+  -h, --help                    Show help information
 
 Configuration File:
   The script uses the .env configuration file in the project root.
@@ -717,6 +720,9 @@ Configuration File:
 Examples:
   $0                                    # Start with default configuration
   $0 --init                             # Initialize configuration interactively
+  $0 -b 8001                            # Specify backend port as 8001
+  $0 -c 8101                            # Specify chat shell port as 8101
+  $0 -m 8002                            # Specify executor manager port as 8002
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
@@ -729,12 +735,27 @@ EOF
 ACTION="start"
 
 # Track which variables were set via command line (to override config file)
+CLI_BACKEND_PORT=""
+CLI_CHAT_SHELL_PORT=""
+CLI_EXECUTOR_MANAGER_PORT=""
 CLI_WEGENT_FRONTEND_PORT=""
 CLI_EXECUTOR_IMAGE=""
 CLI_WEGENT_SOCKET_URL=""
 
 while [[ $# -gt 0 ]]; do
 case $1 in
+    -b|--backend-port)
+        CLI_BACKEND_PORT="$2"
+        shift 2
+        ;;
+    -c|--chat-shell-port)
+        CLI_CHAT_SHELL_PORT="$2"
+        shift 2
+        ;;
+    -m|--executor-manager-port)
+        CLI_EXECUTOR_MANAGER_PORT="$2"
+        shift 2
+        ;;
     -p|--port)
         CLI_WEGENT_FRONTEND_PORT="$2"
         shift 2
@@ -780,6 +801,9 @@ done
 load_config
 
 # Apply command line overrides (CLI arguments take precedence over config file)
+[ -n "$CLI_BACKEND_PORT" ] && BACKEND_PORT="$CLI_BACKEND_PORT"
+[ -n "$CLI_CHAT_SHELL_PORT" ] && CHAT_SHELL_PORT="$CLI_CHAT_SHELL_PORT"
+[ -n "$CLI_EXECUTOR_MANAGER_PORT" ] && EXECUTOR_MANAGER_PORT="$CLI_EXECUTOR_MANAGER_PORT"
 [ -n "$CLI_WEGENT_FRONTEND_PORT" ] && WEGENT_FRONTEND_PORT="$CLI_WEGENT_FRONTEND_PORT"
 [ -n "$CLI_EXECUTOR_IMAGE" ] && EXECUTOR_IMAGE="$CLI_EXECUTOR_IMAGE"
 [ -n "$CLI_WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="$CLI_WEGENT_SOCKET_URL"
