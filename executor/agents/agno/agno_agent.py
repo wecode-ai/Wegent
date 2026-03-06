@@ -351,7 +351,6 @@ class AgnoAgent(Agent):
 
         return TaskStatus.SUCCESS
 
-
     def execute(self) -> TaskStatus:
         """
         Execute the Agno Agent task
@@ -538,6 +537,7 @@ class AgnoAgent(Agent):
 
             # Prepare prompt
             prompt = self.prompt
+
             if self.options.get("cwd"):
                 prompt = (
                     prompt + "\nCurrent working directory: " + self.options.get("cwd")

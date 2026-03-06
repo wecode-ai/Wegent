@@ -317,6 +317,7 @@ export function ChatInputControls({
   if (isMobile) {
     return (
       <MobileChatInputControls
+        taskType={taskType}
         selectedTeam={selectedTeam}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
@@ -457,8 +458,8 @@ export function ChatInputControls({
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
           <>
-            {/* Context Selection - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
+            {/* Context Selection - hidden for code page (taskType === 'code') */}
+            {taskType !== 'code' && (
               <ChatContextInput
                 selectedContexts={selectedContexts}
                 onContextsChange={setSelectedContexts}

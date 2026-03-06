@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown'
-import type { Team, GitRepoInfo, GitBranch as GitBranchType, TaskDetail } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch as GitBranchType, TaskDetail, TaskType } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
@@ -32,6 +32,8 @@ import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 
 export interface MobileChatInputControlsProps {
+  // Task type
+  taskType?: TaskType
   // Team and Model
   selectedTeam: Team | null
   selectedModel: Model | null
@@ -103,6 +105,7 @@ export interface MobileChatInputControlsProps {
  * Optimized layout for mobile devices with dropdown menu
  */
 export function MobileChatInputControls({
+  taskType,
   selectedTeam,
   selectedModel,
   setSelectedModel,
@@ -225,8 +228,8 @@ export function MobileChatInputControls({
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
-        {/* Context (Knowledge base) */}
-        {isChatShell(selectedTeam) && (
+        {/* Context (Knowledge base) - hidden for code page (taskType === 'code') */}
+        {taskType !== 'code' && (
           <ChatContextInput
             selectedContexts={selectedContexts}
             onContextsChange={setSelectedContexts}
