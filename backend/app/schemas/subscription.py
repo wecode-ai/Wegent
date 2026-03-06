@@ -57,13 +57,6 @@ class SubscriptionExecutionTargetType(str, Enum):
     CLOUD = "cloud"
 
 
-class SubscriptionExecutionTargetStrategy(str, Enum):
-    """Execution target resolution strategy."""
-
-    DEFAULT = "default"
-    SPECIFIC = "specific"
-
-
 class SubscriptionExecutionTarget(BaseModel):
     """Execution target for a subscription."""
 
@@ -71,13 +64,9 @@ class SubscriptionExecutionTarget(BaseModel):
         SubscriptionExecutionTargetType.MANAGED,
         description="Execution target type: managed, local, or cloud",
     )
-    strategy: SubscriptionExecutionTargetStrategy = Field(
-        SubscriptionExecutionTargetStrategy.DEFAULT,
-        description="How to resolve the execution target device",
-    )
     device_id: Optional[str] = Field(
         None,
-        description="Specific device ID when strategy is 'specific'",
+        description="Device ID for local or cloud execution targets",
     )
 
 

@@ -50,7 +50,6 @@ import type {
   Subscription,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
-  SubscriptionExecutionTargetStrategy,
   SubscriptionExecutionTargetType,
   SubscriptionKnowledgeBaseRef,
   SubscriptionTaskType,
@@ -272,9 +271,24 @@ const normalizeExecutionTarget = (
   target?: Partial<SubscriptionExecutionTarget>
 ): SubscriptionExecutionTarget => ({
   type: target?.type || 'managed',
-  strategy: target?.strategy || 'default',
   ...(target?.device_id ? { device_id: target.device_id } : {}),
 })
+
+const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
+  [...devices].sort((left, right) => {
+    if (left.device_type !== right.device_type) {
+      return left.device_type === 'local' ? -1 : 1
+    }
+    if (left.is_default !== right.is_default) {
+      return left.is_default ? -1 : 1
+    }
+    return left.name.localeCompare(right.name)
+  })
+
+const getPreferredDevice = (devices: DeviceInfo[]): DeviceInfo | null => {
+  const sortedDevices = sortDevicesForSelection(devices)
+  return sortedDevices[0] || null
+}
 
 export function SubscriptionForm({
   open,
@@ -438,6 +452,35 @@ export function SubscriptionForm({
     }
   }, [open])
 
+  useEffect(() => {
+    if (executionTarget.type === 'managed' || devicesLoading) {
+      return
+    }
+
+    const matchedDevice = availableDevices.find(
+      device => device.device_id === executionTarget.device_id
+    )
+    if (matchedDevice) {
+      if (matchedDevice.device_type !== executionTarget.type) {
+        setExecutionTarget({
+          type: matchedDevice.device_type,
+          device_id: matchedDevice.device_id,
+        })
+      }
+      return
+    }
+
+    const preferredDevice = getPreferredDevice(availableDevices)
+    if (!preferredDevice) {
+      return
+    }
+
+    setExecutionTarget({
+      type: preferredDevice.device_type,
+      device_id: preferredDevice.device_id,
+    })
+  }, [availableDevices, devicesLoading, executionTarget])
+
   // Get selected team
   const selectedTeam = teams.find(t => t.id === teamId)
 
@@ -460,10 +503,8 @@ export function SubscriptionForm({
   })()
 
   const compatibleProvider = getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
-  const targetDevices = availableDevices.filter(
-    device => device.device_type === executionTarget.type
-  )
-  const hasTargetDevices = targetDevices.length > 0
+  const selectableDevices = sortDevicesForSelection(availableDevices)
+  const hasSelectableDevices = selectableDevices.length > 0
 
   // Determine if model selection is required
   // For rental subscriptions: model is REQUIRED (must select a model to use)
@@ -521,31 +562,39 @@ export function SubscriptionForm({
     setSelectedBranch(null)
   }, [])
 
-  const handleExecutionTargetTypeChange = useCallback((type: SubscriptionExecutionTargetType) => {
-    setExecutionTarget(() => ({
-      type,
-      strategy: type === 'managed' ? 'default' : 'default',
-    }))
-  }, [])
+  const handleExecutionTargetTypeChange = useCallback(
+    (type: SubscriptionExecutionTargetType | 'device') => {
+      if (type === 'managed') {
+        setExecutionTarget({ type: 'managed' })
+        return
+      }
 
-  const handleExecutionTargetStrategyChange = useCallback(
-    (strategy: SubscriptionExecutionTargetStrategy) => {
-      setExecutionTarget(prev => ({
-        type: prev.type,
-        strategy,
-        ...(strategy === 'specific' ? { device_id: prev.device_id } : {}),
-      }))
+      const preferredDevice = getPreferredDevice(availableDevices)
+      if (!preferredDevice) {
+        setExecutionTarget({ type: 'local' })
+        return
+      }
+
+      setExecutionTarget({
+        type: preferredDevice.device_type,
+        device_id: preferredDevice.device_id,
+      })
     },
-    []
+    [availableDevices]
   )
 
-  const handleExecutionTargetDeviceChange = useCallback((deviceId: string) => {
-    setExecutionTarget(prev => ({
-      ...prev,
-      strategy: 'specific',
-      device_id: deviceId,
-    }))
-  }, [])
+  const handleExecutionTargetDeviceChange = useCallback(
+    (deviceId: string) => {
+      const selectedDevice = availableDevices.find(device => device.device_id === deviceId)
+      if (!selectedDevice) return
+
+      setExecutionTarget({
+        type: selectedDevice.device_type,
+        device_id: selectedDevice.device_id,
+      })
+    },
+    [availableDevices]
+  )
 
   // Reset form when subscription changes
   useEffect(() => {
@@ -639,13 +688,12 @@ export function SubscriptionForm({
       return
     }
 
-    if (executionTarget.type !== 'managed' && executionTarget.strategy === 'specific') {
-      if (!executionTarget.device_id) {
-        toast.error(t('validation_execution_target_device_required'))
-        return
-      }
+    if (executionTarget.type !== 'managed' && !executionTarget.device_id) {
+      toast.error(t('validation_execution_target_device_required'))
+      return
     }
-    if (executionTarget.type !== 'managed' && !hasTargetDevices) {
+
+    if (executionTarget.type !== 'managed' && !hasSelectableDevices) {
       toast.error(t('validation_execution_target_no_devices'))
       return
     }
@@ -799,7 +847,7 @@ export function SubscriptionForm({
     timeoutSeconds,
     enabled,
     executionTarget,
-    hasTargetDevices,
+    hasSelectableDevices,
     preserveHistory,
     visibility,
     marketWhitelistUsers,
@@ -1098,86 +1146,64 @@ export function SubscriptionForm({
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">{t('execution_target_type')}</Label>
                   <div className="flex gap-2">
-                    {(['managed', 'local', 'cloud'] as SubscriptionExecutionTargetType[]).map(
-                      type => (
-                        <Button
-                          key={type}
-                          type="button"
-                          variant={executionTarget.type === type ? 'primary' : 'outline'}
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => handleExecutionTargetTypeChange(type)}
-                        >
-                          {t(`execution_target_type_${type}`)}
-                        </Button>
-                      )
-                    )}
+                    {(
+                      [
+                        ['managed', t('execution_target_type_managed')],
+                        ['device', t('execution_target_type_device')],
+                      ] as const
+                    ).map(([type, label]) => (
+                      <Button
+                        key={type}
+                        type="button"
+                        variant={
+                          (type === 'managed' && executionTarget.type === 'managed') ||
+                          (type === 'device' && executionTarget.type !== 'managed')
+                            ? 'primary'
+                            : 'outline'
+                        }
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => handleExecutionTargetTypeChange(type)}
+                      >
+                        {label}
+                      </Button>
+                    ))}
                   </div>
                   <p className="text-xs text-text-muted">
-                    {t(`execution_target_type_${executionTarget.type}_hint`)}
+                    {executionTarget.type === 'managed'
+                      ? t('execution_target_type_managed_hint')
+                      : t('execution_target_type_device_hint')}
                   </p>
                 </div>
 
                 {executionTarget.type !== 'managed' && (
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">
-                        {t('execution_target_strategy')}
-                      </Label>
-                      <div className="flex gap-2">
-                        {(['default', 'specific'] as SubscriptionExecutionTargetStrategy[]).map(
-                          strategy => (
-                            <Button
-                              key={strategy}
-                              type="button"
-                              variant={
-                                executionTarget.strategy === strategy ? 'primary' : 'outline'
-                              }
-                              size="sm"
-                              className="flex-1"
-                              onClick={() => handleExecutionTargetStrategyChange(strategy)}
-                            >
-                              {t(`execution_target_strategy_${strategy}`)}
-                            </Button>
-                          )
-                        )}
-                      </div>
-                    </div>
-
-                    {executionTarget.strategy === 'specific' && (
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium">
-                          {t('execution_target_device')}
-                        </Label>
-                        <Select
-                          value={executionTarget.device_id || ''}
-                          onValueChange={handleExecutionTargetDeviceChange}
-                          disabled={devicesLoading || !hasTargetDevices}
-                        >
-                          <SelectTrigger className="h-10">
-                            <SelectValue
-                              placeholder={
-                                devicesLoading
-                                  ? t('execution_target_loading_devices')
-                                  : t('execution_target_select_device')
-                              }
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {targetDevices.map(device => (
-                              <SelectItem key={device.device_id} value={device.device_id}>
-                                {device.name}
-                                {device.is_default ? ` (${t('default')})` : ''}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {!hasTargetDevices && !devicesLoading && (
-                          <p className="text-xs text-destructive">
-                            {t('execution_target_no_devices')}
-                          </p>
-                        )}
-                      </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">{t('execution_target_device')}</Label>
+                    <Select
+                      value={executionTarget.device_id || ''}
+                      onValueChange={handleExecutionTargetDeviceChange}
+                      disabled={devicesLoading || !hasSelectableDevices}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue
+                          placeholder={
+                            devicesLoading
+                              ? t('execution_target_loading_devices')
+                              : t('execution_target_select_device')
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectableDevices.map(device => (
+                          <SelectItem key={device.device_id} value={device.device_id}>
+                            {device.name}
+                            {device.is_default ? ` · ${t('default')}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!hasSelectableDevices && !devicesLoading && (
+                      <p className="text-xs text-destructive">{t('execution_target_no_devices')}</p>
                     )}
                   </div>
                 )}

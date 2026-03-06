@@ -26,7 +26,6 @@ from app.schemas.subscription import (
     Subscription,
     SubscriptionCreate,
     SubscriptionExecutionTarget,
-    SubscriptionExecutionTargetStrategy,
     SubscriptionExecutionTargetType,
     SubscriptionInDB,
     SubscriptionStatus,
@@ -65,50 +64,38 @@ def _validate_execution_target(
     from app.services.device_service import device_service
 
     if execution_target.type == SubscriptionExecutionTargetType.MANAGED:
-        if (
-            execution_target.device_id
-            or execution_target.strategy == SubscriptionExecutionTargetStrategy.SPECIFIC
-        ):
+        if execution_target.device_id:
             raise HTTPException(
                 status_code=400,
                 detail="Managed execution target cannot specify a device",
             )
         return
 
-    if execution_target.strategy == SubscriptionExecutionTargetStrategy.SPECIFIC:
-        if not execution_target.device_id:
-            raise HTTPException(
-                status_code=400,
-                detail="execution_target.device_id is required for specific strategy",
-            )
-
-        device = device_service.get_device_by_device_id(
-            db, user_id=user_id, device_id=execution_target.device_id
-        )
-        if not device:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Device '{execution_target.device_id}' not found",
-            )
-
-        actual_type = device.json.get("spec", {}).get(
-            "deviceType", SubscriptionExecutionTargetType.LOCAL.value
-        )
-        if actual_type != execution_target.type.value:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Device '{execution_target.device_id}' is type '{actual_type}', "
-                    f"expected '{execution_target.type.value}'"
-                ),
-            )
-
-        return
-
-    if execution_target.device_id:
+    if not execution_target.device_id:
         raise HTTPException(
             status_code=400,
-            detail="execution_target.device_id is only allowed for specific strategy",
+            detail="execution_target.device_id is required for device execution targets",
+        )
+
+    device = device_service.get_device_by_device_id(
+        db, user_id=user_id, device_id=execution_target.device_id
+    )
+    if not device:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Device '{execution_target.device_id}' not found",
+        )
+
+    actual_type = device.json.get("spec", {}).get(
+        "deviceType", SubscriptionExecutionTargetType.LOCAL.value
+    )
+    if actual_type != execution_target.type.value:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Device '{execution_target.device_id}' is type '{actual_type}', "
+                f"expected '{execution_target.type.value}'"
+            ),
         )
 
 

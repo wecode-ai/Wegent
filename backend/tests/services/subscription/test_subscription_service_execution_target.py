@@ -100,7 +100,6 @@ def test_create_subscription_persists_specific_execution_target(
             team.id,
             {
                 "type": "local",
-                "strategy": "specific",
                 "device_id": device.name,
             },
         ),
@@ -108,7 +107,6 @@ def test_create_subscription_persists_specific_execution_target(
     )
 
     assert created.execution_target.type == "local"
-    assert created.execution_target.strategy == "specific"
     assert created.execution_target.device_id == device.name
 
     created_kind = test_db.query(Kind).filter(Kind.id == created.id).first()
@@ -117,13 +115,13 @@ def test_create_subscription_persists_specific_execution_target(
     assert created_kind.json["spec"]["executionTarget"]["device_id"] == device.name
 
 
-def test_update_subscription_persists_default_cloud_execution_target(
+def test_update_subscription_persists_cloud_execution_target(
     test_db: Session, test_user
 ):
-    """Update should allow switching to default cloud execution target."""
+    """Update should allow switching to a specific cloud execution target."""
     service = SubscriptionService()
     team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
-    _create_device(
+    cloud_device = _create_device(
         test_db,
         test_user.id,
         "cloud-device-1",
@@ -140,14 +138,13 @@ def test_update_subscription_persists_default_cloud_execution_target(
         test_db,
         subscription_id=created.id,
         subscription_in=SubscriptionUpdate(
-            execution_target={"type": "cloud", "strategy": "default"}
+            execution_target={"type": "cloud", "device_id": cloud_device.name}
         ),
         user_id=test_user.id,
     )
 
     assert updated.execution_target.type == "cloud"
-    assert updated.execution_target.strategy == "default"
-    assert updated.execution_target.device_id is None
+    assert updated.execution_target.device_id == cloud_device.name
 
 
 def test_create_subscription_rejects_execution_target_device_type_mismatch(
@@ -171,7 +168,6 @@ def test_create_subscription_rejects_execution_target_device_type_mismatch(
                 team.id,
                 {
                     "type": "local",
-                    "strategy": "specific",
                     "device_id": "cloud-device-1",
                 },
             ),
@@ -180,3 +176,21 @@ def test_create_subscription_rejects_execution_target_device_type_mismatch(
 
     assert exc_info.value.status_code == 400
     assert "expected 'local'" in str(exc_info.value.detail)
+
+
+def test_create_subscription_rejects_device_target_without_device_id(
+    test_db: Session, test_user
+):
+    """Create should reject local/cloud targets that omit device_id."""
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.create_subscription(
+            test_db,
+            subscription_in=_build_create_payload(team.id, {"type": "local"}),
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "device_id is required" in str(exc_info.value.detail)

@@ -19,13 +19,11 @@ def test_subscription_create_accepts_execution_target():
         prompt_template="Run on a device",
         execution_target={
             "type": "local",
-            "strategy": "specific",
             "device_id": "local-device-1",
         },
     )
 
     assert payload.execution_target.type == "local"
-    assert payload.execution_target.strategy == "specific"
     assert payload.execution_target.device_id == "local-device-1"
 
 
@@ -34,10 +32,10 @@ def test_subscription_update_accepts_execution_target():
     payload = SubscriptionUpdate(
         execution_target={
             "type": "cloud",
-            "strategy": "default",
+            "device_id": "cloud-device-1",
         }
     )
 
     assert payload.execution_target is not None
     assert payload.execution_target.type == "cloud"
-    assert payload.execution_target.strategy == "default"
+    assert payload.execution_target.device_id == "cloud-device-1"

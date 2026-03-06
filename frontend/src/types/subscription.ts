@@ -21,11 +21,8 @@ export type SubscriptionEventType = 'webhook' | 'git_push'
 
 export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud'
 
-export type SubscriptionExecutionTargetStrategy = 'default' | 'specific'
-
 export interface SubscriptionExecutionTarget {
   type: SubscriptionExecutionTargetType
-  strategy: SubscriptionExecutionTargetStrategy
   device_id?: string
 }
 
