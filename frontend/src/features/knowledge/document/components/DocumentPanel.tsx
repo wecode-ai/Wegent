@@ -191,7 +191,7 @@ export function DocumentPanel({
   // When collapsed, show a floating button to expand
   if (isCollapsed) {
     return (
-      <div className="fixed top-2 sm:top-3 right-4 z-50">
+      <div className="fixed top-14 sm:top-16 right-4 z-50">
         <TooltipProvider>
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
