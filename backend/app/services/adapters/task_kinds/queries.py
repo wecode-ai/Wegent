@@ -302,21 +302,18 @@ class TaskQueryMixin:
         if types is None:
             types = ["online", "offline"]
 
-        type_filter = self._build_type_filter_sql(types)
-
-        # Common WHERE clause with all filters pushed to SQL:
-        # - Exclude group chats (resource_members + is_group_chat flag)
-        # - Exclude DELETE status
-        # - Apply type filter (online/offline/subscription)
-        base_where = f"""
-            k.kind = 'Task'
+        # SQL uses only indexed columns (user_id, kind, is_active, namespace)
+        # plus NOT EXISTS on resource_members indexes.
+        # All JSON-based filtering (status, is_group_chat, type labels) is done
+        # in Python to avoid per-row JSON parsing in MySQL.
+        ids_sql = text(
+            """
+            SELECT k.id
+            FROM tasks k
+            WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND k.user_id = :user_id
-            AND (JSON_EXTRACT(k.json, '$.status.status') IS NULL
-                 OR JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.status.status')) != 'DELETE')
-            AND (JSON_EXTRACT(k.json, '$.spec.is_group_chat') IS NULL
-                 OR JSON_EXTRACT(k.json, '$.spec.is_group_chat') = false)
             AND NOT EXISTS (
                 SELECT 1
                 FROM resource_members tm
@@ -325,92 +322,75 @@ class TaskQueryMixin:
                 AND tm.status = 'approved'
                 AND tm.copied_resource_id = 0
             )
-            {type_filter}
-        """
-
-        # Use COUNT(*) OVER() window function to get total count in a single query,
-        # avoiding a separate COUNT query that repeats the same heavy WHERE clause.
-        ids_sql = text(
-            f"""
-            SELECT k.id, COUNT(*) OVER() as total_count
-            FROM tasks k
-            WHERE {base_where}
             ORDER BY k.created_at DESC
-            LIMIT :limit OFFSET :skip
         """
         )
-        task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit, "skip": skip}
-        ).fetchall()
-
-        if not task_id_rows:
-            if skip == 0:
-                return [], 0
-            # Fallback: get count when offset exceeds total results
-            count_sql = text(f"SELECT COUNT(*) FROM tasks k WHERE {base_where}")
-            total = db.execute(count_sql, {"user_id": user_id}).scalar() or 0
-            return [], total
-
+        task_id_rows = db.execute(ids_sql, {"user_id": user_id}).fetchall()
         task_ids = [row[0] for row in task_id_rows]
-        total = task_id_rows[0][1]
+
+        if not task_ids:
+            return [], 0
 
         # Load full task data
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
-        # Restore original order
+        # Restore SQL order
         id_to_task = {t.id: t for t in tasks}
         ordered_tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
 
+        # Filter in Python: status, is_group_chat, type labels
+        filtered_tasks = self._filter_personal_tasks(ordered_tasks, types)
+
+        total = len(filtered_tasks)
+        paginated_tasks = filtered_tasks[skip : skip + limit]
+
         # Build lightweight result
-        result = build_lite_task_list(db, ordered_tasks, user_id)
+        result = build_lite_task_list(db, paginated_tasks, user_id)
 
         return result, total
 
     @staticmethod
-    def _build_type_filter_sql(types: List[str]) -> str:
-        """Build SQL WHERE clause fragment for task type filtering.
-
-        Categories:
-        - subscription: labels.type == 'subscription'
-        - offline: labels.type != 'subscription' AND labels.taskType == 'code'
-        - online: everything else (not subscription, not code)
-        """
+    def _filter_personal_tasks(
+        tasks: List[TaskResource],
+        types: List[str],
+    ) -> List[TaskResource]:
+        """Filter personal tasks in Python based on status, group chat flag, and type."""
         include_online = "online" in types
         include_offline = "offline" in types
         include_subscription = "subscription" in types
 
-        if include_online and include_offline and include_subscription:
-            return ""
+        valid_tasks = []
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
 
-        if not include_online and not include_offline and not include_subscription:
-            return "AND 1 = 0"
+            # Skip DELETE status
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status == "DELETE":
+                continue
 
-        # Build inclusive OR conditions for each requested type
-        or_parts = []
-        non_sub_cond = (
-            "(JSON_EXTRACT(k.json, '$.metadata.labels.type') IS NULL "
-            "OR JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.type')) != 'subscription')"
-        )
+            # Skip group chat tasks
+            if task_crd.spec.is_group_chat:
+                continue
 
-        if include_subscription:
-            or_parts.append(
-                "JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.type')) = 'subscription'"
-            )
-        if include_online and include_offline:
-            or_parts.append(non_sub_cond)
-        elif include_online:
-            or_parts.append(
-                f"({non_sub_cond} AND "
-                "(JSON_EXTRACT(k.json, '$.metadata.labels.taskType') IS NULL "
-                "OR JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.taskType')) != 'code'))"
-            )
-        elif include_offline:
-            or_parts.append(
-                f"({non_sub_cond} AND "
-                "JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.metadata.labels.taskType')) = 'code')"
-            )
+            # Apply type filter
+            labels = task_crd.metadata.labels or {}
+            is_subscription = labels.get("type") == "subscription"
+            task_type_label = labels.get("taskType", "chat")
+            is_code = task_type_label == "code"
 
-        return "AND (" + " OR ".join(or_parts) + ")"
+            if is_subscription:
+                if not include_subscription:
+                    continue
+            elif is_code:
+                if not include_offline:
+                    continue
+            else:
+                if not include_online:
+                    continue
+
+            valid_tasks.append(t)
+
+        return valid_tasks
 
     def get_new_tasks_since_id(
         self, db: Session, *, user_id: int, since_id: int, limit: int = 50
