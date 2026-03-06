@@ -188,6 +188,17 @@ class ClaudeCodeAgent(Agent):
         # Note: emitter is created in base class Agent.__init__()
         # using EmitterBuilder with CallbackTransport
 
+    def _stderr_callback(self, stderr_output: str) -> None:
+        """
+        Callback for handling stderr output from Claude CLI.
+
+        Args:
+            stderr_output: The stderr output string from CLI
+        """
+        if stderr_output:
+            # Log stderr output for debugging
+            logger.warning(f"Claude CLI stderr: {stderr_output}")
+
     def add_thinking_step(
         self,
         title: str,
@@ -838,6 +849,9 @@ class ClaudeCodeAgent(Agent):
         self.options = prepare_options_for_windows(
             self.options, self._get_claude_config_dir()
         )
+
+        # Add stderr callback to capture CLI stderr output
+        self.options["stderr"] = self._stderr_callback
 
         # Create client with options
         if self.options:
