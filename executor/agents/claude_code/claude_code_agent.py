@@ -614,6 +614,25 @@ class ClaudeCodeAgent(Agent):
             # Check if a client connection already exists for the corresponding task_id
             cached_client = SessionManager.get_client(self.session_id)
             if cached_client:
+                # Check if MCP servers changed (e.g., KB MCP added for this message)
+                # MCP servers are configured at client creation time and cannot be
+                # changed per-query, so we must recreate the client when they change.
+                current_mcp_keys = frozenset(
+                    self.options.get("mcp_servers", {}).keys()
+                )
+                cached_mcp_keys = SessionManager.get_client_mcp_keys(self.session_id)
+                if current_mcp_keys != cached_mcp_keys:
+                    logger.info(
+                        f"MCP servers changed for session {self.session_id}: "
+                        f"{cached_mcp_keys} -> {current_mcp_keys}, recreating client"
+                    )
+                    await SessionManager._terminate_client_process(
+                        cached_client, self.session_id
+                    )
+                    SessionManager.remove_client(self.session_id)
+                    cached_client = None
+
+            if cached_client:
                 # Verify the cached client is still valid
                 # Check if client process is still running
                 try:
@@ -865,8 +884,9 @@ class ClaudeCodeAgent(Agent):
         # Connect the client
         await self.client.connect()
 
-        # Store client connection for reuse
-        SessionManager.set_client(self.session_id, self.client)
+        # Store client connection for reuse (with MCP server keys for change detection)
+        current_mcp_keys = frozenset(self.options.get("mcp_servers", {}).keys())
+        SessionManager.set_client(self.session_id, self.client, current_mcp_keys)
 
         # Update session_id_map for tracking (for both initial and new sessions)
         # This ensures cleanup_task_clients can find all clients by task_id

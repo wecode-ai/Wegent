@@ -40,6 +40,10 @@ class SessionManager:
     # Key: internal_session_key (task_id:bot_id), Value: actual Claude session_id
     _session_id_map: Dict[str, str] = {}
 
+    # Track MCP server keys for each cached client
+    # Key: session_id, Value: frozenset of MCP server names the client was created with
+    _client_mcp_keys: Dict[str, frozenset] = {}
+
     @staticmethod
     def get_session_id_file_path(task_id: int) -> str:
         """Get the path to the session ID file for a task.
@@ -110,14 +114,21 @@ class SessionManager:
         return cls._clients.get(session_id)
 
     @classmethod
-    def set_client(cls, session_id: str, client: ClaudeSDKClient) -> None:
+    def set_client(
+        cls,
+        session_id: str,
+        client: ClaudeSDKClient,
+        mcp_server_keys: frozenset = frozenset(),
+    ) -> None:
         """Cache a client connection.
 
         Args:
             session_id: Session ID
             client: ClaudeSDKClient instance
+            mcp_server_keys: Frozenset of MCP server names the client was created with
         """
         cls._clients[session_id] = client
+        cls._client_mcp_keys[session_id] = mcp_server_keys
 
     @classmethod
     def remove_client(cls, session_id: str) -> Optional[ClaudeSDKClient]:
@@ -129,7 +140,20 @@ class SessionManager:
         Returns:
             Removed client or None if not found
         """
+        cls._client_mcp_keys.pop(session_id, None)
         return cls._clients.pop(session_id, None)
+
+    @classmethod
+    def get_client_mcp_keys(cls, session_id: str) -> frozenset:
+        """Get the MCP server keys a cached client was created with.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Frozenset of MCP server names, or empty frozenset if not found
+        """
+        return cls._client_mcp_keys.get(session_id, frozenset())
 
     @classmethod
     def get_session_id(cls, internal_key: str) -> Optional[str]:
@@ -236,6 +260,7 @@ class SessionManager:
                 client = cls._clients[session_id]
                 await client.disconnect()
                 del cls._clients[session_id]
+                cls._client_mcp_keys.pop(session_id, None)
                 logger.info(f"Closed Claude client for session_id: {session_id}")
                 return True
             return False
@@ -257,6 +282,7 @@ class SessionManager:
                     f"Error closing client for session_id {session_id}: {str(e)}"
                 )
         cls._clients.clear()
+        cls._client_mcp_keys.clear()
 
     @classmethod
     async def _terminate_client_process(
@@ -328,6 +354,7 @@ class SessionManager:
         # Remove client from cache
         if session_id in cls._clients:
             del cls._clients[session_id]
+            cls._client_mcp_keys.pop(session_id, None)
             logger.info(f"Removed client from cache: session_id={session_id}")
 
         # Remove session_id_map entry
@@ -386,6 +413,7 @@ class SessionManager:
                 client = cls._clients[session_id]
                 await cls._terminate_client_process(client, session_id)
                 del cls._clients[session_id]
+                cls._client_mcp_keys.pop(session_id, None)
                 cleaned_count += 1
             else:
                 logger.warning(
@@ -404,6 +432,7 @@ class SessionManager:
                 client = cls._clients[session_id]
                 await cls._terminate_client_process(client, session_id)
                 del cls._clients[session_id]
+                cls._client_mcp_keys.pop(session_id, None)
                 cleaned_count += 1
 
         if cleaned_count > 0:

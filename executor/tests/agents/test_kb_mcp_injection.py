@@ -9,10 +9,11 @@ and EXECUTOR_MODE is 'local'. Uses the unified knowledge MCP server
 at /mcp/knowledge/sse.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from executor.agents.claude_code.session_manager import SessionManager
 from shared.models.execution import ExecutionRequest
 
 
@@ -98,3 +99,67 @@ class TestClaudeCodeKBMCPInjection:
         assert "wegent-knowledge" in mcp_servers
         kb_config = mcp_servers["wegent-knowledge"]
         assert "/mcp/knowledge/sse" in kb_config["url"]
+
+
+class TestSessionManagerMCPTracking:
+    """Verify SessionManager tracks MCP server keys for cached clients."""
+
+    def setup_method(self):
+        """Clean up SessionManager state before each test."""
+        SessionManager._clients.clear()
+        SessionManager._client_mcp_keys.clear()
+        SessionManager._session_id_map.clear()
+
+    def teardown_method(self):
+        """Clean up SessionManager state after each test."""
+        SessionManager._clients.clear()
+        SessionManager._client_mcp_keys.clear()
+        SessionManager._session_id_map.clear()
+
+    def test_set_client_stores_mcp_keys(self):
+        """set_client should store MCP server keys alongside the client."""
+        mock_client = MagicMock()
+        mcp_keys = frozenset(["server-a", "server-b"])
+
+        SessionManager.set_client("session-1", mock_client, mcp_keys)
+
+        assert SessionManager.get_client("session-1") is mock_client
+        assert SessionManager.get_client_mcp_keys("session-1") == mcp_keys
+
+    def test_set_client_default_empty_mcp_keys(self):
+        """set_client with no mcp_server_keys should default to empty frozenset."""
+        mock_client = MagicMock()
+
+        SessionManager.set_client("session-1", mock_client)
+
+        assert SessionManager.get_client_mcp_keys("session-1") == frozenset()
+
+    def test_remove_client_cleans_mcp_keys(self):
+        """remove_client should also remove MCP keys."""
+        mock_client = MagicMock()
+        mcp_keys = frozenset(["wegent-knowledge"])
+
+        SessionManager.set_client("session-1", mock_client, mcp_keys)
+        removed = SessionManager.remove_client("session-1")
+
+        assert removed is mock_client
+        assert SessionManager.get_client_mcp_keys("session-1") == frozenset()
+
+    def test_get_client_mcp_keys_missing_session(self):
+        """get_client_mcp_keys should return empty frozenset for unknown session."""
+        assert SessionManager.get_client_mcp_keys("nonexistent") == frozenset()
+
+    def test_mcp_keys_change_detection(self):
+        """Detect MCP server config changes between cached and current options."""
+        mock_client = MagicMock()
+        # First message: no KB MCP
+        cached_keys = frozenset(["other-server"])
+        SessionManager.set_client("session-1", mock_client, cached_keys)
+
+        # Second message: KB MCP added
+        current_keys = frozenset(["other-server", "wegent-knowledge"])
+
+        cached = SessionManager.get_client_mcp_keys("session-1")
+        assert cached != current_keys  # Change detected
+        assert "wegent-knowledge" not in cached
+        assert "wegent-knowledge" in current_keys
