@@ -69,6 +69,26 @@ from shared.telemetry.decorators import add_span_event, trace_async
 logger = setup_logger("claude_code_agent")
 
 
+def _extract_mcp_server_keys(mcp_servers: Any) -> frozenset:
+    """Extract MCP server names from dict or list format config.
+
+    Args:
+        mcp_servers: MCP servers config (dict, list, or None)
+
+    Returns:
+        Frozenset of server names
+    """
+    if not mcp_servers:
+        return frozenset()
+    if isinstance(mcp_servers, dict):
+        return frozenset(mcp_servers.keys())
+    if isinstance(mcp_servers, list):
+        return frozenset(
+            item.get("name", "") for item in mcp_servers if isinstance(item, dict)
+        )
+    return frozenset()
+
+
 def _extract_claude_agent_attributes(self, *args, **kwargs) -> Dict[str, Any]:
     """Extract trace attributes from ClaudeCodeAgent instance."""
     return {
@@ -454,7 +474,6 @@ class ClaudeCodeAgent(Agent):
             )
             return TaskStatus.FAILED
 
-
     def execute(self) -> TaskStatus:
         """
         Execute the Claude Code Agent task
@@ -615,6 +634,25 @@ class ClaudeCodeAgent(Agent):
             # Check if a client connection already exists for the corresponding task_id
             cached_client = SessionManager.get_client(self.session_id)
             if cached_client:
+                # Check if MCP servers changed (e.g., KB MCP added for this message)
+                # MCP servers are configured at client creation time and cannot be
+                # changed per-query, so we must recreate the client when they change.
+                current_mcp_keys = _extract_mcp_server_keys(
+                    self.options.get("mcp_servers")
+                )
+                cached_mcp_keys = SessionManager.get_client_mcp_keys(self.session_id)
+                if current_mcp_keys != cached_mcp_keys:
+                    logger.info(
+                        f"MCP servers changed for session {self.session_id}: "
+                        f"{cached_mcp_keys} -> {current_mcp_keys}, recreating client"
+                    )
+                    await SessionManager._terminate_client_process(
+                        cached_client, self.session_id
+                    )
+                    SessionManager.remove_client(self.session_id)
+                    cached_client = None
+
+            if cached_client:
                 # Verify the cached client is still valid
                 # Check if client process is still running
                 try:
@@ -663,6 +701,26 @@ class ClaudeCodeAgent(Agent):
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
             user_selected_skills = self.task_data.user_selected_skills
+
+            # Inject knowledge base meta prompt if available (local mode only)
+            from executor.config import config as executor_config
+
+            if executor_config.EXECUTOR_MODE == "local":
+                kb_meta_prompt = self.task_data.kb_meta_prompt
+                if kb_meta_prompt:
+                    if is_vision_prompt(prompt):
+                        prompt = append_text_to_vision_prompt(
+                            prompt,
+                            f"<knowledge_base_context>\n{kb_meta_prompt}\n</knowledge_base_context>",
+                            prepend=True,
+                        )
+                    else:
+                        prompt = f"<knowledge_base_context>\n{kb_meta_prompt}\n</knowledge_base_context>\n\n{prompt}"
+                    logger.info(
+                        "Injected kb_meta_prompt into prompt (%d chars)",
+                        len(kb_meta_prompt),
+                    )
+
             if is_vision_prompt(prompt):
                 # Vision content: append text to the text block in the list
                 if user_selected_skills:
@@ -676,9 +734,7 @@ class ClaudeCodeAgent(Agent):
                         f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
                     )
                 if self.options.get("cwd"):
-                    cwd_text = "\nCurrent working directory: " + self.options.get(
-                        "cwd"
-                    )
+                    cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
                     git_url = self.task_data.git_url
                     if git_url:
                         cwd_text += "\n project url:" + git_url
@@ -738,9 +794,7 @@ class ClaudeCodeAgent(Agent):
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
-            prompt_length = (
-                len(prompt) if isinstance(prompt, str) else len(str(prompt))
-            )
+            prompt_length = len(prompt) if isinstance(prompt, str) else len(str(prompt))
             logger.info(
                 f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
@@ -850,8 +904,9 @@ class ClaudeCodeAgent(Agent):
         # Connect the client
         await self.client.connect()
 
-        # Store client connection for reuse
-        SessionManager.set_client(self.session_id, self.client)
+        # Store client connection for reuse (with MCP server keys for change detection)
+        current_mcp_keys = _extract_mcp_server_keys(self.options.get("mcp_servers"))
+        SessionManager.set_client(self.session_id, self.client, current_mcp_keys)
 
         # Update session_id_map for tracking (for both initial and new sessions)
         # This ensures cleanup_task_clients can find all clients by task_id
@@ -933,16 +988,12 @@ class ClaudeCodeAgent(Agent):
             )
 
             # Terminate the CC process
-            await SessionManager._terminate_client_process(
-                self.client, self.session_id
-            )
+            await SessionManager._terminate_client_process(self.client, self.session_id)
 
             # Remove all in-memory tracking (client cache + session_id_map)
             # but preserve the on-disk .claude_session_id file for resume
             internal_key = getattr(self, "_internal_session_key", None)
-            SessionManager.cleanup_session_tracking(
-                self.session_id, internal_key
-            )
+            SessionManager.cleanup_session_tracking(self.session_id, internal_key)
 
             # Clear local client reference
             self.client = None
@@ -957,9 +1008,7 @@ class ClaudeCodeAgent(Agent):
                         if asyncio.iscoroutine(result):
                             await result
                 except Exception as e:
-                    logger.warning(
-                        f"Error in heartbeat callback after auto-close: {e}"
-                    )
+                    logger.warning(f"Error in heartbeat callback after auto-close: {e}")
 
             logger.info(
                 f"Auto-closed CC session: session_id={self.session_id}, "

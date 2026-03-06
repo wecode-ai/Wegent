@@ -6,7 +6,7 @@
 
 This module provides a unified MCP Server for Wegent Backend with two endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
-- /mcp/knowledge - Knowledge MCP module root
+- /mcp/knowledge - Unified knowledge MCP module (retrieval + management tools)
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
 New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
 
@@ -190,21 +190,23 @@ _knowledge_tools_registered = False
 def _register_knowledge_tools() -> None:
     """Register knowledge tools from @mcp_tool decorated endpoints.
 
-    This function imports the knowledge tools module to trigger decorator
-    registration, then registers all collected tools to the knowledge MCP server.
+    This function imports both knowledge and kb_retrieval tools modules to trigger
+    decorator registration, then registers all collected tools to the unified
+    knowledge MCP server.
     """
     global _knowledge_tools_registered
     if _knowledge_tools_registered:
         return
 
-    # Import MCP tools module to trigger @mcp_tool decorator registration
+    # Import MCP tools modules to trigger @mcp_tool decorator registration
     # The decorators will add tools to the global registry
     from app.mcp_server.tool_registry import register_tools_to_server
     from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        kb_retrieval,
         knowledge,
     )
 
-    # Register all collected tools to the knowledge server
+    # Register all collected tools to the unified knowledge server
     count = register_tools_to_server(knowledge_mcp_server, "knowledge")
     logger.info(f"[MCP:Knowledge] Registered {count} tools from decorated endpoints")
 
@@ -260,7 +262,7 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
 
 def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     """Create a Starlette app for a streamable-http MCP server."""
-    # Ensure knowledge tools are registered before creating the app
+    # Ensure tools are registered before creating the app
     if spec.name == "knowledge":
         ensure_knowledge_tools_registered()
 
@@ -297,7 +299,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
                         tool_name="",  # Will be set by tool invocation
-                        server_name="knowledge",
+                        server_name=spec.name,
                     )
                     mcp_ctx_token = set_mcp_context(mcp_ctx)
             else:

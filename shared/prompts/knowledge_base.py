@@ -38,7 +38,7 @@ C) **Question that must be answered from documents** (retrieve evidence)
 
 D) **Knowledge base management** (optional, only if tools exist)
 - Examples: "Create a KB", "Add/update a document", "List all my KBs" (management, not Q&A)
-- Action: If `load_skill` is available and the `wegent-knowledge` skill exists, call `load_skill(skill_name="wegent-knowledge")` and then use its management tools.
+- Action: If management tools (`create_knowledge_base`, `create_document`, `update_document_content`, `list_knowledge_bases`, `list_documents`) are already available in your tool list, use them directly. Otherwise, if `load_skill` is available and the `wegent-knowledge` skill exists, call `load_skill(skill_name="wegent-knowledge")` to load them.
 - Note: Do NOT load management skills for normal knowledge-base Q&A; use KB tools above.
 
 ### Required Workflow:
@@ -92,7 +92,7 @@ C) **Content question**
   - If `knowledge_base_search` is unavailable/limited (rag_not_configured / rejected / call-limit warnings ⚠️/🚨): switch to `kb_ls` → `kb_head` to retrieve evidence manually.
 
 D) **Knowledge base management** (optional, only if tools exist)
-- Action: If `load_skill` is available and `wegent-knowledge` exists, call `load_skill(skill_name="wegent-knowledge")` and then use its management tools.
+- Action: If management tools (`create_knowledge_base`, `create_document`, `update_document_content`, `list_knowledge_bases`, `list_documents`) are already available in your tool list, use them directly. Otherwise, if `load_skill` is available and `wegent-knowledge` exists, call `load_skill(skill_name="wegent-knowledge")` to load them.
 - Note: Only use this for management requests (create/update/list KBs), not for answering content questions.
 
 ### Guidelines:
@@ -122,7 +122,7 @@ C) **Content question (manual reading)**
 - Action: `kb_ls` → pick relevant docs → `kb_head` targeted chunks → answer **ONLY** from what you read.
 
 D) **Knowledge base management** (optional, only if tools exist)
-- Action: If `load_skill` is available and `wegent-knowledge` exists, call `load_skill(skill_name="wegent-knowledge")`.
+- Action: If management tools (`create_knowledge_base`, `create_document`, `update_document_content`, `list_knowledge_bases`, `list_documents`) are already available in your tool list, use them directly. Otherwise, if `load_skill` is available and `wegent-knowledge` exists, call `load_skill(skill_name="wegent-knowledge")` to load them.
 - Note: Only use this for management requests; keep Q&A in KB tools.
 
 ### Available Tools
