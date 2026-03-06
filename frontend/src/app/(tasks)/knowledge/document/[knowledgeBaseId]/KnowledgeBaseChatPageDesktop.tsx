@@ -217,26 +217,16 @@ export function KnowledgeBaseChatPageDesktop({
         setSelectedTask(null)
         clearAllStreams()
 
-        // If there's an open task (chat with this knowledge base), stay on current page
-        // Otherwise navigate to /chat for a new conversation
-        if (hasOpenTask) {
-          // Stay on current page but clear task selection
-          router.replace(`/knowledge/document/${knowledgeBaseId}`)
-        } else {
-          // Navigate to chat for a new conversation
-          router.push('/chat')
-        }
+        // Always stay on current notebook page, just clear the task selection
+        // This gives the user a fresh start with the same knowledge base
+        router.replace(`/knowledge/document/${knowledgeBaseId}`)
       })
       .catch(error => {
         console.error('Failed to stop streams:', error)
-        // Still clear state and navigate even if stopping streams fails
+        // Still clear state and refresh even if stopping streams fails
         setSelectedTask(null)
         clearAllStreams()
-        if (hasOpenTask) {
-          router.replace(`/knowledge/document/${knowledgeBaseId}`)
-        } else {
-          router.push('/chat')
-        }
+        router.replace(`/knowledge/document/${knowledgeBaseId}`)
       })
   }
 
