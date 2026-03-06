@@ -127,6 +127,9 @@ export function KnowledgeBaseChatPageDesktop({
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
+  // Document panel collapsed state
+  const [isDocumentPanelCollapsed, setIsDocumentPanelCollapsed] = useState(false)
+
   // Share button state
   const [shareButton, setShareButton] = useState<React.ReactNode>(null)
 
@@ -349,6 +352,7 @@ export function KnowledgeBaseChatPageDesktop({
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
           hideGroupChatOptions={true}
+          isRightPanelCollapsed={isDocumentPanelCollapsed}
         >
           {shareButton}
           <GithubStarButton />
@@ -405,6 +409,7 @@ export function KnowledgeBaseChatPageDesktop({
               // Notify parent page.tsx to refresh and re-route based on new kb_type
               onKbTypeChanged?.()
             }}
+            onCollapsedChange={setIsDocumentPanelCollapsed}
           />
         </div>
       </div>
