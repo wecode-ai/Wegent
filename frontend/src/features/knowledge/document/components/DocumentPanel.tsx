@@ -13,6 +13,7 @@ import { DocumentList } from './DocumentList'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 // Helper function to get initial width from localStorage
 const getInitialWidth = (
@@ -190,27 +191,44 @@ export function DocumentPanel({
   // When collapsed, show a floating button to expand
   if (isCollapsed) {
     return (
-      <div className="fixed right-4 top-2 sm:top-3 z-40">
+      <div className="fixed top-2 sm:top-3 right-4 z-50">
         <div className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-[0px_6px_8px_0px_rgba(51,51,51,0.06)] relative">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={toggleCollapsed}
-            className="h-11 min-w-[44px] p-0 rounded-full hover:bg-hover"
-            aria-label={t('chatPage.showDocuments')}
-          >
-            <PanelRightOpen className="w-4 h-4" />
-          </Button>
+          {/* Expand button */}
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={toggleCollapsed}
+                  className="flex-shrink-0 p-1.5 -m-1.5 rounded-full hover:bg-hover transition-colors"
+                  aria-label={t('chatPage.showDocuments')}
+                >
+                  <PanelRightOpen className="h-4 w-4 text-text-primary" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>{t('chatPage.showDocuments')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          {/* New chat button */}
           {onNewChat && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onNewChat}
-              className="h-11 min-w-[44px] p-0 rounded-full hover:bg-hover"
-              aria-label={t('chatPage.newNote')}
-            >
-              <Plus className="w-4 h-4" />
-            </Button>
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onNewChat}
+                    className="flex-shrink-0 p-1.5 -m-1.5 rounded-full hover:bg-hover transition-colors"
+                    aria-label={t('chatPage.newNote')}
+                  >
+                    <Plus className="h-4 w-4 text-text-primary" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p>{t('chatPage.newNote')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
       </div>
