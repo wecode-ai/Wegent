@@ -166,9 +166,7 @@ def setup_chat_session(
 
         # Determine task type based on git_url presence (code if git_url, otherwise chat)
         task_type = (
-            "code"
-            if workspace_data and workspace_data.get("git_url")
-            else "chat"
+            "code" if workspace_data and workspace_data.get("git_url") else "chat"
         )
 
         # Create task

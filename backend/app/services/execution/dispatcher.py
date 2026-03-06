@@ -25,6 +25,7 @@ from typing import Any, List, Optional
 
 from openai import AsyncOpenAI
 
+from app.core.async_utils import run_in_main_loop
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -33,8 +34,6 @@ from shared.models import (
 )
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
-
-from app.core.async_utils import run_in_main_loop
 
 from .emitters import (
     CompositeResultEmitter,
