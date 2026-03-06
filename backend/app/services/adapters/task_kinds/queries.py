@@ -370,7 +370,7 @@ class TaskQueryMixin:
         """
         )
         task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
+            ids_sql, {"user_id": user_id, "limit": limit + 200, "skip": skip}
         ).fetchall()
         task_ids = [row[0] for row in task_id_rows]
 
