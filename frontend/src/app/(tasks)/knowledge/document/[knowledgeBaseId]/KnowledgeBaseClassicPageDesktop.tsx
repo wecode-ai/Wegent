@@ -157,8 +157,8 @@ export function KnowledgeBaseClassicPageDesktop({
     await Promise.all(streamingIds.map(id => stopStream(id)))
     setSelectedTask(null)
     clearAllStreams()
-    // Navigate to knowledge base chat page (without /document/ path) for new conversation
-    router.replace(`/knowledge/${knowledgeBaseId}`)
+    // Navigate to chat page for a new conversation
+    router.push('/chat')
   }
 
   // Check if user can manage this knowledge base
