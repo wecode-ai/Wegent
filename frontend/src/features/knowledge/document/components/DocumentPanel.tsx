@@ -196,8 +196,8 @@ export function DocumentPanel({
             variant="ghost"
             size="sm"
             onClick={toggleCollapsed}
-            className="h-8 w-8 p-0 rounded-full hover:bg-hover"
-            title={t('chatPage.showDocuments')}
+            className="h-11 min-w-[44px] p-0 rounded-full hover:bg-hover"
+            aria-label={t('chatPage.showDocuments')}
           >
             <PanelRightOpen className="w-4 h-4" />
           </Button>
@@ -206,8 +206,8 @@ export function DocumentPanel({
               variant="ghost"
               size="sm"
               onClick={onNewChat}
-              className="h-8 w-8 p-0 rounded-full hover:bg-hover"
-              title={t('chatPage.newNote')}
+              className="h-11 min-w-[44px] p-0 rounded-full hover:bg-hover"
+              aria-label={t('chatPage.newNote')}
             >
               <Plus className="w-4 h-4" />
             </Button>
