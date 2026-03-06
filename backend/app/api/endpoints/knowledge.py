@@ -45,6 +45,7 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.exceptions import ConsumerAccessDeniedError
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 from shared.telemetry.decorators import (
     add_span_event,
@@ -57,6 +58,30 @@ from shared.telemetry.decorators import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ============== Consumer Guard Helper ==============
+
+
+def _ensure_not_consumer(db: Session, kb_id: int, user_id: int) -> None:
+    """Raise 403 if the user holds only the Consumer role for the given knowledge base.
+
+    This centralises the Consumer-role check so that every document/chunk
+    content-retrieval endpoint calls the same guard instead of duplicating
+    the logic inline.
+    """
+    from app.models.resource_member import ResourceRole
+    from app.services.share import knowledge_share_service
+
+    has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
+        db, kb_id, user_id
+    )
+    if has_access and role == ResourceRole.CONSUMER.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consumer role cannot view document content. "
+            "You can use this knowledge base via chat only.",
+        )
 
 
 # ============== Knowledge Base Endpoints ==============
@@ -382,11 +407,16 @@ def list_documents(
             user=current_user,
             knowledge_base_id=knowledge_base_id,
         )
+    except ConsumerAccessDeniedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
-        )
+        ) from e
 
 
 @router.post(
@@ -673,6 +703,9 @@ def get_document_detail_standalone(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this document",
         )
+
+    # Block Consumer role from viewing document content
+    _ensure_not_consumer(db, document.kind_id, current_user.id)
 
     # Get content if requested
     content = None
@@ -1040,6 +1073,9 @@ async def get_document_detail(
             detail="Knowledge base not found or access denied",
         )
 
+    # Block Consumer role from viewing document content
+    _ensure_not_consumer(db, kb_id, current_user.id)
+
     # Validate document belongs to the specified knowledge base
     document = (
         db.query(KnowledgeDocument)
@@ -1394,6 +1430,9 @@ def list_document_chunks(
             detail="Access denied to this document",
         )
 
+    # Block Consumer role from viewing chunk content
+    _ensure_not_consumer(db, document.kind_id, current_user.id)
+
     # Get chunks from document
     chunks_data = document.chunks or {}
     all_items = chunks_data.get("items", [])
@@ -1461,6 +1500,9 @@ def get_document_chunk(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this document",
         )
+
+    # Block Consumer role from viewing chunk content
+    _ensure_not_consumer(db, document.kind_id, current_user.id)
 
     # Get chunk by index
     chunks_data = document.chunks or {}

@@ -14,6 +14,7 @@ This module provides services for:
 - Orchestration layer for unified REST API and MCP tool support
 """
 
+from app.services.knowledge.exceptions import ConsumerAccessDeniedError
 from app.services.knowledge.knowledge_base_qa_service import (
     KnowledgeBaseQAService,
     knowledge_base_qa_service,
@@ -27,6 +28,7 @@ from app.services.knowledge.summary_service import SummaryService, get_summary_s
 from app.services.knowledge.task_knowledge_base_service import TaskKnowledgeBaseService
 
 __all__ = [
+    "ConsumerAccessDeniedError",
     "KnowledgeService",
     "SummaryService",
     "get_summary_service",

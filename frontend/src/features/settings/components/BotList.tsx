@@ -37,7 +37,7 @@ import { useToast } from '@/hooks/use-toast'
 interface BotListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'Consumer'>
 }
 
 export default function BotList({ scope = 'personal', groupName, groupRoleMap }: BotListProps) {

@@ -126,7 +126,8 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     (permissions?.approved.Owner?.length || 0) +
     (permissions?.approved.Maintainer?.length || 0) +
     (permissions?.approved.Developer?.length || 0) +
-    (permissions?.approved.Reporter?.length || 0)
+    (permissions?.approved.Reporter?.length || 0) +
+    (permissions?.approved.Consumer?.length || 0)
 
   return (
     <div className="space-y-6 p-4">
@@ -206,6 +207,9 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                       </SelectItem>
                       <SelectItem value="Reporter">
                         {t('document.permission.role.Reporter')}
+                      </SelectItem>
+                      <SelectItem value="Consumer">
+                        {t('document.permission.role.Consumer')}
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -316,6 +320,22 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                 t={t}
               />
             )}
+            {/* Consumer permissions */}
+            {(permissions?.approved.Consumer?.length || 0) > 0 && (
+              <PermissionGroup
+                title={t('document.permission.role.Consumer')}
+                users={permissions!.approved.Consumer}
+                editingId={editingId}
+                editingRole={editingRole}
+                setEditingRole={setEditingRole}
+                onStartEditing={startEditing}
+                onCancelEditing={cancelEditing}
+                onUpdateRole={handleUpdateRole}
+                onDelete={handleDelete}
+                loading={loading}
+                t={t}
+              />
+            )}
           </div>
         )}
       </Card>
@@ -389,6 +409,9 @@ function PermissionGroup({
                     </SelectItem>
                     <SelectItem value="Reporter">
                       {t('document.permission.role.Reporter')}
+                    </SelectItem>
+                    <SelectItem value="Consumer">
+                      {t('document.permission.role.Consumer')}
                     </SelectItem>
                   </SelectContent>
                 </Select>

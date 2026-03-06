@@ -38,6 +38,7 @@ interface RetrievalSettingsSectionProps {
   onChange: (config: Partial<RetrievalConfig>) => void
   readOnly?: boolean
   partialReadOnly?: boolean // When true, only retriever and embedding model are read-only
+  showChangeWarning?: boolean // When true, show warning about reindexing when changing retriever/embedding
   scope?: 'personal' | 'group' | 'organization' | 'all'
   groupName?: string
 }
@@ -47,6 +48,7 @@ export function RetrievalSettingsSection({
   onChange,
   readOnly = false,
   partialReadOnly = false,
+  showChangeWarning = false,
   scope,
   groupName,
 }: RetrievalSettingsSectionProps) {
@@ -288,6 +290,19 @@ export function RetrievalSettingsSection({
             >
               {t('document.goToSettings')}
             </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Change Warning - shown when editing existing knowledge base */}
+      {showChangeWarning && !ragUnavailable && (
+        <Alert variant="warning" className="border-warning/50 bg-warning/5">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <AlertDescription className="text-sm">
+            <p className="font-medium mb-1">{t('document.retrieval.changeWarning')}</p>
+            <p className="text-text-muted text-xs">
+              {t('document.retrieval.changeWarningHint')}
+            </p>
           </AlertDescription>
         </Alert>
       )}

@@ -235,6 +235,8 @@ export function GroupMembersDialog({
         return 'secondary'
       case 'Reporter':
         return 'info'
+      case 'Consumer':
+        return 'warning'
       default:
         return 'info'
     }
@@ -308,6 +310,7 @@ export function GroupMembersDialog({
                     </SelectItem>
                     <SelectItem value="Developer">{t('groups:groups.roles.Developer')}</SelectItem>
                     <SelectItem value="Reporter">{t('groups:groups.roles.Reporter')}</SelectItem>
+                    <SelectItem value="Consumer">{t('groups:groups.roles.Consumer')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -323,6 +326,12 @@ export function GroupMembersDialog({
                   <div>
                     <strong>Reporter：</strong>
                     {t('groups:groupMembers.roleDescriptions.Reporter')}
+                  </div>
+                )}
+                {selectedRole === 'Consumer' && (
+                  <div>
+                    <strong>Consumer：</strong>
+                    {t('groups:groupMembers.roleDescriptions.Consumer')}
                   </div>
                 )}
                 {selectedRole === 'Developer' && (
@@ -463,6 +472,9 @@ export function GroupMembersDialog({
                                 </SelectItem>
                                 <SelectItem value="Reporter">
                                   {t('groups:groups.roles.Reporter')}
+                                </SelectItem>
+                                <SelectItem value="Consumer">
+                                  {t('groups:groups.roles.Consumer')}
                                 </SelectItem>
                               </SelectContent>
                             </Select>
