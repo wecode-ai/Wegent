@@ -14,6 +14,7 @@ from typing import Dict, Optional
 
 from app.schemas.device import DeviceType
 from app.services.device.base_provider import BaseDeviceProvider
+from app.services.device.cloud_provider import CloudDeviceProvider
 from app.services.device.local_provider import LocalDeviceProvider
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,8 @@ class DeviceProviderFactory:
         if DeviceType.LOCAL not in cls._providers:
             # Register built-in providers
             cls._providers[DeviceType.LOCAL] = LocalDeviceProvider()
+        if DeviceType.CLOUD not in cls._providers:
+            cls._providers[DeviceType.CLOUD] = CloudDeviceProvider()
 
     @classmethod
     def get_provider(cls, device_type: DeviceType) -> Optional[BaseDeviceProvider]:

@@ -39,6 +39,7 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
+import { deviceApis, type DeviceInfo } from '@/apis/devices'
 import { subscriptionApis } from '@/apis/subscription'
 import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
@@ -48,6 +49,9 @@ import type {
   NotificationLevel,
   Subscription,
   SubscriptionCreateRequest,
+  SubscriptionExecutionTarget,
+  SubscriptionExecutionTargetStrategy,
+  SubscriptionExecutionTargetType,
   SubscriptionKnowledgeBaseRef,
   SubscriptionTaskType,
   SubscriptionTriggerType,
@@ -244,6 +248,7 @@ interface SubscriptionFormProps {
     enabled: boolean
     preserveHistory: boolean
     visibility: SubscriptionVisibility
+    executionTarget: SubscriptionExecutionTarget
   }>
 }
 
@@ -262,6 +267,14 @@ const defaultTriggerConfig: Record<SubscriptionTriggerType, Record<string, unkno
   one_time: { execute_at: new Date().toISOString() },
   event: { event_type: 'webhook' },
 }
+
+const normalizeExecutionTarget = (
+  target?: Partial<SubscriptionExecutionTarget>
+): SubscriptionExecutionTarget => ({
+  type: target?.type || 'managed',
+  strategy: target?.strategy || 'default',
+  ...(target?.device_id ? { device_id: target.device_id } : {}),
+})
 
 export function SubscriptionForm({
   open,
@@ -291,11 +304,16 @@ export function SubscriptionForm({
   const [retryCount, setRetryCount] = useState(initialData?.retryCount ?? 0)
   const [timeoutSeconds, setTimeoutSeconds] = useState(initialData?.timeoutSeconds ?? 600) // Default 10 minutes
   const [enabled, setEnabled] = useState(initialData?.enabled ?? true)
+  const [executionTarget, setExecutionTarget] = useState<SubscriptionExecutionTarget>(
+    normalizeExecutionTarget(initialData?.executionTarget)
+  )
   const [preserveHistory, setPreserveHistory] = useState(initialData?.preserveHistory ?? false) // History preservation
   const [visibility, setVisibility] = useState<SubscriptionVisibility>(
     initialData?.visibility || 'private'
   ) // Visibility setting
   const [marketWhitelistUsers, setMarketWhitelistUsers] = useState<SearchUser[]>([])
+  const [availableDevices, setAvailableDevices] = useState<DeviceInfo[]>([])
+  const [devicesLoading, setDevicesLoading] = useState(false)
 
   // Knowledge base selection state
   const [knowledgeBaseRefs, setKnowledgeBaseRefs] = useState<SubscriptionKnowledgeBaseRef[]>([])
@@ -402,6 +420,24 @@ export function SubscriptionForm({
     }
   }, [open, t])
 
+  useEffect(() => {
+    const loadDevices = async () => {
+      setDevicesLoading(true)
+      try {
+        const response = await deviceApis.getAllDevices()
+        setAvailableDevices(response.items || [])
+      } catch (error) {
+        console.error('Failed to load devices:', error)
+      } finally {
+        setDevicesLoading(false)
+      }
+    }
+
+    if (open) {
+      loadDevices()
+    }
+  }, [open])
+
   // Get selected team
   const selectedTeam = teams.find(t => t.id === teamId)
 
@@ -424,6 +460,10 @@ export function SubscriptionForm({
   })()
 
   const compatibleProvider = getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
+  const targetDevices = availableDevices.filter(
+    device => device.device_type === executionTarget.type
+  )
+  const hasTargetDevices = targetDevices.length > 0
 
   // Determine if model selection is required
   // For rental subscriptions: model is REQUIRED (must select a model to use)
@@ -481,6 +521,32 @@ export function SubscriptionForm({
     setSelectedBranch(null)
   }, [])
 
+  const handleExecutionTargetTypeChange = useCallback((type: SubscriptionExecutionTargetType) => {
+    setExecutionTarget(() => ({
+      type,
+      strategy: type === 'managed' ? 'default' : 'default',
+    }))
+  }, [])
+
+  const handleExecutionTargetStrategyChange = useCallback(
+    (strategy: SubscriptionExecutionTargetStrategy) => {
+      setExecutionTarget(prev => ({
+        type: prev.type,
+        strategy,
+        ...(strategy === 'specific' ? { device_id: prev.device_id } : {}),
+      }))
+    },
+    []
+  )
+
+  const handleExecutionTargetDeviceChange = useCallback((deviceId: string) => {
+    setExecutionTarget(prev => ({
+      ...prev,
+      strategy: 'specific',
+      device_id: deviceId,
+    }))
+  }, [])
+
   // Reset form when subscription changes
   useEffect(() => {
     if (subscription) {
@@ -494,6 +560,7 @@ export function SubscriptionForm({
       setRetryCount(subscription.retry_count)
       setTimeoutSeconds(subscription.timeout_seconds || 600)
       setEnabled(subscription.enabled)
+      setExecutionTarget(normalizeExecutionTarget(subscription.execution_target))
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
       setMarketWhitelistUsers(
@@ -537,6 +604,7 @@ export function SubscriptionForm({
       setRetryCount(initialData?.retryCount ?? 0)
       setTimeoutSeconds(initialData?.timeoutSeconds ?? 600)
       setEnabled(initialData?.enabled ?? true)
+      setExecutionTarget(normalizeExecutionTarget(initialData?.executionTarget))
       setPreserveHistory(initialData?.preserveHistory ?? false)
       setVisibility(initialData?.visibility || 'private')
       setMarketWhitelistUsers([])
@@ -568,6 +636,17 @@ export function SubscriptionForm({
     // Validation
     if (!displayName.trim()) {
       toast.error(t('validation_display_name_required'))
+      return
+    }
+
+    if (executionTarget.type !== 'managed' && executionTarget.strategy === 'specific') {
+      if (!executionTarget.device_id) {
+        toast.error(t('validation_execution_target_device_required'))
+        return
+      }
+    }
+    if (executionTarget.type !== 'managed' && !hasTargetDevices) {
+      toast.error(t('validation_execution_target_no_devices'))
       return
     }
 
@@ -617,6 +696,7 @@ export function SubscriptionForm({
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          execution_target: executionTarget,
           preserve_history: preserveHistory,
           // Only include team_id, prompt_template, visibility for non-rental subscriptions
           ...(isRental
@@ -678,6 +758,7 @@ export function SubscriptionForm({
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          execution_target: executionTarget,
           preserve_history: preserveHistory,
           visibility,
           market_whitelist_user_ids: marketWhitelistUserIds,
@@ -717,6 +798,8 @@ export function SubscriptionForm({
     retryCount,
     timeoutSeconds,
     enabled,
+    executionTarget,
+    hasTargetDevices,
     preserveHistory,
     visibility,
     marketWhitelistUsers,
@@ -1006,6 +1089,99 @@ export function SubscriptionForm({
                   </Select>
                 </div>
               )}
+
+              <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
+                <div className="text-sm font-medium text-text-secondary">
+                  {t('execution_target')}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{t('execution_target_type')}</Label>
+                  <div className="flex gap-2">
+                    {(['managed', 'local', 'cloud'] as SubscriptionExecutionTargetType[]).map(
+                      type => (
+                        <Button
+                          key={type}
+                          type="button"
+                          variant={executionTarget.type === type ? 'primary' : 'outline'}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => handleExecutionTargetTypeChange(type)}
+                        >
+                          {t(`execution_target_type_${type}`)}
+                        </Button>
+                      )
+                    )}
+                  </div>
+                  <p className="text-xs text-text-muted">
+                    {t(`execution_target_type_${executionTarget.type}_hint`)}
+                  </p>
+                </div>
+
+                {executionTarget.type !== 'managed' && (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">
+                        {t('execution_target_strategy')}
+                      </Label>
+                      <div className="flex gap-2">
+                        {(['default', 'specific'] as SubscriptionExecutionTargetStrategy[]).map(
+                          strategy => (
+                            <Button
+                              key={strategy}
+                              type="button"
+                              variant={
+                                executionTarget.strategy === strategy ? 'primary' : 'outline'
+                              }
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => handleExecutionTargetStrategyChange(strategy)}
+                            >
+                              {t(`execution_target_strategy_${strategy}`)}
+                            </Button>
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    {executionTarget.strategy === 'specific' && (
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">
+                          {t('execution_target_device')}
+                        </Label>
+                        <Select
+                          value={executionTarget.device_id || ''}
+                          onValueChange={handleExecutionTargetDeviceChange}
+                          disabled={devicesLoading || !hasTargetDevices}
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue
+                              placeholder={
+                                devicesLoading
+                                  ? t('execution_target_loading_devices')
+                                  : t('execution_target_select_device')
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {targetDevices.map(device => (
+                              <SelectItem key={device.device_id} value={device.device_id}>
+                                {device.name}
+                                {device.is_default ? ` (${t('default')})` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {!hasTargetDevices && !devicesLoading && (
+                          <p className="text-xs text-destructive">
+                            {t('execution_target_no_devices')}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Repository Selection - Only show for code-type teams */}
               {isCodeTypeTeam && (

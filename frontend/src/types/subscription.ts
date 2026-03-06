@@ -19,6 +19,16 @@ export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 // Event trigger sub-type enumeration
 export type SubscriptionEventType = 'webhook' | 'git_push'
 
+export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud'
+
+export type SubscriptionExecutionTargetStrategy = 'default' | 'specific'
+
+export interface SubscriptionExecutionTarget {
+  type: SubscriptionExecutionTargetType
+  strategy: SubscriptionExecutionTargetStrategy
+  device_id?: string
+}
+
 // Background execution status enumeration
 export type BackgroundExecutionStatus =
   | 'PENDING'
@@ -98,6 +108,7 @@ export interface Subscription {
   retry_count: number
   timeout_seconds: number // Execution timeout (60-3600s, default 600)
   enabled: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   bound_task_id?: number // Task ID bound to this subscription for history preservation
@@ -152,6 +163,7 @@ export interface SubscriptionCreateRequest {
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
@@ -182,6 +194,7 @@ export interface SubscriptionUpdateRequest {
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references

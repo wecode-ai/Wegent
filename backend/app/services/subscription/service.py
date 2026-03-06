@@ -25,6 +25,9 @@ from app.schemas.subscription import (
     BackgroundExecutionInDB,
     Subscription,
     SubscriptionCreate,
+    SubscriptionExecutionTarget,
+    SubscriptionExecutionTargetStrategy,
+    SubscriptionExecutionTargetType,
     SubscriptionInDB,
     SubscriptionStatus,
     SubscriptionTriggerType,
@@ -50,6 +53,63 @@ from app.services.subscription.market_access import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_execution_target(
+    db: Session,
+    *,
+    user_id: int,
+    execution_target: SubscriptionExecutionTarget,
+) -> None:
+    """Validate subscription execution target configuration."""
+    from app.services.device_service import device_service
+
+    if execution_target.type == SubscriptionExecutionTargetType.MANAGED:
+        if (
+            execution_target.device_id
+            or execution_target.strategy == SubscriptionExecutionTargetStrategy.SPECIFIC
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Managed execution target cannot specify a device",
+            )
+        return
+
+    if execution_target.strategy == SubscriptionExecutionTargetStrategy.SPECIFIC:
+        if not execution_target.device_id:
+            raise HTTPException(
+                status_code=400,
+                detail="execution_target.device_id is required for specific strategy",
+            )
+
+        device = device_service.get_device_by_device_id(
+            db, user_id=user_id, device_id=execution_target.device_id
+        )
+        if not device:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Device '{execution_target.device_id}' not found",
+            )
+
+        actual_type = device.json.get("spec", {}).get(
+            "deviceType", SubscriptionExecutionTargetType.LOCAL.value
+        )
+        if actual_type != execution_target.type.value:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Device '{execution_target.device_id}' is type '{actual_type}', "
+                    f"expected '{execution_target.type.value}'"
+                ),
+            )
+
+        return
+
+    if execution_target.device_id:
+        raise HTTPException(
+            status_code=400,
+            detail="execution_target.device_id is only allowed for specific strategy",
+        )
 
 
 class SubscriptionService:
@@ -141,6 +201,11 @@ class SubscriptionService:
 
         market_whitelist_user_ids = filter_existing_market_whitelist_user_ids(
             db, subscription_in.market_whitelist_user_ids
+        )
+        _validate_execution_target(
+            db,
+            user_id=user_id,
+            execution_target=subscription_in.execution_target,
         )
 
         # Build CRD JSON
@@ -425,6 +490,17 @@ class SubscriptionService:
         if "enabled" in update_data:
             subscription_crd.spec.enabled = update_data["enabled"]
             internal["enabled"] = update_data["enabled"]
+
+        if "execution_target" in update_data:
+            execution_target = SubscriptionExecutionTarget.model_validate(
+                update_data["execution_target"]
+            )
+            _validate_execution_target(
+                db,
+                user_id=user_id,
+                execution_target=execution_target,
+            )
+            subscription_crd.spec.executionTarget = execution_target
 
         # Update model reference if changed
         if "model_ref" in update_data:
@@ -815,6 +891,12 @@ class SubscriptionService:
         if webhook_token:
             webhook_url = f"/api/subscriptions/webhook/{webhook_token}"
 
+        execution_target = getattr(
+            subscription_crd.spec,
+            "executionTarget",
+            SubscriptionExecutionTarget(),
+        )
+
         # Extract model_ref from CRD
         model_ref = None
         if subscription_crd.spec.modelRef:
@@ -900,6 +982,7 @@ class SubscriptionService:
             retry_count=subscription_crd.spec.retryCount,
             timeout_seconds=subscription_crd.spec.timeoutSeconds,
             enabled=internal.get("enabled", True),
+            execution_target=execution_target,
             # History preservation settings
             preserve_history=subscription_crd.spec.preserveHistory,
             history_message_count=subscription_crd.spec.historyMessageCount,
