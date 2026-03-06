@@ -155,6 +155,11 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         if hasattr(message, "_wegent_images"):
             images = message._wegent_images
 
+        # Include pre-downloaded files if they were attached
+        files: list[dict[str, Any]] = []
+        if hasattr(message, "_wegent_files"):
+            files = message._wegent_files
+
         return MessageContext(
             content=content,
             sender_id=sender_id,
@@ -165,6 +170,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             raw_message=message,
             extra_data=extra_data,
             images=images,
+            files=files,
         )
 
     async def resolve_user(
@@ -511,6 +517,78 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 continue
         return images
 
+    async def _download_dingtalk_file(
+        self, message: ChatbotMessage
+    ) -> list[dict[str, Any]]:
+        """Download file from DingTalk file-type message.
+
+        For file messages, the SDK stores file metadata in message.extensions["content"].
+        The downloadCode can be used with the same messageFiles/download API as images.
+
+        Args:
+            message: ChatbotMessage with message_type=="file"
+
+        Returns:
+            List of file dicts with filename and binary_data
+        """
+        import json
+
+        import requests
+
+        # File metadata is in extensions["content"], may be dict or JSON string
+        file_content = message.extensions.get("content", {})
+        if isinstance(file_content, str):
+            try:
+                file_content = json.loads(file_content)
+            except (json.JSONDecodeError, TypeError):
+                self.logger.error(
+                    "[DingTalkHandler] Failed to parse file content: %s",
+                    str(file_content)[:100],
+                )
+                return []
+
+        download_code = file_content.get("downloadCode")
+        file_name = file_content.get("fileName", "unknown_file")
+
+        if not download_code:
+            self.logger.warning(
+                "[DingTalkHandler] File message missing downloadCode"
+            )
+            return []
+
+        try:
+            # Reuse the same DingTalk API for file download
+            download_url = self.get_image_download_url(download_code)
+            if not download_url:
+                self.logger.warning(
+                    "[DingTalkHandler] Failed to get download URL for file: %s",
+                    file_name,
+                )
+                return []
+
+            response = requests.get(download_url, timeout=60)
+            response.raise_for_status()
+
+            self.logger.info(
+                "[DingTalkHandler] Downloaded file: name=%s, size=%d bytes",
+                file_name,
+                len(response.content),
+            )
+            return [
+                {
+                    "filename": file_name,
+                    "binary_data": response.content,
+                    "file_size": len(response.content),
+                }
+            ]
+        except Exception as e:
+            self.logger.error(
+                "[DingTalkHandler] Failed to download file %s: %s",
+                file_name,
+                e,
+            )
+            return []
+
     async def _process_with_channel_handler(
         self, incoming_message: ChatbotMessage, callback_data: Dict[str, Any]
     ) -> bool:
@@ -542,6 +620,13 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             images = await self._download_dingtalk_images(image_download_codes)
             if images:
                 incoming_message._wegent_images = images
+
+        # Download files from DingTalk for file-type messages
+        message_type = getattr(incoming_message, "message_type", None)
+        if message_type == "file":
+            files = await self._download_dingtalk_file(incoming_message)
+            if files:
+                incoming_message._wegent_files = files
 
         # Parse message into MessageContext, including callback_data in extra_data
         message_context = self._channel_handler.parse_message(incoming_message)

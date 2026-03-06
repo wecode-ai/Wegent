@@ -4,17 +4,34 @@
 
 'use client'
 
-import { Users, ArrowRight } from 'lucide-react'
+import { Users, ArrowRight, MessageSquarePlus } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { Group } from '@/types/group'
 
 interface GroupCardProps {
   group: Group
   onClick: () => void
+  onCreateGroupChat?: () => void
+  canCreateGroupChat?: boolean
 }
 
-export function GroupCard({ group, onClick }: GroupCardProps) {
+export function GroupCard({
+  group,
+  onClick,
+  onCreateGroupChat,
+  canCreateGroupChat = false,
+}: GroupCardProps) {
+  const { t } = useTranslation()
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Ignore keyboard events from interactive child elements (buttons)
+    // to prevent Enter/Space from bubbling up and triggering the card click
+    if (
+      e.target instanceof HTMLElement &&
+      (e.target.tagName === 'BUTTON' || e.target.closest('[role="button"]'))
+    ) {
+      return
+    }
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       onClick()
@@ -46,13 +63,42 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
         {group.description && <p className="line-clamp-2">{group.description}</p>}
       </div>
 
-      {/* Bottom section - member count */}
+      {/* Bottom section - member count and actions */}
       <div className="flex items-center justify-between mt-auto pt-2 flex-shrink-0">
         <span className="text-xs text-text-muted flex items-center gap-1">
           <Users className="w-3 h-3" />
           {group.member_count || 0}
         </span>
-        <ArrowRight className="w-4 h-4 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+        <div className="flex items-center gap-1">
+          {canCreateGroupChat && onCreateGroupChat && (
+            <button
+              type="button"
+              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+              onClick={e => {
+                e.stopPropagation()
+                onCreateGroupChat()
+              }}
+              onKeyDown={e => e.stopPropagation()}
+              title={t('knowledge:document.groupChat.create')}
+              aria-label={t('knowledge:document.groupChat.create')}
+            >
+              <MessageSquarePlus className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+            onClick={e => {
+              e.stopPropagation()
+              onClick()
+            }}
+            onKeyDown={e => e.stopPropagation()}
+            title={t('common:actions.view')}
+            aria-label={t('common:actions.view')}
+          >
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </Card>
   )

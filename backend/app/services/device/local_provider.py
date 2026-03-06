@@ -123,7 +123,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             )
         else:
             # Check if this is the first device for the user
-            existing_count = (
+            existing_devices = (
                 db.query(Kind)
                 .filter(
                     and_(
@@ -133,7 +133,13 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         Kind.is_active == True,
                     )
                 )
-                .count()
+                .all()
+            )
+            existing_count = sum(
+                1
+                for device in existing_devices
+                if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
+                == DeviceType.LOCAL.value
             )
             is_first_device = existing_count == 0
 

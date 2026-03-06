@@ -64,6 +64,7 @@ class SubscriptionExecutionContext:
     preserve_history: bool = False
     history_message_count: int = 10
     bound_task_id: int = 0
+    resolved_device_id: Optional[str] = None
 
 
 @dataclass
@@ -444,6 +445,10 @@ async def _create_subscription_task(
     - The system will automatically load history via initialize_redis_chat_history
     """
     from app.models.task import TaskResource
+    from app.schemas.subscription import (
+        SubscriptionExecutionTarget,
+        SubscriptionExecutionTargetType,
+    )
     from app.services.chat.storage import TaskCreationParams, create_chat_task
 
     ws = ctx.workspace_info
@@ -463,6 +468,20 @@ async def _create_subscription_task(
         force_override_bot_model = (
             ctx.subscription_crd.spec.forceOverrideBotModel or False
         )
+
+    execution_target = getattr(
+        ctx.subscription_crd.spec,
+        "executionTarget",
+        SubscriptionExecutionTarget(),
+    )
+    resolved_device_id = None
+    if execution_target.type != SubscriptionExecutionTargetType.MANAGED:
+        if not execution_target.device_id:
+            raise ValueError(
+                f"Subscription {ctx.subscription.id} is missing execution target device_id"
+            )
+        resolved_device_id = execution_target.device_id
+    ctx.resolved_device_id = resolved_device_id
 
     # Determine if we should reuse an existing task for history preservation
     reuse_task_id = None
@@ -501,6 +520,7 @@ async def _create_subscription_task(
         git_repo_id=ws.git_repo_id,
         git_domain=ws.git_domain,
         branch_name=ws.branch_name,
+        device_id=resolved_device_id,
     )
 
     result = await create_chat_task(

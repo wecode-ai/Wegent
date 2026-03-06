@@ -199,6 +199,15 @@ class TaskRequestBuilder:
             force_override=force_override,
         )
 
+        # Merge user-selected skills into bot_config so Executor downloads them
+        if bot_config and resolved_skills:
+            all_skill_names = [s["name"] for s in resolved_skills]
+            existing_skills = set(bot_config[0].get("skills", []))
+            for name in all_skill_names:
+                if name not in existing_skills:
+                    bot_config[0].setdefault("skills", []).append(name)
+                    existing_skills.add(name)
+
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
 
