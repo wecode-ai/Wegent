@@ -192,45 +192,22 @@ export function DocumentPanel({
   if (isCollapsed) {
     return (
       <div className="fixed top-2 sm:top-3 right-4 z-50">
-        <div className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-[0px_6px_8px_0px_rgba(51,51,51,0.06)] relative">
-          {/* Expand button */}
-          <TooltipProvider>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={toggleCollapsed}
-                  className="flex-shrink-0 p-1.5 -m-1.5 rounded-full hover:bg-hover transition-colors"
-                  aria-label={t('chatPage.showDocuments')}
-                >
-                  <PanelRightOpen className="h-4 w-4 text-text-primary" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                <p>{t('chatPage.showDocuments')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          {/* New chat button */}
-          {onNewChat && (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={onNewChat}
-                    className="flex-shrink-0 p-1.5 -m-1.5 rounded-full hover:bg-hover transition-colors"
-                    aria-label={t('chatPage.newNote')}
-                  >
-                    <Plus className="h-4 w-4 text-text-primary" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>{t('chatPage.newNote')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={toggleCollapsed}
+                className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-[0px_6px_8px_0px_rgba(51,51,51,0.06)] hover:bg-hover transition-colors"
+                aria-label={t('chatPage.showDocuments')}
+              >
+                <PanelRightOpen className="h-4 w-4 text-text-primary" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>{t('chatPage.showDocuments')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
     )
   }
