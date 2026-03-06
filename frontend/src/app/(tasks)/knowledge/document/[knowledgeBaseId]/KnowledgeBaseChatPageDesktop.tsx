@@ -209,22 +209,35 @@ export function KnowledgeBaseChatPageDesktop({
   }
 
   // Handle new task from collapsed sidebar
-  const handleNewTask = async () => {
+  const handleNewTask = () => {
     // Stop all active streams before clearing state
     const streamingIds = getStreamingTaskIds()
-    await Promise.all(streamingIds.map(id => stopStream(id)))
-    setSelectedTask(null)
-    clearAllStreams()
+    Promise.all(streamingIds.map(id => stopStream(id)))
+      .then(() => {
+        setSelectedTask(null)
+        clearAllStreams()
 
-    // If there's an open task (chat with this knowledge base), stay on current page
-    // Otherwise navigate to /chat for a new conversation
-    if (hasOpenTask) {
-      // Stay on current page but clear task selection
-      router.replace(`/knowledge/document/${knowledgeBaseId}`)
-    } else {
-      // Navigate to chat for a new conversation
-      router.push('/chat')
-    }
+        // If there's an open task (chat with this knowledge base), stay on current page
+        // Otherwise navigate to /chat for a new conversation
+        if (hasOpenTask) {
+          // Stay on current page but clear task selection
+          router.replace(`/knowledge/document/${knowledgeBaseId}`)
+        } else {
+          // Navigate to chat for a new conversation
+          router.push('/chat')
+        }
+      })
+      .catch(error => {
+        console.error('Failed to stop streams:', error)
+        // Still clear state and navigate even if stopping streams fails
+        setSelectedTask(null)
+        clearAllStreams()
+        if (hasOpenTask) {
+          router.replace(`/knowledge/document/${knowledgeBaseId}`)
+        } else {
+          router.push('/chat')
+        }
+      })
   }
 
   // Handle creating new notebook knowledge base
