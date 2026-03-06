@@ -122,6 +122,7 @@ setup_auth() {
 run_tests() {
     local mode=$1
     local test_url=$2
+    local test_pattern=$3
     local auth_file=$(get_auth_file "$test_url")
 
     cd "$SCRIPT_DIR"
@@ -136,18 +137,35 @@ run_tests() {
     export PLAYWRIGHT_AUTH_FILE="$auth_file"
     print_info "Using auth state: $auth_file"
 
+    # Show test pattern if specified
+    if [ -n "$test_pattern" ]; then
+        print_info "Running tests matching: $test_pattern"
+    fi
+
     case $mode in
         "headed")
             print_info "Running tests in headed mode (with browser UI)..."
-            npm run test:headed
+            if [ -n "$test_pattern" ]; then
+                npx playwright test -g "$test_pattern" --headed
+            else
+                npm run test:headed
+            fi
             ;;
         "headless")
             print_info "Running tests in headless mode..."
-            npm test
+            if [ -n "$test_pattern" ]; then
+                npx playwright test -g "$test_pattern"
+            else
+                npm test
+            fi
             ;;
         "debug")
             print_info "Running tests in debug mode..."
-            npm run test:debug
+            if [ -n "$test_pattern" ]; then
+                npx playwright test -g "$test_pattern" --debug
+            else
+                npm run test:debug
+            fi
             ;;
         *)
             print_error "Unknown mode: $mode"
@@ -167,6 +185,7 @@ show_usage() {
     echo "  -d, --debug      Run tests in debug mode"
     echo "  -a, --auth       Force re-authentication (re-scan QR code)"
     echo "  -i, --install    Force reinstall dependencies"
+    echo "  -t, --test       Run specific test by name (e.g., -t clarification)"
     echo "  --help           Show this help message"
     echo ""
     echo "Arguments:"
@@ -181,6 +200,8 @@ show_usage() {
     echo "  $0 http://localhost:3000           # Test specific URL (localhost)"
     echo "  $0 -h http://localhost:3000        # Test localhost with browser visible"
     echo "  $0 -a                              # Re-authenticate and run tests"
+    echo "  $0 -t clarification                # Run only clarification mode test"
+    echo "  $0 -t chat                         # Run tests matching 'chat' in name"
     echo "  TEST_BASE_URL=http://localhost:3000 $0"
     echo ""
 }
@@ -190,6 +211,7 @@ main() {
     local mode="headless"
     local force_auth=false
     local force_install=false
+    local test_pattern=""
     local test_url="${TEST_BASE_URL:-https://wegent.intra.weibo.com}"
 
     # Parse arguments
@@ -214,6 +236,16 @@ main() {
             -i|--install)
                 force_install=true
                 shift
+                ;;
+            -t|--test)
+                if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                    test_pattern="$2"
+                    shift 2
+                else
+                    print_error "Missing test pattern after -t/--test"
+                    show_usage
+                    exit 1
+                fi
                 ;;
             --help)
                 show_usage
@@ -267,8 +299,11 @@ main() {
 
     # Step 3: Run tests
     print_info "Test mode: $mode"
+    if [ -n "$test_pattern" ]; then
+        print_info "Test filter: $test_pattern"
+    fi
     echo ""
-    run_tests "$mode" "$test_url"
+    run_tests "$mode" "$test_url" "$test_pattern"
 }
 
 # Run main function

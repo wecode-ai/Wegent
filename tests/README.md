@@ -15,6 +15,10 @@ cd tests
 ./run-tests.sh -d           # Debug mode
 ./run-tests.sh -a           # Force re-login
 ./run-tests.sh --help       # Show all options
+
+# Run specific test by name
+./run-tests.sh -t clarification        # Run only clarification mode test
+./run-tests.sh -t "send message"       # Run tests matching "send message"
 ```
 
 ## Manual Setup
@@ -64,6 +68,7 @@ npm run test:debug
 | `-d, --debug` | Run tests in debug mode |
 | `-a, --auth` | Force re-authentication (re-scan QR code) |
 | `-i, --install` | Force reinstall dependencies |
+| `-t, --test` | Run specific test by name (e.g., `-t clarification`) |
 | `URL` | Target URL to test (e.g., `https://preview-wegent.intra.weibo.com`) |
 | `--help` | Show help message |
 
@@ -78,6 +83,12 @@ npm run test:debug
 
 # Test with browser visible
 ./run-tests.sh -h https://preview-wegent.intra.weibo.com
+
+# Run specific test (e.g., clarification mode test)
+./run-tests.sh -t clarification
+
+# Run specific test with browser visible
+./run-tests.sh -t clarification -h
 
 # Using environment variable
 TEST_BASE_URL=https://preview-wegent.intra.weibo.com ./run-tests.sh
