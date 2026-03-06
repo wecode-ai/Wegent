@@ -188,6 +188,17 @@ class ClaudeCodeAgent(Agent):
         # Note: emitter is created in base class Agent.__init__()
         # using EmitterBuilder with CallbackTransport
 
+    def _stderr_callback(self, stderr_output: str) -> None:
+        """
+        Callback for handling stderr output from Claude CLI.
+
+        Args:
+            stderr_output: The stderr output string from CLI
+        """
+        if stderr_output:
+            # Log stderr output for debugging
+            logger.warning(f"Claude CLI stderr: {stderr_output}")
+
     def add_thinking_step(
         self,
         title: str,
@@ -454,7 +465,6 @@ class ClaudeCodeAgent(Agent):
             )
             return TaskStatus.FAILED
 
-
     def execute(self) -> TaskStatus:
         """
         Execute the Claude Code Agent task
@@ -676,9 +686,7 @@ class ClaudeCodeAgent(Agent):
                         f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
                     )
                 if self.options.get("cwd"):
-                    cwd_text = "\nCurrent working directory: " + self.options.get(
-                        "cwd"
-                    )
+                    cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
                     git_url = self.task_data.git_url
                     if git_url:
                         cwd_text += "\n project url:" + git_url
@@ -738,9 +746,7 @@ class ClaudeCodeAgent(Agent):
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
-            prompt_length = (
-                len(prompt) if isinstance(prompt, str) else len(str(prompt))
-            )
+            prompt_length = len(prompt) if isinstance(prompt, str) else len(str(prompt))
             logger.info(
                 f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
@@ -805,6 +811,9 @@ class ClaudeCodeAgent(Agent):
         connects it, and stores it in the cache.
 
         Config files are generated in initialize() and passed via 'settings' parameter.
+
+        If resuming a saved session fails (e.g., session expired or invalid),
+        automatically retries with a fresh session.
         """
         logger.info(f"Creating new Claude client for session_id: {self.session_id}")
 
@@ -824,6 +833,7 @@ class ClaudeCodeAgent(Agent):
 
         # Check if there's a saved session ID to resume
         # Skip if resume option is already set (e.g., from retry logic)
+        saved_session_id = None
         if "resume" not in self.options:
             saved_session_id = SessionManager.load_saved_session_id(self.task_id)
             if saved_session_id:
@@ -840,6 +850,9 @@ class ClaudeCodeAgent(Agent):
             self.options, self._get_claude_config_dir()
         )
 
+        # Add stderr callback to capture CLI stderr output
+        self.options["stderr"] = self._stderr_callback
+
         # Create client with options
         if self.options:
             code_options = ClaudeAgentOptions(**self.options)
@@ -847,8 +860,37 @@ class ClaudeCodeAgent(Agent):
         else:
             self.client = ClaudeSDKClient()
 
-        # Connect the client
-        await self.client.connect()
+        # Connect the client with retry logic for resume failures
+        try:
+            await self.client.connect()
+        except Exception as e:
+            # Check if this is a resume failure (session expired or invalid)
+            if saved_session_id and "resume" in self.options:
+                logger.warning(
+                    f"Failed to resume session {saved_session_id} for task {self.task_id}: {e}. "
+                    f"Deleting invalid session file and retrying with fresh session."
+                )
+                # Delete the invalid session ID file
+                SessionManager.delete_saved_session_id(self.task_id)
+
+                # Remove resume option and retry
+                del self.options["resume"]
+
+                # Recreate client without resume option
+                if self.options:
+                    code_options = ClaudeAgentOptions(**self.options)
+                    self.client = ClaudeSDKClient(options=code_options)
+                else:
+                    self.client = ClaudeSDKClient()
+
+                # Retry connection
+                logger.info(
+                    f"Retrying connection for task {self.task_id} with fresh session"
+                )
+                await self.client.connect()
+            else:
+                # Not a resume failure, re-raise the exception
+                raise
 
         # Store client connection for reuse
         SessionManager.set_client(self.session_id, self.client)
@@ -933,16 +975,12 @@ class ClaudeCodeAgent(Agent):
             )
 
             # Terminate the CC process
-            await SessionManager._terminate_client_process(
-                self.client, self.session_id
-            )
+            await SessionManager._terminate_client_process(self.client, self.session_id)
 
             # Remove all in-memory tracking (client cache + session_id_map)
             # but preserve the on-disk .claude_session_id file for resume
             internal_key = getattr(self, "_internal_session_key", None)
-            SessionManager.cleanup_session_tracking(
-                self.session_id, internal_key
-            )
+            SessionManager.cleanup_session_tracking(self.session_id, internal_key)
 
             # Clear local client reference
             self.client = None
@@ -957,9 +995,7 @@ class ClaudeCodeAgent(Agent):
                         if asyncio.iscoroutine(result):
                             await result
                 except Exception as e:
-                    logger.warning(
-                        f"Error in heartbeat callback after auto-close: {e}"
-                    )
+                    logger.warning(f"Error in heartbeat callback after auto-close: {e}")
 
             logger.info(
                 f"Auto-closed CC session: session_id={self.session_id}, "
