@@ -535,11 +535,11 @@ class KnowledgeService:
         if data.description is not None:
             spec["description"] = data.description
 
-        # Update retrieval config if provided (only allowed fields)
+        # Update retrieval config if provided
         if data.retrieval_config is not None:
             current_retrieval_config = spec.get("retrievalConfig", {})
             if current_retrieval_config:
-                # Only update allowed fields, keep retriever and embedding_config unchanged
+                # Existing config: only update tunable fields, keep retriever and embedding_config unchanged
                 if data.retrieval_config.retrieval_mode is not None:
                     current_retrieval_config["retrieval_mode"] = (
                         data.retrieval_config.retrieval_mode
@@ -555,6 +555,37 @@ class KnowledgeService:
                         data.retrieval_config.hybrid_weights.model_dump()
                     )
                 spec["retrievalConfig"] = current_retrieval_config
+            else:
+                # No existing config: build a new one from scratch
+                # Field names must match RetrievalConfig model (snake_case)
+                new_config = {}
+                if data.retrieval_config.retriever_name:
+                    new_config["retriever_name"] = (
+                        data.retrieval_config.retriever_name
+                    )
+                    new_config["retriever_namespace"] = (
+                        data.retrieval_config.retriever_namespace or "default"
+                    )
+                if data.retrieval_config.embedding_config is not None:
+                    new_config["embedding_config"] = (
+                        data.retrieval_config.embedding_config.model_dump()
+                    )
+                if data.retrieval_config.retrieval_mode is not None:
+                    new_config["retrieval_mode"] = (
+                        data.retrieval_config.retrieval_mode
+                    )
+                if data.retrieval_config.top_k is not None:
+                    new_config["top_k"] = data.retrieval_config.top_k
+                if data.retrieval_config.score_threshold is not None:
+                    new_config["score_threshold"] = (
+                        data.retrieval_config.score_threshold
+                    )
+                if data.retrieval_config.hybrid_weights is not None:
+                    new_config["hybrid_weights"] = (
+                        data.retrieval_config.hybrid_weights.model_dump()
+                    )
+                if new_config:
+                    spec["retrievalConfig"] = new_config
 
         # Update summary_enabled if provided
         if data.summary_enabled is not None:

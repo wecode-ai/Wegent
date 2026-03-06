@@ -115,6 +115,14 @@ export interface KnowledgeBaseCreate {
 }
 
 export interface RetrievalConfigUpdate {
+  // These fields are only accepted when initializing retrieval config for the first time
+  retriever_name?: string
+  retriever_namespace?: string
+  embedding_config?: {
+    model_name?: string
+    model_namespace?: string
+  }
+  // Tunable fields (can always be updated)
   retrieval_mode?: 'vector' | 'keyword' | 'hybrid'
   top_k?: number
   score_threshold?: number
