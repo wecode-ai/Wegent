@@ -25,6 +25,8 @@ from app.schemas.subscription import (
     BackgroundExecutionInDB,
     Subscription,
     SubscriptionCreate,
+    SubscriptionDeviceRef,
+    SubscriptionExecutionMode,
     SubscriptionInDB,
     SubscriptionStatus,
     SubscriptionTriggerType,
@@ -143,6 +145,41 @@ class SubscriptionService:
             db, subscription_in.market_whitelist_user_ids
         )
 
+        # Validate cloud device if execution_mode is 'device'
+        if (
+            subscription_in.execution_mode == "device"
+            or subscription_in.execution_mode == SubscriptionExecutionMode.DEVICE.value
+        ):
+            if not subscription_in.device_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="device_id is required when execution_mode is 'device'",
+                )
+            # Validate device exists, belongs to user, and is a cloud device
+            device = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.name == subscription_in.device_id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not device:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Device with id '{subscription_in.device_id}' not found",
+                )
+            # Verify it's a cloud device
+            device_type = device.json.get("spec", {}).get("deviceType", "local")
+            if device_type != "cloud":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only cloud devices are supported for scheduled task execution. "
+                    "Local devices may not be online when the subscription triggers.",
+                )
+
         # Build CRD JSON
         subscription_crd = build_subscription_crd(
             subscription_in, team, workspace, webhook_token
@@ -175,6 +212,9 @@ class SubscriptionService:
             "failure_count": 0,
             "bound_task_id": 0,
             "market_whitelist_user_ids": market_whitelist_user_ids,
+            # Execution mode and device reference
+            "execution_mode": subscription_in.execution_mode or "auto",
+            "device_id": subscription_in.device_id or "",
         }
 
         # Create Subscription as a Kind resource
@@ -465,6 +505,67 @@ class SubscriptionService:
                     db, update_data["market_whitelist_user_ids"]
                 )
             )
+
+        # Update execution mode and device reference
+        if "execution_mode" in update_data or "device_id" in update_data:
+            new_execution_mode = update_data.get(
+                "execution_mode", internal.get("execution_mode", "auto")
+            )
+            new_device_id = update_data.get("device_id", internal.get("device_id", ""))
+
+            # Handle device_id being explicitly set to empty string (clearing device)
+            if "device_id" in update_data and update_data["device_id"] == "":
+                new_device_id = ""
+                # If clearing device, also reset execution mode to auto
+                if new_execution_mode == "device":
+                    new_execution_mode = "auto"
+
+            # Validate cloud device if execution_mode is 'device'
+            if new_execution_mode == "device":
+                if not new_device_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="device_id is required when execution_mode is 'device'",
+                    )
+                # Validate device exists, belongs to user, and is a cloud device
+                device = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == user_id,
+                        Kind.kind == "Device",
+                        Kind.name == new_device_id,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if not device:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Device with id '{new_device_id}' not found",
+                    )
+                # Verify it's a cloud device
+                device_type = device.json.get("spec", {}).get("deviceType", "local")
+                if device_type != "cloud":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Only cloud devices are supported for scheduled task execution. "
+                        "Local devices may not be online when the subscription triggers.",
+                    )
+
+            # Update internal fields
+            internal["execution_mode"] = new_execution_mode
+            internal["device_id"] = new_device_id
+
+            # Update CRD spec
+            subscription_crd.spec.executionMode = SubscriptionExecutionMode(
+                new_execution_mode
+            )
+            if new_device_id:
+                subscription_crd.spec.deviceRef = SubscriptionDeviceRef(
+                    deviceId=new_device_id, deviceType="cloud"
+                )
+            else:
+                subscription_crd.spec.deviceRef = None
 
         # Update trigger configuration
         if "trigger_type" in update_data or "trigger_config" in update_data:
@@ -926,6 +1027,9 @@ class SubscriptionService:
             source_owner_username=source_owner_username,
             rental_count=rental_count,
             market_whitelist_user_ids=market_whitelist_user_ids,
+            # Execution mode and device reference
+            execution_mode=internal.get("execution_mode", "auto"),
+            device_id=internal.get("device_id") or None,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )

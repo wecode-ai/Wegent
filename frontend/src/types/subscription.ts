@@ -72,6 +72,9 @@ export interface SubscriptionKnowledgeBaseRef {
   namespace: string
 }
 
+// Execution mode enumeration
+export type SubscriptionExecutionMode = 'auto' | 'device'
+
 // Subscription configuration
 export interface Subscription {
   id: number
@@ -124,6 +127,9 @@ export interface Subscription {
   source_subscription_display_name?: string
   source_owner_username?: string
   rental_count?: number
+  // Execution mode and device reference
+  execution_mode?: SubscriptionExecutionMode
+  device_id?: string
   created_at: string
   updated_at: string
 }
@@ -158,6 +164,9 @@ export interface SubscriptionCreateRequest {
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
+  // Execution mode and device reference
+  execution_mode?: SubscriptionExecutionMode
+  device_id?: string // Cloud device ID for execution
 }
 
 // Subscription update request
@@ -188,6 +197,9 @@ export interface SubscriptionUpdateRequest {
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
+  // Execution mode and device reference
+  execution_mode?: SubscriptionExecutionMode
+  device_id?: string // Cloud device ID for execution (set to '' to clear)
 }
 
 // Subscription list response

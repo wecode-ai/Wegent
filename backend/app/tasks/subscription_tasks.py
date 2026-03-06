@@ -64,6 +64,9 @@ class SubscriptionExecutionContext:
     preserve_history: bool = False
     history_message_count: int = 10
     bound_task_id: int = 0
+    # Execution mode and device reference
+    execution_mode: str = "auto"
+    device_id: str = ""
 
 
 @dataclass
@@ -253,6 +256,10 @@ def _load_subscription_execution_context(
         effective_crd.spec.preserveHistory = False  # Rentals don't support history
         subscription_crd = effective_crd
 
+    # Extract execution mode and device_id from internal
+    execution_mode = internal.get("execution_mode", "auto")
+    device_id = internal.get("device_id", "")
+
     return SubscriptionExecutionContext(
         subscription=subscription,
         subscription_crd=subscription_crd,
@@ -264,6 +271,8 @@ def _load_subscription_execution_context(
         preserve_history=preserve_history,
         history_message_count=history_message_count,
         bound_task_id=bound_task_id,
+        execution_mode=execution_mode,
+        device_id=device_id,
     )
 
 
