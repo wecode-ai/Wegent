@@ -63,6 +63,30 @@ class BackgroundExecutionStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class SubscriptionExecutionMode(str, Enum):
+    """Subscription execution mode enumeration.
+
+    Determines how the subscription task is routed for execution.
+    """
+
+    AUTO = "auto"  # Default behavior: route based on shell type
+    DEVICE = "device"  # Route to a specific cloud device via WebSocket
+
+
+class SubscriptionDeviceRef(BaseModel):
+    """Reference to a cloud device for subscription execution.
+
+    Note: Only cloud devices are supported for scheduled task execution,
+    because local devices may not be online when the subscription triggers.
+    """
+
+    deviceId: str = Field(..., description="Cloud device unique identifier")
+    deviceType: str = Field(
+        "cloud",
+        description="Device type (only 'cloud' is supported for subscriptions)",
+    )
+
+
 # Trigger configuration schemas
 class CronTriggerConfig(BaseModel):
     """Cron trigger configuration."""
@@ -220,6 +244,15 @@ class SubscriptionSpec(BaseModel):
         description="Knowledge bases to bind to this subscription. "
         "AI will have access to these knowledge bases during execution.",
     )
+    # Execution mode and device reference
+    executionMode: SubscriptionExecutionMode = Field(
+        SubscriptionExecutionMode.AUTO,
+        description="Execution mode: 'auto' (route by shell type) or 'device' (route to specific cloud device)",
+    )
+    deviceRef: Optional[SubscriptionDeviceRef] = Field(
+        None,
+        description="Reference to cloud device for execution (required when executionMode is 'device')",
+    )
 
 
 class SubscriptionStatus(BaseModel):
@@ -337,6 +370,15 @@ class SubscriptionBase(BaseModel):
         description="User IDs allowed to discover and rent this market subscription. "
         "If empty or omitted, all users can discover and rent it.",
     )
+    # Execution mode and device reference
+    execution_mode: str = Field(
+        "auto",
+        description="Execution mode: 'auto' (route by shell type) or 'device' (route to specific cloud device)",
+    )
+    device_id: Optional[str] = Field(
+        None,
+        description="Cloud device ID for execution (required when execution_mode is 'device')",
+    )
 
 
 class SubscriptionCreate(SubscriptionBase):
@@ -375,6 +417,16 @@ class SubscriptionUpdate(BaseModel):
     knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = None
     # Market whitelist
     market_whitelist_user_ids: Optional[List[int]] = None
+    # Execution mode and device reference
+    execution_mode: Optional[str] = Field(
+        None,
+        description="Execution mode: 'auto' (route by shell type) or 'device' (route to specific cloud device)",
+    )
+    device_id: Optional[str] = Field(
+        None,
+        description="Cloud device ID for execution (required when execution_mode is 'device'). "
+        "Set to empty string to clear device selection.",
+    )
 
 
 class SubscriptionInDB(SubscriptionBase):
@@ -413,6 +465,15 @@ class SubscriptionInDB(SubscriptionBase):
     )
     rental_count: int = Field(
         0, description="Number of rentals (for market subscriptions)"
+    )
+    # Execution mode and device reference
+    execution_mode: str = Field(
+        "auto",
+        description="Execution mode: 'auto' (route by shell type) or 'device' (route to specific cloud device)",
+    )
+    device_id: Optional[str] = Field(
+        None,
+        description="Cloud device ID for execution (when execution_mode is 'device')",
     )
     created_at: datetime
     updated_at: datetime

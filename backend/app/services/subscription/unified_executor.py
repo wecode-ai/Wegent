@@ -59,6 +59,10 @@ class SubscriptionExecutionData:
     trigger_type: str
     trigger_reason: str
 
+    # Execution mode and device reference
+    execution_mode: str = "auto"
+    device_id: str = ""
+
     # Default values must come last
     is_subscription: bool = True
 
@@ -123,13 +127,19 @@ async def execute_subscription_unified(
         enable_deep_thinking=True,
     )
 
+    # Determine device_id for routing
+    # If execution_mode is 'device', use the configured device_id
+    device_id = None
+    if execution_data.execution_mode == "device" and execution_data.device_id:
+        device_id = execution_data.device_id
+
     # Determine communication mode
     router = ExecutionRouter()
-    target = router.route(request, device_id=None)
+    target = router.route(request, device_id=device_id)
 
     logger.info(
         f"[execute_subscription_unified] Routing result: "
-        f"mode={target.mode.value}, url={target.url}"
+        f"mode={target.mode.value}, url={target.url}, device_id={device_id}"
     )
 
     if target.mode == CommunicationMode.SSE:
@@ -137,6 +147,13 @@ async def execute_subscription_unified(
         await _execute_sse_sync(
             request=request,
             execution_data=execution_data,
+        )
+    elif target.mode == CommunicationMode.WEBSOCKET:
+        # WebSocket mode (Cloud Device) - dispatch to device with retry logic
+        await _execute_websocket_device(
+            request=request,
+            execution_data=execution_data,
+            device_id=device_id,
         )
     else:
         # HTTP+Callback mode (ClaudeCode/Agno/Dify) - asynchronous execution
@@ -255,6 +272,138 @@ async def _execute_sse_sync(
                 user_id=execution_data.user_id,
                 status="FAILED",
                 error=str(e),
+            )
+        )
+
+
+async def _execute_websocket_device(
+    request: Any,
+    execution_data: SubscriptionExecutionData,
+    device_id: str,
+) -> None:
+    """Execute subscription via WebSocket mode (cloud device).
+
+    Dispatches the task to a specific cloud device via WebSocket.
+    Implements retry logic with backoff for device offline scenarios.
+
+    Retry strategy:
+    - Up to 3 retries with exponential backoff: 30s, 60s, 120s
+    - Total wait time: ~3.5 minutes
+    - If device is still offline after all retries, mark execution as FAILED
+
+    Args:
+        request: ExecutionRequest
+        execution_data: Subscription execution data
+        device_id: Target cloud device ID
+    """
+    import asyncio
+
+    from app.core.events import TaskCompletedEvent, get_event_bus
+    from app.services.device_service import DeviceService
+    from app.services.execution import execution_dispatcher
+    from app.services.execution.emitters import SSEResultEmitter
+
+    logger.info(
+        f"[_execute_websocket_device] Starting WebSocket device execution: "
+        f"execution_id={execution_data.execution_id}, device_id={device_id}"
+    )
+
+    event_bus = get_event_bus()
+
+    # Retry configuration
+    max_retries = 3
+    retry_delays = [30, 60, 120]  # Backoff in seconds
+
+    for attempt in range(max_retries + 1):
+        # Check if device is online
+        is_online = await DeviceService.is_device_online(
+            execution_data.user_id, device_id
+        )
+
+        if is_online:
+            logger.info(
+                f"[_execute_websocket_device] Device {device_id} is online, "
+                f"dispatching task (attempt {attempt + 1})"
+            )
+            break
+
+        # Device is offline
+        if attempt < max_retries:
+            delay = retry_delays[attempt]
+            logger.warning(
+                f"[_execute_websocket_device] Device {device_id} is offline, "
+                f"retrying in {delay}s (attempt {attempt + 1}/{max_retries}), "
+                f"execution_id={execution_data.execution_id}"
+            )
+            await asyncio.sleep(delay)
+        else:
+            # All retries exhausted
+            error_msg = (
+                f"Cloud device '{device_id}' is offline. "
+                f"Subscription execution failed after {max_retries} retry attempts. "
+                f"Please ensure the device is online when the subscription triggers."
+            )
+            logger.error(
+                f"[_execute_websocket_device] {error_msg}, "
+                f"execution_id={execution_data.execution_id}"
+            )
+            await event_bus.publish(
+                TaskCompletedEvent(
+                    task_id=execution_data.task_id,
+                    subtask_id=execution_data.subtask_id,
+                    user_id=execution_data.user_id,
+                    status="FAILED",
+                    error=error_msg,
+                )
+            )
+            return
+
+    # Device is online, dispatch the task
+    emitter = SSEResultEmitter(
+        task_id=execution_data.task_id,
+        subtask_id=execution_data.subtask_id,
+    )
+
+    try:
+        # Dispatch task to device via WebSocket
+        dispatch_task = asyncio.create_task(
+            execution_dispatcher.dispatch(request, device_id=device_id, emitter=emitter)
+        )
+
+        # Wait for completion and collect results
+        accumulated_content, final_event = await emitter.collect()
+
+        # Wait for dispatch task to complete
+        try:
+            await dispatch_task
+        except Exception:
+            pass  # Error already handled via emitter
+
+        logger.info(
+            f"[_execute_websocket_device] WebSocket device execution completed: "
+            f"execution_id={execution_data.execution_id}, "
+            f"device_id={device_id}, "
+            f"content_length={len(accumulated_content)}"
+        )
+
+        # Note: Task completion is handled by DeviceNamespace.on_task_complete
+        # which publishes TaskCompletedEvent → SubscriptionTaskCompletionHandler
+
+    except Exception as e:
+        logger.error(
+            f"[_execute_websocket_device] WebSocket device dispatch failed: "
+            f"execution_id={execution_data.execution_id}, "
+            f"device_id={device_id}, error={e}",
+            exc_info=True,
+        )
+
+        await event_bus.publish(
+            TaskCompletedEvent(
+                task_id=execution_data.task_id,
+                subtask_id=execution_data.subtask_id,
+                user_id=execution_data.user_id,
+                status="FAILED",
+                error=f"Failed to dispatch task to cloud device: {e}",
             )
         )
 
@@ -400,4 +549,6 @@ def extract_subscription_execution_data(
         team_display_name=team_display_name,
         trigger_type=ctx.trigger_type,
         trigger_reason=ctx.execution.trigger_reason or "",
+        execution_mode=ctx.execution_mode,
+        device_id=ctx.device_id,
     )

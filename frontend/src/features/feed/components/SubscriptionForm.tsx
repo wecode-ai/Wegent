@@ -8,7 +8,18 @@
  * Subscription creation/edit form component.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff, Database } from 'lucide-react'
+import {
+  Copy,
+  Check,
+  Terminal,
+  Brain,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Database,
+  Monitor,
+  Cloud,
+} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,6 +59,7 @@ import type {
   NotificationLevel,
   Subscription,
   SubscriptionCreateRequest,
+  SubscriptionExecutionMode,
   SubscriptionKnowledgeBaseRef,
   SubscriptionTaskType,
   SubscriptionTriggerType,
@@ -62,6 +74,7 @@ import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { cn, parseUTCDate } from '@/lib/utils'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import { deviceApis, type DeviceInfo } from '@/apis/devices'
 
 // Model type for selector
 interface SubscriptionModel {
@@ -300,6 +313,12 @@ export function SubscriptionForm({
   // Knowledge base selection state
   const [knowledgeBaseRefs, setKnowledgeBaseRefs] = useState<SubscriptionKnowledgeBaseRef[]>([])
 
+  // Execution mode and device selection state
+  const [executionMode, setExecutionMode] = useState<SubscriptionExecutionMode>('auto')
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+  const [cloudDevices, setCloudDevices] = useState<DeviceInfo[]>([])
+  const [devicesLoading, setDevicesLoading] = useState(false)
+
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
   const [models, setModels] = useState<SubscriptionModel[]>([])
@@ -373,6 +392,26 @@ export function SubscriptionForm({
     }
     if (open) {
       loadTeams()
+    }
+  }, [open])
+
+  // Load cloud devices for device execution mode
+  useEffect(() => {
+    const loadCloudDevices = async () => {
+      setDevicesLoading(true)
+      try {
+        const response = await deviceApis.getAllDevices()
+        // Filter to only show cloud devices
+        const cloudOnly = response.items.filter(device => device.device_type === 'cloud')
+        setCloudDevices(cloudOnly)
+      } catch (error) {
+        console.error('Failed to load cloud devices:', error)
+      } finally {
+        setDevicesLoading(false)
+      }
+    }
+    if (open) {
+      loadCloudDevices()
     }
   }, [open])
 
@@ -523,6 +562,9 @@ export function SubscriptionForm({
       } else {
         setSelectedModel(null)
       }
+      // Restore execution mode and device selection
+      setExecutionMode(subscription.execution_mode || 'auto')
+      setSelectedDeviceId(subscription.device_id || null)
     } else {
       // Use initialData if provided, otherwise use defaults
       setDisplayName(initialData?.displayName || '')
@@ -544,6 +586,8 @@ export function SubscriptionForm({
       setSelectedBranch(null)
       setSelectedModel(null)
       setKnowledgeBaseRefs([])
+      setExecutionMode('auto')
+      setSelectedDeviceId(null)
     }
   }, [subscription, open, initialData])
 
@@ -640,6 +684,9 @@ export function SubscriptionForm({
           force_override_bot_model: !!selectedModel, // Always override when model is selected
           // Include knowledge base references
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
+          // Include execution mode and device selection
+          execution_mode: executionMode,
+          device_id: executionMode === 'device' ? selectedDeviceId || '' : '',
         }
         await subscriptionApis.updateSubscription(subscription.id, updateData)
 
@@ -693,6 +740,9 @@ export function SubscriptionForm({
           force_override_bot_model: !!selectedModel, // Always override when model is selected
           // Include knowledge base references
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
+          // Include execution mode and device selection
+          execution_mode: executionMode,
+          device_id: executionMode === 'device' ? selectedDeviceId || undefined : undefined,
         }
         await subscriptionApis.createSubscription(createData)
         toast.success(t('create_success'))
@@ -724,6 +774,8 @@ export function SubscriptionForm({
     selectedBranch,
     selectedModel,
     knowledgeBaseRefs,
+    executionMode,
+    selectedDeviceId,
     isEditing,
     isRental,
     subscription,
@@ -1169,6 +1221,97 @@ export function SubscriptionForm({
                     disabled={isRental}
                   />
                   <p className="text-xs text-text-muted">{t('knowledge_base_hint')}</p>
+                </div>
+              </div>
+
+              {/* Execution Target - Cloud Device Selection */}
+              <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
+                <div className="flex items-center gap-2">
+                  <Cloud className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium text-text-secondary">
+                    {t('execution_target')}
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {/* Execution Mode Toggle */}
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={executionMode === 'auto' ? 'primary' : 'outline'}
+                      size="sm"
+                      onClick={() => {
+                        setExecutionMode('auto')
+                        setSelectedDeviceId(null)
+                      }}
+                      className="flex-1"
+                    >
+                      <Monitor className="h-4 w-4 mr-1.5" />
+                      {t('execution_mode_auto')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={executionMode === 'device' ? 'primary' : 'outline'}
+                      size="sm"
+                      onClick={() => setExecutionMode('device')}
+                      className="flex-1"
+                      disabled={cloudDevices.length === 0}
+                    >
+                      <Cloud className="h-4 w-4 mr-1.5" />
+                      {t('execution_mode_device')}
+                    </Button>
+                  </div>
+
+                  {/* Device Selection - Only show when mode is 'device' */}
+                  {executionMode === 'device' && (
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">{t('select_cloud_device')}</Label>
+                      <Select
+                        value={selectedDeviceId || ''}
+                        onValueChange={setSelectedDeviceId}
+                        disabled={devicesLoading}
+                      >
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder={t('select_cloud_device_placeholder')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {cloudDevices.map(device => (
+                            <SelectItem key={device.device_id} value={device.device_id}>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={cn(
+                                    'h-2 w-2 rounded-full',
+                                    device.status === 'online'
+                                      ? 'bg-green-500'
+                                      : device.status === 'busy'
+                                        ? 'bg-yellow-500'
+                                        : 'bg-gray-400'
+                                  )}
+                                />
+                                <span>{device.name}</span>
+                                <span className="text-xs text-text-muted">
+                                  ({device.status === 'online' ? t('device_online') : t('device_offline')})
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Offline warning */}
+                      {selectedDeviceId && (() => {
+                        const selectedDevice = cloudDevices.find(d => d.device_id === selectedDeviceId)
+                        return selectedDevice && selectedDevice.status !== 'online' ? (
+                          <p className="text-xs text-amber-600 dark:text-amber-400">
+                            {t('device_offline_warning')}
+                          </p>
+                        ) : null
+                      })()}
+                    </div>
+                  )}
+
+                  <p className="text-xs text-text-muted">
+                    {executionMode === 'auto' ? t('execution_mode_auto_hint') : t('execution_mode_device_hint')}
+                  </p>
                 </div>
               </div>
 

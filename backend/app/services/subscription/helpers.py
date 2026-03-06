@@ -31,7 +31,9 @@ from app.schemas.subscription import (
     OneTimeTriggerConfig,
     Subscription,
     SubscriptionCreate,
+    SubscriptionDeviceRef,
     SubscriptionEventType,
+    SubscriptionExecutionMode,
     SubscriptionMetadata,
     SubscriptionSpec,
     SubscriptionStatus,
@@ -159,6 +161,19 @@ def build_subscription_crd(
         historyMessageCount=subscription_in.history_message_count,
         # Knowledge base references
         knowledgeBaseRefs=subscription_in.knowledge_base_refs,
+        # Execution mode and device reference
+        executionMode=(
+            SubscriptionExecutionMode(subscription_in.execution_mode)
+            if subscription_in.execution_mode
+            else SubscriptionExecutionMode.AUTO
+        ),
+        deviceRef=(
+            SubscriptionDeviceRef(
+                deviceId=subscription_in.device_id, deviceType="cloud"
+            )
+            if subscription_in.device_id
+            else None
+        ),
     )
 
     status = SubscriptionStatus()
