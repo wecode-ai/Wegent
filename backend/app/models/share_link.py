@@ -86,7 +86,14 @@ class ShareLink(Base):
         nullable=False,
         default=PermissionLevel.VIEW.value,
         server_default="view",
-        comment="Default permission level: view, edit, manage",
+        comment="Default permission level: view, edit, manage (deprecated, use default_role)",
+    )
+    default_role = Column(
+        String(20),
+        nullable=False,
+        default="Reporter",
+        server_default="Reporter",
+        comment="Default role for joiners: Owner, Maintainer, Developer, Reporter, Consumer",
     )
 
     # Expiration - default to year 9999 for "never expires"

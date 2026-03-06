@@ -339,8 +339,9 @@ class UnifiedShareService(ABC):
                 f"[create_share_link] UPDATING existing link: id={existing_link.id}"
             )
             existing_link.require_approval = config.require_approval
-            existing_link.default_permission_level = (
-                config.default_permission_level.value
+            existing_link.default_role = config.default_role.value
+            existing_link.default_permission_level = self.ROLE_TO_PERMISSION.get(
+                config.default_role.value, PermissionLevel.VIEW.value
             )
             if config.expires_in_hours:
                 existing_link.expires_at = datetime.utcnow() + timedelta(
@@ -394,7 +395,10 @@ class UnifiedShareService(ABC):
             resource_id=resource_id,
             share_token=share_token,
             require_approval=config.require_approval,
-            default_permission_level=config.default_permission_level.value,
+            default_role=config.default_role.value,
+            default_permission_level=self.ROLE_TO_PERMISSION.get(
+                config.default_role.value, PermissionLevel.VIEW.value
+            ),
             expires_at=expires_at,
             created_by_user_id=user_id,
             is_active=True,
@@ -510,7 +514,6 @@ class UnifiedShareService(ABC):
             share_token=share_link.share_token,
             require_approval=share_link.require_approval,
             default_role=default_role,
-            default_permission_level=share_link.default_permission_level,
             expires_at=share_link.expires_at,
             is_active=share_link.is_active,
             created_by_user_id=share_link.created_by_user_id,
