@@ -210,22 +210,16 @@ export function KnowledgeBaseChatPageDesktop({
 
   // Handle new task from collapsed sidebar
   const handleNewTask = () => {
-    // Stop all active streams before clearing state
+    // Clear state and navigate immediately for responsive UI
+    setSelectedTask(null)
+    clearAllStreams()
+    window.location.href = `/knowledge/document/${knowledgeBaseId}`
+
+    // Stop streams in the background without blocking navigation
     const streamingIds = getStreamingTaskIds()
-    Promise.all(streamingIds.map(id => stopStream(id)))
-      .then(() => {
-        setSelectedTask(null)
-        clearAllStreams()
-        // Force a hard reload to ensure a fresh start
-        window.location.href = `/knowledge/document/${knowledgeBaseId}`
-      })
-      .catch(error => {
-        console.error('Failed to stop streams:', error)
-        // Still clear state and refresh even if stopping streams fails
-        setSelectedTask(null)
-        clearAllStreams()
-        window.location.href = `/knowledge/document/${knowledgeBaseId}`
-      })
+    Promise.all(streamingIds.map(id => stopStream(id))).catch(error => {
+      console.error('Failed to stop streams:', error)
+    })
   }
 
   // Handle creating new notebook knowledge base

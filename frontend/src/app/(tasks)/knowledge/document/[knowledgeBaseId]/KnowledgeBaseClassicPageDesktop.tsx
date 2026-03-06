@@ -152,22 +152,16 @@ export function KnowledgeBaseClassicPageDesktop({
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
-    // Stop all active streams before clearing state
+    // Clear state and navigate immediately for responsive UI
+    setSelectedTask(null)
+    clearAllStreams()
+    router.push('/chat')
+
+    // Stop streams in the background without blocking navigation
     const streamingIds = getStreamingTaskIds()
-    Promise.all(streamingIds.map(id => stopStream(id)))
-      .then(() => {
-        setSelectedTask(null)
-        clearAllStreams()
-        // Navigate to chat page for a new conversation
-        router.push('/chat')
-      })
-      .catch(error => {
-        console.error('Failed to stop streams:', error)
-        // Still navigate even if stopping streams fails
-        setSelectedTask(null)
-        clearAllStreams()
-        router.push('/chat')
-      })
+    Promise.all(streamingIds.map(id => stopStream(id))).catch(error => {
+      console.error('Failed to stop streams:', error)
+    })
   }
 
   // Check if user can manage this knowledge base
