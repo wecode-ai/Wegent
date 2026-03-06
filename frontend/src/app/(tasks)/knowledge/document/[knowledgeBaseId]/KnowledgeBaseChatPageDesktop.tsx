@@ -212,8 +212,16 @@ export function KnowledgeBaseChatPageDesktop({
     await Promise.all(streamingIds.map(id => stopStream(id)))
     setSelectedTask(null)
     clearAllStreams()
-    // Stay on current page but clear task selection
-    router.replace(`/knowledge/document/${knowledgeBaseId}`)
+
+    // If there's an open task (chat with this knowledge base), stay on current page
+    // Otherwise navigate to /chat for a new conversation
+    if (hasOpenTask) {
+      // Stay on current page but clear task selection
+      router.replace(`/knowledge/document/${knowledgeBaseId}`)
+    } else {
+      // Navigate to chat for a new conversation
+      router.push('/chat')
+    }
   }
 
   // Handle creating new notebook knowledge base
