@@ -111,7 +111,7 @@ export function KnowledgeBaseChatPageDesktop({
   }
 
   // Chat stream context
-  const { clearAllStreams } = useChatStreamContext()
+  const { clearAllStreams, stopStream, getStreamingTaskIds } = useChatStreamContext()
 
   // Check if a task is currently open
   const taskId =
@@ -196,7 +196,10 @@ export function KnowledgeBaseChatPageDesktop({
   }
 
   // Handle new task from collapsed sidebar
-  const handleNewTask = () => {
+  const handleNewTask = async () => {
+    // Stop all active streams before clearing state
+    const streamingIds = getStreamingTaskIds()
+    await Promise.all(streamingIds.map(id => stopStream(id)))
     setSelectedTask(null)
     clearAllStreams()
     // Stay on current page but clear task selection

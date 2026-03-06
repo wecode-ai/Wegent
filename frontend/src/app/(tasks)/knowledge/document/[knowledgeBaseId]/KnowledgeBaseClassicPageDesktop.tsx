@@ -80,10 +80,10 @@ export function KnowledgeBaseClassicPageDesktop({
   const { user, isLoading: isUserLoading } = useUser()
 
   // Task context
-  const { setSelectedTask, selectedTaskDetail } = useTaskContext()
+  const { setSelectedTask } = useTaskContext()
 
   // Chat stream context
-  const { clearAllStreams, stopStream } = useChatStreamContext()
+  const { clearAllStreams, stopStream, getStreamingTaskIds } = useChatStreamContext()
 
   // Tab state for documents/permissions
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
@@ -152,10 +152,9 @@ export function KnowledgeBaseClassicPageDesktop({
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = async () => {
-    // Stop any active stream before clearing state
-    if (selectedTaskDetail?.id) {
-      await stopStream(selectedTaskDetail.id, selectedTaskDetail.subtasks)
-    }
+    // Stop all active streams before clearing state
+    const streamingIds = getStreamingTaskIds()
+    await Promise.all(streamingIds.map(id => stopStream(id)))
     setSelectedTask(null)
     clearAllStreams()
     // Navigate to knowledge base chat page for new conversation
