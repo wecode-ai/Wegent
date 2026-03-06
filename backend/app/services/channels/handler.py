@@ -84,6 +84,8 @@ class MessageContext:
     extra_data: Dict[str, Any]  # Channel-specific extra data
     images: List[Dict[str, str]] = field(default_factory=list)
     # Each image dict: {"mime_type": "image/png", "base64_data": "iVBOR..."}
+    files: List[Dict[str, Any]] = field(default_factory=list)
+    # Each file dict: {"filename": "doc.pdf", "binary_data": b"...", "file_size": 12345}
 
 
 @dataclass
@@ -492,7 +494,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             f"content_preview={message_context.content[:50] if message_context.content else 'empty'}"
         )
 
-        if not message_context.content and not message_context.images:
+        if not message_context.content and not message_context.images and not message_context.files:
             self.logger.warning(
                 f"[{self._channel_type.value}Handler] Empty message content, skipping"
             )
@@ -1341,6 +1343,77 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         "image/webp": ".webp",
     }
 
+    def _get_display_text(self, message_context: MessageContext) -> str:
+        """Get display text for DB storage, with fallbacks for media-only messages."""
+        if message_context.content:
+            return message_context.content
+        if message_context.files:
+            filenames = ", ".join(f["filename"] for f in message_context.files)
+            return f"[文件] {filenames}"
+        if message_context.images:
+            return "[图片]"
+        return ""
+
+    def _persist_im_files_as_attachments(
+        self,
+        db: Session,
+        user_id: int,
+        subtask_id: int,
+        files: List[Dict[str, Any]],
+    ) -> List[int]:
+        """Persist IM channel files as SubtaskContext attachments.
+
+        Downloads from IM channels (DingTalk, Feishu, etc.) provide files as
+        binary data. This method saves them into the subtask_contexts table
+        so they are processed (text extraction) and available for the AI.
+
+        Args:
+            db: Database session (must be open, caller handles commit)
+            user_id: Owner user ID
+            subtask_id: User subtask ID to link the files to
+            files: List of file dicts with filename and binary_data
+
+        Returns:
+            List of attachment metadata dicts for executor (id, original_filename)
+        """
+        from app.services.context.context_service import ContextService
+
+        context_service = ContextService()
+        attachment_metas: List[Dict[str, Any]] = []
+
+        for file_info in files:
+            try:
+                context, _ = context_service.upload_attachment(
+                    db=db,
+                    user_id=user_id,
+                    filename=file_info["filename"],
+                    binary_data=file_info["binary_data"],
+                    subtask_id=subtask_id,
+                )
+                attachment_metas.append({
+                    "id": context.id,
+                    "original_filename": file_info["filename"],
+                })
+                self.logger.info(
+                    "[%sHandler] Persisted IM file as attachment: "
+                    "context_id=%d, subtask_id=%d, filename=%s, size=%d bytes",
+                    self._channel_type.value,
+                    context.id,
+                    subtask_id,
+                    file_info["filename"],
+                    len(file_info["binary_data"]),
+                )
+            except Exception as e:
+                self.logger.error(
+                    "[%sHandler] Failed to persist IM file %s: %s",
+                    self._channel_type.value,
+                    file_info.get("filename", "unknown"),
+                    e,
+                )
+                continue
+
+        return attachment_metas
+
     def _persist_im_images_as_attachments(
         self,
         db: Session,
@@ -1451,8 +1524,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
-        # Use text for DB storage; fallback to "[图片]" for image-only messages
-        display_text = message or "[图片]"
+        display_text = self._get_display_text(message_context)
         params = TaskCreationParams(
             message=display_text,
             title=(
@@ -1517,6 +1589,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     user_id=user.id,
                     subtask_id=result.user_subtask.id,
                     images=message_context.images,
+                )
+
+            # Persist IM channel files as attachments
+            if message_context.files:
+                self._persist_im_files_as_attachments(
+                    db=db,
+                    user_id=user.id,
+                    subtask_id=result.user_subtask.id,
+                    files=message_context.files,
                 )
 
             # Extract needed data from ORM objects before closing session
@@ -1653,8 +1734,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
-        # Use text for DB storage; fallback to "[图片]" for image-only messages
-        display_text = message or "[图片]"
+        display_text = self._get_display_text(message_context)
 
         # Get model for device mode (uses default Claude if user hasn't selected one)
         override_model_name, override_model_type = (
@@ -1702,6 +1782,16 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user_id=user.id,
                 subtask_id=result.user_subtask.id,
                 images=message_context.images,
+            )
+
+        # Persist IM channel files as attachments
+        file_attachment_metas: List[Dict[str, Any]] = []
+        if message_context.files:
+            file_attachment_metas = self._persist_im_files_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                files=message_context.files,
             )
 
         if conversation_id:
@@ -1764,6 +1854,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user=user,
                 user_subtask=result.user_subtask,
                 message=device_message,
+                attachments=file_attachment_metas or None,
             )
 
             # Save callback info
@@ -1800,8 +1891,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
-        # Use text for DB storage; fallback to "[图片]" for image-only messages
-        display_text = message or "[图片]"
+        display_text = self._get_display_text(message_context)
 
         # Get user's model selection
         override_model_name, override_model_type = await self._get_user_model_override(
@@ -1849,6 +1939,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user_id=user.id,
                 subtask_id=result.user_subtask.id,
                 images=message_context.images,
+            )
+
+        # Persist IM channel files as attachments
+        if message_context.files:
+            self._persist_im_files_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                files=message_context.files,
             )
 
         if conversation_id:
