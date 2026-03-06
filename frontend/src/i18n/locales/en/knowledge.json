@@ -359,7 +359,9 @@
         "public": "Public",
         "group": "Group"
       },
-      "searchPlaceholder": "Search..."
+      "searchPlaceholder": "Search...",
+      "changeWarning": "After changing the retriever or embedding model, existing documents need to be reindexed for proper retrieval.",
+      "changeWarningHint": "It is recommended to perform \"Reindex\" on all documents after making changes."
     },
     "splitter": {
       "title": "Chunking Settings",

@@ -125,46 +125,30 @@ export function EditKnowledgeBaseDialog({
       }
 
       // Add retrieval config update
+      // Always send full config including retriever and embedding (user can now edit them)
       if (retrievalConfig) {
-        const hasExistingConfig = !!knowledgeBase?.retrieval_config
         const retrievalConfigUpdate: RetrievalConfigUpdate = {}
 
-        if (hasExistingConfig) {
-          // Existing config: only update tunable fields (exclude retriever and embedding_config)
-          if (retrievalConfig.retrieval_mode !== undefined) {
-            retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode
-          }
-          if (retrievalConfig.top_k !== undefined) {
-            retrievalConfigUpdate.top_k = retrievalConfig.top_k
-          }
-          if (retrievalConfig.score_threshold !== undefined) {
-            retrievalConfigUpdate.score_threshold = retrievalConfig.score_threshold
-          }
-          if (retrievalConfig.hybrid_weights !== undefined) {
-            retrievalConfigUpdate.hybrid_weights = retrievalConfig.hybrid_weights
-          }
-        } else {
-          // No existing config: send full config including retriever and embedding
-          if (retrievalConfig.retriever_name) {
-            retrievalConfigUpdate.retriever_name = retrievalConfig.retriever_name
-            retrievalConfigUpdate.retriever_namespace =
-              retrievalConfig.retriever_namespace || 'default'
-          }
-          if (retrievalConfig.embedding_config?.model_name) {
-            retrievalConfigUpdate.embedding_config = retrievalConfig.embedding_config
-          }
-          if (retrievalConfig.retrieval_mode !== undefined) {
-            retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode
-          }
-          if (retrievalConfig.top_k !== undefined) {
-            retrievalConfigUpdate.top_k = retrievalConfig.top_k
-          }
-          if (retrievalConfig.score_threshold !== undefined) {
-            retrievalConfigUpdate.score_threshold = retrievalConfig.score_threshold
-          }
-          if (retrievalConfig.hybrid_weights !== undefined) {
-            retrievalConfigUpdate.hybrid_weights = retrievalConfig.hybrid_weights
-          }
+        // Always include retriever and embedding config if available
+        if (retrievalConfig.retriever_name) {
+          retrievalConfigUpdate.retriever_name = retrievalConfig.retriever_name
+          retrievalConfigUpdate.retriever_namespace =
+            retrievalConfig.retriever_namespace || 'default'
+        }
+        if (retrievalConfig.embedding_config?.model_name) {
+          retrievalConfigUpdate.embedding_config = retrievalConfig.embedding_config
+        }
+        if (retrievalConfig.retrieval_mode !== undefined) {
+          retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode
+        }
+        if (retrievalConfig.top_k !== undefined) {
+          retrievalConfigUpdate.top_k = retrievalConfig.top_k
+        }
+        if (retrievalConfig.score_threshold !== undefined) {
+          retrievalConfigUpdate.score_threshold = retrievalConfig.score_threshold
+        }
+        if (retrievalConfig.hybrid_weights !== undefined) {
+          retrievalConfigUpdate.hybrid_weights = retrievalConfig.hybrid_weights
         }
 
         // Only add retrieval_config if there are changes
@@ -228,7 +212,8 @@ export function EditKnowledgeBaseDialog({
             retrievalConfig={retrievalConfig}
             onRetrievalConfigChange={handleRetrievalConfigChange}
             retrievalReadOnly={false}
-            retrievalPartialReadOnly={!!knowledgeBase?.retrieval_config}
+            retrievalPartialReadOnly={false}
+            retrievalShowChangeWarning={!!knowledgeBase?.retrieval_config}
           />
 
           {error && <p className="text-sm text-error">{error}</p>}

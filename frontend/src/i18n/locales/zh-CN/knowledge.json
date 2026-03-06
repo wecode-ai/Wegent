@@ -359,7 +359,9 @@
         "public": "公共",
         "group": "组"
       },
-      "searchPlaceholder": "搜索..."
+      "searchPlaceholder": "搜索...",
+      "changeWarning": "修改检索引擎或 Embedding 模型后，已有文档需要重新索引才能正常检索。",
+      "changeWarningHint": "建议在修改后对所有文档执行「重新索引」操作。"
     },
     "splitter": {
       "title": "分段设置",

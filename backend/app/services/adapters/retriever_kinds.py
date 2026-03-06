@@ -41,12 +41,14 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
 
         Scope behavior:
         - scope='personal' (default): personal retrievers + public retrievers (namespace='default')
-        - scope='group': group retrievers + public retrievers (requires group_name or queries all user's groups)
+        - scope='group': group retrievers + personal retrievers + public retrievers
+          (requires group_name or queries all user's groups)
+          Personal retrievers are included as fallback when no group/public retrievers exist.
         - scope='all': personal + all user's groups + public retrievers
 
         Query logic:
         - For personal scope (namespace='default'): query with user_id filter, plus public (user_id=0)
-        - For group scope (namespace!='default'): query without user_id filter, plus public
+        - For group scope (namespace!='default'): query without user_id filter, plus personal, plus public
           Group retrievers may be created by other users in the same group.
 
         Note: Public retrievers are always included, even if they have the same name as
@@ -70,7 +72,10 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
             # Personal retrievers only (default namespace)
             personal_namespaces = ["default"]
         elif scope == "group":
-            # Group retrievers - if group_name not provided, query all user's groups
+            # Group retrievers + personal retrievers (as fallback) + public retrievers
+            # Personal retrievers are included so users can use their own retrievers
+            # when creating group knowledge bases, even if no group/public retrievers exist
+            personal_namespaces = ["default"]  # Include personal retrievers as fallback
             if group_name:
                 group_namespaces = [group_name]
             else:
@@ -127,9 +132,6 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 )
                 .order_by(Kind.created_at.desc())
                 .all()
-            )
-            logger.info(
-                f"Found {len(public_retrievers)} public retrievers for user_id={user_id}, scope={scope}"
             )
             # Always include public retrievers, even if they have the same name
             # as personal/group retrievers. Frontend displays them in separate sections.
