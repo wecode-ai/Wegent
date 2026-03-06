@@ -6,21 +6,14 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  ArrowLeft,
-  PanelRightClose,
-  PanelRightOpen,
-  BookOpen,
-  Plus,
-  FileText,
-  Shield,
-} from 'lucide-react'
+import { ArrowLeft, PanelRightClose, PanelRightOpen, Plus, FileText, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList } from './DocumentList'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 // Helper function to get initial width from localStorage
 const getInitialWidth = (
@@ -69,6 +62,8 @@ interface DocumentPanelProps {
   onNewChat?: () => void
   /** Callback when knowledge base type is converted */
   onTypeConverted?: (updatedKb: KnowledgeBase) => void
+  /** Callback when collapsed state changes */
+  onCollapsedChange?: (collapsed: boolean) => void
 }
 
 const MIN_WIDTH = 280
@@ -93,6 +88,7 @@ export function DocumentPanel({
   onDocumentSelectionChange,
   onNewChat,
   onTypeConverted,
+  onCollapsedChange,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
 
@@ -115,6 +111,11 @@ export function DocumentPanel({
   useEffect(() => {
     setIsInitialized(true)
   }, [])
+
+  // Notify parent when collapsed state changes
+  useEffect(() => {
+    onCollapsedChange?.(isCollapsed)
+  }, [isCollapsed, onCollapsedChange])
 
   // Keep widthRef in sync
   useEffect(() => {
@@ -198,17 +199,25 @@ export function DocumentPanel({
   // When collapsed, show a floating button to expand
   if (isCollapsed) {
     return (
-      <div className="fixed right-4 top-1/2 -translate-y-1/2 z-40">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={toggleCollapsed}
-          className="h-24 w-10 flex flex-col items-center justify-center gap-2 rounded-lg shadow-lg border-border bg-surface hover:bg-hover"
-          title={t('chatPage.showDocuments')}
-        >
-          <PanelRightOpen className="w-4 h-4" />
-          <BookOpen className="w-4 h-4" />
-        </Button>
+      <div className="fixed top-2 sm:top-3 right-4 z-50">
+        <div className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-[0px_6px_8px_0px_rgba(51,51,51,0.06)] relative">
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={toggleCollapsed}
+                  className="flex-shrink-0 p-1.5 -m-1.5 rounded-full hover:bg-hover transition-colors"
+                  aria-label={t('chatPage.showDocuments')}
+                >
+                  <PanelRightOpen className="h-4 w-4 text-text-primary" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>{t('chatPage.showDocuments')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </div>
     )
   }
