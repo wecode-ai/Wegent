@@ -27,7 +27,13 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { teamService } from '@/features/tasks/service/teamService'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
-import { DocumentPanel, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
+import {
+  DocumentPanel,
+  KnowledgeBaseSummaryCard,
+  CreateKnowledgeBaseDialog,
+} from '@/features/knowledge/document/components'
+import { createKnowledgeBase } from '@/apis/knowledge'
+import type { KnowledgeBaseType, SummaryModelRef } from '@/types/knowledge'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listGroups } from '@/apis/groups'
@@ -127,6 +133,10 @@ export function KnowledgeBaseChatPageDesktop({
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
+  // Create knowledge base dialog state
+  const [showCreateKbDialog, setShowCreateKbDialog] = useState(false)
+  const [isCreatingKb, setIsCreatingKb] = useState(false)
+
   // Group role map for permission checking
   const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
 
@@ -204,6 +214,38 @@ export function KnowledgeBaseChatPageDesktop({
     clearAllStreams()
     // Stay on current page but clear task selection
     router.replace(`/knowledge/document/${knowledgeBaseId}`)
+  }
+
+  // Handle creating new notebook knowledge base
+  const handleCreateNotebook = async (data: {
+    name: string
+    description?: string
+    retrieval_config?: Record<string, unknown>
+    summary_enabled?: boolean
+    summary_model_ref?: SummaryModelRef | null
+    max_calls_per_conversation: number
+    exempt_calls_before_check: number
+  }) => {
+    setIsCreatingKb(true)
+    try {
+      const response = await createKnowledgeBase({
+        name: data.name,
+        description: data.description,
+        kb_type: 'notebook' as KnowledgeBaseType,
+        retrieval_config: data.retrieval_config,
+        summary_enabled: data.summary_enabled,
+        summary_model_ref: data.summary_model_ref,
+        max_calls_per_conversation: data.max_calls_per_conversation,
+        exempt_calls_before_check: data.exempt_calls_before_check,
+      })
+      // Navigate to the new knowledge base
+      router.push(`/knowledge/document/${response.id}`)
+    } catch (error) {
+      console.error('Failed to create knowledge base:', error)
+      throw error
+    } finally {
+      setIsCreatingKb(false)
+    }
   }
 
   // Handle back to knowledge list
@@ -350,7 +392,7 @@ export function KnowledgeBaseChatPageDesktop({
             canManage={canManageKb}
             canManagePermissions={canManagePermissions}
             onDocumentSelectionChange={setSelectedDocumentIds}
-            onNewChat={handleNewTask}
+            onNewChat={() => setShowCreateKbDialog(true)}
             onTypeConverted={() => {
               // Notify parent page.tsx to refresh and re-route based on new kb_type
               onKbTypeChanged?.()
@@ -365,6 +407,15 @@ export function KnowledgeBaseChatPageDesktop({
         onOpenChange={setIsSearchDialogOpen}
         shortcutDisplayText={shortcutDisplayText}
         pageType="chat"
+      />
+
+      {/* Create Knowledge Base Dialog */}
+      <CreateKnowledgeBaseDialog
+        open={showCreateKbDialog}
+        onOpenChange={setShowCreateKbDialog}
+        onSubmit={handleCreateNotebook}
+        loading={isCreatingKb}
+        kbType="notebook"
       />
     </div>
   )
