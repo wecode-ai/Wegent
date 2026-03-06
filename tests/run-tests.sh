@@ -13,8 +13,16 @@ NODE_MODULES="$SCRIPT_DIR/node_modules"
 get_auth_file() {
     local url="$1"
     # Extract domain from URL (remove protocol and port)
-    local domain=$(echo "$url" | sed -E 's|https?://||' | sed -E 's|[:/].*||' | sed -E 's|[^a-zA-Z0-9.-]|_|g')
-    if [ -z "$domain" ] || [ "$domain" = "localhost" ]; then
+    # First remove protocol, then remove port and path
+    local domain=$(echo "$url" | sed -E 's|^https?://||' | sed -E 's|[:/].*$||')
+    # Sanitize domain: keep only alphanumeric, dots, and hyphens; replace others with underscore
+    domain=$(echo "$domain" | sed -E 's|[^a-zA-Z0-9.-]|_|g')
+    # Limit domain length to prevent overly long filenames (max 64 chars)
+    if [ ${#domain} -gt 64 ]; then
+        domain="${domain:0:64}"
+    fi
+    # Default to localhost if empty
+    if [ -z "$domain" ]; then
         domain="localhost"
     fi
     echo "$AUTH_DIR/user_${domain}.json"
@@ -238,18 +246,59 @@ main() {
                 shift
                 ;;
             -t|--test)
-                if [[ -n "$2" && ! "$2" =~ ^- ]]; then
-                    test_pattern="$2"
-                    shift 2
-                else
+                # Check if next argument exists and is not an option
+                if [[ $# -lt 2 ]]; then
                     print_error "Missing test pattern after -t/--test"
                     show_usage
                     exit 1
                 fi
+                if [[ "$2" =~ ^- ]]; then
+                    print_error "Test pattern cannot start with '-': $2"
+                    show_usage
+                    exit 1
+                fi
+                test_pattern="$2"
+                shift 2
                 ;;
             --help)
                 show_usage
                 exit 0
+                ;;
+            # Handle combined short options (e.g., -ht)
+            -[hldiat]*)
+                # Extract individual flags from combined option
+                local flags="${1#-}"
+                local i
+                for ((i=0; i<${#flags}; i++)); do
+                    case "${flags:$i:1}" in
+                        h) mode="headed" ;;
+                        l) mode="headless" ;;
+                        d) mode="debug" ;;
+                        a) force_auth=true ;;
+                        i) force_install=true ;;
+                        t)
+                            # For -t, the rest of the string or next argument is the pattern
+                            if [[ $i -lt $((${#flags}-1)) ]]; then
+                                # Pattern is the rest of this combined option
+                                test_pattern="${flags:$((i+1))}"
+                                break
+                            elif [[ $# -lt 2 || "$2" =~ ^- ]]; then
+                                print_error "Missing test pattern after -t in combined options"
+                                show_usage
+                                exit 1
+                            else
+                                test_pattern="$2"
+                                shift
+                            fi
+                            ;;
+                        *)
+                            print_error "Unknown option flag: ${flags:$i:1}"
+                            show_usage
+                            exit 1
+                            ;;
+                    esac
+                done
+                shift
                 ;;
             http://*|https://*)
                 test_url="$1"

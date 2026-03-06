@@ -38,16 +38,25 @@ async function setupChatPage(page: any) {
   // Select "wegent-chat" agent from QuickAccessCards if available
   const quickAccessCards = page.locator('[data-tour="quick-access-cards"]')
   if (await quickAccessCards.isVisible({ timeout: 3000 }).catch(() => false)) {
-    const wegentChatCard = quickAccessCards.locator('div.rounded-full.border:has-text("wegent-chat")').first()
-    if (await wegentChatCard.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await wegentChatCard.click()
-      await page.waitForTimeout(1000)
-    } else {
-      const firstCard = quickAccessCards.locator('div.rounded-full.border').first()
-      if (await firstCard.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await firstCard.click()
-        await page.waitForTimeout(1000)
+    // Get all available cards first
+    const allCards = quickAccessCards.locator('div.rounded-full.border')
+    const cardCount = await allCards.count()
+
+    if (cardCount > 0) {
+      // Try to find wegent-chat card among all cards
+      let wegentChatIndex = -1
+      for (let i = 0; i < cardCount; i++) {
+        const cardText = await allCards.nth(i).textContent().catch(() => '')
+        if (cardText?.includes('wegent-chat')) {
+          wegentChatIndex = i
+          break
+        }
       }
+
+      // Click wegent-chat if found, otherwise click the first card
+      const cardToClick = wegentChatIndex >= 0 ? allCards.nth(wegentChatIndex) : allCards.first()
+      await cardToClick.click()
+      await page.waitForTimeout(1000)
     }
   }
 
@@ -199,7 +208,9 @@ test.describe('Chat Flow', () => {
     // Step 5: Wait for clarification form to appear
     // Note: AI takes time to analyze and generate clarification questions
     // Wait up to 120 seconds for the form to appear
-    const clarificationForm = page.locator('.border-primary\\/30:has-text("Spec Clarification"), .border-primary\\/30:has-text("需求澄清")').first()
+    // Use a more robust selector - match by partial class name and text content
+    // border-primary/30 is a Tailwind class, we match the border-primary part
+    const clarificationForm = page.locator('[class*="border-primary"]:has-text("Spec Clarification"), [class*="border-primary"]:has-text("需求澄清"), [class*="bg-primary"]:has-text("Spec Clarification"), [class*="bg-primary"]:has-text("需求澄清")').first()
 
     // Poll for the form with longer timeout
     let hasClarificationForm = false
