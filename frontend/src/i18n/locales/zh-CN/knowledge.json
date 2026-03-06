@@ -64,6 +64,8 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
+      "myKnowledgeBases": "我的知识库",
+      "sharedWithMe": "共享给我的",
       "convertType": "转换类型",
       "convertToNotebook": "转为笔记本",
       "convertToClassic": "转为知识库",

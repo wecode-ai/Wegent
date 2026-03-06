@@ -64,6 +64,8 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
+      "myKnowledgeBases": "My Knowledge Bases",
+      "sharedWithMe": "Shared with Me",
       "convertType": "Convert Type",
       "convertToNotebook": "Convert to Notebook",
       "convertToClassic": "Convert to Knowledge Base",

@@ -312,15 +312,19 @@ class KnowledgeService:
             bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
 
             # Single query to get personal, shared, and bound knowledge bases
+            # Only return KBs in "default" namespace (personal KBs).
+            # Group KBs (namespace != "default") are excluded — they are
+            # shown on the "Group" tab instead.
             # Personal: user_id matches and namespace is "default"
-            # Shared: id is in shared_kb_ids
-            # Bound: id is in bound_kb_ids (personal KBs bound to group chats)
+            # Shared: id is in shared_kb_ids (only personal KBs)
+            # Bound: id is in bound_kb_ids (only personal KBs bound to group chats)
             all_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
-                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
+                    Kind.namespace == "default",
+                    (Kind.user_id == user_id)
                     | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False)
                     | (Kind.id.in_(bound_kb_ids) if bound_kb_ids else False),
                 )
