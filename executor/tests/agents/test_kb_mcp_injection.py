@@ -42,6 +42,7 @@ class TestClaudeCodeKBMCPInjection:
 
         task_data = _create_task_data(
             knowledge_base_ids=[1, 2, 3],
+            system_prompt="Ghost prompt\n<knowledge_base>KB instructions</knowledge_base>",
         )
 
         options = extract_claude_options(task_data)
@@ -52,6 +53,38 @@ class TestClaudeCodeKBMCPInjection:
         kb_config = mcp_servers["wegent-knowledge"]
         assert "/mcp/knowledge/sse" in kb_config["url"]
         assert "Bearer test-token-123" in kb_config["headers"]["Authorization"]
+
+    @patch("executor.agents.claude_code.config_manager.executor_config")
+    def test_kb_system_prompt_uses_enhanced_prompt(self, mock_config):
+        """System prompt should use backend's enhanced prompt with KB instructions."""
+        mock_config.EXECUTOR_MODE = "local"
+        from executor.agents.claude_code.config_manager import extract_claude_options
+
+        enhanced_prompt = "Ghost prompt\n<knowledge_base>KB_PROMPT_STRICT</knowledge_base>"
+        task_data = _create_task_data(
+            knowledge_base_ids=[1],
+            system_prompt=enhanced_prompt,
+        )
+
+        options = extract_claude_options(task_data)
+
+        # System prompt should be the enhanced one with KB instructions
+        assert options.get("system_prompt") == enhanced_prompt
+        assert "<knowledge_base>" in options["system_prompt"]
+
+    @patch("executor.agents.claude_code.config_manager.executor_config")
+    def test_system_prompt_unchanged_without_kb(self, mock_config):
+        """System prompt should remain the raw Ghost prompt when no KB selected."""
+        mock_config.EXECUTOR_MODE = "local"
+        from executor.agents.claude_code.config_manager import extract_claude_options
+
+        task_data = _create_task_data(
+            bot=[{"name": "test-bot", "system_prompt": "Raw Ghost prompt"}],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options.get("system_prompt") == "Raw Ghost prompt"
 
     @patch("executor.agents.claude_code.config_manager.executor_config")
     def test_no_kb_mcp_without_knowledge_base_ids(self, mock_config):

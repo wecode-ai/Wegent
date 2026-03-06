@@ -384,6 +384,13 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                 f"Added KB knowledge MCP server for {len(task_data.knowledge_base_ids)} knowledge bases at {kb_mcp_url}"
             )
 
+            # Use the enhanced system prompt from backend which includes KB
+            # instructions (KB_PROMPT_STRICT). The backend computes this in
+            # _process_contexts() and stores it in request.system_prompt,
+            # while bot_config["system_prompt"] remains the raw Ghost prompt.
+            if task_data.system_prompt:
+                bot_config["system_prompt"] = task_data.system_prompt
+
         for key in valid_options:
             if key in bot_config and bot_config[key] is not None:
                 options[key] = bot_config[key]
