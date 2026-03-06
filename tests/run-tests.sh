@@ -13,8 +13,16 @@ NODE_MODULES="$SCRIPT_DIR/node_modules"
 get_auth_file() {
     local url="$1"
     # Extract domain from URL (remove protocol and port)
-    local domain=$(echo "$url" | sed -E 's|https?://||' | sed -E 's|[:/].*||' | sed -E 's|[^a-zA-Z0-9.-]|_|g')
-    if [ -z "$domain" ] || [ "$domain" = "localhost" ]; then
+    # First remove protocol, then remove port and path
+    local domain=$(echo "$url" | sed -E 's|^https?://||' | sed -E 's|[:/].*$||')
+    # Sanitize domain: keep only alphanumeric, dots, and hyphens; replace others with underscore
+    domain=$(echo "$domain" | sed -E 's|[^a-zA-Z0-9.-]|_|g')
+    # Limit domain length to prevent overly long filenames (max 64 chars)
+    if [ ${#domain} -gt 64 ]; then
+        domain="${domain:0:64}"
+    fi
+    # Default to localhost if empty
+    if [ -z "$domain" ]; then
         domain="localhost"
     fi
     echo "$AUTH_DIR/user_${domain}.json"
@@ -122,6 +130,7 @@ setup_auth() {
 run_tests() {
     local mode=$1
     local test_url=$2
+    local test_pattern=$3
     local auth_file=$(get_auth_file "$test_url")
 
     cd "$SCRIPT_DIR"
@@ -136,18 +145,35 @@ run_tests() {
     export PLAYWRIGHT_AUTH_FILE="$auth_file"
     print_info "Using auth state: $auth_file"
 
+    # Show test pattern if specified
+    if [ -n "$test_pattern" ]; then
+        print_info "Running tests matching: $test_pattern"
+    fi
+
     case $mode in
         "headed")
             print_info "Running tests in headed mode (with browser UI)..."
-            npm run test:headed
+            if [ -n "$test_pattern" ]; then
+                npx playwright test -g "$test_pattern" --headed
+            else
+                npm run test:headed
+            fi
             ;;
         "headless")
             print_info "Running tests in headless mode..."
-            npm test
+            if [ -n "$test_pattern" ]; then
+                npx playwright test -g "$test_pattern"
+            else
+                npm test
+            fi
             ;;
         "debug")
             print_info "Running tests in debug mode..."
-            npm run test:debug
+            if [ -n "$test_pattern" ]; then
+                npx playwright test -g "$test_pattern" --debug
+            else
+                npm run test:debug
+            fi
             ;;
         *)
             print_error "Unknown mode: $mode"
@@ -167,6 +193,7 @@ show_usage() {
     echo "  -d, --debug      Run tests in debug mode"
     echo "  -a, --auth       Force re-authentication (re-scan QR code)"
     echo "  -i, --install    Force reinstall dependencies"
+    echo "  -t, --test       Run specific test by name (e.g., -t clarification)"
     echo "  --help           Show this help message"
     echo ""
     echo "Arguments:"
@@ -181,6 +208,8 @@ show_usage() {
     echo "  $0 http://localhost:3000           # Test specific URL (localhost)"
     echo "  $0 -h http://localhost:3000        # Test localhost with browser visible"
     echo "  $0 -a                              # Re-authenticate and run tests"
+    echo "  $0 -t clarification                # Run only clarification mode test"
+    echo "  $0 -t chat                         # Run tests matching 'chat' in name"
     echo "  TEST_BASE_URL=http://localhost:3000 $0"
     echo ""
 }
@@ -190,6 +219,7 @@ main() {
     local mode="headless"
     local force_auth=false
     local force_install=false
+    local test_pattern=""
     local test_url="${TEST_BASE_URL:-https://wegent.intra.weibo.com}"
 
     # Parse arguments
@@ -215,9 +245,60 @@ main() {
                 force_install=true
                 shift
                 ;;
+            -t|--test)
+                # Check if next argument exists and is not an option
+                if [[ $# -lt 2 ]]; then
+                    print_error "Missing test pattern after -t/--test"
+                    show_usage
+                    exit 1
+                fi
+                if [[ "$2" =~ ^- ]]; then
+                    print_error "Test pattern cannot start with '-': $2"
+                    show_usage
+                    exit 1
+                fi
+                test_pattern="$2"
+                shift 2
+                ;;
             --help)
                 show_usage
                 exit 0
+                ;;
+            # Handle combined short options (e.g., -ht)
+            -[hldiat]*)
+                # Extract individual flags from combined option
+                local flags="${1#-}"
+                local i
+                for ((i=0; i<${#flags}; i++)); do
+                    case "${flags:$i:1}" in
+                        h) mode="headed" ;;
+                        l) mode="headless" ;;
+                        d) mode="debug" ;;
+                        a) force_auth=true ;;
+                        i) force_install=true ;;
+                        t)
+                            # For -t, the rest of the string or next argument is the pattern
+                            if [[ $i -lt $((${#flags}-1)) ]]; then
+                                # Pattern is the rest of this combined option
+                                test_pattern="${flags:$((i+1))}"
+                                break
+                            elif [[ $# -lt 2 || "$2" =~ ^- ]]; then
+                                print_error "Missing test pattern after -t in combined options"
+                                show_usage
+                                exit 1
+                            else
+                                test_pattern="$2"
+                                shift
+                            fi
+                            ;;
+                        *)
+                            print_error "Unknown option flag: ${flags:$i:1}"
+                            show_usage
+                            exit 1
+                            ;;
+                    esac
+                done
+                shift
                 ;;
             http://*|https://*)
                 test_url="$1"
@@ -267,8 +348,11 @@ main() {
 
     # Step 3: Run tests
     print_info "Test mode: $mode"
+    if [ -n "$test_pattern" ]; then
+        print_info "Test filter: $test_pattern"
+    fi
     echo ""
-    run_tests "$mode" "$test_url"
+    run_tests "$mode" "$test_url" "$test_pattern"
 }
 
 # Run main function
