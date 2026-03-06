@@ -216,17 +216,15 @@ export function KnowledgeBaseChatPageDesktop({
       .then(() => {
         setSelectedTask(null)
         clearAllStreams()
-
-        // Always stay on current notebook page, just clear the task selection
-        // This gives the user a fresh start with the same knowledge base
-        router.replace(`/knowledge/document/${knowledgeBaseId}`)
+        // Force a hard reload to ensure a fresh start
+        window.location.href = `/knowledge/document/${knowledgeBaseId}`
       })
       .catch(error => {
         console.error('Failed to stop streams:', error)
         // Still clear state and refresh even if stopping streams fails
         setSelectedTask(null)
         clearAllStreams()
-        router.replace(`/knowledge/document/${knowledgeBaseId}`)
+        window.location.href = `/knowledge/document/${knowledgeBaseId}`
       })
   }
 
