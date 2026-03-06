@@ -34,6 +34,8 @@ from shared.models import (
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
 
+from app.core.async_utils import run_in_main_loop
+
 from .emitters import (
     CompositeResultEmitter,
     ResultEmitter,
@@ -764,12 +766,7 @@ class ExecutionDispatcher:
         )
 
         # Send task to specified room
-        await sio.emit(
-            target.event,
-            request.to_dict(),
-            room=target.room,
-            namespace=target.namespace,
-        )
+        await self._emit_socketio_in_main_loop(sio, target, request.to_dict())
 
         logger.info(
             f"[ExecutionDispatcher] WebSocket dispatch: "
@@ -779,6 +776,29 @@ class ExecutionDispatcher:
         # In WebSocket mode, subsequent events are handled by DeviceNamespace's
         # on_task_progress/on_task_complete
         # No need to wait for response here
+
+    async def _emit_socketio_in_main_loop(
+        self,
+        sio: Any,
+        target: ExecutionTarget,
+        payload: dict,
+    ) -> None:
+        """Emit Socket.IO events from the main application loop.
+
+        Socket.IO and its Redis manager are owned by the main app loop. Subscription
+        device execution runs in a background thread with a separate event loop, so
+        direct awaits against `sio.emit()` can fail with cross-loop Future errors.
+        """
+
+        async def _emit() -> None:
+            await sio.emit(
+                target.event,
+                payload,
+                room=target.room,
+                namespace=target.namespace,
+            )
+
+        await run_in_main_loop(_emit)
 
     async def _dispatch_http_callback(
         self,
