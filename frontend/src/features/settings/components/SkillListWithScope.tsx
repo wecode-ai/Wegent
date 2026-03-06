@@ -18,6 +18,7 @@ import {
   updateSkillFromGit,
   batchUpdateSkillsFromGit,
 } from '@/apis/skills'
+import { checkSkillMarketAvailable } from '@/apis/skillMarket'
 import { getGroup } from '@/apis/groups'
 import { Group } from '@/types/group'
 import { Badge } from '@/components/ui/badge'
@@ -40,9 +41,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
-import { Download, Trash2, Sparkles, Globe, Plus, RefreshCw, GitBranch } from 'lucide-react'
+import { Download, Trash2, Sparkles, Globe, Plus, RefreshCw, GitBranch, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
+import SkillSearchModal from './skills/SkillSearchModal'
 import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog'
 import { useUser } from '@/features/common/UserContext'
 
@@ -62,6 +64,7 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
+  const [searchModalOpen, setSearchModalOpen] = useState(false)
   const [currentGroup, setCurrentGroup] = useState<Group | null>(null)
   const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
   const [updatingAllFromGit, setUpdatingAllFromGit] = useState(false)
@@ -74,9 +77,21 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     failed: number
   } | null>(null)
 
+  // Skill market availability state
+  const [skillMarketAvailable, setSkillMarketAvailable] = useState(false)
+
   // Reference conflict dialog state
   const [referenceConflictOpen, setReferenceConflictOpen] = useState(false)
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
+
+  // Check skill market availability on mount
+  useEffect(() => {
+    const checkMarketAvailability = async () => {
+      const available = await checkSkillMarketAvailable()
+      setSkillMarketAvailable(available)
+    }
+    checkMarketAvailability()
+  }, [])
 
   // Fetch group details when selectedGroup changes
   useEffect(() => {
@@ -341,6 +356,13 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
           <p className="text-sm text-text-secondary">{t('skills.description')}</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Search Skills button - only show if skill market is available */}
+          {skillMarketAvailable && (
+            <Button onClick={() => setSearchModalOpen(true)} size="sm" variant="outline">
+              <Search className="w-4 h-4 mr-1" />
+              {t('skills.search_skills')}
+            </Button>
+          )}
           {/* Update All from Git button - only show if there are git-imported skills */}
           {hasGitSkills && (
             <Button
@@ -503,6 +525,14 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
       <SkillUploadModal
         open={uploadModalOpen}
         onClose={handleUploadModalClose}
+        namespace={scope === 'group' && selectedGroup ? selectedGroup : 'default'}
+      />
+
+      {/* Search Modal */}
+      <SkillSearchModal
+        open={searchModalOpen}
+        onClose={() => setSearchModalOpen(false)}
+        onSkillsChange={loadSkills}
         namespace={scope === 'group' && selectedGroup ? selectedGroup : 'default'}
       />
 
