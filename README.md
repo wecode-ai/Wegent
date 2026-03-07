@@ -153,9 +153,7 @@ All features above are fully customizable:
 
 ## 🚀 Quick Start
 
-### Method 1: Quick Install (Recommended)
-
-The install script will guide you through the installation process. By default, it uses **Standalone mode** which is the easiest way to get started:
+**One command to start:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
@@ -163,132 +161,45 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 
 Then open http://localhost:3000 in your browser.
 
-**Install options:**
-```bash
-# Install with standalone mode (default, recommended)
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+### Other Deployment Options
 
-# Install with standard mode (multi-container with MySQL)
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
-```
-
-### Deployment Modes
-
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Standalone** (default) | Single container, SQLite, easy setup | Quick start, development, small-scale |
-| **Standard** | Multi-container, MySQL, production-ready | Production, high concurrency |
-
-### Standalone Mode (Single Container)
-
-Standalone mode runs all services in a single container with SQLite database. This is the **recommended** way for most users:
+| Mode | Description |
+|------|-------------|
+| **Standalone** (default) | Single container, SQLite, recommended for most users |
+| **Standard** | Multi-container, MySQL, for production |
+| **Development** | Hot reload, for developers |
 
 ```bash
-# Using install script (recommended)
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
-
-# Or using docker-compose directly
-docker-compose -f docker-compose.standalone.yml up -d
-```
-
-See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
-
-### Standard Mode (Multi-Container)
-
-For production environments with high concurrency requirements:
-
-```bash
-# Using install script
+# Standard mode (multi-container with MySQL)
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
 
-# Or using docker-compose directly
-docker-compose up -d
+# Development mode (from source, with hot reload)
+git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
 ```
 
-> Optional: Enable RAG features with `docker compose --profile rag up -d`
-
-### Method 2: Source Installation
-
-If you have cloned the source code, you can run the install script directly. It will automatically detect the source environment and prompt you to choose a deployment mode:
+<details>
+<summary><b>🔧 Common Commands</b></summary>
 
 ```bash
-git clone https://github.com/wecode-ai/Wegent.git
-cd Wegent
-./install.sh
+# Standalone mode
+docker compose -f docker-compose.standalone.yml logs -f   # View logs
+docker compose -f docker-compose.standalone.yml down      # Stop
+docker compose -f docker-compose.standalone.yml up -d     # Start
+
+# Standard mode
+docker compose logs -f   # View logs
+docker compose down      # Stop
+docker compose up -d     # Start
+
+# Development mode
+./start.sh --status      # Check status
+./start.sh --stop        # Stop
+./start.sh --restart     # Restart
 ```
 
-Or manually specify the deployment mode:
+</details>
 
-```bash
-# Standalone mode (recommended)
-./install.sh --standalone
-
-# Standard mode with local build
-./install.sh --standard
-```
-
-**Common commands (standalone mode):**
-```bash
-# View logs
-docker compose -f docker-compose.standalone.yml logs -f
-
-# Stop services
-docker compose -f docker-compose.standalone.yml down
-
-# Start services
-docker compose -f docker-compose.standalone.yml up -d
-```
-
-**Common commands (standard mode with source build):**
-```bash
-# View logs
-docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f
-
-# Stop services
-docker compose -f docker-compose.yml -f docker-compose.build.yml down
-
-# Start services
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
-
-# Rebuild images
-docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache
-```
-
-### Method 3: Local Development Mode
-
-If you are a developer and want fast debugging with hot reload, use local development mode:
-
-```bash
-git clone https://github.com/wecode-ai/Wegent.git
-cd Wegent
-./start.sh
-```
-
-**Local development mode features:**
-- Run services directly without Docker
-- Automatic hot reload on code changes
-- Ideal for daily development and debugging
-
-**Common commands (local dev mode):**
-```bash
-# Start services
-./start.sh
-
-# Stop services
-./start.sh --stop
-
-# Restart services
-./start.sh --restart
-
-# Check status
-./start.sh --status
-
-# Initialize configuration
-./start.sh --init
-
-# Show help
-./start.sh --help
-```
+> 📖 See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
 
 ---
 

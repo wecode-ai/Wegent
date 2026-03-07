@@ -154,9 +154,7 @@ graph TB
 
 ## 🚀 快速开始
 
-### 方式一：快速安装（推荐）
-
-安装脚本会引导你完成安装过程。默认使用 **Standalone 模式**，这是最简单的入门方式：
+**一条命令启动：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
@@ -164,132 +162,45 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 
 然后在浏览器中访问 http://localhost:3000
 
-**安装选项：**
-```bash
-# 使用 Standalone 模式安装（默认，推荐）
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+### 其他部署方式
 
-# 使用 Standard 模式安装（多容器 + MySQL）
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
-```
-
-### 部署模式
-
-| 模式 | 说明 | 适用场景 |
-|------|------|----------|
-| **Standalone**（默认） | 单容器，SQLite，简单易用 | 快速体验、开发测试、小规模使用 |
-| **Standard** | 多容器，MySQL，生产就绪 | 生产环境、高并发场景 |
-
-### Standalone 模式（单容器部署）
-
-Standalone 模式将所有服务运行在单个容器中，使用 SQLite 数据库。这是大多数用户的**推荐**方式：
+| 模式 | 说明 |
+|------|------|
+| **Standalone**（默认） | 单容器，SQLite，推荐大多数用户使用 |
+| **Standard** | 多容器，MySQL，适合生产环境 |
+| **Development** | 热重载，适合开发者 |
 
 ```bash
-# 使用安装脚本（推荐）
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
-
-# 或直接使用 docker-compose
-docker-compose -f docker-compose.standalone.yml up -d
-```
-
-详情请参阅 [Standalone 模式文档](docs/zh/deployment/standalone-mode.md)。
-
-### Standard 模式（多容器部署）
-
-适用于高并发需求的生产环境：
-
-```bash
-# 使用安装脚本
+# Standard 模式（多容器 + MySQL）
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
 
-# 或直接使用 docker-compose
-docker-compose up -d
+# 开发模式（从源码安装，支持热重载）
+git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
 ```
 
-> 可选：启用 RAG 功能 `docker compose --profile rag up -d`
-
-### 方式二：源码安装
-
-如果你已经克隆了源码，可以直接运行安装脚本，它会自动检测源码环境并提示你选择部署模式：
+<details>
+<summary><b>🔧 常用命令</b></summary>
 
 ```bash
-git clone https://github.com/wecode-ai/Wegent.git
-cd Wegent
-./install.sh
+# Standalone 模式
+docker compose -f docker-compose.standalone.yml logs -f   # 查看日志
+docker compose -f docker-compose.standalone.yml down      # 停止
+docker compose -f docker-compose.standalone.yml up -d     # 启动
+
+# Standard 模式
+docker compose logs -f   # 查看日志
+docker compose down      # 停止
+docker compose up -d     # 启动
+
+# 开发模式
+./start.sh --status      # 查看状态
+./start.sh --stop        # 停止
+./start.sh --restart     # 重启
 ```
 
-或者手动指定部署模式：
+</details>
 
-```bash
-# Standalone 模式（推荐）
-./install.sh --standalone
-
-# Standard 模式（本地构建）
-./install.sh --standard
-```
-
-**常用命令（Standalone 模式）：**
-```bash
-# 查看日志
-docker compose -f docker-compose.standalone.yml logs -f
-
-# 停止服务
-docker compose -f docker-compose.standalone.yml down
-
-# 启动服务
-docker compose -f docker-compose.standalone.yml up -d
-```
-
-**常用命令（Standard 模式 + 源码构建）：**
-```bash
-# 查看日志
-docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f
-
-# 停止服务
-docker compose -f docker-compose.yml -f docker-compose.build.yml down
-
-# 启动服务
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
-
-# 重新构建镜像
-docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache
-```
-
-### 方式三：本地开发模式
-
-如果你是开发者，想要快速调试和热重载，可以使用本地开发模式：
-
-```bash
-git clone https://github.com/wecode-ai/Wegent.git
-cd Wegent
-./start.sh
-```
-
-**本地开发模式特点：**
-- 直接运行服务，不使用 Docker
-- 代码修改后自动热重载
-- 适合日常开发调试
-
-**常用命令（本地开发模式）：**
-```bash
-# 启动服务
-./start.sh
-
-# 停止服务
-./start.sh --stop
-
-# 重启服务
-./start.sh --restart
-
-# 查看状态
-./start.sh --status
-
-# 初始化配置
-./start.sh --init
-
-# 查看帮助
-./start.sh --help
-```
+> 📖 详情请参阅 [Standalone 模式文档](docs/zh/deployment/standalone-mode.md)。
 
 ---
 
