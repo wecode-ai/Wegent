@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 setup(
     name="wegent",
-    version="1.0.0",
+    version="1.1.0",
     description="Wegent command line tool - kubectl-style CLI for managing Wegent resources",
     long_description=long_description,
     long_description_content_type="text/markdown",
