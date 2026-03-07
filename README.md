@@ -155,27 +155,61 @@ All features above are fully customizable:
 
 ### Method 1: Quick Install (Recommended)
 
+The install script will guide you through the installation process. By default, it uses **Standalone mode** which is the easiest way to get started:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
 
 Then open http://localhost:3000 in your browser.
 
-> Optional: Enable RAG features with `docker compose --profile rag up -d`
+**Install options:**
+```bash
+# Install with standalone mode (default, recommended)
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
+# Install with standard mode (multi-container with MySQL)
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
+```
+
+### Deployment Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Standalone** (default) | Single container, SQLite, easy setup | Quick start, development, small-scale |
+| **Standard** | Multi-container, MySQL, production-ready | Production, high concurrency |
 
 ### Standalone Mode (Single Container)
 
-For quick deployment or development, you can use the standalone mode which runs all services in a single container with SQLite database:
+Standalone mode runs all services in a single container with SQLite database. This is the **recommended** way for most users:
 
 ```bash
+# Using install script (recommended)
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
+# Or using docker-compose directly
 docker-compose -f docker-compose.standalone.yml up -d
 ```
 
 See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
 
+### Standard Mode (Multi-Container)
+
+For production environments with high concurrency requirements:
+
+```bash
+# Using install script
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
+
+# Or using docker-compose directly
+docker-compose up -d
+```
+
+> Optional: Enable RAG features with `docker compose --profile rag up -d`
+
 ### Method 2: Source Installation
 
-If you have cloned the source code, you can run the install script directly. It will automatically detect the source environment and build images from local source:
+If you have cloned the source code, you can run the install script directly. It will automatically detect the source environment and prompt you to choose a deployment mode:
 
 ```bash
 git clone https://github.com/wecode-ai/Wegent.git
@@ -183,13 +217,29 @@ cd Wegent
 ./install.sh
 ```
 
-Or manually specify to use local build in the source directory:
+Or manually specify the deployment mode:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+# Standalone mode (recommended)
+./install.sh --standalone
+
+# Standard mode with local build
+./install.sh --standard
 ```
 
-**Common commands (source mode):**
+**Common commands (standalone mode):**
+```bash
+# View logs
+docker compose -f docker-compose.standalone.yml logs -f
+
+# Stop services
+docker compose -f docker-compose.standalone.yml down
+
+# Start services
+docker compose -f docker-compose.standalone.yml up -d
+```
+
+**Common commands (standard mode with source build):**
 ```bash
 # View logs
 docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f

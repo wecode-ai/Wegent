@@ -8,6 +8,30 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Parse command line arguments
+DEPLOY_MODE="${WEGENT_DEPLOY_MODE:-}"
+SHOW_HELP=0
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --standalone)
+            DEPLOY_MODE="standalone"
+            shift
+            ;;
+        --standard)
+            DEPLOY_MODE="standard"
+            shift
+            ;;
+        --help|-h)
+            SHOW_HELP=1
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
 echo -e "${BLUE}"
 cat << 'EOF'
  __        __                    _
@@ -20,6 +44,22 @@ EOF
 echo -e "${NC}"
 echo -e "${GREEN}Wegent Installer${NC}"
 echo ""
+
+if [ "$SHOW_HELP" = "1" ]; then
+    echo "Usage: install.sh [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --standalone    Install in standalone mode (single container, recommended)"
+    echo "  --standard      Install in standard mode (multi-container with MySQL)"
+    echo "  --help, -h      Show this help message"
+    echo ""
+    echo "Environment variables:"
+    echo "  WEGENT_DEPLOY_MODE    Set to 'standalone' or 'standard'"
+    echo "  WEGENT_INSTALL_DIR    Installation directory (default: current directory)"
+    echo "  WEGENT_SOURCE_BUILD   Set to '1' to force source build mode"
+    echo ""
+    exit 0
+fi
 
 # Check for required commands
 check_command() {
@@ -58,8 +98,9 @@ fi
 echo -e "${GREEN}All requirements satisfied.${NC}"
 echo ""
 
-# Download docker-compose.yml
+# URLs for downloading compose files
 COMPOSE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.yml"
+COMPOSE_STANDALONE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.standalone.yml"
 INSTALL_DIR="${WEGENT_INSTALL_DIR:-.}"
 
 echo -e "${YELLOW}Installing Wegent to ${INSTALL_DIR}...${NC}"
@@ -86,26 +127,65 @@ if [ "$IS_SOURCE_BUILD" = "1" ]; then
     echo -e "${YELLOW}Will build images from source code.${NC}"
 fi
 
-# Download docker-compose.yml (only if not in source mode)
-if [ "$IS_SOURCE_BUILD" = "1" ]; then
-    if [ -f "docker-compose.yml" ]; then
-        echo -e "${GREEN}Found existing docker-compose.yml, skipping download.${NC}"
-    else
-        echo -e "${RED}Error: docker-compose.yml not found in source directory.${NC}"
-        echo "Please ensure you have the latest source code from the repository."
-        exit 1
-    fi
-else
-    echo -e "${YELLOW}Downloading docker-compose.yml...${NC}"
-    curl -fsSL "$COMPOSE_URL" -o docker-compose.yml
+# Prompt for deployment mode if not specified
+if [ -z "$DEPLOY_MODE" ]; then
+    echo ""
+    echo -e "${YELLOW}Select deployment mode:${NC}"
+    echo -e "  ${GREEN}[1]${NC} Standalone mode (recommended) - Single container, SQLite, easy setup"
+    echo -e "  ${BLUE}[2]${NC} Standard mode - Multi-container, MySQL, production-ready"
+    echo ""
+    read -r -p "Choose [1/2] (default: 1): " mode_choice
+    
+    case "$mode_choice" in
+        2)
+            DEPLOY_MODE="standard"
+            ;;
+        *)
+            DEPLOY_MODE="standalone"
+            ;;
+    esac
 fi
 
-# Check docker-compose.build.yml exists for source build
+echo ""
+if [ "$DEPLOY_MODE" = "standalone" ]; then
+    echo -e "${GREEN}Using Standalone mode${NC} - Single container deployment"
+else
+    echo -e "${GREEN}Using Standard mode${NC} - Multi-container deployment"
+fi
+echo ""
+
+# Download compose files based on mode
 if [ "$IS_SOURCE_BUILD" = "1" ]; then
-    if [ ! -f "docker-compose.build.yml" ]; then
-        echo -e "${RED}Error: docker-compose.build.yml not found in source directory.${NC}"
-        echo "Please ensure you have the latest source code from the repository."
-        exit 1
+    if [ "$DEPLOY_MODE" = "standalone" ]; then
+        if [ -f "docker-compose.standalone.yml" ]; then
+            echo -e "${GREEN}Found existing docker-compose.standalone.yml, skipping download.${NC}"
+        else
+            echo -e "${RED}Error: docker-compose.standalone.yml not found in source directory.${NC}"
+            echo "Please ensure you have the latest source code from the repository."
+            exit 1
+        fi
+    else
+        if [ -f "docker-compose.yml" ]; then
+            echo -e "${GREEN}Found existing docker-compose.yml, skipping download.${NC}"
+        else
+            echo -e "${RED}Error: docker-compose.yml not found in source directory.${NC}"
+            echo "Please ensure you have the latest source code from the repository."
+            exit 1
+        fi
+        # Check docker-compose.build.yml exists for source build
+        if [ ! -f "docker-compose.build.yml" ]; then
+            echo -e "${RED}Error: docker-compose.build.yml not found in source directory.${NC}"
+            echo "Please ensure you have the latest source code from the repository."
+            exit 1
+        fi
+    fi
+else
+    if [ "$DEPLOY_MODE" = "standalone" ]; then
+        echo -e "${YELLOW}Downloading docker-compose.standalone.yml...${NC}"
+        curl -fsSL "$COMPOSE_STANDALONE_URL" -o docker-compose.standalone.yml
+    else
+        echo -e "${YELLOW}Downloading docker-compose.yml...${NC}"
+        curl -fsSL "$COMPOSE_URL" -o docker-compose.yml
     fi
 fi
 
@@ -210,9 +290,13 @@ else
     echo ""
 fi
 
-# Set compose command with build file if source build
-if [ "$IS_SOURCE_BUILD" = "1" ]; then
-    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.yml -f docker-compose.build.yml"
+# Set compose command based on deployment mode and source build
+if [ "$DEPLOY_MODE" = "standalone" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.standalone.yml"
+else
+    if [ "$IS_SOURCE_BUILD" = "1" ]; then
+        COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.yml -f docker-compose.build.yml"
+    fi
 fi
 
 echo -e "${YELLOW}Starting Wegent services...${NC}"
@@ -226,8 +310,16 @@ echo ""
 echo -e "  Open ${BLUE}http://localhost:3000${NC} in your browser"
 echo ""
 echo -e "  Installation directory: ${YELLOW}${INSTALL_DIR}${NC}"
+echo -e "  Deployment mode: ${YELLOW}${DEPLOY_MODE}${NC}"
 echo ""
-if [ "$IS_SOURCE_BUILD" = "1" ]; then
+if [ "$DEPLOY_MODE" = "standalone" ]; then
+    echo -e "  ${BLUE}Standalone mode${NC} - Single container with SQLite"
+    echo ""
+    echo -e "  Useful commands:"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD logs -f${NC}    # View logs"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD down${NC}       # Stop services"
+    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD up -d${NC}      # Start services"
+elif [ "$IS_SOURCE_BUILD" = "1" ]; then
     echo -e "  ${BLUE}Source build mode${NC} - images built from local source code"
     echo ""
     echo -e "  Useful commands:"
@@ -236,6 +328,8 @@ if [ "$IS_SOURCE_BUILD" = "1" ]; then
     echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD up -d${NC}      # Start services"
     echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD build --no-cache${NC}  # Rebuild images"
 else
+    echo -e "  ${BLUE}Standard mode${NC} - Multi-container with MySQL"
+    echo ""
     echo -e "  Useful commands:"
     echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD logs -f${NC}    # View logs"
     echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD down${NC}       # Stop services"
