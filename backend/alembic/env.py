@@ -28,8 +28,12 @@ config = context.config
 # Override sqlalchemy.url from app settings
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
-# The initial schema revision ID - all migrations before this were squashed
-INITIAL_SCHEMA_REVISION = "020e34b70ee5"
+# The merge baseline revision ID (current head after migration squash)
+# This is where the old MySQL chain and new unified baseline converge
+# - Old users: ... -> z6a7b8c9d0e1 -> aa1_merge_baseline
+# - New users: aa0_unified_schema_init -> aa1_merge_baseline
+# Legacy versions (not found in available migrations) will be updated to this
+MERGE_BASELINE_HEAD = "aa1_merge_baseline"
 
 logger = logging.getLogger("alembic.env")
 
@@ -106,7 +110,7 @@ def _get_available_revisions() -> set:
 
 def _migrate_legacy_alembic_version(connection) -> None:
     """
-    Automatically migrate legacy alembic_version records to the new initial schema.
+    Automatically migrate legacy alembic_version records to the current head.
 
     This handles the case where old migration files were deleted (squashed) and
     the database has a version record pointing to a non-existent migration.
@@ -115,8 +119,7 @@ def _migrate_legacy_alembic_version(connection) -> None:
     1. Check if alembic_version table exists
     2. Get the current version from the table
     3. If the version doesn't exist in available migrations, update it to
-       INITIAL_SCHEMA_REVISION (assuming the database schema is already up-to-date
-       with the initial schema)
+       MERGE_BASELINE_HEAD (the current head where old and new chains converge)
     """
     inspector = inspect(connection)
 
@@ -135,13 +138,6 @@ def _migrate_legacy_alembic_version(connection) -> None:
 
     current_version = row[0]
 
-    # If already at initial schema or newer, no action needed
-    if current_version == INITIAL_SCHEMA_REVISION:
-        logger.debug(
-            f"Database already at initial schema revision {INITIAL_SCHEMA_REVISION}"
-        )
-        return
-
     # Get available revisions
     available_revisions = _get_available_revisions()
 
@@ -153,22 +149,23 @@ def _migrate_legacy_alembic_version(connection) -> None:
         return
 
     # Current version doesn't exist - this is a legacy version that was squashed
+    # Update to the current head (merge baseline)
     logger.warning(
         f"Legacy alembic version detected: {current_version} "
         f"(not found in available migrations). "
-        f"Updating to initial schema revision: {INITIAL_SCHEMA_REVISION}"
+        f"Updating to current head: {MERGE_BASELINE_HEAD}"
     )
 
-    # Update to initial schema revision
+    # Update to current head
     connection.execute(
         text("UPDATE alembic_version SET version_num = :new_version"),
-        {"new_version": INITIAL_SCHEMA_REVISION},
+        {"new_version": MERGE_BASELINE_HEAD},
     )
     connection.commit()
 
     logger.info(
         f"Successfully migrated alembic_version from {current_version} "
-        f"to {INITIAL_SCHEMA_REVISION}"
+        f"to {MERGE_BASELINE_HEAD}"
     )
 
 
