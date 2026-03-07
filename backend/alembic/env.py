@@ -10,6 +10,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, inspect, pool, text
 
 from alembic import context
+from alembic.script import ScriptDirectory
 
 # Add the parent directory to sys.path to import app modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -28,13 +29,6 @@ config = context.config
 # Override sqlalchemy.url from app settings
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
-# The merge baseline revision ID (current head after migration squash)
-# This is where the old MySQL chain and new unified baseline converge
-# - Old users: ... -> z6a7b8c9d0e1 -> aa1_merge_baseline
-# - New users: aa0_unified_schema_init -> aa1_merge_baseline
-# Legacy versions (not found in available migrations) will be updated to this
-MERGE_BASELINE_HEAD = "aa1_merge_baseline"
-
 logger = logging.getLogger("alembic.env")
 
 # Interpret the config file for Python logging.
@@ -52,6 +46,12 @@ target_metadata = Base.metadata
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
+
+
+def _get_head_revision() -> str:
+    """Get the current head revision from the script directory."""
+    script = ScriptDirectory.from_config(config)
+    return script.get_current_head()
 
 
 def is_sqlite() -> bool:
@@ -90,83 +90,76 @@ def is_sqlite() -> bool:
     return url.startswith("sqlite") if url else False
 
 
-def _get_available_revisions() -> set:
-    """Get all available revision IDs from the versions directory."""
-    versions_dir = os.path.join(os.path.dirname(__file__), "versions")
-    revisions = set()
-
-    if not os.path.exists(versions_dir):
-        return revisions
-
-    for filename in os.listdir(versions_dir):
-        if filename.endswith(".py") and not filename.startswith("__"):
-            # Extract revision ID from filename (format: revision_description.py)
-            revision_id = filename.split("_")[0]
-            if revision_id:
-                revisions.add(revision_id)
-
-    return revisions
-
-
-def _migrate_legacy_alembic_version(connection) -> None:
+def _is_fresh_database(connection) -> bool:
     """
-    Automatically migrate legacy alembic_version records to the current head.
+    Check if this is a fresh database (no tables exist).
 
-    This handles the case where old migration files were deleted (squashed) and
-    the database has a version record pointing to a non-existent migration.
+    A fresh database means:
+    1. No alembic_version table exists, AND
+    2. No application tables exist (e.g., 'users' table)
 
-    The function will:
-    1. Check if alembic_version table exists
-    2. Get the current version from the table
-    3. If the version doesn't exist in available migrations, update it to
-       MERGE_BASELINE_HEAD (the current head where old and new chains converge)
+    This is used to determine whether to initialize the database
+    with Base.metadata.create_all() or run migrations normally.
     """
     inspector = inspect(connection)
+    existing_tables = set(inspector.get_table_names())
 
-    # Check if alembic_version table exists
-    if "alembic_version" not in inspector.get_table_names():
-        logger.info("alembic_version table does not exist, skipping legacy migration")
-        return
+    # If alembic_version exists, it's not a fresh database
+    if "alembic_version" in existing_tables:
+        return False
 
-    # Get current version
-    result = connection.execute(text("SELECT version_num FROM alembic_version"))
-    row = result.fetchone()
+    # Check for any application tables
+    # If any of these exist, it's an existing database without alembic tracking
+    app_tables = {"users", "kinds", "tasks", "namespaces"}
+    if existing_tables & app_tables:
+        return False
 
-    if not row:
-        logger.info("No version record found in alembic_version table")
-        return
+    return True
 
-    current_version = row[0]
 
-    # Get available revisions
-    available_revisions = _get_available_revisions()
+def _initialize_fresh_database(connection) -> None:
+    """
+    Initialize a fresh database with all tables and stamp to head.
 
-    # If current version exists in available migrations, no action needed
-    if current_version in available_revisions:
-        logger.debug(
-            f"Current version {current_version} exists in available migrations"
+    For fresh installations (both MySQL and SQLite), this function:
+    1. Creates all tables using SQLAlchemy's Base.metadata.create_all()
+    2. Stamps the database to the current head revision
+
+    This approach:
+    - Bypasses all old MySQL-specific migrations for new installations
+    - Ensures cross-database compatibility (works for both MySQL and SQLite)
+    - Future migrations will work normally since we stamp to head
+    """
+    head_revision = _get_head_revision()
+    logger.info(f"Fresh database detected. Initializing with current schema...")
+
+    # Step 1: Create all tables using SQLAlchemy metadata
+    # This is cross-database compatible (works for both MySQL and SQLite)
+    logger.info("Creating all tables using SQLAlchemy metadata...")
+    Base.metadata.create_all(bind=connection, checkfirst=True)
+    logger.info("All tables created successfully")
+
+    # Step 2: Create alembic_version table and stamp to head
+    logger.info(f"Stamping database to head revision: {head_revision}")
+    connection.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS alembic_version (
+                version_num VARCHAR(32) NOT NULL,
+                CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+            )
+            """
         )
-        return
-
-    # Current version doesn't exist - this is a legacy version that was squashed
-    # Update to the current head (merge baseline)
-    logger.warning(
-        f"Legacy alembic version detected: {current_version} "
-        f"(not found in available migrations). "
-        f"Updating to current head: {MERGE_BASELINE_HEAD}"
     )
 
-    # Update to current head
+    # Insert the head revision (skip all migrations since tables are already created)
     connection.execute(
-        text("UPDATE alembic_version SET version_num = :new_version"),
-        {"new_version": MERGE_BASELINE_HEAD},
+        text("INSERT INTO alembic_version (version_num) VALUES (:version)"),
+        {"version": head_revision},
     )
     connection.commit()
 
-    logger.info(
-        f"Successfully migrated alembic_version from {current_version} "
-        f"to {MERGE_BASELINE_HEAD}"
-    )
+    logger.info(f"Database initialized and stamped to head: {head_revision}")
 
 
 def run_migrations_offline() -> None:
@@ -205,10 +198,10 @@ def run_migrations_online() -> None:
 
     # Get the database URL to determine which database type we're using
     db_url = config.get_main_option("sqlalchemy.url")
-    is_sqlite = db_url.startswith("sqlite") if db_url else False
+    is_sqlite_db = db_url.startswith("sqlite") if db_url else False
 
     # Add database-specific connection arguments
-    if is_sqlite:
+    if is_sqlite_db:
         # SQLite configuration
         configuration["sqlalchemy.connect_args"] = {"check_same_thread": False}
     else:
@@ -225,10 +218,17 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        # Migrate legacy alembic_version records before running migrations
-        # This handles the case where old migration files were squashed
-        _migrate_legacy_alembic_version(connection)
+        # For fresh databases, create tables and stamp to head
+        # This ensures new users (both MySQL and SQLite) get a working database
+        # without running old MySQL-specific migrations
+        if _is_fresh_database(connection):
+            _initialize_fresh_database(connection)
+            # After initialization, no migrations need to run
+            # since we've already created all tables and stamped to head
+            logger.info("Fresh database initialized. No migrations to run.")
+            return
 
+        # For existing databases, run migrations normally
         # Configure context with database-specific options
         context_kwargs = {
             "connection": connection,
@@ -241,7 +241,7 @@ def run_migrations_online() -> None:
 
         # Enable batch mode for SQLite to handle ALTER TABLE limitations
         # SQLite doesn't support most ALTER TABLE operations natively
-        if is_sqlite:
+        if is_sqlite_db:
             context_kwargs["render_as_batch"] = True
 
         context.configure(**context_kwargs)

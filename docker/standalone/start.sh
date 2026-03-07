@@ -30,10 +30,13 @@ cd /app/backend
 
 if [ ! -f /app/data/wegent.db ]; then
     echo "[1/4] Initializing SQLite database..."
+    # env.py will detect fresh database and use Base.metadata.create_all()
+    # then stamp to head, bypassing old MySQL-specific migrations
     alembic upgrade head
     echo "      Database initialized successfully"
 else
     echo "[1/4] Database exists, checking for migrations..."
+    # For existing databases, run migrations normally
     alembic upgrade head
     echo "      Database migrations applied"
 fi
