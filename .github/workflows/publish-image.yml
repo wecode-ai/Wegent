@@ -434,6 +434,74 @@ jobs:
           cache-to: type=gha,mode=max,scope=chat-shell-arm64
 
   # ============================================================================
+  # Standalone Image Build (parallel AMD64 + ARM64)
+  # Single image containing Backend, Frontend, Chat Shell, and Executor
+  # ============================================================================
+  build-standalone-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push standalone image (amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/standalone/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+          cache-from: type=gha,scope=standalone-amd64
+          cache-to: type=gha,mode=max,scope=standalone-amd64
+
+  build-standalone-arm64:
+    needs: prepare-release
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push standalone image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/standalone/Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+          cache-from: type=gha,scope=standalone-arm64
+          cache-to: type=gha,mode=max,scope=standalone-arm64
+
+  # ============================================================================
   # Executor Local Binary Build (macOS)
   # ============================================================================
   build-executor-local-macos-arm64:
@@ -656,6 +724,8 @@ jobs:
       - build-frontend-arm64
       - build-chat-shell-amd64
       - build-chat-shell-arm64
+      - build-standalone-amd64
+      - build-standalone-arm64
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -701,6 +771,7 @@ jobs:
           create_manifest "wegent-executor-manager"
           create_manifest "wegent-web"
           create_manifest "wegent-chat-shell"
+          create_manifest "wegent-standalone"
 
           echo "🎉 All multi-arch manifests created successfully!"
 
