@@ -97,6 +97,11 @@ class ChannelManager:
             ChannelType.TELEGRAM.value,
             self._create_telegram_provider,
         )
+        # Register Feishu provider
+        self.register_provider_factory(
+            ChannelType.FEISHU.value,
+            self._create_feishu_provider,
+        )
         # Future providers can be registered here or via register_provider_factory()
 
     def register_provider_factory(
@@ -154,6 +159,13 @@ class ChannelManager:
         from app.services.channels.telegram.service import TelegramChannelProvider
 
         return TelegramChannelProvider(channel)
+
+    @staticmethod
+    def _create_feishu_provider(channel: ChannelLike) -> "BaseChannelProvider":
+        """Create a Feishu provider instance."""
+        from app.services.channels.feishu.service import FeishuChannelProvider
+
+        return FeishuChannelProvider(channel)
 
     async def start_all_enabled(self, db: Session) -> int:
         """
