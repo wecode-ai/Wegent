@@ -323,16 +323,39 @@ class TaskOperationsMixin:
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        task = TaskResource(
-            id=task_id,
-            user_id=user.id,
-            kind="Task",
-            name=f"task-{task_id}",
-            namespace="default",
-            json=task_json,
-            is_active=True,
+        # Check if a Placeholder record exists for this task_id
+        # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
+        existing_placeholder = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Placeholder",
+            )
+            .first()
         )
-        db.add(task)
+
+        if existing_placeholder:
+            # Update the existing Placeholder record to become a Task
+            existing_placeholder.user_id = user.id
+            existing_placeholder.kind = "Task"
+            existing_placeholder.name = f"task-{task_id}"
+            existing_placeholder.namespace = "default"
+            existing_placeholder.json = task_json
+            existing_placeholder.is_active = True
+            existing_placeholder.updated_at = datetime.now()
+            task = existing_placeholder
+        else:
+            # No placeholder exists, create a new Task record
+            task = TaskResource(
+                id=task_id,
+                user_id=user.id,
+                kind="Task",
+                name=f"task-{task_id}",
+                namespace="default",
+                json=task_json,
+                is_active=True,
+            )
+            db.add(task)
 
         return task, team
 
@@ -902,14 +925,21 @@ class TaskOperationsMixin:
                 "status": {"state": "Reserved"},
             }
 
+            now = datetime.now()
             result = db.execute(
                 text(
                     """
-                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
-                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, NOW(), NOW())
+                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id)
+                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, :created_at, :updated_at, :project_id)
             """
                 ),
-                {"user_id": user_id, "json": json_lib.dumps(placeholder_json)},
+                {
+                    "user_id": user_id,
+                    "json": json_lib.dumps(placeholder_json),
+                    "created_at": now,
+                    "updated_at": now,
+                    "project_id": 0,
+                },
             )
 
             allocated_id = result.lastrowid
@@ -928,20 +958,17 @@ class TaskOperationsMixin:
 
     def validate_task_id(self, db: Session, task_id: int) -> bool:
         """
-        Validate that task_id is valid and clean up placeholder if exists.
+        Validate that task_id is valid.
+
+        Note: We no longer delete Placeholder records here. Instead, _create_new_task
+        will update the existing Placeholder record to avoid SQLite UNIQUE constraint
+        issues when re-inserting with the same ID.
         """
         existing_record = db.execute(
             text("SELECT kind FROM tasks WHERE id = :task_id"), {"task_id": task_id}
         ).fetchone()
 
         if existing_record:
-            kind = existing_record[0]
-
-            if kind == "Placeholder":
-                db.execute(text("DELETE FROM tasks WHERE id = :id"), {"id": task_id})
-                db.commit()
-                return True
-
             return True
 
         return False

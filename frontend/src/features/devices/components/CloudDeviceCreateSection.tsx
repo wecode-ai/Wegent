@@ -25,9 +25,7 @@ export function CloudDeviceCreateSection() {
     <div className="flex flex-col items-center justify-center py-12 text-center">
       <Cloud className="w-12 h-12 text-text-muted mb-4" />
       <h3 className="text-lg font-semibold mb-2">{t('cloud_coming_soon_title')}</h3>
-      <p className="text-sm text-text-muted max-w-md">
-        {t('cloud_coming_soon_description')}
-      </p>
+      <p className="text-sm text-text-muted max-w-md">{t('cloud_coming_soon_description')}</p>
     </div>
   )
 }

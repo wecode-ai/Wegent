@@ -164,6 +164,16 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 
 > 可选：启用 RAG 功能 `docker compose --profile rag up -d`
 
+### Standalone 模式（单容器部署）
+
+如需快速部署或开发测试，可以使用 Standalone 模式，将所有服务运行在单个容器中，使用 SQLite 数据库：
+
+```bash
+docker-compose -f docker-compose.standalone.yml up -d
+```
+
+详情请参阅 [Standalone 模式文档](docs/zh/deployment/standalone-mode.md)。
+
 ### 方式二：源码安装
 
 如果你已经克隆了源码，可以直接运行安装脚本，它会自动检测源码环境并从本地构建镜像：

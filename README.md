@@ -163,6 +163,16 @@ Then open http://localhost:3000 in your browser.
 
 > Optional: Enable RAG features with `docker compose --profile rag up -d`
 
+### Standalone Mode (Single Container)
+
+For quick deployment or development, you can use the standalone mode which runs all services in a single container with SQLite database:
+
+```bash
+docker-compose -f docker-compose.standalone.yml up -d
+```
+
+See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
+
 ### Method 2: Source Installation
 
 If you have cloned the source code, you can run the install script directly. It will automatically detect the source environment and build images from local source:

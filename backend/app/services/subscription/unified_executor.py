@@ -9,8 +9,10 @@ This module provides a unified execution path for subscription tasks,
 using the ExecutionDispatcher to handle different shell types:
 - Chat Shell -> SSE mode (synchronous execution)
 - ClaudeCode/Agno/Dify -> HTTP+Callback mode (asynchronous execution)
+- INPROCESS mode (standalone mode) -> synchronous execution
 
-All execution modes publish TaskCompletedEvent for unified handling.
+TaskCompletedEvent is published by StatusUpdatingEmitter for unified handling
+across all execution modes.
 """
 
 import logging
@@ -150,7 +152,8 @@ async def _execute_sse_sync(
 ) -> None:
     """Execute subscription via SSE mode (synchronous).
 
-    Waits for the AI response to complete and publishes TaskCompletedEvent.
+    Waits for the AI response to complete. TaskCompletedEvent is published
+    by StatusUpdatingEmitter for unified handling.
 
     Args:
         request: ExecutionRequest
@@ -159,7 +162,6 @@ async def _execute_sse_sync(
     import asyncio
     import threading
 
-    from app.core.events import TaskCompletedEvent, get_event_bus
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
 
@@ -169,9 +171,6 @@ async def _execute_sse_sync(
         f"thread={threading.current_thread().name}, "
         f"is_daemon={threading.current_thread().daemon}"
     )
-
-    event_bus = get_event_bus()
-    accumulated_content = ""
 
     try:
         # Create SSEResultEmitter for collecting response
@@ -210,32 +209,7 @@ async def _execute_sse_sync(
             f"content_length={len(accumulated_content)}"
         )
 
-        # Build result from accumulated content or final_event
-        result = None
-        if accumulated_content:
-            result = {"value": accumulated_content}
-        elif final_event and final_event.result:
-            result = final_event.result
-
-        # Publish TaskCompletedEvent for unified handling
-        logger.info(
-            f"[_execute_sse_sync] About to publish TaskCompletedEvent: "
-            f"task_id={execution_data.task_id}, subtask_id={execution_data.subtask_id}, "
-            f"status=COMPLETED, execution_id={execution_data.execution_id}"
-        )
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=execution_data.task_id,
-                subtask_id=execution_data.subtask_id,
-                user_id=execution_data.user_id,
-                status="COMPLETED",
-                result=result,
-            )
-        )
-        logger.info(
-            f"[_execute_sse_sync] TaskCompletedEvent published successfully: "
-            f"execution_id={execution_data.execution_id}"
-        )
+        # TaskCompletedEvent is published by StatusUpdatingEmitter
 
     except Exception as e:
         logger.error(
@@ -243,17 +217,7 @@ async def _execute_sse_sync(
             f"execution_id={execution_data.execution_id}, error={e}",
             exc_info=True,
         )
-
-        # Publish TaskCompletedEvent with FAILED status
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=execution_data.task_id,
-                subtask_id=execution_data.subtask_id,
-                user_id=execution_data.user_id,
-                status="FAILED",
-                error=str(e),
-            )
-        )
+        # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
 
 
 async def _execute_http_callback(
@@ -262,8 +226,8 @@ async def _execute_http_callback(
 ) -> None:
     """Execute subscription via HTTP+Callback mode (asynchronous).
 
-    Dispatches the task and returns immediately.
-    Task completion is handled by /internal/callback API publishing TaskCompletedEvent.
+    Dispatches the task and waits for completion. TaskCompletedEvent is published
+    by StatusUpdatingEmitter for unified handling across all execution modes.
 
     Note: This function runs in a background thread (APScheduler), so we use
     SSEResultEmitter instead of the default WebSocket emitter chain to avoid
@@ -293,8 +257,7 @@ async def _execute_http_callback(
 
     try:
         # Dispatch task with our thread-safe emitter
-        # The executor_manager will call /internal/callback when done
-        # which will publish TaskCompletedEvent
+        # TaskCompletedEvent is published by StatusUpdatingEmitter
         dispatch_task = asyncio.create_task(
             execution_dispatcher.dispatch(
                 request,
@@ -324,26 +287,15 @@ async def _execute_http_callback(
             f"task_id={execution_data.task_id}"
         )
 
+        # TaskCompletedEvent is published by StatusUpdatingEmitter
+
     except Exception as e:
         logger.error(
             f"[_execute_http_callback] Dispatch failed: "
             f"execution_id={execution_data.execution_id}, error={e}",
             exc_info=True,
         )
-
-        # Publish TaskCompletedEvent for dispatch failure
-        from app.core.events import TaskCompletedEvent, get_event_bus
-
-        event_bus = get_event_bus()
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=execution_data.task_id,
-                subtask_id=execution_data.subtask_id,
-                user_id=execution_data.user_id,
-                status="FAILED",
-                error=f"Failed to dispatch task: {e}",
-            )
-        )
+        # TaskCompletedEvent with FAILED status is published by StatusUpdatingEmitter
 
 
 def extract_subscription_execution_data(

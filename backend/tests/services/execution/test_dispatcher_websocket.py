@@ -32,17 +32,21 @@ async def test_dispatch_websocket_schedules_socket_emit_in_main_loop():
     emitter = AsyncMock()
     sio = MagicMock()
 
-    with patch(
-        "app.core.socketio.get_sio",
-        return_value=sio,
-    ), patch.object(
-        dispatcher,
-        "_set_subtask_executor",
-        AsyncMock(),
-    ), patch(
-        "app.services.execution.dispatcher.run_in_main_loop",
-        AsyncMock(return_value=None),
-    ) as run_in_main_loop_mock:
+    with (
+        patch(
+            "app.core.socketio.get_sio",
+            return_value=sio,
+        ),
+        patch.object(
+            dispatcher,
+            "_set_subtask_executor",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.execution.dispatcher.run_in_main_loop",
+            AsyncMock(return_value=None),
+        ) as run_in_main_loop_mock,
+    ):
         await dispatcher._dispatch_websocket(request, target, emitter)
 
     emitter.emit_start.assert_awaited_once()

@@ -50,12 +50,15 @@ async def test_http_callback_dispatch_preserves_device_id():
 
     dispatch_mock = AsyncMock(return_value=None)
 
-    with patch(
-        "app.services.execution.execution_dispatcher.dispatch",
-        dispatch_mock,
-    ), patch(
-        "app.services.execution.emitters.SSEResultEmitter",
-        _FakeEmitter,
+    with (
+        patch(
+            "app.services.execution.execution_dispatcher.dispatch",
+            dispatch_mock,
+        ),
+        patch(
+            "app.services.execution.emitters.SSEResultEmitter",
+            _FakeEmitter,
+        ),
     ):
         await _execute_http_callback(request=object(), execution_data=execution_data)
 

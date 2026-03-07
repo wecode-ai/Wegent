@@ -131,7 +131,11 @@ async def route_task_to_device(
         task=task,
         user=user,
         team=team,
-        message=message if message is not None else (user_subtask.prompt if user_subtask else local_subtask.prompt or ""),
+        message=(
+            message
+            if message is not None
+            else (user_subtask.prompt if user_subtask else local_subtask.prompt or "")
+        ),
         override_model_name=override_model_name,
         force_override=force_override,
         attachments=attachments,
