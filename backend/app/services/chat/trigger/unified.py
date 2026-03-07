@@ -17,7 +17,7 @@ Key changes from the original trigger_ai_response:
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from app.db.session import SessionLocal
 from app.models.kind import Kind
@@ -26,8 +26,11 @@ from app.models.task import TaskResource
 from app.models.user import User
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from app.api.ws.chat_namespace import ChatNamespace
     from app.services.execution.emitters import ResultEmitter
+    from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ async def trigger_ai_response_unified(
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
-    message: str,
+    message: Union[str, list],
     payload: Any,
     task_room: str,
     device_id: Optional[str] = None,
@@ -126,7 +129,7 @@ async def build_execution_request(
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
-    message: str,
+    message: Union[str, list],
     payload: Any = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
@@ -219,6 +222,58 @@ async def build_execution_request(
             force_override=force_override,
         )
 
+        # Merge user-selected generate_params into videoConfig for video models
+        # Validates params against model capabilities to reject invalid values
+        if payload is not None:
+            generate_params = getattr(payload, "generate_params", None)
+            if generate_params and request.model_config.get("modelType") == "video":
+                video_config = request.model_config.get("videoConfig") or {}
+                capabilities = video_config.get("capabilities") or {}
+
+                if generate_params.resolution:
+                    allowed_resolutions = [
+                        r.get("label") for r in (capabilities.get("resolutions") or [])
+                    ]
+                    if (
+                        allowed_resolutions
+                        and generate_params.resolution not in allowed_resolutions
+                    ):
+                        raise ValueError(
+                            f"Unsupported resolution '{generate_params.resolution}', "
+                            f"allowed: {allowed_resolutions}"
+                        )
+                    video_config["resolution"] = generate_params.resolution
+
+                if generate_params.ratio:
+                    allowed_ratios = [
+                        r.get("value")
+                        for r in (capabilities.get("aspect_ratios") or [])
+                    ]
+                    if allowed_ratios and generate_params.ratio not in allowed_ratios:
+                        raise ValueError(
+                            f"Unsupported aspect ratio '{generate_params.ratio}', "
+                            f"allowed: {allowed_ratios}"
+                        )
+                    video_config["ratio"] = generate_params.ratio
+
+                if generate_params.duration:
+                    allowed_durations = capabilities.get("durations_sec") or []
+                    if (
+                        allowed_durations
+                        and generate_params.duration not in allowed_durations
+                    ):
+                        raise ValueError(
+                            f"Unsupported duration {generate_params.duration}s, "
+                            f"allowed: {allowed_durations}"
+                        )
+                    video_config["duration"] = generate_params.duration
+
+                request.model_config["videoConfig"] = video_config
+
+        # Always propagate user_subtask_id for downstream persistence (e.g., KB tool results).
+        # Note: This is different from request.subtask_id which is the assistant subtask.
+        request.user_subtask_id = user_subtask_id
+
         # Process contexts (attachments, knowledge bases, etc.)
         if user_subtask_id:
             request = await _process_contexts(db, request, user_subtask_id, user.id)
@@ -230,11 +285,11 @@ async def build_execution_request(
 
 
 async def _process_contexts(
-    db,
-    request,
+    db: "Session",
+    request: "ExecutionRequest",
     user_subtask_id: int,
     user_id: int,
-):
+) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
     Args:
@@ -247,23 +302,12 @@ async def _process_contexts(
         Enhanced ExecutionRequest with context information
     """
     from app.services.chat.preprocessing import prepare_contexts_for_chat
-    from app.services.chat.preprocessing.contexts import (
-        _get_bound_knowledge_base_ids,
-        get_document_ids_from_subtask,
-        get_knowledge_base_ids_from_subtask,
-    )
 
     # Get context_window from model_config for selected_documents injection threshold
     model_context_window = request.model_config.get("context_window")
 
     # Process contexts (attachments, knowledge bases, etc.)
-    (
-        final_message,
-        enhanced_system_prompt,
-        extra_tools,
-        has_table_context,
-        table_contexts,
-    ) = await prepare_contexts_for_chat(
+    ctx = await prepare_contexts_for_chat(
         db=db,
         user_subtask_id=user_subtask_id,
         user_id=user_id,
@@ -273,33 +317,26 @@ async def _process_contexts(
         context_window=model_context_window,
     )
 
-    # Update request with processed contexts
-    request.prompt = final_message
-    request.system_prompt = enhanced_system_prompt
-    request.table_contexts = table_contexts
-
-    # Get knowledge base IDs
-    knowledge_base_ids = get_knowledge_base_ids_from_subtask(db, user_subtask_id)
-    is_user_selected_kb = bool(knowledge_base_ids)
-
-    if knowledge_base_ids:
-        document_ids = get_document_ids_from_subtask(db, user_subtask_id)
-        request.knowledge_base_ids = knowledge_base_ids
-        request.document_ids = document_ids
-        request.is_user_selected_kb = is_user_selected_kb
-    elif request.task_id:
-        # Fall back to task-level bound knowledge bases
-        knowledge_base_ids = _get_bound_knowledge_base_ids(db, request.task_id)
-        if knowledge_base_ids:
-            request.knowledge_base_ids = knowledge_base_ids
-            request.is_user_selected_kb = False
+    # Update request with all processed context results.
+    # knowledge_base_ids / is_user_selected_kb / document_ids / kb_meta_prompt are
+    # computed inside _prepare_kb_tools_from_contexts and surfaced here - no extra
+    # DB queries needed.
+    request.prompt = ctx.final_message
+    request.system_prompt = ctx.kb.enhanced_system_prompt
+    request.table_contexts = ctx.table_contexts
+    request.kb_meta_prompt = ctx.kb.kb_meta_prompt
+    if ctx.kb.knowledge_base_ids:
+        request.knowledge_base_ids = ctx.kb.knowledge_base_ids
+        request.is_user_selected_kb = ctx.kb.is_user_selected_kb
+        if ctx.kb.document_ids:
+            request.document_ids = ctx.kb.document_ids
 
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
         "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d",
         user_subtask_id,
         request.knowledge_base_ids,
-        len(table_contexts),
+        len(ctx.table_contexts),
     )
 
     return request

@@ -15,7 +15,7 @@ Refactored version:
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Union
 
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,8 @@ async def route_task_to_device(
     user: User,
     auth_token: str = "",
     user_subtask: Optional[Subtask] = None,
+    message: Optional[Union[str, list]] = None,
+    attachments: Optional[List[dict]] = None,
 ) -> bool:
     """
     Route a task to a local device for execution.
@@ -59,6 +61,9 @@ async def route_task_to_device(
         user: User object
         auth_token: JWT token for API calls
         user_subtask: Optional user subtask for context retrieval
+        message: Optional explicit message/prompt (e.g. vision content).
+                 When provided, overrides subtask.prompt in the execution request.
+        attachments: Optional list of attachment metadata dicts for the executor.
 
     Returns:
         True if task was successfully routed to device
@@ -106,6 +111,19 @@ async def route_task_to_device(
     # Refresh to get updated state
     db.refresh(local_subtask)
 
+    # Extract model override from task labels
+    task_json = local_task.json if local_task else {}
+    task_labels = task_json.get("metadata", {}).get("labels", {})
+    override_model_name = None
+    force_override = False
+    if task_labels.get("forceOverrideBotModel") == "true":
+        override_model_name = task_labels.get("modelId")
+        force_override = True
+        logger.info(
+            f"[DeviceRouter] Extracted model override from task labels: "
+            f"modelId={override_model_name}, forceOverrideBotModel=true"
+        )
+
     # Build unified execution request
     builder = TaskRequestBuilder(db)
     request = builder.build(
@@ -113,7 +131,14 @@ async def route_task_to_device(
         task=task,
         user=user,
         team=team,
-        message=local_subtask.prompt or "",
+        message=(
+            message
+            if message is not None
+            else (user_subtask.prompt if user_subtask else local_subtask.prompt or "")
+        ),
+        override_model_name=override_model_name,
+        force_override=force_override,
+        attachments=attachments,
     )
 
     # Dispatch task via ExecutionDispatcher
@@ -142,7 +167,7 @@ async def route_task_to_device_unified(
     subtask: Subtask,
     team: Kind,
     user: User,
-    message: str = "",
+    message: Union[str, list] = "",
     auth_token: str = "",
 ) -> bool:
     """
@@ -176,6 +201,19 @@ async def route_task_to_device_unified(
     if not device_info:
         raise HTTPException(status_code=400, detail="Selected device is offline")
 
+    # Extract model override from task labels
+    task_json = task.json or {}
+    task_labels = task_json.get("metadata", {}).get("labels", {})
+    override_model_name = None
+    force_override = False
+    if task_labels.get("forceOverrideBotModel") == "true":
+        override_model_name = task_labels.get("modelId")
+        force_override = True
+        logger.info(
+            f"[DeviceRouter] Extracted model override from task labels: "
+            f"modelId={override_model_name}, forceOverrideBotModel=true"
+        )
+
     # Build unified execution request
     builder = TaskRequestBuilder(db)
     request = builder.build(
@@ -184,6 +222,8 @@ async def route_task_to_device_unified(
         user=user,
         team=team,
         message=message,
+        override_model_name=override_model_name,
+        force_override=force_override,
     )
 
     # Dispatch task via ExecutionDispatcher with device_id

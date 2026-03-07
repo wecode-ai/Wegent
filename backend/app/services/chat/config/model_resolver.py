@@ -723,10 +723,19 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(
             f"[model_resolver] _extract_model_config: using responses API from protocol={protocol}"
         )
-
     # Context window and output token limits from modelConfig
     context_window = model_config.get("context_window")
     max_output_tokens = model_config.get("max_output_tokens")
+
+    # Model category type (llm, video, tts, etc.) - used for routing
+    model_category_type = model_spec.get("modelType")
+    if model_category_type:
+        logger.info(
+            f"[model_resolver] _extract_model_config: modelType={model_category_type}"
+        )
+
+    # Video generation config (when modelType='video')
+    video_config = model_spec.get("videoConfig")
 
     return {
         "api_key": api_key,
@@ -740,6 +749,10 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         # Context window and output token limits from ModelSpec or modelConfig
         "context_window": context_window,
         "max_output_tokens": max_output_tokens,
+        # Model category type for routing (llm, video, tts, etc.)
+        "modelType": model_category_type,
+        # Video generation config (resolution, ratio, duration, etc.)
+        "videoConfig": video_config,
     }
 
 

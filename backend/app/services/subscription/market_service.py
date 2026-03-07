@@ -36,6 +36,10 @@ from app.services.subscription.helpers import (
     calculate_next_execution_time,
     extract_trigger_config,
 )
+from app.services.subscription.market_access import (
+    can_view_market_subscription,
+    get_market_whitelist_user_ids_from_internal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +108,16 @@ class SubscriptionMarketService:
             visibility = getattr(
                 subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
             )
-            if visibility == SubscriptionVisibility.MARKET:
+            internal = sub.json.get("_internal", {})
+            market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
+                internal
+            )
+            if can_view_market_subscription(
+                visibility=visibility,
+                owner_user_id=sub.user_id,
+                current_user_id=user_id,
+                whitelist_user_ids=market_whitelist_user_ids,
+            ):
                 market_subscriptions.append(sub)
 
         # Apply search filter
@@ -213,6 +226,18 @@ class SubscriptionMarketService:
             )
 
         internal = subscription.json.get("_internal", {})
+        market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
+            internal
+        )
+        if not can_view_market_subscription(
+            visibility=visibility,
+            owner_user_id=subscription.user_id,
+            current_user_id=user_id,
+            whitelist_user_ids=market_whitelist_user_ids,
+        ):
+            raise HTTPException(
+                status_code=403, detail="Access denied to this market subscription"
+            )
 
         # Get owner username
         owner = db.query(User).filter(User.id == subscription.user_id).first()
@@ -290,6 +315,20 @@ class SubscriptionMarketService:
         if visibility != SubscriptionVisibility.MARKET:
             raise HTTPException(
                 status_code=400, detail="Source subscription is not available in market"
+            )
+
+        source_internal = source.json.get("_internal", {})
+        market_whitelist_user_ids = get_market_whitelist_user_ids_from_internal(
+            source_internal
+        )
+        if not can_view_market_subscription(
+            visibility=visibility,
+            owner_user_id=source.user_id,
+            current_user_id=renter_user_id,
+            whitelist_user_ids=market_whitelist_user_ids,
+        ):
+            raise HTTPException(
+                status_code=403, detail="Access denied to this market subscription"
             )
 
         # Prevent users from renting their own subscriptions
@@ -428,7 +467,6 @@ class SubscriptionMarketService:
         db.add(rental)
 
         # Increment rental count on source subscription
-        source_internal = source.json.get("_internal", {})
         source_internal["rental_count"] = source_internal.get("rental_count", 0) + 1
         source.json["_internal"] = source_internal
         flag_modified(source, "json")

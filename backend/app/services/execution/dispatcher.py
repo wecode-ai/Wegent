@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, List, Optional
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
+from app.core.async_utils import run_in_main_loop
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -459,6 +460,19 @@ class ExecutionDispatcher:
             return request.bot[0].get("shell_type", "Chat")
         return "Chat"
 
+    @staticmethod
+    def _get_model_type(request: ExecutionRequest) -> str:
+        """Get model type from request's model_config.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            Model type string (e.g., "llm", "image")
+        """
+        model_config = request.model_config or {}
+        return model_config.get("modelType", "llm")
+
     async def dispatch_with_composite(
         self,
         request: ExecutionRequest,
@@ -488,7 +502,11 @@ class ExecutionDispatcher:
         target: ExecutionTarget,
         emitter: ResultEmitter,
     ) -> None:
-        """Dispatch task via SSE using OpenAI client.
+        """Dispatch task via SSE.
+
+        Routes based on modelType:
+        - modelType == "image" -> ImageAgent (direct API call)
+        - modelType == "llm" or default -> chat_shell via OpenAI client
 
         Uses AsyncOpenAI client to consume OpenAI Responses API compatible endpoint.
         Converts ExecutionRequest to OpenAI format, sends request, and processes
@@ -502,6 +520,15 @@ class ExecutionDispatcher:
             target: Execution target configuration
             emitter: Result emitter for event emission
         """
+        # Check if this is an image generation request
+        model_type = self._get_model_type(request)
+
+        if model_type == "image":
+            # Route to ImageAgent for direct image generation
+            await self._dispatch_image_generation(request, emitter)
+            return
+
+        # Default: route to chat_shell via OpenAI client
         from app.services.chat.storage.session import session_manager
 
         # OpenAI client appends /responses to base_url, so we need to include /v1
@@ -669,6 +696,32 @@ class ExecutionDispatcher:
             # Unregister stream to clean up
             await session_manager.unregister_stream(request.subtask_id)
 
+    async def _dispatch_image_generation(
+        self,
+        request: ExecutionRequest,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Dispatch image generation task to ImageAgent.
+
+        ImageAgent handles:
+        1. Calling Seedream API directly
+        2. Uploading result as attachment
+        3. Emitting events via emitter
+
+        Args:
+            request: Execution request
+            emitter: Result emitter for event emission
+        """
+        from .agents.image.image_agent import ImageAgent
+
+        logger.info(
+            f"[ExecutionDispatcher] Dispatching to ImageAgent: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
+
+        agent = ImageAgent()
+        await agent.execute(request, emitter)
+
     async def _dispatch_polling(
         self,
         request: ExecutionRequest,
@@ -718,12 +771,7 @@ class ExecutionDispatcher:
         )
 
         # Send task to specified room
-        await sio.emit(
-            target.event,
-            request.to_dict(),
-            room=target.room,
-            namespace=target.namespace,
-        )
+        await self._emit_socketio_in_main_loop(sio, target, request.to_dict())
 
         logger.info(
             f"[ExecutionDispatcher] WebSocket dispatch: "
@@ -733,6 +781,29 @@ class ExecutionDispatcher:
         # In WebSocket mode, subsequent events are handled by DeviceNamespace's
         # on_task_progress/on_task_complete
         # No need to wait for response here
+
+    async def _emit_socketio_in_main_loop(
+        self,
+        sio: Any,
+        target: ExecutionTarget,
+        payload: dict,
+    ) -> None:
+        """Emit Socket.IO events from the main application loop.
+
+        Socket.IO and its Redis manager are owned by the main app loop. Subscription
+        device execution runs in a background thread with a separate event loop, so
+        direct awaits against `sio.emit()` can fail with cross-loop Future errors.
+        """
+
+        async def _emit() -> None:
+            await sio.emit(
+                target.event,
+                payload,
+                room=target.room,
+                namespace=target.namespace,
+            )
+
+        await run_in_main_loop(_emit)
 
     async def _dispatch_inprocess(
         self,
@@ -852,77 +923,6 @@ class ExecutionDispatcher:
                 message_id=request.message_id,
             )
             raise
-
-
-class ChatShellBridgeTransport:
-    """Transport that bridges chat_shell's ResponsesAPIEmitter to Backend's ResultEmitter.
-
-    This transport receives OpenAI Responses API format events from chat_shell
-    and converts them to ExecutionEvent format for the Backend's ResultEmitter.
-    """
-
-    def __init__(
-        self,
-        emitter: ResultEmitter,
-        event_parser: ResponsesAPIEventParser,
-        task_id: int,
-        subtask_id: int,
-        message_id: Optional[int] = None,
-    ):
-        """Initialize the bridge transport.
-
-        Args:
-            emitter: Backend's ResultEmitter to forward events to
-            event_parser: Parser for converting OpenAI events to ExecutionEvent
-            task_id: Task ID
-            subtask_id: Subtask ID
-            message_id: Optional message ID
-        """
-        self.emitter = emitter
-        self.event_parser = event_parser
-        self.task_id = task_id
-        self.subtask_id = subtask_id
-        self.message_id = message_id
-
-    async def send(
-        self,
-        event_type: str,
-        task_id: int,
-        subtask_id: int,
-        data: dict,
-        message_id: Optional[int] = None,
-        executor_name: Optional[str] = None,
-        executor_namespace: Optional[str] = None,
-    ) -> dict:
-        """Send event by converting and forwarding to ResultEmitter.
-
-        Args:
-            event_type: OpenAI Responses API event type
-            task_id: Task ID
-            subtask_id: Subtask ID
-            data: Event data
-            message_id: Optional message ID
-            executor_name: Optional executor name
-            executor_namespace: Optional executor namespace
-
-        Returns:
-            Status dict indicating success
-        """
-        msg_id = message_id or self.message_id
-
-        # Parse event using shared parser
-        parsed_event = self.event_parser.parse(
-            task_id=self.task_id,
-            subtask_id=self.subtask_id,
-            message_id=msg_id,
-            event_type=event_type,
-            data=data,
-        )
-
-        if parsed_event:
-            await self.emitter.emit(parsed_event)
-
-        return {"status": "success"}
 
     async def _dispatch_http_callback(
         self,
@@ -1292,6 +1292,77 @@ class ChatShellBridgeTransport:
             room=target.room,
             namespace=target.namespace,
         )
+
+
+class ChatShellBridgeTransport:
+    """Transport that bridges chat_shell's ResponsesAPIEmitter to Backend's ResultEmitter.
+
+    This transport receives OpenAI Responses API format events from chat_shell
+    and converts them to ExecutionEvent format for the Backend's ResultEmitter.
+    """
+
+    def __init__(
+        self,
+        emitter: ResultEmitter,
+        event_parser: ResponsesAPIEventParser,
+        task_id: int,
+        subtask_id: int,
+        message_id: Optional[int] = None,
+    ):
+        """Initialize the bridge transport.
+
+        Args:
+            emitter: Backend's ResultEmitter to forward events to
+            event_parser: Parser for converting OpenAI events to ExecutionEvent
+            task_id: Task ID
+            subtask_id: Subtask ID
+            message_id: Optional message ID
+        """
+        self.emitter = emitter
+        self.event_parser = event_parser
+        self.task_id = task_id
+        self.subtask_id = subtask_id
+        self.message_id = message_id
+
+    async def send(
+        self,
+        event_type: str,
+        task_id: int,
+        subtask_id: int,
+        data: dict,
+        message_id: Optional[int] = None,
+        executor_name: Optional[str] = None,
+        executor_namespace: Optional[str] = None,
+    ) -> dict:
+        """Send event by converting and forwarding to ResultEmitter.
+
+        Args:
+            event_type: OpenAI Responses API event type
+            task_id: Task ID
+            subtask_id: Subtask ID
+            data: Event data
+            message_id: Optional message ID
+            executor_name: Optional executor name
+            executor_namespace: Optional executor namespace
+
+        Returns:
+            Status dict indicating success
+        """
+        msg_id = message_id or self.message_id
+
+        # Parse event using shared parser
+        parsed_event = self.event_parser.parse(
+            task_id=self.task_id,
+            subtask_id=self.subtask_id,
+            message_id=msg_id,
+            event_type=event_type,
+            data=data,
+        )
+
+        if parsed_event:
+            await self.emitter.emit(parsed_event)
+
+        return {"status": "success"}
 
 
 # Global instance

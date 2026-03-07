@@ -576,7 +576,88 @@ class ChannelCallbackRegistry:
             )
             return None
 
+    async def handle_task_completed(
+        self,
+        task_id: int,
+        subtask_id: int,
+        status: str,
+        result: Any,
+        error: Optional[str] = None,
+    ) -> bool:
+        """Handle task completion by sending results to all channel callbacks.
+
+        This method is called when a task completes (typically from TaskCompletedEvent).
+        It checks all registered channel callback services for callback info
+        and sends the result to any channels that have saved callback info for this task.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            status: Task status ("COMPLETED", "FAILED", "CANCELLED")
+            result: Result dictionary containing output value
+            error: Error message if failed
+
+        Returns:
+            True if at least one callback was sent successfully
+        """
+        sent_any = False
+
+        # Extract content from result
+        content = ""
+        if result and isinstance(result, dict):
+            content = result.get("value", "") or result.get("output", "") or ""
+
+        for channel_type, service in self._services.items():
+            try:
+                # Check if this service has callback info for the task
+                callback_info = await service.get_callback_info(task_id)
+                if callback_info:
+                    logger.info(
+                        f"[CallbackRegistry] Found callback info for task {task_id} "
+                        f"in channel {channel_type.value}, sending result"
+                    )
+                    success = await service.send_task_result(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        content=content,
+                        status=status,
+                        error_message=error,
+                    )
+                    if success:
+                        sent_any = True
+                        logger.info(
+                            f"[CallbackRegistry] Successfully sent result to "
+                            f"{channel_type.value} for task {task_id}"
+                        )
+            except Exception as e:
+                logger.error(
+                    f"[CallbackRegistry] Error sending callback to {channel_type.value} "
+                    f"for task {task_id}: {e}",
+                    exc_info=True,
+                )
+
+        return sent_any
+
 
 def get_callback_registry() -> ChannelCallbackRegistry:
     """Get the ChannelCallbackRegistry singleton instance."""
     return ChannelCallbackRegistry.get_instance()
+
+
+async def handle_channel_task_completed(event: Any) -> None:
+    """Handle TaskCompletedEvent for IM channel callbacks.
+
+    This function is subscribed to the event bus and forwards task completion
+    events to all registered channel callback services.
+
+    Args:
+        event: TaskCompletedEvent from app.core.events
+    """
+    registry = get_callback_registry()
+    await registry.handle_task_completed(
+        task_id=event.task_id,
+        subtask_id=event.subtask_id,
+        status=event.status,
+        result=event.result,
+        error=event.error,
+    )

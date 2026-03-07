@@ -22,10 +22,9 @@ export function useEmbeddingModels(
   const fetchModels = useCallback(async () => {
     try {
       setLoading(true)
-      // For organization and group scope, use 'personal' to get user's models + public models
-      // Organization and Group KBs should be able to use personal or public models
-      // Group-specific models can be added later if needed
-      const apiScope = scope === 'organization' || scope === 'group' ? 'personal' : scope || 'all'
+      // For organization scope, use 'personal' to get user's models + public models
+      // For group scope, pass 'group' directly to get group's models + public models
+      const apiScope = scope === 'organization' ? 'personal' : scope || 'all'
       // Use modelApis.getUnifiedModels with scope support and filter by embedding type
       const response = await modelApis.getUnifiedModels(
         undefined, // shellType

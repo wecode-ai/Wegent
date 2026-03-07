@@ -27,6 +27,12 @@ export interface DeviceRunningTask {
   created_at?: string
 }
 
+export interface CloudDeviceConfig {
+  sandboxId: string
+  imageId: string
+  createdAt: string
+}
+
 export interface DeviceInfo {
   id: number
   device_id: string
@@ -45,6 +51,8 @@ export interface DeviceInfo {
   executor_version: string | null
   latest_version: string | null
   update_available: boolean
+  // Cloud device specific config
+  cloud_config?: CloudDeviceConfig
 }
 
 export interface DeviceListResponse {

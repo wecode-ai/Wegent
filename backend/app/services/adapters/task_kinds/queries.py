@@ -215,6 +215,8 @@ class TaskQueryMixin:
         from app.models.share_link import ResourceType
 
         # Get task IDs that are group chats (have members) using resource_members
+        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
+        # Share-copy records are created when users import shared tasks, not for group chat membership
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.resource_id
@@ -225,6 +227,7 @@ class TaskQueryMixin:
             AND k.is_active = true
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.user_id = :user_id)
+            AND tm.copied_resource_id = 0
         """
         )
         member_task_ids_result = db.execute(
@@ -303,6 +306,8 @@ class TaskQueryMixin:
         from app.models.share_link import ResourceType
 
         # Get all task IDs that are group chats (have members) using resource_members
+        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
+        # Share-copy records are created when users import shared tasks, not for group chat membership
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.resource_id
@@ -312,6 +317,7 @@ class TaskQueryMixin:
             AND k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
+            AND tm.copied_resource_id = 0
         """
         )
         member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
@@ -364,7 +370,7 @@ class TaskQueryMixin:
         """
         )
         task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
+            ids_sql, {"user_id": user_id, "limit": limit + 200, "skip": skip}
         ).fetchall()
         task_ids = [row[0] for row in task_id_rows]
 
@@ -629,6 +635,7 @@ class TaskQueryMixin:
             agent_config = {}
 
             # Get Model data for agent_config
+            # Only return model binding info, not sensitive env (api_key etc.)
             if bot_crd.spec.modelRef:
                 model = kindReader.get_by_name_and_namespace(
                     db,
@@ -637,9 +644,11 @@ class TaskQueryMixin:
                     bot_crd.spec.modelRef.namespace,
                     bot_crd.spec.modelRef.name,
                 )
-                if model and model.json:
-                    model_crd = Model.model_validate(model.json)
-                    agent_config = model_crd.spec.modelConfig
+                model_type = "public" if model and model.user_id == 0 else "user"
+                agent_config = {
+                    "bind_model": bot_crd.spec.modelRef.name,
+                    "bind_model_type": model_type,
+                }
 
             # Get Shell data for shell_type
             shell = kindReader.get_by_name_and_namespace(

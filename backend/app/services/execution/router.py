@@ -125,11 +125,13 @@ class ExecutionRouter:
         """Route task to execution target.
 
         Routing priority:
-        1. If device_id is specified, use WebSocket mode
-        2. In standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
-        3. If CHAT_SHELL_MODE=package, use INPROCESS for Chat shell type
-        4. Otherwise, look up configuration by shell_type
-        5. Default to HTTP+Callback mode
+        0. Model type based routing (e.g., video models -> POLLING)
+        1. Protocol-based routing (e.g., gemini-deep-research -> POLLING)
+        2. If device_id is specified, use WebSocket mode
+        3. In standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
+        4. If CHAT_SHELL_MODE=package, use INPROCESS for Chat shell type
+        5. Otherwise, look up configuration by shell_type
+        6. Default to HTTP+Callback mode
 
         Args:
             request: Execution request
@@ -143,7 +145,14 @@ class ExecutionRouter:
         logger = logging.getLogger(__name__)
         user_id = request.user.get("id") if request.user else None
 
-        # Priority 0: Protocol-based routing (e.g., gemini-deep-research)
+        # Priority 0: Model type based routing for polling agents
+        model_type = self._get_model_type(request)
+        if model_type == "video" and not device_id:
+            return ExecutionTarget(
+                mode=CommunicationMode.POLLING,
+            )
+
+        # Priority 1: Protocol-based routing (e.g., gemini-deep-research)
         protocol = (
             request.model_config.get("protocol") if request.model_config else None
         )
@@ -152,7 +161,7 @@ class ExecutionRouter:
                 mode=CommunicationMode.POLLING,
             )
 
-        # Priority 1: device_id specified, use WebSocket mode
+        # Priority 2: device_id specified, use WebSocket mode
         if device_id:
             return ExecutionTarget(
                 mode=CommunicationMode.WEBSOCKET,
@@ -169,7 +178,7 @@ class ExecutionRouter:
             f"chat_shell_mode={self.chat_shell_mode}"
         )
 
-        # Priority 2: Standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
+        # Priority 3: Standalone mode with executor enabled, use INPROCESS for ClaudeCode/Agno
         if (
             self.standalone_mode
             and self.standalone_executor_enabled
@@ -178,7 +187,7 @@ class ExecutionRouter:
             logger.info(f"[ExecutionRouter.route] Routing to INPROCESS mode (executor)")
             return ExecutionTarget(mode=CommunicationMode.INPROCESS)
 
-        # Priority 3: Chat shell in package mode, use INPROCESS for Chat type
+        # Priority 4: Chat shell in package mode, use INPROCESS for Chat type
         if (
             self.chat_shell_mode == "package"
             and shell_type in self.INPROCESS_CHAT_SHELL_TYPES
@@ -188,7 +197,7 @@ class ExecutionRouter:
             )
             return ExecutionTarget(mode=CommunicationMode.INPROCESS)
 
-        # Priority 4: Look up configuration by shell_type
+        # Priority 5: Look up configuration by shell_type
         service_config = self.EXECUTION_SERVICES.get(shell_type)
 
         if service_config:
@@ -206,7 +215,7 @@ class ExecutionRouter:
                     url=service_config["url"],
                 )
 
-        # Priority 5: Default configuration
+        # Priority 6: Default configuration
         default_url = (
             getattr(settings, "EXECUTOR_MANAGER_URL", "http://127.0.0.1:8001")
             + "/executor-manager"
@@ -228,3 +237,16 @@ class ExecutionRouter:
         if request.bot and len(request.bot) > 0:
             return request.bot[0].get("shell_type", "Chat")
         return "Chat"
+
+    def _get_model_type(self, request: ExecutionRequest) -> Optional[str]:
+        """Get model type from request.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            Model type string (e.g., 'video', 'llm') or None
+        """
+        if request.model_config:
+            return request.model_config.get("modelType")
+        return None

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { SearchIcon } from './SearchIcon'
+import { Input } from '@/components/ui/input'
 
 interface SearchBoxProps {
   value: string
@@ -37,12 +38,12 @@ export function SearchBox({
 
   return (
     <div className={`relative ${className}`}>
-      <input
+      <Input
         type="text"
         placeholder={placeholder}
         value={value}
         onChange={e => onChange(e.target.value)}
-        className={`w-full ${sizeClasses[size]} bg-surface border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40`}
+        className={`${sizeClasses[size]} focus-visible:ring-primary/40`}
       />
       <SearchIcon
         className={`absolute ${iconSizeClasses[size]} top-1/2 transform -translate-y-1/2 text-text-muted`}

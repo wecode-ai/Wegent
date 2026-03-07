@@ -9,7 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { ChatTipItem, Team } from '@/types/api'
+import type { ChatTipItem, Team, TaskType } from '@/types/api'
 import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
 import SkillAutocomplete, { SkillFlyAnimationTrigger } from '../chat/SkillAutocomplete'
@@ -21,7 +21,7 @@ interface ChatInputProps {
   handleSendMessage: () => void
   isLoading: boolean
   disabled?: boolean
-  taskType?: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType?: TaskType
   autoFocus?: boolean
   // Controls whether the message can be submitted (e.g., model selection required)
   canSubmit?: boolean

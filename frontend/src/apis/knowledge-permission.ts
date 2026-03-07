@@ -6,6 +6,7 @@ import type {
   JoinByLinkRequest,
   JoinByLinkResponse,
   KBShareInfo,
+  MemberRole,
   MyPermissionResponse,
   PermissionAddRequest,
   PermissionApplyRequest,
@@ -28,6 +29,7 @@ interface ResourceMemberResponse {
   user_id: number
   user_name: string | null
   user_email: string | null
+  role: string
   permission_level: string
   status: string
   invited_by_user_id: number
@@ -54,7 +56,7 @@ export const knowledgePermissionApi = {
       `/share/KnowledgeBase/${kbId}/join`,
       {
         share_token: '', // Will be filled by the caller
-        requested_permission_level: request.permission_level,
+        requested_role: request.role,
       }
     )
     return response
@@ -72,7 +74,7 @@ export const knowledgePermissionApi = {
       `/share/KnowledgeBase/${kbId}/requests/${permissionId}/review`,
       {
         approved: request.action === 'approve',
-        permission_level: request.permission_level,
+        role: request.role,
       }
     )
     return response
@@ -94,59 +96,58 @@ export const knowledgePermissionApi = {
         user_id: number
         user_name: string | null
         user_email: string | null
+        requested_role: string
         requested_permission_level: string
         requested_at: string
       }[]
       total: number
     }>(`/share/KnowledgeBase/${kbId}/requests`)
 
-    // Transform pending requests
-    // Normalize permission_level to lowercase to handle legacy data (e.g., VIEW -> view)
-    const pending = pendingResponse.requests.map(r => ({
-      id: r.id,
-      user_id: r.user_id,
-      username: r.user_name || '',
-      email: r.user_email || '',
-      permission_level: r.requested_permission_level.toLowerCase() as 'view' | 'edit' | 'manage',
-      requested_at: r.requested_at,
-    }))
+    // Transform pending requests - use role if available, fallback to permission_level
+    const pending = pendingResponse.requests.map(r => {
+      // Use requested_role if available (valid MemberRole), otherwise undefined
+      const role = (r.requested_role as MemberRole) || undefined
+      // Keep legacy permission_level as separate value
+      const permissionLevel = r.requested_permission_level.toLowerCase() as
+        | 'view'
+        | 'edit'
+        | 'manage'
+      return {
+        id: r.id,
+        user_id: r.user_id,
+        username: r.user_name || '',
+        email: r.user_email || '',
+        role: role,
+        permission_level: permissionLevel,
+        requested_at: r.requested_at,
+      }
+    })
 
-    // Transform approved members
-    // Normalize permission_level to lowercase to handle legacy data (e.g., VIEW -> view)
+    // Transform approved members - group by role
     const approved = membersResponse.members.reduce(
       (acc, m) => {
-        const level = m.permission_level.toLowerCase() as 'view' | 'edit' | 'manage'
-        if (!acc[level]) acc[level] = []
-        const member: {
-          id: number
-          user_id: number
-          username: string
-          email: string
-          permission_level: 'view' | 'edit' | 'manage'
-          requested_at: string
-          reviewed_at?: string
-          reviewed_by?: number
-        } = {
+        // Use role if available, otherwise derive from permission_level
+        const role = (m.role || m.permission_level) as MemberRole
+        if (!acc[role]) acc[role] = []
+        const member = {
           id: m.id,
           user_id: m.user_id,
           username: m.user_name || '',
           email: m.user_email || '',
-          permission_level: level,
+          role: role,
+          permission_level: m.permission_level.toLowerCase() as 'view' | 'edit' | 'manage',
           requested_at: m.requested_at,
+          reviewed_at: m.reviewed_at || undefined,
+          reviewed_by: m.reviewed_by_user_id || undefined,
         }
-        if (m.reviewed_at) {
-          member.reviewed_at = m.reviewed_at
-        }
-        if (m.reviewed_by_user_id) {
-          member.reviewed_by = m.reviewed_by_user_id
-        }
-        acc[level].push(member)
+        acc[role].push(member)
         return acc
       },
-      { view: [], edit: [], manage: [] } as {
-        view: typeof pending
-        edit: typeof pending
-        manage: typeof pending
+      { Owner: [], Maintainer: [], Developer: [], Reporter: [] } as {
+        Owner: typeof pending
+        Maintainer: typeof pending
+        Developer: typeof pending
+        Reporter: typeof pending
       }
     )
     return { pending, approved }
@@ -174,13 +175,13 @@ export const knowledgePermissionApi = {
     }
     const response = await client.post<PermissionResponse>(`/share/KnowledgeBase/${kbId}/members`, {
       user_id: user.id,
-      permission_level: request.permission_level,
+      role: request.role,
     })
     return response
   },
 
   /**
-   * Update a user's permission level
+   * Update a user's role
    */
   updatePermission: async (
     kbId: number,
@@ -190,7 +191,7 @@ export const knowledgePermissionApi = {
     const response = await client.put<PermissionResponse>(
       `/share/KnowledgeBase/${kbId}/members/${permissionId}`,
       {
-        permission_level: request.permission_level,
+        role: request.role,
       }
     )
     return response
@@ -249,7 +250,7 @@ export const knowledgePermissionApi = {
    */
   createShareLink: async (kbId: number, config?: ShareLinkConfig): Promise<ShareLinkResponse> => {
     const response = await client.post<ShareLinkResponse>(`/share/KnowledgeBase/${kbId}/link`, {
-      config: config || { require_approval: true, default_permission_level: 'view' },
+      config: config || { require_approval: true, default_role: 'Reporter' },
     })
     return response
   },

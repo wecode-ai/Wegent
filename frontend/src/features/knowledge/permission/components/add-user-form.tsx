@@ -15,23 +15,23 @@ import {
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
-import type { PermissionLevel } from '@/types/knowledge'
+import type { MemberRole } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
 
 interface AddUserFormProps {
   selectedUsers: SearchUser[]
-  permissionLevel: PermissionLevel
+  role: MemberRole
   onSelectedUsersChange: (users: SearchUser[]) => void
-  onPermissionLevelChange: (level: PermissionLevel) => void
+  onRoleChange: (role: MemberRole) => void
   onSubmit: (e: FormEvent) => void
   error: string | null
 }
 
 export function AddUserForm({
   selectedUsers,
-  permissionLevel,
+  role,
   onSelectedUsersChange,
-  onPermissionLevelChange,
+  onRoleChange,
   onSubmit,
   error,
 }: AddUserFormProps) {
@@ -51,38 +51,35 @@ export function AddUserForm({
           />
         </div>
 
-        {/* Permission Level Select */}
+        {/* Role Select */}
         <div className="space-y-2">
-          <Label htmlFor="permissionLevel">{t('document.permission.permissionLevel')}</Label>
-          <Select
-            value={permissionLevel}
-            onValueChange={v => onPermissionLevelChange(v as PermissionLevel)}
-          >
-            <SelectTrigger id="permissionLevel">
+          <Label htmlFor="role">{t('document.permission.role.label')}</Label>
+          <Select value={role} onValueChange={v => onRoleChange(v as MemberRole)}>
+            <SelectTrigger id="role">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="view">
+              <SelectItem value="Maintainer">
                 <div>
-                  <div className="font-medium">{t('document.permission.view')}</div>
+                  <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
                   <div className="text-xs text-text-muted">
-                    {t('document.permission.viewDescription')}
+                    {t('document.permission.role.MaintainerDescription')}
                   </div>
                 </div>
               </SelectItem>
-              <SelectItem value="edit">
+              <SelectItem value="Developer">
                 <div>
-                  <div className="font-medium">{t('document.permission.edit')}</div>
+                  <div className="font-medium">{t('document.permission.role.Developer')}</div>
                   <div className="text-xs text-text-muted">
-                    {t('document.permission.editDescription')}
+                    {t('document.permission.role.DeveloperDescription')}
                   </div>
                 </div>
               </SelectItem>
-              <SelectItem value="manage">
+              <SelectItem value="Reporter">
                 <div>
-                  <div className="font-medium">{t('document.permission.manage')}</div>
+                  <div className="font-medium">{t('document.permission.role.Reporter')}</div>
                   <div className="text-xs text-text-muted">
-                    {t('document.permission.manageDescription')}
+                    {t('document.permission.role.ReporterDescription')}
                   </div>
                 </div>
               </SelectItem>

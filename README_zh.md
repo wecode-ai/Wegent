@@ -154,6 +154,8 @@ graph TB
 
 ## 🚀 快速开始
 
+### 方式一：快速安装（推荐）
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
@@ -171,6 +173,73 @@ docker-compose -f docker-compose.standalone.yml up -d
 ```
 
 详情请参阅 [Standalone 模式文档](docs/zh/deployment/standalone-mode.md)。
+
+### 方式二：源码安装
+
+如果你已经克隆了源码，可以直接运行安装脚本，它会自动检测源码环境并从本地构建镜像：
+
+```bash
+git clone https://github.com/wecode-ai/Wegent.git
+cd Wegent
+./install.sh
+```
+
+或者在源码目录中手动指定使用本地构建：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+```
+
+**常用命令（源码模式）：**
+```bash
+# 查看日志
+docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f
+
+# 停止服务
+docker compose -f docker-compose.yml -f docker-compose.build.yml down
+
+# 启动服务
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+
+# 重新构建镜像
+docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache
+```
+
+### 方式三：本地开发模式
+
+如果你是开发者，想要快速调试和热重载，可以使用本地开发模式：
+
+```bash
+git clone https://github.com/wecode-ai/Wegent.git
+cd Wegent
+./start.sh
+```
+
+**本地开发模式特点：**
+- 直接运行服务，不使用 Docker
+- 代码修改后自动热重载
+- 适合日常开发调试
+
+**常用命令（本地开发模式）：**
+```bash
+# 启动服务
+./start.sh
+
+# 停止服务
+./start.sh --stop
+
+# 重启服务
+./start.sh --restart
+
+# 查看状态
+./start.sh --status
+
+# 初始化配置
+./start.sh --init
+
+# 查看帮助
+./start.sh --help
+```
 
 ---
 
@@ -244,17 +313,17 @@ docker-compose -f docker-compose.standalone.yml up -d
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/kissghosts">
-            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
-            <br />
-            <sub><b>Yanhe</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/yixiangxx">
             <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
             <br />
             <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/kissghosts">
+            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
+            <br />
+            <sub><b>Yanhe</b></sub>
         </a>
     </td></tr>
 <tr>
@@ -301,20 +370,27 @@ docker-compose -f docker-compose.standalone.yml up -d
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/kerwin612">
+            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
+            <br />
+            <sub><b>Kerwin Bryant</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/fingki">
             <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
             <sub><b>Fingki</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
@@ -351,6 +427,21 @@ docker-compose -f docker-compose.standalone.yml up -d
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/LiDaiyan">
+            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+            <br />
+            <sub><b>Li Daiyan</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/RichardoMrMu">
+            <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
+            <br />
+            <sub><b>RichardoMu</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
@@ -362,6 +453,13 @@ docker-compose -f docker-compose.standalone.yml up -d
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
             <sub><b>Graindt</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qingchengliu">
+            <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
+            <br />
+            <sub><b>Qingcheng</b></sub>
         </a>
     </td>
     <td align="center">

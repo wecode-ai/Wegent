@@ -310,6 +310,14 @@ show_uv_install_instructions() {
     exit 1
 }
 
+# Detect if running in WSL
+is_wsl() {
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 # Check if docker is installed
 check_docker_installed() {
     if command -v docker &> /dev/null; then
@@ -678,14 +686,17 @@ Wegent One-Click Startup Script (Local Development Mode)
 Usage: $0 [options]
 
 Options:
-  -p, --port PORT           Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
-  -e, --executor-image IMG  Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
-  --socket-url URL          Socket direct url (auto-computed from BACKEND_PORT)
-  --init                    Interactive configuration initialization
-  --stop                    Stop all services
-  --restart                 Restart all services
-  --status                  Check service status
-  -h, --help                Show help information
+  -b, --backend-port PORT       Backend API port (default: $DEFAULT_BACKEND_PORT)
+  -c, --chat-shell-port PORT    Chat Shell port (default: $DEFAULT_CHAT_SHELL_PORT)
+  -m, --executor-manager-port PORT  Executor Manager port (default: $DEFAULT_EXECUTOR_MANAGER_PORT)
+  -p, --port PORT               Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
+  -e, --executor-image IMG      Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
+  --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
+  --init                        Interactive configuration initialization
+  --stop                        Stop all services
+  --restart                     Restart all services
+  --status                      Check service status
+  -h, --help                    Show help information
 
 Configuration File:
   The script uses the .env configuration file in the project root.
@@ -709,6 +720,9 @@ Configuration File:
 Examples:
   $0                                    # Start with default configuration
   $0 --init                             # Initialize configuration interactively
+  $0 -b 8001                            # Specify backend port as 8001
+  $0 -c 8101                            # Specify chat shell port as 8101
+  $0 -m 8002                            # Specify executor manager port as 8002
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
@@ -721,12 +735,27 @@ EOF
 ACTION="start"
 
 # Track which variables were set via command line (to override config file)
+CLI_BACKEND_PORT=""
+CLI_CHAT_SHELL_PORT=""
+CLI_EXECUTOR_MANAGER_PORT=""
 CLI_WEGENT_FRONTEND_PORT=""
 CLI_EXECUTOR_IMAGE=""
 CLI_WEGENT_SOCKET_URL=""
 
 while [[ $# -gt 0 ]]; do
 case $1 in
+    -b|--backend-port)
+        CLI_BACKEND_PORT="$2"
+        shift 2
+        ;;
+    -c|--chat-shell-port)
+        CLI_CHAT_SHELL_PORT="$2"
+        shift 2
+        ;;
+    -m|--executor-manager-port)
+        CLI_EXECUTOR_MANAGER_PORT="$2"
+        shift 2
+        ;;
     -p|--port)
         CLI_WEGENT_FRONTEND_PORT="$2"
         shift 2
@@ -772,6 +801,9 @@ done
 load_config
 
 # Apply command line overrides (CLI arguments take precedence over config file)
+[ -n "$CLI_BACKEND_PORT" ] && BACKEND_PORT="$CLI_BACKEND_PORT"
+[ -n "$CLI_CHAT_SHELL_PORT" ] && CHAT_SHELL_PORT="$CLI_CHAT_SHELL_PORT"
+[ -n "$CLI_EXECUTOR_MANAGER_PORT" ] && EXECUTOR_MANAGER_PORT="$CLI_EXECUTOR_MANAGER_PORT"
 [ -n "$CLI_WEGENT_FRONTEND_PORT" ] && WEGENT_FRONTEND_PORT="$CLI_WEGENT_FRONTEND_PORT"
 [ -n "$CLI_EXECUTOR_IMAGE" ] && EXECUTOR_IMAGE="$CLI_EXECUTOR_IMAGE"
 [ -n "$CLI_WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="$CLI_WEGENT_SOCKET_URL"
@@ -1133,8 +1165,23 @@ start_services() {
     export RUNTIME_INTERNAL_API_URL=http://localhost:$BACKEND_PORT
     export RUNTIME_SOCKET_DIRECT_URL=$WEGENT_SOCKET_URL
 
+    # Build the frontend startup command
+    # In WSL, use full path to node to ensure we use the correct nvm-installed version
+    # instead of potentially using Windows node or a different version
+    local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT npm run dev"
+    
+    if is_wsl; then
+        # Get the full path to node from the current shell (which has nvm loaded)
+        local node_path=$(command -v node)
+        if [ -n "$node_path" ]; then
+            # Set PATH to use the nvm node directory
+            local node_dir=$(dirname "$node_path")
+            frontend_cmd="PATH=$node_dir:\$PATH $frontend_cmd"
+        fi
+    fi
+
     # Start frontend in background
-    nohup bash -c "PORT=$WEGENT_FRONTEND_PORT npm run dev" > "$PID_DIR/frontend.log" 2>&1 &
+    nohup bash -c "$frontend_cmd" > "$PID_DIR/frontend.log" 2>&1 &
     local frontend_pid=$!
     echo $frontend_pid > "$PID_DIR/frontend.pid"
 

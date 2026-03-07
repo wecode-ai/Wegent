@@ -76,8 +76,7 @@ export function EditKnowledgeBaseDialog({
     setRetrievalConfig(config)
   }, [])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     setError('')
     setSummaryModelError('')
 
@@ -154,65 +153,68 @@ export function EditKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.edit')}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-4 py-4">
-            <KnowledgeBaseForm
-              name={name}
-              description={description}
-              onNameChange={value => setName(value)}
-              onDescriptionChange={value => setDescription(value)}
-              summaryEnabled={summaryEnabled}
-              onSummaryEnabledChange={checked => {
-                setSummaryEnabled(checked)
-                if (!checked) {
-                  setSummaryModelRef(null)
-                  setSummaryModelError('')
-                }
-              }}
-              summaryModelRef={summaryModelRef}
-              summaryModelError={summaryModelError}
-              onSummaryModelChange={value => {
-                setSummaryModelRef(value)
+        <div className="flex-1 overflow-y-auto space-y-4 py-4">
+          <KnowledgeBaseForm
+            name={name}
+            description={description}
+            onNameChange={value => setName(value)}
+            onDescriptionChange={value => setDescription(value)}
+            summaryEnabled={summaryEnabled}
+            onSummaryEnabledChange={checked => {
+              setSummaryEnabled(checked)
+              if (!checked) {
+                setSummaryModelRef(null)
                 setSummaryModelError('')
-              }}
-              knowledgeDefaultTeamId={
-                !knowledgeBase?.summary_model_ref ? knowledgeDefaultTeamId : undefined
               }
-              callLimits={{ maxCalls, exemptCalls }}
-              onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
-                setMaxCalls(nextMax)
-                setExemptCalls(nextExempt)
-              }}
-              advancedVariant="collapsible"
-              advancedOpen={showAdvanced}
-              onAdvancedOpenChange={setShowAdvanced}
-              showRetrievalSection={!!knowledgeBase?.retrieval_config}
-              retrievalConfig={retrievalConfig}
-              onRetrievalConfigChange={handleRetrievalConfigChange}
-              retrievalReadOnly={false}
-              retrievalPartialReadOnly={true}
-            />
+            }}
+            summaryModelRef={summaryModelRef}
+            summaryModelError={summaryModelError}
+            onSummaryModelChange={value => {
+              setSummaryModelRef(value)
+              setSummaryModelError('')
+            }}
+            knowledgeDefaultTeamId={
+              !knowledgeBase?.summary_model_ref ? knowledgeDefaultTeamId : undefined
+            }
+            callLimits={{ maxCalls, exemptCalls }}
+            onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
+              setMaxCalls(nextMax)
+              setExemptCalls(nextExempt)
+            }}
+            advancedVariant="collapsible"
+            advancedOpen={showAdvanced}
+            onAdvancedOpenChange={setShowAdvanced}
+            showRetrievalSection={!!knowledgeBase?.retrieval_config}
+            retrievalConfig={retrievalConfig}
+            onRetrievalConfigChange={handleRetrievalConfigChange}
+            retrievalReadOnly={false}
+            retrievalPartialReadOnly={true}
+          />
 
-            {error && <p className="text-sm text-error">{error}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-              disabled={loading}
-            >
-              {t('common:actions.cancel')}
-            </Button>
-            <Button type="submit" variant="primary" disabled={loading}>
-              {loading ? t('common:actions.saving') : t('common:actions.save')}
-            </Button>
-          </DialogFooter>
-        </form>
+          {error && <p className="text-sm text-error">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
+            {t('common:actions.cancel')}
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            variant="primary"
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
+            {loading ? t('common:actions.saving') : t('common:actions.save')}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

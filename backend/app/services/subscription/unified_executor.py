@@ -45,6 +45,7 @@ class SubscriptionExecutionData:
     user_id: int
     team_id: int
     user_subtask_id: Optional[int]
+    device_id: Optional[str]
 
     # Execution data
     prompt: str
@@ -91,13 +92,8 @@ async def execute_subscription_unified(
         user: User object
         execution_data: Subscription execution data
     """
-    from app.core.config import settings
     from app.services.chat.trigger.unified import build_execution_request
-    from app.services.execution import (
-        CommunicationMode,
-        ExecutionRouter,
-        execution_dispatcher,
-    )
+    from app.services.execution import CommunicationMode, ExecutionRouter
 
     logger.info(
         f"[execute_subscription_unified] Starting execution: "
@@ -127,11 +123,12 @@ async def execute_subscription_unified(
 
     # Determine communication mode
     router = ExecutionRouter()
-    target = router.route(request, device_id=None)
+    task_device_id = task.json.get("spec", {}).get("device_id")
+    target = router.route(request, device_id=task_device_id)
 
     logger.info(
         f"[execute_subscription_unified] Routing result: "
-        f"mode={target.mode.value}, url={target.url}"
+        f"mode={target.mode.value}, url={target.url}, device_id={task_device_id}"
     )
 
     if target.mode == CommunicationMode.SSE:
@@ -247,7 +244,8 @@ async def _execute_http_callback(
 
     logger.info(
         f"[_execute_http_callback] Starting HTTP+Callback execution: "
-        f"execution_id={execution_data.execution_id}"
+        f"execution_id={execution_data.execution_id}, "
+        f"device_id={execution_data.device_id}"
     )
 
     # Use SSEResultEmitter to avoid WebSocket/Socket.IO cross-thread issues
@@ -261,7 +259,11 @@ async def _execute_http_callback(
         # Dispatch task with our thread-safe emitter
         # TaskCompletedEvent is published by StatusUpdatingEmitter
         dispatch_task = asyncio.create_task(
-            execution_dispatcher.dispatch(request, device_id=None, emitter=emitter)
+            execution_dispatcher.dispatch(
+                request,
+                device_id=execution_data.device_id,
+                emitter=emitter,
+            )
         )
 
         # Wait for completion and collect results
@@ -340,6 +342,7 @@ def extract_subscription_execution_data(
         user_id=ctx.user.id,
         team_id=ctx.team.id,
         user_subtask_id=user_subtask.id if user_subtask else None,
+        device_id=task.json.get("spec", {}).get("device_id"),
         prompt=ctx.execution.prompt or "",
         model_override_name=model_override_name,
         preserve_history=ctx.preserve_history,

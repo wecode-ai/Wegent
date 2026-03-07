@@ -11,7 +11,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -62,7 +62,7 @@ class TaskRequestBuilder:
         task: TaskResource,
         user: User,
         team: Kind,
-        message: str,
+        message: Union[str, list],
         *,
         # Feature toggles
         enable_tools: bool = True,
@@ -198,6 +198,15 @@ class TaskRequestBuilder:
             override_model_name=override_model_name,
             force_override=force_override,
         )
+
+        # Merge user-selected skills into bot_config so Executor downloads them
+        if bot_config and resolved_skills:
+            all_skill_names = [s["name"] for s in resolved_skills]
+            existing_skills = set(bot_config[0].get("skills", []))
+            for name in all_skill_names:
+                if name not in existing_skills:
+                    bot_config[0].setdefault("skills", []).append(name)
+                    existing_skills.add(name)
 
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
@@ -365,6 +374,7 @@ class TaskRequestBuilder:
         - Environment variable placeholder replacement
         - API key decryption
         - Custom placeholder replacement (user_id, task_id, etc.)
+        - Secondary model config for video models
 
         Args:
             bot: Bot Kind object
@@ -414,7 +424,102 @@ class TaskRequestBuilder:
             task_data=task_data,
         )
 
+        # Handle secondaryModelRef for generation models (video and image).
+        # When modelType is 'video' or 'image', resolve secondary model for intent analysis
+        # used in multi-turn follow-up generation.
+        if model_config.get("modelType") in ("video", "image"):
+            secondary_model_config = self._get_secondary_model_config(
+                bot=bot,
+                user_id=user_id,
+                user_name=user_name,
+                task_id=task_id,
+                team_id=team_id,
+            )
+            if secondary_model_config:
+                model_config["secondary_model_config"] = secondary_model_config
+
         return model_config
+
+    def _get_secondary_model_config(
+        self,
+        bot: Kind,
+        user_id: int,
+        user_name: str,
+        task_id: int,
+        team_id: int,
+    ) -> dict[str, Any] | None:
+        """Get secondary model configuration from bot's secondaryModelRef.
+
+        Used for auxiliary tasks like intent analysis in video/image generation
+        follow-up conversations.
+
+        Args:
+            bot: Bot Kind object
+            user_id: User ID
+            user_name: User name for placeholder replacement
+            task_id: Task ID for placeholder replacement
+            team_id: Team ID for placeholder replacement
+
+        Returns:
+            Secondary model configuration dictionary or None if not configured
+        """
+        from app.services.chat.config.model_resolver import (
+            _extract_model_config,
+            _find_model_with_namespace,
+            _process_model_config_placeholders,
+        )
+
+        bot_crd = Bot.model_validate(bot.json)
+
+        if not bot_crd.spec or not bot_crd.spec.secondaryModelRef:
+            logger.debug(
+                "[TaskRequestBuilder] No secondaryModelRef configured for bot=%s",
+                bot.name,
+            )
+            return None
+
+        secondary_model_ref = bot_crd.spec.secondaryModelRef
+        model_name = secondary_model_ref.name
+
+        # Find the secondary model
+        model_kind, model_spec = _find_model_with_namespace(
+            self.db, model_name, user_id
+        )
+
+        if not model_spec:
+            logger.warning(
+                "[TaskRequestBuilder] Secondary model not found: name=%s",
+                model_name,
+            )
+            return None
+
+        # Extract and process model config
+        secondary_config = _extract_model_config(model_spec)
+
+        # Process placeholders
+        bot_spec = bot.json.get("spec", {}) if bot.json else {}
+        agent_config = bot_spec.get("agent_config", {})
+        user_info = {"id": user_id, "name": user_name}
+        task_data = ExecutionRequest(
+            task_id=task_id,
+            team_id=team_id,
+            user=user_info,
+        )
+
+        secondary_config = _process_model_config_placeholders(
+            model_config=secondary_config,
+            user_id=user_id,
+            user_name=user_name,
+            agent_config=agent_config,
+            task_data=task_data,
+        )
+
+        logger.info(
+            "[TaskRequestBuilder] Resolved secondaryModelRef: model=%s",
+            model_name,
+        )
+
+        return secondary_config
 
     # =========================================================================
     # System Prompt (from ChatConfigBuilder)

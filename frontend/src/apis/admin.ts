@@ -59,6 +59,7 @@ export interface AdminPublicModel {
   display_name: string | null
   json: Record<string, unknown>
   is_active: boolean
+  is_advanced: boolean
   created_at: string
   updated_at: string
 }
@@ -79,6 +80,7 @@ export interface AdminPublicModelUpdate {
   namespace?: string
   json?: Record<string, unknown>
   is_active?: boolean
+  is_advanced?: boolean
 }
 
 // System Stats Types

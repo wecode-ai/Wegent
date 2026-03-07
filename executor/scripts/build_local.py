@@ -130,8 +130,9 @@ def find_claude_agent_sdk_binary(
 ) -> tuple[str, str] | None:
     """Find the bundled Claude CLI binary from claude-agent-sdk.
 
-    Only Windows platform includes the Claude CLI binary in the build.
-    Mac and Linux platforms rely on system-installed Claude Code.
+    Bundles the Claude CLI binary for Linux and Windows to create standalone executables.
+    macOS uses system-installed Claude Code (not bundled).
+    For cross-platform builds, downloads the appropriate wheel from PyPI.
 
     Args:
         target_platform: Target platform ('Windows', 'Darwin', 'Linux').
@@ -143,16 +144,16 @@ def find_claude_agent_sdk_binary(
     """
     target = target_platform or platform.system()
 
-    # Only Windows requires bundled Claude CLI binary
-    # Mac and Linux use system-installed Claude Code
-    if target != "Windows":
+    # macOS uses system-installed Claude Code (no binary bundled)
+    # Linux and Windows bundle the binary
+    if target == "Darwin":
         print(
             f"Platform {target}: Using system-installed Claude Code (no binary bundled)"
         )
         return None
 
-    # For Windows, try to find local binary first
-    binary_name = "claude.exe"
+    # Determine binary name based on platform
+    binary_name = "claude.exe" if target == "Windows" else "claude"
 
     try:
         import claude_agent_sdk
@@ -171,14 +172,17 @@ def find_claude_agent_sdk_binary(
     except ImportError:
         pass
 
-    # For cross-platform Windows builds, download from PyPI
-    return _download_windows_claude_binary()
+    # For cross-platform builds, download from PyPI
+    return _download_claude_binary_from_pypi(target)
 
 
-def _download_windows_claude_binary() -> tuple[str, str] | None:
-    """Download Windows claude.exe from PyPI wheel.
+def _download_claude_binary_from_pypi(target_platform: str) -> tuple[str, str] | None:
+    """Download Claude CLI binary from PyPI wheel for the target platform.
 
     Uses PyPI JSON API to find the correct wheel URL dynamically.
+
+    Args:
+        target_platform: Target platform ('Windows', 'Darwin', 'Linux').
 
     Returns:
         Tuple of (source_path, dest_dir) for PyInstaller --add-binary,
@@ -189,6 +193,16 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
     import urllib.request
     import zipfile
 
+    # Map platform to wheel platform tag
+    platform_tags = {
+        "Windows": "win_amd64",
+        "Darwin": "macosx",
+        "Linux": "linux",
+    }
+
+    # Determine binary name
+    binary_name = "claude.exe" if target_platform == "Windows" else "claude"
+
     # Get SDK version from installed package
     try:
         import claude_agent_sdk
@@ -198,8 +212,13 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
         sdk_version = None
 
     print(
-        f"Looking for Windows Claude CLI binary (sdk version: {sdk_version or 'latest'})..."
+        f"Looking for {target_platform} Claude CLI binary (sdk version: {sdk_version or 'latest'})..."
     )
+
+    platform_tag = platform_tags.get(target_platform)
+    if not platform_tag:
+        print(f"Error: Unknown target platform: {target_platform}")
+        return None
 
     try:
         # Query PyPI API for package info
@@ -207,19 +226,19 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
         with urllib.request.urlopen(pypi_url, timeout=30) as response:
             pypi_data = json_module.loads(response.read().decode())
 
-        # Find Windows wheel URL
+        # Find wheel URL for target platform
         version = sdk_version or pypi_data["info"]["version"]
         releases = pypi_data["releases"].get(version, [])
 
         wheel_url = None
         for release in releases:
             filename = release.get("filename", "")
-            if "win_amd64" in filename and filename.endswith(".whl"):
+            if platform_tag in filename and filename.endswith(".whl"):
                 wheel_url = release["url"]
                 break
 
         if not wheel_url:
-            print(f"Error: No Windows wheel found for version {version}")
+            print(f"Error: No {target_platform} wheel found for version {version}")
             return None
 
         print(f"Downloading from: {wheel_url}")
@@ -231,9 +250,9 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
         # Download wheel
         urllib.request.urlretrieve(wheel_url, wheel_path)
 
-        # Extract claude.exe from wheel
+        # Extract binary from wheel
+        binary_zip_path = f"claude_agent_sdk/_bundled/{binary_name}"
         with zipfile.ZipFile(wheel_path, "r") as zf:
-            binary_zip_path = "claude_agent_sdk/_bundled/claude.exe"
             if binary_zip_path in zf.namelist():
                 zf.extract(binary_zip_path, temp_dir)
                 binary_path = temp_dir / binary_zip_path
@@ -247,7 +266,7 @@ def _download_windows_claude_binary() -> tuple[str, str] | None:
                 return None
 
     except Exception as e:
-        print(f"Error downloading Windows Claude binary: {e}")
+        print(f"Error downloading {target_platform} Claude binary: {e}")
         return None
 
 
@@ -425,15 +444,16 @@ def build_executable(
             "--collect-data=tiktoken_ext",
         ]
 
-        # Add Claude CLI binary only for Windows (avoids asyncio + .cmd issue)
-        # Mac and Linux use system-installed Claude Code
+        # Add Claude CLI binary for Linux and Windows (macOS uses system-installed)
         claude_binary = find_claude_agent_sdk_binary(target_platform=effective_platform)
         if claude_binary:
             src_path, dest_dir = claude_binary
             cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
             print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
-        elif effective_platform == "Windows":
-            print("Warning: Claude CLI binary not found, executor may fail on Windows")
+        elif effective_platform in ["Windows", "Linux"]:
+            print(
+                f"Warning: Claude CLI binary not found for {effective_platform}, executor may fail"
+            )
 
         # Continue with remaining options
         cmd += [

@@ -34,6 +34,15 @@ def _get_display_name(model: Kind) -> str:
     return model.name
 
 
+def _get_is_advanced(model: Kind) -> bool:
+    """Extract isAdvanced from model spec, default to False."""
+    if model.json and isinstance(model.json, dict):
+        spec = model.json.get("spec", {})
+        if isinstance(spec, dict):
+            return bool(spec.get("isAdvanced", False))
+    return False
+
+
 def _model_to_response(model: Kind) -> PublicModelResponse:
     """Convert Kind model to PublicModelResponse."""
     display_name = _get_display_name(model)
@@ -44,6 +53,7 @@ def _model_to_response(model: Kind) -> PublicModelResponse:
         display_name=display_name if display_name != model.name else None,
         model_json=model.json,
         is_active=model.is_active,
+        is_advanced=_get_is_advanced(model),
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
@@ -173,6 +183,14 @@ async def update_public_model(
         model.json = model_data.model_json
     if model_data.is_active is not None:
         model.is_active = model_data.is_active
+    if model_data.is_advanced is not None:
+        updated_json = dict(model.json) if isinstance(model.json, dict) else {}
+        if "spec" not in updated_json or not isinstance(updated_json.get("spec"), dict):
+            updated_json["spec"] = {}
+        else:
+            updated_json["spec"] = dict(updated_json["spec"])
+        updated_json["spec"]["isAdvanced"] = model_data.is_advanced
+        model.json = updated_json
 
     db.commit()
     db.refresh(model)

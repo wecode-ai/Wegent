@@ -153,6 +153,8 @@ All features above are fully customizable:
 
 ## 🚀 Quick Start
 
+### Method 1: Quick Install (Recommended)
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
@@ -170,6 +172,73 @@ docker-compose -f docker-compose.standalone.yml up -d
 ```
 
 See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
+
+### Method 2: Source Installation
+
+If you have cloned the source code, you can run the install script directly. It will automatically detect the source environment and build images from local source:
+
+```bash
+git clone https://github.com/wecode-ai/Wegent.git
+cd Wegent
+./install.sh
+```
+
+Or manually specify to use local build in the source directory:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+```
+
+**Common commands (source mode):**
+```bash
+# View logs
+docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f
+
+# Stop services
+docker compose -f docker-compose.yml -f docker-compose.build.yml down
+
+# Start services
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+
+# Rebuild images
+docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache
+```
+
+### Method 3: Local Development Mode
+
+If you are a developer and want fast debugging with hot reload, use local development mode:
+
+```bash
+git clone https://github.com/wecode-ai/Wegent.git
+cd Wegent
+./start.sh
+```
+
+**Local development mode features:**
+- Run services directly without Docker
+- Automatic hot reload on code changes
+- Ideal for daily development and debugging
+
+**Common commands (local dev mode):**
+```bash
+# Start services
+./start.sh
+
+# Stop services
+./start.sh --stop
+
+# Restart services
+./start.sh --restart
+
+# Check status
+./start.sh --status
+
+# Initialize configuration
+./start.sh --init
+
+# Show help
+./start.sh --help
+```
 
 ---
 
@@ -243,17 +312,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/kissghosts">
-            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
-            <br />
-            <sub><b>Yanhe</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/yixiangxx">
             <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
             <br />
             <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/kissghosts">
+            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
+            <br />
+            <sub><b>Yanhe</b></sub>
         </a>
     </td></tr>
 <tr>
@@ -300,20 +369,27 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/kerwin612">
+            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
+            <br />
+            <sub><b>Kerwin Bryant</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/fingki">
             <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
             <sub><b>Fingki</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
@@ -350,6 +426,21 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/LiDaiyan">
+            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+            <br />
+            <sub><b>Li Daiyan</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/RichardoMrMu">
+            <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
+            <br />
+            <sub><b>RichardoMu</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
@@ -361,6 +452,13 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
             <sub><b>Graindt</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qingchengliu">
+            <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
+            <br />
+            <sub><b>Qingcheng</b></sub>
         </a>
     </td>
     <td align="center">

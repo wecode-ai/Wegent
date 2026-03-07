@@ -38,7 +38,7 @@ import {
   SkillRequestPayload,
   SkillResponsePayload,
 } from '@/types/socket'
-import type { TaskDetailSubtask, Team } from '@/types/api'
+import type { TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { taskStateManager, generateMessageId, UnifiedMessage } from '../state'
 import DOMPurify from 'dompurify'
@@ -99,7 +99,7 @@ export interface ChatMessageRequest {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code' | 'knowledge' | 'task'
+  task_type?: TaskType
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
   // Local device ID for task execution (optional, when undefined use cloud executor)
@@ -118,6 +118,17 @@ export interface ChatMessageRequest {
   }>
   /** Action type. 'pipeline:confirm' for pipeline stage confirmation */
   action?: 'pipeline:confirm' | string
+  /** Generation parameters for video/image generation tasks */
+  generate_params?: {
+    /** Resolution for generation (e.g., '1080p', '720p', '480p') */
+    resolution?: string
+    /** Aspect ratio for generation (e.g., '16:9', '9:16', '1:1') */
+    ratio?: string
+    /** Duration in seconds for video generation */
+    duration?: number
+    /** Model name for video/image generation */
+    model?: string
+  }
 }
 
 /**
@@ -662,6 +673,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       })
 
       // Create user message
+      // Include video_config in result if generate_params is provided (for video generation tasks)
+      const videoConfig = request.generate_params
+        ? {
+            model: request.generate_params.model,
+            resolution: request.generate_params.resolution,
+            ratio: request.generate_params.ratio,
+            duration: request.generate_params.duration,
+          }
+        : undefined
+
       const userMessage: UnifiedMessage = {
         id: userMessageId,
         type: 'user',
@@ -674,6 +695,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         senderUserName: options?.currentUserName,
         senderUserId: options?.currentUserId,
         shouldShowSender: request.is_group_chat,
+        // Add video_config to result for video generation tasks
+        result: videoConfig ? { video_config: videoConfig } : undefined,
       }
 
       // Add to state machine immediately
@@ -706,6 +729,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         device_id: request.device_id,
         additional_skills: request.additional_skills,
         action: request.action,
+        generate_params: request.generate_params,
       }
 
       try {

@@ -18,7 +18,7 @@ import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { Team, SubtaskContextBrief } from '@/types/api'
+import type { Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -28,9 +28,11 @@ import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
+import { getAttachment } from '@/apis/attachments'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
+import { useModelSelection } from '../../hooks/useModelSelection'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -38,12 +40,15 @@ import { useSkillSelector } from '../../hooks/useSkillSelector'
  */
 const COLLAPSE_SELECTORS_THRESHOLD = 420
 
+/** Generation mode type - video or image */
+type GenerateMode = 'video' | 'image'
+
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
-  taskType?: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType?: TaskType
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
   /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
@@ -61,6 +66,8 @@ interface ChatAreaProps {
   selectedDocumentIds?: number[]
   /** Reason why input is disabled (e.g., device offline). If set, input will be disabled and show this message. */
   disabledReason?: string
+  /** Callback when user switches between video and image mode (only used in generate page) */
+  onGenerateModeChange?: (mode: GenerateMode) => void
 }
 
 /**
@@ -80,6 +87,7 @@ function ChatAreaContent({
   knowledgeBaseId,
   selectedDocumentIds,
   disabledReason,
+  onGenerateModeChange,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -89,10 +97,55 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
+  const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
+
+  // Video model selection state - only enabled for video mode
+  // Uses unified useModelSelection hook with modelCategoryType='video'
+  // NOTE: Must be called before useChatAreaState to provide maxAttachments
+  const videoModelSelection = useModelSelection({
+    teamId: null,
+    taskId: null,
+    selectedTeam: null,
+    disabled: taskType !== 'video',
+    modelCategoryType: 'video',
+  })
+
+  // Image model selection state - only enabled for image mode
+  // Uses unified useModelSelection hook with modelCategoryType='image'
+  // NOTE: Must be called before useChatAreaState to provide maxAttachments
+  const imageModelSelection = useModelSelection({
+    teamId: null,
+    taskId: null,
+    selectedTeam: null,
+    disabled: taskType !== 'image',
+    modelCategoryType: 'image',
+  })
+
+  // Compute maxAttachments from selected model's imageConfig
+  // This value is passed to useChatAreaState for attachment upload limits
+  const maxAttachmentsFromModel = useMemo(() => {
+    if (taskType === 'image') {
+      const imageConfig = imageModelSelection.selectedModel?.config?.imageConfig as
+        | { max_reference_images?: number }
+        | undefined
+      return imageConfig?.max_reference_images
+    }
+    // Video mode can also use reference images, use same field if available
+    if (taskType === 'video') {
+      const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
+        | { max_reference_images?: number }
+        | undefined
+      return videoConfig?.max_reference_images
+    }
+    return undefined
+  }, [
+    taskType,
+    imageModelSelection.selectedModel?.config,
+    videoModelSelection.selectedModel?.config,
+  ])
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({
@@ -100,6 +153,7 @@ function ChatAreaContent({
     taskType,
     selectedTeamForNewTask,
     initialKnowledgeBase,
+    maxAttachments: maxAttachmentsFromModel,
   })
 
   // Skill selector state - fetches available skills and manages selection
@@ -107,6 +161,73 @@ function ChatAreaContent({
     team: chatState.selectedTeam,
     enabled: true,
   })
+
+  // Video mode specific state - resolution, aspect ratio, and duration
+  // These are kept separate from useModelSelection as they are video-specific parameters
+  const [selectedResolution, setSelectedResolution] = useState('1080p')
+  const [selectedRatio, setSelectedRatio] = useState('16:9')
+  const [selectedDuration, setSelectedDuration] = useState(5)
+
+  // Derive available options and defaults from selected video model's config
+  const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
+    | {
+        resolution?: string
+        ratio?: string
+        duration?: number
+        capabilities?: {
+          aspect_ratios?: { value: string }[]
+          resolutions?: { label: string }[]
+          durations_sec?: number[]
+        }
+      }
+    | undefined
+  const videoCapabilities = videoConfig?.capabilities
+
+  const availableResolutions = useMemo(() => {
+    if (videoCapabilities?.resolutions?.length) {
+      return videoCapabilities.resolutions.map(r => r.label)
+    }
+    return ['480p', '720p', '1080p']
+  }, [videoCapabilities?.resolutions])
+
+  const availableRatios = useMemo(() => {
+    if (videoCapabilities?.aspect_ratios?.length) {
+      return videoCapabilities.aspect_ratios.map(r => r.value)
+    }
+    return ['16:9', '9:16', '1:1', '4:3', '3:4']
+  }, [videoCapabilities?.aspect_ratios])
+
+  const availableDurations = useMemo(() => {
+    if (videoCapabilities?.durations_sec?.length) {
+      return videoCapabilities.durations_sec
+    }
+    return [5, 10]
+  }, [videoCapabilities?.durations_sec])
+
+  // When video model changes, apply model's recommended defaults
+  const videoModelName = videoModelSelection.selectedModel?.name
+  useEffect(() => {
+    if (!videoConfig) return
+    if (videoConfig.resolution && availableResolutions.includes(videoConfig.resolution)) {
+      setSelectedResolution(videoConfig.resolution)
+    } else if (availableResolutions.length) {
+      setSelectedResolution(availableResolutions[0])
+    }
+    if (videoConfig.ratio && availableRatios.includes(videoConfig.ratio)) {
+      setSelectedRatio(videoConfig.ratio)
+    } else if (availableRatios.length) {
+      setSelectedRatio(availableRatios[0])
+    }
+    if (videoConfig.duration && availableDurations.includes(videoConfig.duration)) {
+      setSelectedDuration(videoConfig.duration)
+    } else if (availableDurations.length) {
+      setSelectedDuration(availableDurations[0])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoModelName])
+
+  // Image mode specific state - image size
+  const [selectedImageSize, setSelectedImageSize] = useState('2048x2048')
 
   // Compute subtask info for scroll management
   // Note: Now using taskState from state machine instead of selectedTaskDetail.subtasks
@@ -148,7 +269,7 @@ function ChatAreaContent({
     })
     const result = teamsWithValidBindMode.filter(team => {
       if (!team.bind_mode) return true
-      const included = team.bind_mode.includes(taskType as 'chat' | 'code' | 'knowledge' | 'task')
+      const included = team.bind_mode.includes(taskType)
       return included
     })
 
@@ -289,10 +410,51 @@ function ChatAreaContent({
     hasMessages: hasMessagesForHooks,
   })
 
+  // For video/image mode, use respective model selection; otherwise use regular model selection
+  // This ensures the correct model is passed to the backend for routing
+  const effectiveSelectedModel = useMemo(() => {
+    if (taskType === 'video') return videoModelSelection.selectedModel
+    if (taskType === 'image') return imageModelSelection.selectedModel
+    return chatState.selectedModel
+  }, [
+    taskType,
+    videoModelSelection.selectedModel,
+    imageModelSelection.selectedModel,
+    chatState.selectedModel,
+  ])
+
+  // Build generate params for video/image generation tasks
+  // Include model name for display in user message bubble
+  const generateParams = useMemo(() => {
+    if (taskType === 'video') {
+      return {
+        resolution: selectedResolution,
+        ratio: selectedRatio,
+        duration: selectedDuration,
+        model: videoModelSelection.selectedModel?.name,
+      }
+    }
+    if (taskType === 'image') {
+      return {
+        size: selectedImageSize,
+        model: imageModelSelection.selectedModel?.name,
+      }
+    }
+    return undefined
+  }, [
+    taskType,
+    selectedResolution,
+    selectedRatio,
+    selectedDuration,
+    selectedImageSize,
+    videoModelSelection.selectedModel?.name,
+    imageModelSelection.selectedModel?.name,
+  ])
+
   // Stream handlers (send message, retry, cancel, stop)
   const streamHandlers = useChatStreamHandlers({
     selectedTeam: chatState.selectedTeam,
-    selectedModel: chatState.selectedModel,
+    selectedModel: effectiveSelectedModel,
     forceOverride: chatState.forceOverride,
     selectedRepo: chatState.selectedRepo,
     selectedBranch: chatState.selectedBranch,
@@ -318,6 +480,8 @@ function ChatAreaContent({
     // Skill selection - pass user-selected skills to backend
     // Uses full skill info (name, namespace, is_public) for backend to determine preload vs download
     additionalSkills: skillSelector.selectedSkills,
+    // Generation parameters for video/image generation tasks
+    generateParams,
   })
 
   // Scheme URL action bridge - handles wegent://action/send-message and wegent://action/prefill-message
@@ -372,11 +536,27 @@ function ChatAreaContent({
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
+    // Video mode uses video model selection, not regular model selection
+    if (taskType === 'video') {
+      // In video mode, we need a video model selected
+      return !videoModelSelection.selectedModel
+    }
+    // Image mode uses image model selection
+    if (taskType === 'image') {
+      // In image mode, we need an image model selected
+      return !imageModelSelection.selectedModel
+    }
     if (!chatState.selectedTeam || chatState.selectedTeam.agent_type === 'dify') return false
     const hasDefaultOption = allBotsHavePredefinedModel(chatState.selectedTeam)
     if (hasDefaultOption) return false
     return !chatState.selectedModel
-  }, [chatState.selectedTeam, chatState.selectedModel])
+  }, [
+    chatState.selectedTeam,
+    chatState.selectedModel,
+    taskType,
+    videoModelSelection.selectedModel,
+    imageModelSelection.selectedModel,
+  ])
 
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
@@ -496,10 +676,149 @@ function ChatAreaContent({
     [chatState]
   )
 
+  // Callback when user wants to use a previously generated image as reference
+  // Fetches the attachment metadata and adds it to the current input attachments
+  const handleUseAsReference = useCallback(
+    async (item: import('../message/ImageGallery').ImageItem) => {
+      if (!item.attachmentId) return
+      try {
+        const detail = await getAttachment(item.attachmentId)
+        chatState.addExistingAttachment({
+          id: detail.id,
+          filename: detail.filename,
+          file_size: detail.file_size,
+          mime_type: detail.mime_type,
+          status: detail.status,
+          text_length: detail.text_length ?? null,
+          error_message: detail.error_message ?? null,
+          error_code: detail.error_code ?? null,
+          subtask_id: detail.subtask_id ?? null,
+          file_extension: detail.file_extension,
+          created_at: detail.created_at,
+        })
+      } catch (error) {
+        // Log error; system will fall back to auto intent analysis
+        console.error('Failed to use image as reference:', error)
+      }
+    },
+    [chatState]
+  )
+
+  // Callback when user clicks re-edit on an AI message
+  // Finds the corresponding user message from the state machine messages and restores its prompt + attachments to the input
+  const handleReEdit = useCallback(
+    async (aiMsg: import('../message/MessageBubble').Message) => {
+      if (!aiMsg.subtaskId) return
+
+      // Locate the AI message in the state machine to get its messageId (shared with the user message)
+      const stateMessages = taskState?.messages
+      if (!stateMessages) return
+
+      const aiStateMsg = stateMessages.get(`ai-${aiMsg.subtaskId}`)
+      if (!aiStateMsg) return
+
+      // Find the corresponding user message using the following strategy:
+      // 1. Primary: match by shared messageId (works for messages loaded from backend)
+      // 2. Fallback: use Map insertion order - find the last user message that appears
+      //    before the AI message in the Map (works for live-session messages that have no messageId yet)
+      let userStateMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+
+      if (aiStateMsg.messageId != null) {
+        // Primary lookup: match by shared messageId
+        for (const msg of stateMessages.values()) {
+          if (msg.type === 'user' && msg.messageId === aiStateMsg.messageId) {
+            userStateMsg = msg
+            break
+          }
+        }
+      }
+
+      if (!userStateMsg) {
+        // Fallback: iterate the Map in insertion order; track the last user message seen
+        // before we reach the target AI message entry
+        let lastUserMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+        for (const [key, msg] of stateMessages.entries()) {
+          if (key === `ai-${aiMsg.subtaskId}`) {
+            // Reached the AI message - the previous user message is the one we want
+            if (lastUserMsg) {
+              userStateMsg = lastUserMsg
+            }
+            break
+          }
+          if (msg.type === 'user') {
+            lastUserMsg = msg
+          }
+        }
+      }
+
+      if (!userStateMsg) return
+
+      // Restore text prompt to input
+      if (userStateMsg.content) {
+        chatState.setTaskInputMessage(userStateMsg.content)
+      }
+
+      // Clear any existing draft attachments and contexts before restoring the original ones
+      // so the restored set exactly matches the original user message
+      chatState.resetAttachment()
+      chatState.setSelectedContexts([])
+
+      // Restore all contexts (attachments and knowledge bases) from the user message
+      const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
+
+      // Restore attachment contexts
+      const attachmentContexts = rawContexts.filter(c => c.context_type === 'attachment')
+      for (const ctx of attachmentContexts) {
+        try {
+          const detail = await getAttachment(ctx.id)
+          chatState.addExistingAttachment({
+            id: detail.id,
+            filename: detail.filename,
+            file_size: detail.file_size,
+            mime_type: detail.mime_type,
+            status: detail.status,
+            text_length: detail.text_length ?? null,
+            error_message: detail.error_message ?? null,
+            error_code: detail.error_code ?? null,
+            subtask_id: detail.subtask_id ?? null,
+            file_extension: detail.file_extension,
+            created_at: detail.created_at,
+          })
+        } catch (error) {
+          console.error('Failed to restore attachment for re-edit:', error)
+        }
+      }
+
+      // Restore knowledge base and table contexts
+      const restoredContextItems: ContextItem[] = []
+      for (const ctx of rawContexts) {
+        if (ctx.context_type === 'knowledge_base') {
+          restoredContextItems.push({
+            id: ctx.id,
+            name: ctx.name,
+            type: 'knowledge_base',
+            document_count: ctx.document_count ?? undefined,
+          })
+        } else if (ctx.context_type === 'table') {
+          restoredContextItems.push({
+            id: ctx.id,
+            name: ctx.name,
+            type: 'table',
+            document_id: 0,
+            source_config: ctx.source_config ?? undefined,
+          })
+        }
+      }
+      if (restoredContextItems.length > 0) {
+        chatState.setSelectedContexts(restoredContextItems)
+      }
+    },
+    [taskState, chatState]
+  )
+
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      clearAccessDenied()
       setSelectedTask(null)
       router.push('/chat')
     }
@@ -630,6 +949,31 @@ function ChatAreaContent({
     preloadedSkillNames: skillSelector.preloadedSkillNames,
     selectedSkillNames: skillSelector.selectedSkillNames,
     onToggleSkill: skillSelector.toggleSkill,
+    // Video mode props - only passed when taskType is 'video'
+    // Note: videoModels is no longer passed - ModelSelector fetches models internally via useModelSelection
+    selectedVideoModel: videoModelSelection.selectedModel,
+    onVideoModelChange: (model: Model) =>
+      videoModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`),
+    isVideoModelsLoading: videoModelSelection.isLoading,
+    selectedResolution,
+    onResolutionChange: setSelectedResolution,
+    availableResolutions,
+    selectedRatio,
+    onRatioChange: setSelectedRatio,
+    availableRatios,
+    selectedDuration,
+    onDurationChange: setSelectedDuration,
+    availableDurations,
+    // Image mode props - only passed when taskType is 'image'
+    // Note: imageModels is no longer passed - ModelSelector fetches models internally via useModelSelection
+    selectedImageModel: imageModelSelection.selectedModel,
+    onImageModelChange: (model: Model) =>
+      imageModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`),
+    isImageModelsLoading: imageModelSelection.isLoading,
+    selectedImageSize,
+    onImageSizeChange: setSelectedImageSize,
+    // Generate mode switch props - only passed when in generate page
+    onGenerateModeChange,
   }
 
   return (
@@ -692,6 +1036,8 @@ function ChatAreaContent({
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
               onContextReselect={handleContextReselect}
               hideGroupChatOptions={taskType === 'knowledge'}
+              onUseAsReference={handleUseAsReference}
+              onReEdit={handleReEdit}
             />
           </div>
         </div>
