@@ -10,13 +10,22 @@ extracted, variable-substituted, prefix-namespaced, and merged into
 the final Claude Code SDK options alongside Ghost-level MCP servers.
 """
 
+from unittest.mock import patch
+
 import pytest
 
 from executor.agents.claude_code.config_manager import (
+    _check_mcp_server_reachable,
     _extract_skill_mcp_servers,
+    _filter_reachable_mcp_servers,
     extract_claude_options,
 )
 from shared.models.execution import ExecutionRequest
+
+
+def _mock_reachable(name, config):
+    """Mock that treats all servers as reachable."""
+    return True
 
 
 class TestExtractSkillMcpServers:
@@ -180,9 +189,44 @@ class TestExtractSkillMcpServers:
         assert result == {}
 
 
-class TestExtractClaudeOptionsWithSkillMcp:
-    """Tests for skill MCP integration in extract_claude_options."""
+class TestFilterReachableMcpServers:
+    """Tests for _filter_reachable_mcp_servers and _check_mcp_server_reachable."""
 
+    def test_empty_dict_returns_empty(self):
+        assert _filter_reachable_mcp_servers({}) == {}
+
+    def test_none_returns_none(self):
+        assert _filter_reachable_mcp_servers(None) is None
+
+    def test_no_url_returns_false(self):
+        assert _check_mcp_server_reachable("test", {}) is False
+
+    @patch(
+        "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
+        side_effect=lambda n, c: n != "bad-server",
+    )
+    def test_filters_unreachable(self, mock_check):
+        """Unreachable servers are removed from the result."""
+        servers = {
+            "good-server": {"type": "http", "url": "http://good.example.com"},
+            "bad-server": {"type": "http", "url": "http://bad.example.com"},
+        }
+        result = _filter_reachable_mcp_servers(servers)
+
+        assert "good-server" in result
+        assert "bad-server" not in result
+
+
+class TestExtractClaudeOptionsWithSkillMcp:
+    """Tests for skill MCP integration in extract_claude_options.
+
+    All tests mock _check_mcp_server_reachable to bypass network checks.
+    """
+
+    @patch(
+        "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
+        _mock_reachable,
+    )
     def test_skill_mcp_merged_into_options(self):
         """Skill MCP servers appear in the final options mcp_servers dict."""
         task_data = ExecutionRequest(
@@ -205,6 +249,10 @@ class TestExtractClaudeOptionsWithSkillMcp:
         assert "mcp_servers" in options
         assert "image-toolkit_imageServer" in options["mcp_servers"]
 
+    @patch(
+        "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
+        _mock_reachable,
+    )
     def test_skill_mcp_merged_with_ghost_mcp(self):
         """Skill MCP servers merge alongside existing Ghost-level MCP servers."""
         task_data = ExecutionRequest(
@@ -234,10 +282,13 @@ class TestExtractClaudeOptionsWithSkillMcp:
         options = extract_claude_options(task_data)
 
         mcp = options["mcp_servers"]
-        # Both Ghost and Skill MCP servers should be present
         assert "ghost-server" in mcp
         assert "my-skill_skillServer" in mcp
 
+    @patch(
+        "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
+        _mock_reachable,
+    )
     def test_no_skill_configs_preserves_ghost_mcp(self):
         """When no skill_configs, Ghost MCP remains unchanged."""
         task_data = ExecutionRequest(
@@ -260,6 +311,10 @@ class TestExtractClaudeOptionsWithSkillMcp:
         assert "ghost-server" in mcp
         assert len(mcp) == 1
 
+    @patch(
+        "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
+        _mock_reachable,
+    )
     def test_skill_mcp_only_no_ghost_mcp(self):
         """Skill MCP works when Ghost has no MCP servers configured."""
         task_data = ExecutionRequest(
@@ -281,3 +336,29 @@ class TestExtractClaudeOptionsWithSkillMcp:
 
         assert "mcp_servers" in options
         assert "my-skill_server1" in options["mcp_servers"]
+
+    def test_unreachable_mcp_servers_removed_from_options(self):
+        """MCP servers that fail reachability check are excluded from options."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[
+                {
+                    "mcp_servers": {
+                        "unreachable-ghost": {
+                            "type": "http",
+                            "url": "http://192.0.2.1:9999/unreachable",
+                        },
+                    },
+                }
+            ],
+            skill_configs=[],
+        )
+
+        with patch(
+            "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
+            return_value=False,
+        ):
+            options = extract_claude_options(task_data)
+
+        # Unreachable servers should have been filtered out
+        assert "mcp_servers" not in options
