@@ -1,39 +1,83 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
+
+# Wegent Installer for macOS and Linux
+# Usage: curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 
 # Colors
+BOLD='\033[1m'
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MUTED='\033[38;2;90;100;128m'
 NC='\033[0m' # No Color
 
-# Parse command line arguments
+# Configuration
 DEPLOY_MODE="${WEGENT_DEPLOY_MODE:-}"
+INSTALL_DIR="${WEGENT_INSTALL_DIR:-.}"
+IS_SOURCE_BUILD="${WEGENT_SOURCE_BUILD:-}"
+NO_PROMPT="${WEGENT_NO_PROMPT:-0}"
+VERBOSE="${WEGENT_VERBOSE:-0}"
+DRY_RUN="${WEGENT_DRY_RUN:-0}"
 SHOW_HELP=0
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --standalone)
-            DEPLOY_MODE="standalone"
-            shift
-            ;;
-        --standard)
-            DEPLOY_MODE="standard"
-            shift
-            ;;
-        --help|-h)
-            SHOW_HELP=1
-            shift
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
+# URLs for downloading compose files
+COMPOSE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.yml"
+COMPOSE_STANDALONE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.standalone.yml"
 
-echo -e "${BLUE}"
-cat << 'EOF'
+# Temporary files cleanup
+TMPFILES=()
+cleanup_tmpfiles() {
+    local f
+    for f in "${TMPFILES[@]:-}"; do
+        rm -rf "$f" 2>/dev/null || true
+    done
+}
+trap cleanup_tmpfiles EXIT
+
+mktempfile() {
+    local f
+    f="$(mktemp)"
+    TMPFILES+=("$f")
+    echo "$f"
+}
+
+# ============================================================================
+# UI Functions
+# ============================================================================
+
+ui_info() {
+    echo -e "${MUTED}·${NC} $*"
+}
+
+ui_success() {
+    echo -e "${GREEN}✓${NC} $*"
+}
+
+ui_warn() {
+    echo -e "${YELLOW}!${NC} $*"
+}
+
+ui_error() {
+    echo -e "${RED}✗${NC} $*"
+}
+
+ui_section() {
+    echo ""
+    echo -e "${CYAN}${BOLD}$1${NC}"
+}
+
+ui_kv() {
+    local key="$1"
+    local value="$2"
+    printf "${MUTED}%-20s${NC} %s\n" "$key:" "$value"
+}
+
+print_banner() {
+    echo -e "${BLUE}${BOLD}"
+    cat << 'EOF'
  __        __                    _
  \ \      / /__  __ _  ___ _ __ | |_
   \ \ /\ / / _ \/ _` |/ _ \ '_ \| __|
@@ -41,298 +85,886 @@ cat << 'EOF'
     \_/\_/ \___|\__, |\___|_| |_|\__|
                 |___/
 EOF
-echo -e "${NC}"
-echo -e "${GREEN}Wegent Installer${NC}"
-echo ""
+    echo -e "${NC}"
+    echo -e "${GREEN}${BOLD}Wegent Installer${NC}"
+    echo -e "${MUTED}AI-native operating system for intelligent agent teams${NC}"
+    echo ""
+}
 
-if [ "$SHOW_HELP" = "1" ]; then
-    echo "Usage: install.sh [OPTIONS]"
-    echo ""
-    echo "Options:"
-    echo "  --standalone    Install in standalone mode (single container, recommended)"
-    echo "  --standard      Install in standard mode (multi-container with MySQL)"
-    echo "  --help, -h      Show this help message"
-    echo ""
-    echo "Environment variables:"
-    echo "  WEGENT_DEPLOY_MODE    Set to 'standalone' or 'standard'"
-    echo "  WEGENT_INSTALL_DIR    Installation directory (default: current directory)"
-    echo "  WEGENT_SOURCE_BUILD   Set to '1' to force source build mode"
-    echo ""
-    exit 0
-fi
+print_usage() {
+    cat <<EOF
+Wegent Installer (macOS + Linux)
 
-# Check for required commands
-check_command() {
-    if ! command -v "$1" &> /dev/null; then
-        echo -e "${RED}Error: $1 is not installed.${NC}"
-        echo "Please install $1 and try again."
+Usage:
+  curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- [options]
+
+Options:
+  --standalone          Install in standalone mode (single container, recommended)
+  --standard            Install in standard mode (multi-container with MySQL)
+  --no-prompt           Disable interactive prompts (for CI/automation)
+  --dry-run             Print what would happen without making changes
+  --verbose             Enable verbose output
+  --help, -h            Show this help message
+
+Environment variables:
+  WEGENT_DEPLOY_MODE    Set to 'standalone' or 'standard'
+  WEGENT_INSTALL_DIR    Installation directory (default: current directory)
+  WEGENT_SOURCE_BUILD   Set to '1' to force source build mode
+  WEGENT_NO_PROMPT      Set to '1' to disable prompts
+  WEGENT_VERBOSE        Set to '1' for verbose output
+  WEGENT_DRY_RUN        Set to '1' for dry run
+
+Examples:
+  # Interactive installation (recommended)
+  curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
+
+  # Non-interactive standalone installation
+  curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --no-prompt
+
+  # Install to specific directory
+  WEGENT_INSTALL_DIR=/opt/wegent curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
+EOF
+}
+
+# ============================================================================
+# Argument Parsing
+# ============================================================================
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --standalone)
+                DEPLOY_MODE="standalone"
+                shift
+                ;;
+            --standard)
+                DEPLOY_MODE="standard"
+                shift
+                ;;
+            --no-prompt)
+                NO_PROMPT=1
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=1
+                shift
+                ;;
+            --verbose)
+                VERBOSE=1
+                shift
+                ;;
+            --help|-h)
+                SHOW_HELP=1
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+}
+
+# ============================================================================
+# OS Detection
+# ============================================================================
+
+OS="unknown"
+ARCH="unknown"
+
+detect_os() {
+    case "$(uname -s 2>/dev/null || true)" in
+        Darwin)
+            OS="macos"
+            ;;
+        Linux)
+            OS="linux"
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            OS="windows"
+            ;;
+    esac
+
+    case "$(uname -m 2>/dev/null || true)" in
+        x86_64|amd64)
+            ARCH="x86_64"
+            ;;
+        arm64|aarch64)
+            ARCH="arm64"
+            ;;
+        armv7l|armv7)
+            ARCH="armv7"
+            ;;
+    esac
+}
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+is_root() {
+    [[ "$(id -u)" -eq 0 ]]
+}
+
+is_promptable() {
+    if [[ "$NO_PROMPT" == "1" ]]; then
+        return 1
+    fi
+    if [[ ! -t 0 || ! -t 1 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+command_exists() {
+    command -v "$1" &> /dev/null
+}
+
+run_quiet_step() {
+    local title="$1"
+    shift
+
+    if [[ "$VERBOSE" == "1" ]]; then
+        echo -e "${MUTED}Running: $*${NC}"
+        "$@"
+        return $?
+    fi
+
+    local log
+    log="$(mktempfile)"
+
+    if "$@" >"$log" 2>&1; then
+        return 0
+    fi
+
+    ui_error "${title} failed"
+    if [[ -s "$log" ]]; then
+        echo ""
+        echo -e "${MUTED}--- Error output ---${NC}"
+        tail -n 30 "$log" >&2 || true
+        echo -e "${MUTED}--- End of output ---${NC}"
+    fi
+    return 1
+}
+
+# ============================================================================
+# Docker Installation
+# ============================================================================
+
+check_docker() {
+    if command_exists docker; then
+        ui_success "Docker found"
+        return 0
+    fi
+    return 1
+}
+
+check_docker_running() {
+    if docker info &> /dev/null; then
+        ui_success "Docker daemon is running"
+        return 0
+    fi
+    return 1
+}
+
+check_docker_compose() {
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+        ui_success "Docker Compose (plugin) found"
+        return 0
+    elif command_exists docker-compose; then
+        COMPOSE_CMD="docker-compose"
+        ui_success "Docker Compose (standalone) found"
+        return 0
+    fi
+    return 1
+}
+
+install_docker_macos() {
+    ui_section "Installing Docker on macOS"
+
+    # Check if Homebrew is available
+    if ! command_exists brew; then
+        ui_info "Homebrew not found, installing..."
+        if [[ "$DRY_RUN" == "1" ]]; then
+            ui_info "[DRY RUN] Would install Homebrew"
+        else
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            # Add Homebrew to PATH for this session
+            if [[ -f "/opt/homebrew/bin/brew" ]]; then
+                eval "$(/opt/homebrew/bin/brew shellenv)"
+            elif [[ -f "/usr/local/bin/brew" ]]; then
+                eval "$(/usr/local/bin/brew shellenv)"
+            fi
+        fi
+        ui_success "Homebrew installed"
+    else
+        ui_success "Homebrew already installed"
+    fi
+
+    # Install Docker Desktop via Homebrew Cask
+    ui_info "Installing Docker Desktop via Homebrew..."
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would run: brew install --cask docker"
+    else
+        if ! run_quiet_step "Installing Docker Desktop" brew install --cask docker; then
+            ui_error "Failed to install Docker Desktop"
+            echo ""
+            echo "You can manually install Docker Desktop from:"
+            echo "  https://www.docker.com/products/docker-desktop/"
+            return 1
+        fi
+    fi
+
+    ui_success "Docker Desktop installed"
+    echo ""
+    ui_warn "Please start Docker Desktop manually:"
+    echo "  1. Open Docker Desktop from Applications"
+    echo "  2. Wait for Docker to start (whale icon in menu bar)"
+    echo "  3. Re-run this installer"
+    echo ""
+
+    if is_promptable; then
+        echo -e "${YELLOW}Press Enter after Docker Desktop is running...${NC}"
+        read -r
+        if check_docker_running; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+install_docker_linux() {
+    ui_section "Installing Docker on Linux"
+
+    # Detect Linux distribution
+    local distro=""
+    if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        distro="${ID:-}"
+    fi
+
+    ui_info "Detected distribution: ${distro:-unknown}"
+
+    case "$distro" in
+        ubuntu|debian|linuxmint|pop)
+            install_docker_debian
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            install_docker_rhel
+            ;;
+        arch|manjaro)
+            install_docker_arch
+            ;;
+        *)
+            install_docker_generic
+            ;;
+    esac
+}
+
+install_docker_debian() {
+    ui_info "Installing Docker using official Docker repository..."
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would install Docker via apt"
+        return 0
+    fi
+
+    local sudo_cmd=""
+    if ! is_root; then
+        sudo_cmd="sudo"
+    fi
+
+    # Remove old versions
+    $sudo_cmd apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+    # Install prerequisites
+    run_quiet_step "Installing prerequisites" $sudo_cmd apt-get update
+    run_quiet_step "Installing prerequisites" $sudo_cmd apt-get install -y \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
+
+    # Add Docker's official GPG key
+    $sudo_cmd install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | $sudo_cmd gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
+    $sudo_cmd chmod a+r /etc/apt/keyrings/docker.gpg
+
+    # Set up the repository
+    local arch
+    arch="$(dpkg --print-architecture)"
+    local codename
+    codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-$(lsb_release -cs)}")"
+
+    echo \
+        "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        ${codename} stable" | $sudo_cmd tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Install Docker Engine
+    run_quiet_step "Updating package index" $sudo_cmd apt-get update
+    run_quiet_step "Installing Docker Engine" $sudo_cmd apt-get install -y \
+        docker-ce \
+        docker-ce-cli \
+        containerd.io \
+        docker-buildx-plugin \
+        docker-compose-plugin
+
+    # Add current user to docker group
+    if ! is_root; then
+        $sudo_cmd usermod -aG docker "$USER" 2>/dev/null || true
+        ui_info "Added $USER to docker group"
+    fi
+
+    # Start Docker service
+    $sudo_cmd systemctl enable docker 2>/dev/null || true
+    $sudo_cmd systemctl start docker 2>/dev/null || true
+
+    ui_success "Docker installed successfully"
+}
+
+install_docker_rhel() {
+    ui_info "Installing Docker using official Docker repository..."
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would install Docker via dnf/yum"
+        return 0
+    fi
+
+    local sudo_cmd=""
+    if ! is_root; then
+        sudo_cmd="sudo"
+    fi
+
+    local pkg_manager="dnf"
+    if ! command_exists dnf; then
+        pkg_manager="yum"
+    fi
+
+    # Remove old versions
+    $sudo_cmd $pkg_manager remove -y docker docker-client docker-client-latest \
+        docker-common docker-latest docker-latest-logrotate \
+        docker-logrotate docker-engine 2>/dev/null || true
+
+    # Install prerequisites
+    run_quiet_step "Installing prerequisites" $sudo_cmd $pkg_manager install -y yum-utils
+
+    # Add Docker repository
+    $sudo_cmd yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo 2>/dev/null || \
+    $sudo_cmd yum-config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo 2>/dev/null || true
+
+    # Install Docker Engine
+    run_quiet_step "Installing Docker Engine" $sudo_cmd $pkg_manager install -y \
+        docker-ce \
+        docker-ce-cli \
+        containerd.io \
+        docker-buildx-plugin \
+        docker-compose-plugin
+
+    # Add current user to docker group
+    if ! is_root; then
+        $sudo_cmd usermod -aG docker "$USER" 2>/dev/null || true
+    fi
+
+    # Start Docker service
+    $sudo_cmd systemctl enable docker 2>/dev/null || true
+    $sudo_cmd systemctl start docker 2>/dev/null || true
+
+    ui_success "Docker installed successfully"
+}
+
+install_docker_arch() {
+    ui_info "Installing Docker via pacman..."
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would install Docker via pacman"
+        return 0
+    fi
+
+    local sudo_cmd=""
+    if ! is_root; then
+        sudo_cmd="sudo"
+    fi
+
+    run_quiet_step "Installing Docker" $sudo_cmd pacman -S --noconfirm docker docker-compose
+
+    # Add current user to docker group
+    if ! is_root; then
+        $sudo_cmd usermod -aG docker "$USER" 2>/dev/null || true
+    fi
+
+    # Start Docker service
+    $sudo_cmd systemctl enable docker 2>/dev/null || true
+    $sudo_cmd systemctl start docker 2>/dev/null || true
+
+    ui_success "Docker installed successfully"
+}
+
+install_docker_generic() {
+    ui_info "Installing Docker using convenience script..."
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would install Docker via get.docker.com"
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktempfile)"
+    curl -fsSL https://get.docker.com -o "$tmp"
+
+    if is_root; then
+        run_quiet_step "Installing Docker" sh "$tmp"
+    else
+        run_quiet_step "Installing Docker" sudo sh "$tmp"
+    fi
+
+    # Add current user to docker group
+    if ! is_root; then
+        sudo usermod -aG docker "$USER" 2>/dev/null || true
+    fi
+
+    ui_success "Docker installed successfully"
+}
+
+ensure_docker() {
+    ui_section "[1/4] Checking Docker"
+
+    # Check if Docker is installed
+    if ! check_docker; then
+        ui_info "Docker not found, installing..."
+
+        if [[ "$OS" == "macos" ]]; then
+            if ! install_docker_macos; then
+                ui_error "Docker installation failed or Docker is not running"
+                echo ""
+                echo "Please install Docker Desktop manually:"
+                echo "  https://www.docker.com/products/docker-desktop/"
+                exit 1
+            fi
+        elif [[ "$OS" == "linux" ]]; then
+            if ! install_docker_linux; then
+                ui_error "Docker installation failed"
+                echo ""
+                echo "Please install Docker manually:"
+                echo "  https://docs.docker.com/engine/install/"
+                exit 1
+            fi
+        else
+            ui_error "Unsupported operating system: $OS"
+            echo "Please install Docker manually:"
+            echo "  https://docs.docker.com/get-docker/"
+            exit 1
+        fi
+    fi
+
+    # Check if Docker daemon is running
+    if ! check_docker_running; then
+        ui_warn "Docker daemon is not running"
+        echo ""
+        if [[ "$OS" == "macos" ]]; then
+            echo "Please start Docker Desktop:"
+            echo "  1. Open Docker Desktop from Applications"
+            echo "  2. Wait for Docker to start (whale icon in menu bar)"
+        else
+            echo "Please start Docker:"
+            echo "  sudo systemctl start docker"
+        fi
+        echo ""
+
+        if is_promptable; then
+            echo -e "${YELLOW}Press Enter after Docker is running...${NC}"
+            read -r
+            if ! check_docker_running; then
+                ui_error "Docker daemon is still not running"
+                exit 1
+            fi
+        else
+            exit 1
+        fi
+    fi
+
+    # Check Docker Compose
+    if ! check_docker_compose; then
+        ui_error "Docker Compose is not available"
+        echo ""
+        echo "Docker Compose should be included with Docker Desktop."
+        echo "If using Docker Engine, install the compose plugin:"
+        echo "  sudo apt-get install docker-compose-plugin"
         exit 1
     fi
 }
 
-echo -e "${YELLOW}Checking requirements...${NC}"
-check_command "docker"
-check_command "curl"
+# ============================================================================
+# Source Build Detection
+# ============================================================================
 
-# Check if docker compose is available
-if docker compose version &> /dev/null; then
-    COMPOSE_CMD="docker compose"
-elif command -v docker-compose &> /dev/null; then
-    COMPOSE_CMD="docker-compose"
-else
-    echo -e "${RED}Error: docker compose is not available.${NC}"
-    echo "Please install Docker Compose and try again."
-    exit 1
-fi
+detect_source_build() {
+    if [[ -n "$IS_SOURCE_BUILD" ]]; then
+        return
+    fi
 
-# Check if docker daemon is running
-if ! docker info &> /dev/null; then
-    echo -e "${RED}Error: Docker daemon is not running.${NC}"
-    echo "Please start Docker and try again."
-    echo ""
-    echo "  - On macOS/Windows: Start Docker Desktop"
-    echo "  - On Linux: sudo systemctl start docker"
-    exit 1
-fi
-
-echo -e "${GREEN}All requirements satisfied.${NC}"
-echo ""
-
-# URLs for downloading compose files
-COMPOSE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.yml"
-COMPOSE_STANDALONE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.standalone.yml"
-INSTALL_DIR="${WEGENT_INSTALL_DIR:-.}"
-
-echo -e "${YELLOW}Installing Wegent to ${INSTALL_DIR}...${NC}"
-
-mkdir -p "$INSTALL_DIR"
-cd "$INSTALL_DIR"
-
-# Detect if this is a source clone scenario
-# Check if WEGENT_SOURCE_BUILD is explicitly set, otherwise check git remote
-IS_SOURCE_BUILD="${WEGENT_SOURCE_BUILD:-}"
-
-if [ -z "$IS_SOURCE_BUILD" ]; then
     # Check if we are in a git repository AND have the build configuration file
-    # This prevents false positives (e.g., running in ~) and supports forks/renamed repos
-    if git rev-parse --git-dir > /dev/null 2>&1 && [ -f "docker-compose.build.yml" ]; then
+    if git rev-parse --git-dir > /dev/null 2>&1 && [[ -f "docker-compose.build.yml" ]]; then
         IS_SOURCE_BUILD=1
     else
         IS_SOURCE_BUILD=0
     fi
-fi
+}
 
-if [ "$IS_SOURCE_BUILD" = "1" ]; then
-    echo -e "${GREEN}Detected Wegent source code (git clone).${NC}"
-    echo -e "${YELLOW}Will build images from source code.${NC}"
-fi
+# ============================================================================
+# Deployment Mode Selection
+# ============================================================================
 
-# Prompt for deployment mode if not specified
-if [ -z "$DEPLOY_MODE" ]; then
+select_deploy_mode() {
+    ui_section "[2/4] Selecting Deployment Mode"
+
+    if [[ -n "$DEPLOY_MODE" ]]; then
+        if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+            ui_success "Using Standalone mode (from argument/env)"
+        else
+            ui_success "Using Standard mode (from argument/env)"
+        fi
+        return
+    fi
+
+    if ! is_promptable; then
+        DEPLOY_MODE="standalone"
+        ui_info "Non-interactive mode, defaulting to Standalone"
+        return
+    fi
+
     echo ""
     echo -e "${YELLOW}Select deployment mode:${NC}"
-    echo -e "  ${GREEN}[1]${NC} Standalone mode (recommended) - Single container, SQLite, easy setup"
-    echo -e "  ${BLUE}[2]${NC} Standard mode - Multi-container, MySQL, production-ready"
+    echo -e "  ${GREEN}[1]${NC} Standalone mode ${MUTED}(recommended)${NC}"
+    echo -e "      Single container, SQLite, easy setup, low resource usage"
+    echo ""
+    echo -e "  ${BLUE}[2]${NC} Standard mode"
+    echo -e "      Multi-container, MySQL, production-ready, scalable"
     echo ""
     read -r -p "Choose [1/2] (default: 1): " mode_choice
-    
+
     case "$mode_choice" in
         2)
             DEPLOY_MODE="standard"
+            ui_success "Selected Standard mode"
             ;;
         *)
             DEPLOY_MODE="standalone"
+            ui_success "Selected Standalone mode"
             ;;
     esac
-fi
+}
 
-echo ""
-if [ "$DEPLOY_MODE" = "standalone" ]; then
-    echo -e "${GREEN}Using Standalone mode${NC} - Single container deployment"
-else
-    echo -e "${GREEN}Using Standard mode${NC} - Multi-container deployment"
-fi
-echo ""
-
-# Download compose files based on mode
-if [ "$IS_SOURCE_BUILD" = "1" ]; then
-    if [ "$DEPLOY_MODE" = "standalone" ]; then
-        if [ -f "docker-compose.standalone.yml" ]; then
-            echo -e "${GREEN}Found existing docker-compose.standalone.yml, skipping download.${NC}"
-        else
-            echo -e "${RED}Error: docker-compose.standalone.yml not found in source directory.${NC}"
-            echo "Please ensure you have the latest source code from the repository."
-            exit 1
-        fi
-    else
-        if [ -f "docker-compose.yml" ]; then
-            echo -e "${GREEN}Found existing docker-compose.yml, skipping download.${NC}"
-        else
-            echo -e "${RED}Error: docker-compose.yml not found in source directory.${NC}"
-            echo "Please ensure you have the latest source code from the repository."
-            exit 1
-        fi
-        # Check docker-compose.build.yml exists for source build
-        if [ ! -f "docker-compose.build.yml" ]; then
-            echo -e "${RED}Error: docker-compose.build.yml not found in source directory.${NC}"
-            echo "Please ensure you have the latest source code from the repository."
-            exit 1
-        fi
-    fi
-else
-    if [ "$DEPLOY_MODE" = "standalone" ]; then
-        echo -e "${YELLOW}Downloading docker-compose.standalone.yml...${NC}"
-        curl -fsSL "$COMPOSE_STANDALONE_URL" -o docker-compose.standalone.yml
-    else
-        echo -e "${YELLOW}Downloading docker-compose.yml...${NC}"
-        curl -fsSL "$COMPOSE_URL" -o docker-compose.yml
-    fi
-fi
+# ============================================================================
+# Configuration
+# ============================================================================
 
 # Detect server IP for WebSocket configuration
-# Cross-platform compatible (macOS and Linux)
 detect_server_ip() {
     local ip=""
-    
-    # Detect OS type
-    local os_type
-    os_type=$(uname -s)
-    
-    if [ "$os_type" = "Darwin" ]; then
+
+    if [[ "$OS" == "macos" ]]; then
         # macOS: use ipconfig or ifconfig
-        # Try to get IP from en0 (usually the primary interface on Mac)
         for iface in en0 en1 en2 en3; do
             ip=$(ipconfig getifaddr "$iface" 2>/dev/null)
-            if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ]; then
+            if [[ -n "$ip" && "$ip" != "127.0.0.1" ]]; then
                 echo "$ip"
                 return
             fi
         done
-        # Fallback: use ifconfig to find first non-loopback IPv4
+        # Fallback: use ifconfig
         ip=$(ifconfig 2>/dev/null | awk '/inet / && !/127.0.0.1/ {print $2; exit}')
-        if [ -n "$ip" ]; then
+        if [[ -n "$ip" ]]; then
             echo "$ip"
             return
         fi
     else
         # Linux: use ip command or hostname -I
-        # Try to get IP from common physical interfaces first
         for iface in eth0 ens33 ens160 enp0s3 enp0s8 ens192 em1; do
             ip=$(ip -4 addr show "$iface" 2>/dev/null | awk '/inet / {split($2, a, "/"); print a[1]}' | head -1)
-            if [ -n "$ip" ]; then
+            if [[ -n "$ip" ]]; then
                 echo "$ip"
                 return
             fi
         done
-        # Fallback: get first non-docker, non-loopback IP using hostname -I
+        # Fallback: hostname -I
         ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^172\.\(1[6-9]\|2[0-9]\|3[0-1]\)\.' | grep -v '^127\.' | head -1)
-        if [ -n "$ip" ]; then
+        if [[ -n "$ip" ]]; then
             echo "$ip"
             return
         fi
-        # Last resort: use ip route
+        # Last resort: ip route
         ip=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
-        if [ -n "$ip" ]; then
+        if [[ -n "$ip" ]]; then
             echo "$ip"
             return
         fi
     fi
-    
+
     echo ""
 }
 
-# Configure WebSocket URL
-SERVER_IP=$(detect_server_ip)
-SOCKET_URL="http://localhost:8000"
+configure_environment() {
+    ui_section "[3/4] Configuring Environment"
 
-# Skip if .env already exists
-if [ -f ".env" ]; then
-    echo -e "${GREEN}Found existing .env file, skipping configuration.${NC}"
-    echo ""
-elif [ -n "$SERVER_IP" ] && [ "$SERVER_IP" != "127.0.0.1" ]; then
-    echo ""
-    echo -e "${YELLOW}Detected server IP: ${GREEN}${SERVER_IP}${NC}"
-    echo -e "Use this IP for WebSocket connection (for remote access)?"
-    echo -e "  ${GREEN}[Y]${NC} Yes, use ${SERVER_IP}"
-    echo -e "  ${YELLOW}[n]${NC} No, use localhost (local development)"
-    echo -e "  ${BLUE}[c]${NC} Custom IP or domain"
-    read -r -p "Choose [Y/n/c]: " choice
+    # Skip if .env already exists
+    if [[ -f ".env" ]]; then
+        ui_success "Found existing .env file, skipping configuration"
+        return
+    fi
 
-    case "$choice" in
-        n|N)
-            SOCKET_URL="http://localhost:8000"
-            ;;
-        c|C)
-            read -r -p "Enter custom address (e.g., example.com): " custom_host
-            SOCKET_URL="http://${custom_host}:8000"
-            ;;
-        *)
-            SOCKET_URL="http://${SERVER_IP}:8000"
-            ;;
-    esac
+    local server_ip
+    server_ip=$(detect_server_ip)
+    local socket_url="http://localhost:8000"
+
+    if [[ -n "$server_ip" && "$server_ip" != "127.0.0.1" ]] && is_promptable; then
+        echo ""
+        echo -e "${YELLOW}Detected server IP: ${GREEN}${server_ip}${NC}"
+        echo "Use this IP for WebSocket connection (for remote access)?"
+        echo -e "  ${GREEN}[Y]${NC} Yes, use ${server_ip}"
+        echo -e "  ${YELLOW}[n]${NC} No, use localhost (local development)"
+        echo -e "  ${BLUE}[c]${NC} Custom IP or domain"
+        read -r -p "Choose [Y/n/c]: " choice
+
+        case "$choice" in
+            n|N)
+                socket_url="http://localhost:8000"
+                ;;
+            c|C)
+                read -r -p "Enter custom address (e.g., example.com): " custom_host
+                socket_url="http://${custom_host}:8000"
+                ;;
+            *)
+                socket_url="http://${server_ip}:8000"
+                ;;
+        esac
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would create .env with WEGENT_SOCKET_URL=${socket_url}"
+        return
+    fi
 
     # Generate .env file
-    echo "# Wegent Configuration" > .env
-    echo "# Generated by install.sh" >> .env
-    echo "" >> .env
-    echo "# WebSocket URL for frontend to connect to backend" >> .env
-    echo "WEGENT_SOCKET_URL=${SOCKET_URL}" >> .env
-    echo -e "${GREEN}Configuration saved to .env${NC}"
-    echo ""
-else
-    # Local development, generate default .env
-    echo "# Wegent Configuration" > .env
-    echo "# Generated by install.sh" >> .env
-    echo "" >> .env
-    echo "# WebSocket URL for frontend to connect to backend" >> .env
-    echo "WEGENT_SOCKET_URL=${SOCKET_URL}" >> .env
-    echo -e "${GREEN}Configuration saved to .env${NC}"
-    echo ""
-fi
+    cat > .env <<EOF
+# Wegent Configuration
+# Generated by install.sh on $(date)
 
-# Set compose command based on deployment mode and source build
-if [ "$DEPLOY_MODE" = "standalone" ]; then
-    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.standalone.yml"
-else
-    if [ "$IS_SOURCE_BUILD" = "1" ]; then
-        COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.yml -f docker-compose.build.yml"
+# WebSocket URL for frontend to connect to backend
+WEGENT_SOCKET_URL=${socket_url}
+EOF
+
+    ui_success "Configuration saved to .env"
+}
+
+# ============================================================================
+# Download and Start
+# ============================================================================
+
+download_compose_files() {
+    ui_section "[4/4] Starting Wegent"
+
+    if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
+        ui_success "Detected source code (git clone), using local files"
+
+        if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+            if [[ ! -f "docker-compose.standalone.yml" ]]; then
+                ui_error "docker-compose.standalone.yml not found"
+                echo "Please ensure you have the latest source code."
+                exit 1
+            fi
+        else
+            if [[ ! -f "docker-compose.yml" ]]; then
+                ui_error "docker-compose.yml not found"
+                exit 1
+            fi
+            if [[ ! -f "docker-compose.build.yml" ]]; then
+                ui_error "docker-compose.build.yml not found"
+                exit 1
+            fi
+        fi
+    else
+        if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+            ui_info "Downloading docker-compose.standalone.yml..."
+            if [[ "$DRY_RUN" == "1" ]]; then
+                ui_info "[DRY RUN] Would download from $COMPOSE_STANDALONE_URL"
+            else
+                if ! curl -fsSL "$COMPOSE_STANDALONE_URL" -o docker-compose.standalone.yml; then
+                    ui_error "Failed to download docker-compose.standalone.yml"
+                    exit 1
+                fi
+            fi
+        else
+            ui_info "Downloading docker-compose.yml..."
+            if [[ "$DRY_RUN" == "1" ]]; then
+                ui_info "[DRY RUN] Would download from $COMPOSE_URL"
+            else
+                if ! curl -fsSL "$COMPOSE_URL" -o docker-compose.yml; then
+                    ui_error "Failed to download docker-compose.yml"
+                    exit 1
+                fi
+            fi
+        fi
     fi
-fi
+}
 
-echo -e "${YELLOW}Starting Wegent services...${NC}"
-$COMPOSE_CMD up -d
+start_services() {
+    # Build compose command
+    local compose_args=""
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        compose_args="-f docker-compose.standalone.yml"
+    else
+        if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
+            compose_args="-f docker-compose.yml -f docker-compose.build.yml"
+        else
+            compose_args="-f docker-compose.yml"
+        fi
+    fi
 
-echo ""
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Wegent installed successfully!${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo ""
-echo -e "  Open ${BLUE}http://localhost:3000${NC} in your browser"
-echo ""
-echo -e "  Installation directory: ${YELLOW}${INSTALL_DIR}${NC}"
-echo -e "  Deployment mode: ${YELLOW}${DEPLOY_MODE}${NC}"
-echo ""
-if [ "$DEPLOY_MODE" = "standalone" ]; then
-    echo -e "  ${BLUE}Standalone mode${NC} - Single container with SQLite"
+    ui_info "Starting Wegent services..."
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would run: $COMPOSE_CMD $compose_args up -d"
+        return
+    fi
+
+    if ! $COMPOSE_CMD $compose_args up -d; then
+        ui_error "Failed to start services"
+        echo ""
+        echo "Check the logs for more details:"
+        echo "  $COMPOSE_CMD $compose_args logs"
+        exit 1
+    fi
+
+    ui_success "Wegent services started"
+}
+
+# ============================================================================
+# Completion
+# ============================================================================
+
+print_completion() {
+    local compose_args=""
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        compose_args="-f docker-compose.standalone.yml"
+    else
+        if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
+            compose_args="-f docker-compose.yml -f docker-compose.build.yml"
+        else
+            compose_args="-f docker-compose.yml"
+        fi
+    fi
+
     echo ""
-    echo -e "  Useful commands:"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD logs -f${NC}    # View logs"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD down${NC}       # Stop services"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD up -d${NC}      # Start services"
-elif [ "$IS_SOURCE_BUILD" = "1" ]; then
-    echo -e "  ${BLUE}Source build mode${NC} - images built from local source code"
+    echo -e "${GREEN}${BOLD}========================================${NC}"
+    echo -e "${GREEN}${BOLD}  Wegent installed successfully! 🎉${NC}"
+    echo -e "${GREEN}${BOLD}========================================${NC}"
     echo ""
-    echo -e "  Useful commands:"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD logs -f${NC}    # View logs"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD down${NC}       # Stop services"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD up -d${NC}      # Start services"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD build --no-cache${NC}  # Rebuild images"
-else
-    echo -e "  ${BLUE}Standard mode${NC} - Multi-container with MySQL"
+    echo -e "  Open ${BLUE}${BOLD}http://localhost:3000${NC} in your browser"
     echo ""
-    echo -e "  Useful commands:"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD logs -f${NC}    # View logs"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD down${NC}       # Stop services"
-    echo -e "    ${YELLOW}cd ${INSTALL_DIR} && $COMPOSE_CMD up -d${NC}      # Start services"
-fi
-echo ""
+    ui_kv "Installation directory" "$(pwd)"
+    ui_kv "Deployment mode" "$DEPLOY_MODE"
+
+    if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
+        ui_kv "Build mode" "source"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Useful commands:${NC}"
+    echo ""
+    echo -e "  ${MUTED}# View logs${NC}"
+    echo -e "  ${YELLOW}$COMPOSE_CMD $compose_args logs -f${NC}"
+    echo ""
+    echo -e "  ${MUTED}# Stop services${NC}"
+    echo -e "  ${YELLOW}$COMPOSE_CMD $compose_args down${NC}"
+    echo ""
+    echo -e "  ${MUTED}# Start services${NC}"
+    echo -e "  ${YELLOW}$COMPOSE_CMD $compose_args up -d${NC}"
+
+    if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
+        echo ""
+        echo -e "  ${MUTED}# Rebuild images${NC}"
+        echo -e "  ${YELLOW}$COMPOSE_CMD $compose_args build --no-cache${NC}"
+    fi
+
+    echo ""
+
+    # Check if user needs to re-login for docker group
+    if [[ "$OS" == "linux" ]] && ! is_root; then
+        if ! groups | grep -q docker; then
+            echo -e "${YELLOW}Note:${NC} You may need to log out and back in for docker group changes to take effect."
+            echo ""
+        fi
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    parse_args "$@"
+
+    if [[ "$SHOW_HELP" == "1" ]]; then
+        print_usage
+        exit 0
+    fi
+
+    print_banner
+
+    # Detect OS
+    detect_os
+    if [[ "$OS" == "unknown" ]]; then
+        ui_error "Unsupported operating system"
+        echo "This installer supports macOS and Linux."
+        echo "For Windows, please use Docker Desktop and run:"
+        echo "  docker compose -f docker-compose.standalone.yml up -d"
+        exit 1
+    fi
+    ui_success "Detected: $OS ($ARCH)"
+
+    # Check curl
+    if ! command_exists curl; then
+        ui_error "curl is required but not installed"
+        exit 1
+    fi
+
+    # Create and enter install directory
+    if [[ "$INSTALL_DIR" != "." ]]; then
+        ui_info "Installing to $INSTALL_DIR"
+        mkdir -p "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
+    fi
+
+    # Detect source build
+    detect_source_build
+    if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
+        ui_success "Detected Wegent source code (git clone)"
+        ui_info "Will build images from source code"
+    fi
+
+    # Show install plan in verbose mode
+    if [[ "$VERBOSE" == "1" ]]; then
+        ui_section "Install Plan"
+        ui_kv "OS" "$OS"
+        ui_kv "Architecture" "$ARCH"
+        ui_kv "Deploy mode" "${DEPLOY_MODE:-auto}"
+        ui_kv "Install directory" "$(pwd)"
+        ui_kv "Source build" "$IS_SOURCE_BUILD"
+        ui_kv "Dry run" "$DRY_RUN"
+    fi
+
+    # Main installation steps
+    ensure_docker
+    select_deploy_mode
+    configure_environment
+    download_compose_files
+    start_services
+
+    print_completion
+}
+
+# Run main function
+main "$@"
