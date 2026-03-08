@@ -908,6 +908,69 @@ start_services() {
     ui_success "Wegent services started"
 }
 
+# Wait for services to be healthy
+wait_for_services() {
+    local compose_args="$1"
+    local max_wait=120  # Maximum wait time in seconds
+    local wait_interval=3
+    local elapsed=0
+
+    ui_info "Waiting for services to be ready..."
+
+    # Determine which service to check based on deploy mode
+    local service_name=""
+    local health_url=""
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        service_name="wegent"
+        health_url="http://localhost:8000/health"
+    else
+        service_name="backend"
+        health_url="http://localhost:8000/health"
+    fi
+
+    # Show spinner while waiting
+    local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spinner_pid=""
+
+    # Start spinner in background
+    (
+        local i=0
+        local len=${#spinner_chars}
+        while true; do
+            printf "\r${MUTED}%s${NC} Waiting for services to be ready..." "${spinner_chars:$i:1}"
+            i=$(( (i + 1) % len ))
+            sleep 0.1
+        done
+    ) &
+    spinner_pid=$!
+
+    # Wait for health endpoint to respond
+    while [[ $elapsed -lt $max_wait ]]; do
+        # Try to hit the health endpoint
+        if curl -fsSL --connect-timeout 2 --max-time 5 "$health_url" >/dev/null 2>&1; then
+            # Stop spinner
+            kill "$spinner_pid" 2>/dev/null || true
+            wait "$spinner_pid" 2>/dev/null || true
+            printf "\r\033[K"
+            ui_success "Services are ready"
+            return 0
+        fi
+
+        sleep $wait_interval
+        elapsed=$((elapsed + wait_interval))
+    done
+
+    # Stop spinner
+    kill "$spinner_pid" 2>/dev/null || true
+    wait "$spinner_pid" 2>/dev/null || true
+    printf "\r\033[K"
+
+    ui_warn "Services may not be fully ready yet (timeout after ${max_wait}s)"
+    ui_info "You can check the status with: $COMPOSE_CMD $compose_args ps"
+    ui_info "View logs with: $COMPOSE_CMD $compose_args logs -f"
+    return 0  # Don't fail, just warn
+}
+
 # ============================================================================
 # Completion
 # ============================================================================
@@ -1030,6 +1093,23 @@ main() {
     configure_environment
     download_compose_files
     start_services
+
+    # Build compose_args for wait_for_services
+    local compose_args=""
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        compose_args="-f docker-compose.standalone.yml"
+    else
+        if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
+            compose_args="-f docker-compose.yml -f docker-compose.build.yml"
+        else
+            compose_args="-f docker-compose.yml"
+        fi
+    fi
+
+    # Wait for services to be ready before showing completion message
+    if [[ "$DRY_RUN" != "1" ]]; then
+        wait_for_services "$compose_args"
+    fi
 
     print_completion
 }
