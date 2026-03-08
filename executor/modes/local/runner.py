@@ -271,13 +271,9 @@ class LocalRunner:
             if info.agent and hasattr(info.agent, "cleanup"):
                 try:
                     info.agent.cleanup()
-                    logger.info(
-                        f"Cleaned up agent resources for task {task_id}"
-                    )
+                    logger.info(f"Cleaned up agent resources for task {task_id}")
                 except Exception as e:
-                    logger.error(
-                        f"Error cleaning up agent for task {task_id}: {e}"
-                    )
+                    logger.error(f"Error cleaning up agent for task {task_id}: {e}")
 
             # Remove from running tasks
             self._running_tasks.pop(task_id, None)
@@ -358,9 +354,7 @@ class LocalRunner:
         try:
             await self._execute_task(task_data)
         except Exception as e:
-            logger.exception(
-                f"Task execution failed for task_id={task_id}: {e}"
-            )
+            logger.exception(f"Task execution failed for task_id={task_id}: {e}")
             try:
                 await self._report_task_failure(task_data, str(e))
             except Exception as report_err:
@@ -444,12 +438,8 @@ class LocalRunner:
         if task_id in self._running_tasks:
             self._running_tasks[task_id].agent = agent
 
-        agent.on_client_created_callback = lambda: self._on_client_created(
-            task_id
-        )
-        agent.report_progress = self._make_emitter_report_progress(
-            ws_emitter
-        )
+        agent.on_client_created_callback = lambda: self._on_client_created(task_id)
+        agent.report_progress = self._make_emitter_report_progress(ws_emitter)
 
         # Report task started via emitter (response.in_progress)
         await ws_emitter.in_progress()

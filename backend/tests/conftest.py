@@ -254,9 +254,15 @@ def test_client(test_db: Session) -> TestClient:
     Create a test client with database dependency override.
     """
     from app.api.dependencies import get_db
+    from app.core.rate_limit import limiter
     from app.main import create_app
 
     app = create_app()
+
+    # Disable rate limiting for tests to avoid Redis connection issues
+    # The limiter is initialized at module load time and may have Redis enabled
+    # but Redis connections can become stale during parallel test runs
+    limiter.enabled = False
 
     # Override database dependency to always return the same test_db session
     def override_get_db():

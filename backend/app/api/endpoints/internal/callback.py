@@ -12,24 +12,23 @@ to the frontend via WebSocket.
 All callback events use OpenAI Responses API format for consistency with SSE mode.
 The ResponsesAPIEventParser is used to parse events into ExecutionEvent format.
 
-For terminal events (DONE, ERROR), TaskCompletedEvent is published for unified handling
-by SubscriptionTaskCompletionHandler.
+For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
+1. Database status updates
+2. Publishing TaskCompletedEvent for unified handling by SubscriptionTaskCompletionHandler
 """
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.events import TaskCompletedEvent, get_event_bus
 from app.models.task import TaskResource
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
-from shared.models import EventType
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +78,9 @@ async def handle_callback(
     This endpoint receives execution events in OpenAI Responses API format
     from executors and forwards them to the frontend via WebSocketResultEmitter.
 
-    For terminal events (DONE, ERROR), TaskCompletedEvent is published for
-    unified handling by SubscriptionTaskCompletionHandler.
+    For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
+    - Database status updates
+    - Publishing TaskCompletedEvent for unified handling by SubscriptionTaskCompletionHandler
 
     The event format is the same as SSE mode, ensuring consistency across
     all execution modes (SSE, callback, device).
@@ -126,8 +126,9 @@ async def handle_callback(
 
         # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
         # StatusUpdatingEmitter intercepts terminal events (DONE, ERROR, CANCELLED)
-        # and updates the database status accordingly, including executor_name
-        # for container reuse in follow-up tasks
+        # and handles:
+        # 1. Database status updates (including executor_name for container reuse)
+        # 2. Publishing TaskCompletedEvent for unified handling
         ws_emitter = WebSocketResultEmitter(
             task_id=request.task_id, subtask_id=request.subtask_id, user_id=user_id
         )
@@ -146,13 +147,8 @@ async def handle_callback(
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
 
-        # Handle terminal events - publish TaskCompletedEvent for unified handling
-        if event.type in (
-            EventType.DONE.value,
-            EventType.ERROR.value,
-            EventType.CANCELLED.value,
-        ):
-            await _publish_task_completed_event(db, request, event)
+        # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
+        # for unified handling across all execution modes
 
         return CallbackResponse(status="ok")
 
@@ -161,78 +157,6 @@ async def handle_callback(
     except Exception as e:
         logger.exception(f"[Callback] Error handling callback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _publish_task_completed_event(
-    db: Session,
-    request: CallbackRequest,
-    event: Any,
-) -> None:
-    """Publish TaskCompletedEvent for terminal events.
-
-    Args:
-        db: Database session
-        request: Original callback request
-        event: Parsed execution event
-    """
-    try:
-        # Get task to find user_id
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == request.task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-            )
-            .first()
-        )
-
-        if not task:
-            logger.warning(
-                f"[Callback] Cannot publish TaskCompletedEvent: "
-                f"task {request.task_id} not found"
-            )
-            return
-
-        # Determine status and result/error
-        if event.type == EventType.DONE.value:
-            status = "COMPLETED"
-            result = event.result if hasattr(event, "result") else None
-            error = None
-        elif event.type == EventType.ERROR.value:
-            status = "FAILED"
-            result = None
-            error = event.error if hasattr(event, "error") else "Unknown error"
-        else:  # CANCELLED
-            status = "CANCELLED"
-            result = None
-            error = None
-
-        # Publish TaskCompletedEvent
-        event_bus = get_event_bus()
-        await event_bus.publish(
-            TaskCompletedEvent(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                user_id=task.user_id,
-                status=status,
-                result=result,
-                error=error,
-            )
-        )
-
-        logger.info(
-            f"[Callback] Published TaskCompletedEvent: "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-            f"status={status}"
-        )
-
-    except Exception as e:
-        # Don't fail the callback if event publishing fails
-        logger.error(
-            f"[Callback] Failed to publish TaskCompletedEvent: {e}",
-            exc_info=True,
-        )
 
 
 @router.post("/batch", response_model=CallbackResponse)
@@ -244,6 +168,10 @@ async def handle_batch_callback(
 
     This endpoint receives multiple execution events in OpenAI Responses API format
     and processes them in order.
+
+    For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
+    - Database status updates
+    - Publishing TaskCompletedEvent for unified handling
 
     Args:
         events: List of callback requests in OpenAI Responses API format
@@ -292,7 +220,9 @@ async def handle_batch_callback(
             user_id = task_user_cache[request.task_id]
 
             # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
-            # Include executor_name for container reuse in follow-up tasks
+            # StatusUpdatingEmitter handles:
+            # 1. Database status updates (including executor_name for container reuse)
+            # 2. Publishing TaskCompletedEvent for unified handling
             ws_emitter = WebSocketResultEmitter(
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
@@ -308,13 +238,8 @@ async def handle_batch_callback(
             await emitter.emit(event)
             await emitter.close()
 
-            # Handle terminal events
-            if event.type in (
-                EventType.DONE.value,
-                EventType.ERROR.value,
-                EventType.CANCELLED.value,
-            ):
-                await _publish_task_completed_event(db, request, event)
+            # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
+            # for unified handling across all execution modes
 
             processed += 1
 

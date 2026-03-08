@@ -109,22 +109,26 @@ def convert_openai_to_anthropic_content(
         block_type = block.get("type", "")
 
         if block_type == "input_text":
-            anthropic_blocks.append({
-                "type": "text",
-                "text": block.get("text", ""),
-            })
+            anthropic_blocks.append(
+                {
+                    "type": "text",
+                    "text": block.get("text", ""),
+                }
+            )
 
         elif block_type == "input_image":
             image_url = block.get("image_url", "")
             media_type, data = _parse_data_uri(image_url)
-            anthropic_blocks.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": data,
-                },
-            })
+            anthropic_blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data,
+                    },
+                }
+            )
 
         else:
             # Pass through unknown block types as-is

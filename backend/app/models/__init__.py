@@ -11,7 +11,6 @@ Models with relationships should be imported after their related models.
 The legacy SharedTask, SharedTeam, and TaskMember models have been removed.
 Use ResourceMember for all resource sharing functionality.
 """
-
 from app.models.api_key import APIKey
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
@@ -21,6 +20,7 @@ from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import PermissionLevel, ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
+from app.models.subscription import BackgroundExecution
 from app.models.subscription_follow import (
     SubscriptionFollow,
     SubscriptionShareNamespace,
@@ -34,6 +34,7 @@ from app.models.task import TaskResource
 # All models should import Base directly from app.db.base
 # Import User last as it may have relationships to other models
 from app.models.user import User
+from app.models.wiki import WikiContent, WikiGeneration, WikiProject
 
 __all__ = [
     "User",
@@ -50,6 +51,11 @@ __all__ = [
     "Project",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",
+    "BackgroundExecution",
+    # Wiki models
+    "WikiProject",
+    "WikiGeneration",
+    "WikiContent",
     # Unified share system
     "ShareLink",
     "ResourceMember",

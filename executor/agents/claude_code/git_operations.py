@@ -192,6 +192,7 @@ def authenticate_cli(git_domain: str, git_token: str) -> bool:
         )
         return False
 
+
 def setup_git_authentication(task_data: ExecutionRequest) -> None:
     """Setup complete Git authentication for a task.
 

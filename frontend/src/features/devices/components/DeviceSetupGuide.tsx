@@ -45,9 +45,7 @@ export function DeviceSetupGuide({ backendUrl, authToken, guideUrl }: DeviceSetu
           onClick={() => setDeviceType('local')}
           className={cn(
             'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative',
-            deviceType === 'local'
-              ? 'text-primary'
-              : 'text-text-muted hover:text-text-secondary'
+            deviceType === 'local' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
           )}
         >
           <Monitor className="w-4 h-4" />
@@ -65,9 +63,7 @@ export function DeviceSetupGuide({ backendUrl, authToken, guideUrl }: DeviceSetu
           onClick={() => setDeviceType('cloud')}
           className={cn(
             'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative',
-            deviceType === 'cloud'
-              ? 'text-primary'
-              : 'text-text-muted hover:text-text-secondary'
+            deviceType === 'cloud' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
           )}
         >
           <Cloud className="w-4 h-4" />

@@ -144,14 +144,14 @@ class AgentService:
 
     async def create_agent_async(self, task_data: ExecutionRequest) -> Optional[Agent]:
         """Async version of create_agent that runs blocking operations in executor.
-        
+
         This method offloads the synchronous agent creation (including Git clone
         and skill deployment) to a thread pool executor to avoid blocking the
         event loop.
-        
+
         Args:
             task_data: Execution request data
-            
+
         Returns:
             Created agent or None if creation failed
         """
