@@ -20,7 +20,7 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
-from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.schemas.user import ChangePasswordRequest, UserCreate, UserInDB, UserUpdate
 from app.services.kind import kind_service
 from app.services.user import user_service
 
@@ -78,6 +78,26 @@ async def update_current_user_endpoint(
         return user
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put("/me/password", response_model=UserInDB)
+async def change_password(
+    request: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Change current user's password"""
+    if request.new_password != request.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passwords do not match",
+        )
+
+    # Hash and update the password
+    current_user.password_hash = security.get_password_hash(request.new_password)
+    db.commit()
+    db.refresh(current_user)
+    return current_user
 
 
 @router.delete("/me/git-token/{git_domain:path}", response_model=UserInDB)
@@ -312,6 +332,7 @@ async def get_welcome_config(
 
     # Check admin setup status for admin users
     admin_setup_completed = None
+    admin_password_changed = None
     if current_user.role == "admin":
         setup_config = (
             db.query(SystemConfig)
@@ -323,6 +344,17 @@ async def get_welcome_config(
         else:
             admin_setup_completed = False
 
+        # Check if admin password has been changed from default
+        from app.core.yaml_init import DEFAULT_ADMIN_Password_HASH
+
+        admin_user = db.query(User).filter(User.user_name == "admin").first()
+        if admin_user:
+            admin_password_changed = (
+                admin_user.password_hash != DEFAULT_ADMIN_Password_HASH
+            )
+        else:
+            admin_password_changed = True
+
     if not config:
         # Return default configuration
         return WelcomeConfigResponse(
@@ -331,6 +363,7 @@ async def get_welcome_config(
             ],
             tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
             admin_setup_completed=admin_setup_completed,
+            admin_password_changed=admin_password_changed,
         )
 
     config_value = config.config_value or {}
@@ -344,6 +377,7 @@ async def get_welcome_config(
             for tip in config_value.get("tips", DEFAULT_SLOGAN_TIPS_CONFIG["tips"])
         ],
         admin_setup_completed=admin_setup_completed,
+        admin_password_changed=admin_password_changed,
     )
 
 

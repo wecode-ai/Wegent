@@ -35,12 +35,24 @@ def health_check(db: Session = Depends(get_db)):
         result = db.execute(text("SELECT COUNT(*) FROM users"))
         user_count = result.scalar()
 
+        # Check if admin password has been changed from default
+        from app.core.yaml_init import DEFAULT_ADMIN_Password_HASH
+        from app.models.user import User
+
+        admin_password_changed = True
+        admin_user = db.query(User).filter(User.user_name == "admin").first()
+        if admin_user:
+            admin_password_changed = (
+                admin_user.password_hash != DEFAULT_ADMIN_Password_HASH
+            )
+
         return {
             "status": "healthy",
             "database": "connected",
             "users_initialized": user_count > 0,
             "user_count": user_count,
             "shutting_down": shutdown_manager.is_shutting_down,
+            "admin_password_changed": admin_password_changed,
         }
     except Exception as e:
         return {"status": "unhealthy", "database": "error", "error": str(e)}

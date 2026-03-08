@@ -190,6 +190,13 @@ export const userApis = {
     return apiClient.get('/users/features')
   },
 
+  /**
+   * Change current user's password
+   */
+  async changePassword(data: { new_password: string; confirm_password: string }): Promise<User> {
+    return apiClient.put('/users/me/password', data)
+  },
+
   isAuthenticated(): boolean {
     return isAuthenticated()
   },

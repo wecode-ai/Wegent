@@ -242,6 +242,10 @@ class WelcomeConfigResponse(BaseModel):
         default=None,
         description="Whether admin setup wizard has been completed (only returned for admin users)",
     )
+    admin_password_changed: Optional[bool] = Field(
+        default=None,
+        description="Whether admin password has been changed from default (only returned for admin users)",
+    )
 
 
 # Public Retriever Management Schemas

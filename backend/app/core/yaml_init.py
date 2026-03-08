@@ -23,6 +23,11 @@ from app.services.k_batch import batch_service
 
 logger = logging.getLogger(__name__)
 
+# Default admin password hash for "Wegent2025!" - used to detect if admin has changed default password
+DEFAULT_ADMIN_Password_HASH = (
+    "$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW"
+)
+
 
 def load_yaml_documents(file_path: Path) -> List[Dict[str, Any]]:
     """
@@ -64,7 +69,7 @@ def ensure_default_user(db: Session) -> tuple[int, bool]:
         # Default admin user (admin/Wegent2025!)
         admin_user = User(
             user_name="admin",
-            password_hash="$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW",
+            password_hash=DEFAULT_ADMIN_Password_HASH,
             email="admin@example.com",
             git_info=[],
             is_active=True,
