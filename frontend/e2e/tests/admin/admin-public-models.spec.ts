@@ -17,14 +17,22 @@ test.describe('Admin - Public Model Management', () => {
 
     // Mark admin setup as complete via API to prevent GlobalAdminSetupWizard from showing
     // First change password (required before setup can be completed)
-    await apiClient
+    const passwordResult = await apiClient
       .changeAdminPassword(ADMIN_USER.password, ADMIN_USER.password)
-      .catch(() => {
-        // Ignore errors - password may already be changed
+      .catch((error: Error) => {
+        console.log(`password change request failed (may already be changed): ${error.message}`)
+        return null
       })
-    await apiClient.markAdminSetupComplete().catch(() => {
-      // Ignore errors - setup may already be complete
+    if (passwordResult && passwordResult.status >= 400) {
+      console.log(`password change API returned ${passwordResult.status} - may already be changed`)
+    }
+    const setupResult = await apiClient.markAdminSetupComplete().catch((error: Error) => {
+      console.log(`Setup complete request failed (may already be complete): ${error.message}`)
+      return null
     })
+    if (setupResult && setupResult.status >= 400) {
+      console.log(`Setup complete API returned ${setupResult.status} - may already be complete`)
+    }
 
     // Navigate directly to admin page (already authenticated via global setup storageState)
     await adminPage.navigateToTab('public-models')

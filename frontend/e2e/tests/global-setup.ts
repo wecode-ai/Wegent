@@ -48,7 +48,9 @@ setup('authenticate', async ({ page, request }) => {
       if (passwordResponse.ok()) {
         console.log('Admin password changed successfully (same credentials, different hash)')
       } else {
-        console.warn(`Failed to change admin password: ${passwordResponse.status()}`)
+        throw new Error(
+          `Failed to change admin password: ${passwordResponse.status()} - ${await passwordResponse.text()}`
+        )
       }
 
       // Now mark setup as complete
@@ -61,12 +63,13 @@ setup('authenticate', async ({ page, request }) => {
       if (response.ok()) {
         console.log('Admin setup marked as complete')
       } else {
-        console.warn(`Failed to mark admin setup as complete: ${response.status()}`)
+        throw new Error(
+          `Failed to mark admin setup as complete: ${response.status()} - ${await response.text()}`
+        )
       }
     }
   } catch (error) {
-    console.warn('Warning: Could not mark admin setup as complete:', error)
-    // Continue anyway - this is not critical for all tests
+    throw new Error(`Admin setup failed during global-setup: ${error}`)
   }
 
   // Save storage state (cookies, localStorage)

@@ -36,15 +36,9 @@ def health_check(db: Session = Depends(get_db)):
         user_count = result.scalar()
 
         # Check if admin password has been changed from default
-        from app.core.yaml_init import DEFAULT_ADMIN_Password_HASH
-        from app.models.user import User
+        from app.services.admin_utils import is_admin_password_default
 
-        admin_password_changed = True
-        admin_user = db.query(User).filter(User.user_name == "admin").first()
-        if admin_user:
-            admin_password_changed = (
-                admin_user.password_hash != DEFAULT_ADMIN_Password_HASH
-            )
+        admin_password_changed = not is_admin_password_default(db)
 
         return {
             "status": "healthy",

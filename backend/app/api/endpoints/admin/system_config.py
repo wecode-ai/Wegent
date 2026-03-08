@@ -235,10 +235,9 @@ async def mark_admin_setup_complete(
         AdminSetupCompleteResponse: Contains success status and message
     """
     # Verify admin password has been changed from default
-    from app.core.yaml_init import DEFAULT_ADMIN_Password_HASH
+    from app.services.admin_utils import is_admin_password_default
 
-    admin_user = db.query(User).filter(User.user_name == "admin").first()
-    if admin_user and admin_user.password_hash == DEFAULT_ADMIN_Password_HASH:
+    if is_admin_password_default(db):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Please change the default password before completing setup",

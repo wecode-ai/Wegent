@@ -345,15 +345,9 @@ async def get_welcome_config(
             admin_setup_completed = False
 
         # Check if admin password has been changed from default
-        from app.core.yaml_init import DEFAULT_ADMIN_Password_HASH
+        from app.services.admin_utils import is_admin_password_default
 
-        admin_user = db.query(User).filter(User.user_name == "admin").first()
-        if admin_user:
-            admin_password_changed = (
-                admin_user.password_hash != DEFAULT_ADMIN_Password_HASH
-            )
-        else:
-            admin_password_changed = True
+        admin_password_changed = not is_admin_password_default(db)
 
     if not config:
         # Return default configuration
