@@ -636,9 +636,10 @@ export default function ChatInput({
   // Text area should be ~60-70px minimum (about 2-3 lines with 26px line-height)
   const minHeight = isMobile ? '3.5rem' : '4rem'
   // When expanded, double the max height for easier editing of large text
+  // Only apply expansion on desktop - mobile has no toggle button to collapse
   const baseMaxHeight = isMobile ? '9rem' : '10rem'
   const expandedMaxHeight = isMobile ? '18rem' : '20rem'
-  const maxHeight = isExpanded ? expandedMaxHeight : baseMaxHeight
+  const maxHeight = !isMobile && isExpanded ? expandedMaxHeight : baseMaxHeight
 
   // Get tooltip text based on send key preference and platform
   const tooltipText = useMemo(() => {
