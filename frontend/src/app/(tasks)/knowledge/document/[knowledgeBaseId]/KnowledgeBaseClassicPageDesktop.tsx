@@ -20,6 +20,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
@@ -76,6 +78,12 @@ export function KnowledgeBaseClassicPageDesktop({
 
   // User state
   const { user, isLoading: isUserLoading } = useUser()
+
+  // Task context
+  const { setSelectedTask } = useTaskContext()
+
+  // Chat stream context
+  const { clearAllStreams, stopStream, getStreamingTaskIds } = useChatStreamContext()
 
   // Tab state for documents/permissions
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
@@ -142,6 +150,20 @@ export function KnowledgeBaseClassicPageDesktop({
     router.back()
   }
 
+  // Handle new task from collapsed sidebar button
+  const handleNewTask = () => {
+    // Clear state and navigate immediately for responsive UI
+    setSelectedTask(null)
+    clearAllStreams()
+    router.push('/chat')
+
+    // Stop streams in the background without blocking navigation
+    const streamingIds = getStreamingTaskIds()
+    Promise.all(streamingIds.map(id => stopStream(id))).catch(error => {
+      console.error('Failed to stop streams:', error)
+    })
+  }
+
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
@@ -197,7 +219,7 @@ export function KnowledgeBaseClassicPageDesktop({
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && (
-        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={() => {}} />
+        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
       )}
 
       {/* Resizable left sidebar */}

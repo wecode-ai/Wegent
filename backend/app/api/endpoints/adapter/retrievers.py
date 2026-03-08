@@ -3,20 +3,34 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.rag.storage import factory as storage_factory
+
+# RAG storage factory is conditionally imported based on STANDALONE_MODE
+# RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
+if not settings.STANDALONE_MODE:
+    from app.services.rag.storage import factory as storage_factory
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _check_rag_available():
+    """Check if RAG module is available (not in standalone mode)."""
+    if settings.STANDALONE_MODE:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG features are not available in standalone mode",
+        )
 
 
 # Static routes must be defined before dynamic routes to avoid conflicts
@@ -38,6 +52,7 @@ def get_storage_retrieval_methods():
       "storage_types": ["elasticsearch", "qdrant"]
     }
     """
+    _check_rag_available()
     return {
         "data": storage_factory.get_all_storage_retrieval_methods(),
         "storage_types": storage_factory.get_supported_storage_types(),
@@ -61,7 +76,7 @@ def get_storage_type_retrieval_methods(storage_type: str):
     Raises:
         400: If storage type is not supported
     """
-    from fastapi import HTTPException
+    _check_rag_available()
 
     try:
         methods = storage_factory.get_supported_retrieval_methods(storage_type)
@@ -220,6 +235,8 @@ def test_retriever_connection(
       "message": "Connection successful" | "Error message"
     }
     """
+    _check_rag_available()
+
     storage_type = test_data.get("storage_type")
     url = test_data.get("url")
     username = test_data.get("username")

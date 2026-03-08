@@ -5,14 +5,16 @@ Revises:
 Create Date: 2025-11-25 21:13:27.348617+08:00
 
 """
+
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 
+from alembic import op
+
 # revision identifiers, used by Alembic.
-revision: str = '0c086b93f8b9'
+revision: str = "0c086b93f8b9"
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -22,7 +24,8 @@ def upgrade() -> None:
     """Upgrade schema - Create all tables if they don't exist."""
 
     # Create users table
-    op.execute("""
+    op.execute(
+        """
     CREATE TABLE IF NOT EXISTS users (
         id INT NOT NULL AUTO_INCREMENT,
         user_name VARCHAR(50) NOT NULL,
@@ -36,10 +39,12 @@ def upgrade() -> None:
         UNIQUE KEY (user_name),
         KEY ix_users_id (id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
     # Create kinds table
-    op.execute("""
+    op.execute(
+        """
     CREATE TABLE IF NOT EXISTS kinds (
         id INT NOT NULL AUTO_INCREMENT,
         user_id INT NOT NULL,
@@ -54,10 +59,12 @@ def upgrade() -> None:
         KEY ix_kinds_id (id),
         KEY ix_kinds_kind (kind)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
     # Create subtasks table
-    op.execute("""
+    op.execute(
+        """
     CREATE TABLE IF NOT EXISTS subtasks (
         id INT NOT NULL AUTO_INCREMENT,
         user_id INT NOT NULL,
@@ -82,10 +89,12 @@ def upgrade() -> None:
         PRIMARY KEY (id),
         KEY ix_subtasks_id (id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
     # Create shared_teams table
-    op.execute("""
+    op.execute(
+        """
     CREATE TABLE IF NOT EXISTS shared_teams (
         id INT NOT NULL AUTO_INCREMENT,
         user_id INT NOT NULL,
@@ -101,10 +110,12 @@ def upgrade() -> None:
         KEY ix_shared_teams_team_id (team_id),
         UNIQUE KEY idx_user_team (user_id, team_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
     # Create public_models table
-    op.execute("""
+    op.execute(
+        """
     CREATE TABLE IF NOT EXISTS public_models (
         id INT NOT NULL AUTO_INCREMENT,
         name VARCHAR(100) NOT NULL,
@@ -117,10 +128,12 @@ def upgrade() -> None:
         KEY ix_public_models_id (id),
         UNIQUE KEY idx_public_model_name_namespace (name, namespace)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
     # Create public_shells table
-    op.execute("""
+    op.execute(
+        """
     CREATE TABLE IF NOT EXISTS public_shells (
         id INT NOT NULL AUTO_INCREMENT,
         name VARCHAR(100) NOT NULL,
@@ -133,15 +146,15 @@ def upgrade() -> None:
         KEY ix_public_shells_id (id),
         UNIQUE KEY idx_public_shell_name_namespace (name, namespace)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
 
 def downgrade() -> None:
     """Downgrade schema - Drop all tables."""
-    op.drop_table('public_shells')
-    op.drop_table('public_models')
-    op.drop_table('shared_teams')
-    op.drop_table('subtasks')
-    op.drop_table('kinds')
-    op.drop_table('users')
-
+    op.drop_table("public_shells")
+    op.drop_table("public_models")
+    op.drop_table("shared_teams")
+    op.drop_table("subtasks")
+    op.drop_table("kinds")
+    op.drop_table("users")

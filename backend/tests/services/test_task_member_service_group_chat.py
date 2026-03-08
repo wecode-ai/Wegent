@@ -177,12 +177,15 @@ class TestTaskMemberServiceGroupChatDetection:
         mock_member_user.id = 2
         mock_member_user.user_name = "member"
 
-        with patch.object(
-            task_member_service, "get_task", return_value=mock_task
-        ), patch.object(
-            task_member_service,
-            "get_user",
-            side_effect=lambda db, uid: mock_owner if uid == 1 else mock_member_user,
+        with (
+            patch.object(task_member_service, "get_task", return_value=mock_task),
+            patch.object(
+                task_member_service,
+                "get_user",
+                side_effect=lambda db, uid: (
+                    mock_owner if uid == 1 else mock_member_user
+                ),
+            ),
         ):
             # Mock query returns only real group chat members (not share records)
             mock_query = MagicMock()
@@ -235,9 +238,7 @@ class TestSharedTaskDoesNotBecomeGroupChat:
         mock_task.user_id = 1  # User A owns this task
         mock_task.json = {"spec": {"is_group_chat": False}}  # Not a group chat
 
-        with patch.object(
-            task_member_service, "get_task", return_value=mock_task
-        ):
+        with patch.object(task_member_service, "get_task", return_value=mock_task):
             # is_group_chat should return False
             result = task_member_service.is_group_chat(mock_db, task_id=100)
             assert result is False
@@ -265,9 +266,7 @@ class TestSharedTaskDoesNotBecomeGroupChat:
         """
         User who copied a shared task should NOT be a member of the original task.
         """
-        with patch.object(
-            task_member_service, "is_task_owner", return_value=False
-        ):
+        with patch.object(task_member_service, "is_task_owner", return_value=False):
             # Query returns None because share records are excluded
             mock_query = MagicMock()
             mock_db.query.return_value = mock_query

@@ -179,9 +179,7 @@ class TestSaveClaudeConfigFiles:
             agent = self._create_agent(task_data)
             agent._save_claude_config_files(agent_config_with_sensitive_data)
 
-            config_dir = os.path.join(
-                temp_workspace, str(task_data.task_id), ".claude"
-            )
+            config_dir = os.path.join(temp_workspace, str(task_data.task_id), ".claude")
             dir_stat = os.stat(config_dir)
             dir_mode = stat.S_IMODE(dir_stat.st_mode)
 
@@ -301,9 +299,7 @@ class TestSaveClaudeConfigFiles:
             agent._save_claude_config_files(agent_config_with_sensitive_data)
 
             # Walk through all created files
-            config_dir = os.path.join(
-                temp_workspace, str(task_data.task_id), ".claude"
-            )
+            config_dir = os.path.join(temp_workspace, str(task_data.task_id), ".claude")
 
             for root, dirs, files in os.walk(config_dir):
                 for filename in files:

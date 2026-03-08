@@ -20,7 +20,6 @@ from executor.agents.claude_code.multimodal_prompt import (
     save_vision_images,
 )
 
-
 # --- is_vision_prompt ---
 
 

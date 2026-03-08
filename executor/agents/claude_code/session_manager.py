@@ -314,7 +314,9 @@ class SessionManager:
             return False
 
     @classmethod
-    def cleanup_session_tracking(cls, session_id: str, internal_key: str = None) -> None:
+    def cleanup_session_tracking(
+        cls, session_id: str, internal_key: str = None
+    ) -> None:
         """Remove in-memory tracking for a session without touching disk files.
 
         Removes the client from _clients and the mapping from _session_id_map,
@@ -333,17 +335,13 @@ class SessionManager:
         # Remove session_id_map entry
         if internal_key:
             cls._session_id_map.pop(internal_key, None)
-            logger.info(
-                f"Removed session_id_map entry: {internal_key} -> {session_id}"
-            )
+            logger.info(f"Removed session_id_map entry: {internal_key} -> {session_id}")
         else:
             # Search for matching entry
             for key, sid in list(cls._session_id_map.items()):
                 if sid == session_id:
                     del cls._session_id_map[key]
-                    logger.info(
-                        f"Removed session_id_map entry: {key} -> {session_id}"
-                    )
+                    logger.info(f"Removed session_id_map entry: {key} -> {session_id}")
                     break
 
     @classmethod
