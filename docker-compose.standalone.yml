@@ -42,6 +42,11 @@ services:
       # Redis configuration
       - REDIS_URL=redis://redis:6379/0
       
+      # Frontend WebSocket configuration (for remote access)
+      # Set this to your server's IP or domain if accessing remotely
+      # Example: http://192.168.1.100:8000 or http://your-domain.com:8000
+      - RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-}
+      
       # Backend configuration
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - DB_AUTO_MIGRATE=True
