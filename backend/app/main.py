@@ -716,3 +716,13 @@ async def root():
         "docs_url": f"{settings.API_PREFIX}/docs",
         "socketio_path": "/socket.io",
     }
+
+
+# Health check endpoint (registered on FastAPI app)
+@_fastapi_app.get("/health")
+async def health():
+    """
+    Health check endpoint for container orchestration and load balancers.
+    Returns a simple status indicating the service is running.
+    """
+    return {"status": "healthy"}
