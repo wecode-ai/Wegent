@@ -75,7 +75,7 @@ export default defineConfig({
       },
       dependencies: ['setup'],
     },
-    /* API tests - no browser needed, no setup dependency */
+    /* API tests - no browser needed, depends on setup for password change */
     {
       name: 'api',
       testMatch: /api\/.*\.spec\.ts/,
@@ -83,6 +83,7 @@ export default defineConfig({
         // API tests don't need a browser
         baseURL: process.env.E2E_API_URL || 'http://localhost:8000',
       },
+      dependencies: ['setup'],
     },
     /* Performance tests */
     {
