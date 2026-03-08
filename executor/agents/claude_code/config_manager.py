@@ -342,6 +342,43 @@ def _filter_reachable_mcp_servers(
     return reachable
 
 
+def _normalize_mcp_server_types(mcp_servers: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize MCP server types for Claude Code SDK compatibility.
+
+    Claude Code SDK only supports "http" type, but skill configurations
+    may use "streamable-http". This function converts unsupported types.
+
+    Args:
+        mcp_servers: Dict of MCP server configs
+
+    Returns:
+        Dict with normalized server types
+    """
+    if not mcp_servers:
+        return mcp_servers
+
+    # Claude Code SDK supported types
+    TYPE_MAPPING = {
+        "streamable-http": "http",
+    }
+
+    for name, config in mcp_servers.items():
+        if not isinstance(config, dict):
+            continue
+        original_type = config.get("type", "")
+        mapped_type = TYPE_MAPPING.get(original_type)
+        if mapped_type:
+            config["type"] = mapped_type
+            logger.info(
+                "[MCP-NORMALIZE] Server '%s': type '%s' -> '%s'",
+                name,
+                original_type,
+                mapped_type,
+            )
+
+    return mcp_servers
+
+
 def _extract_skill_mcp_servers(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract and merge MCP servers from skill_configs.
 
@@ -354,7 +391,7 @@ def _extract_skill_mcp_servers(task_data: ExecutionRequest) -> Dict[str, Any]:
 
     Returns:
         Dict of MCP server configs in Claude Code SDK format, e.g.
-        {"skillName_serverName": {"type": "streamable-http", "url": "..."}}
+        {"skillName_serverName": {"type": "http", "url": "..."}}
     """
     from shared.utils.mcp_utils import replace_mcp_server_variables
 
@@ -530,6 +567,12 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
             logger.info(
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
             )
+
+        # Normalize MCP server types for Claude Code SDK compatibility
+        # (e.g., "streamable-http" -> "http")
+        final_mcp = bot_config.get("mcp_servers")
+        if isinstance(final_mcp, dict) and final_mcp:
+            bot_config["mcp_servers"] = _normalize_mcp_server_types(final_mcp)
 
         # Filter out unreachable MCP servers to prevent SDK initialization timeout
         final_mcp = bot_config.get("mcp_servers")
