@@ -533,7 +533,7 @@ const IMChannelList: React.FC = () => {
       is_enabled: channel.is_enabled,
       default_team_id: channel.default_team_id || 0,
       default_model_name: channel.default_model_name || '',
-      app_id: ((channel.config?.app_id as string) || (channel.config?.client_id as string) || ''),
+      app_id: (channel.config?.app_id as string) || (channel.config?.client_id as string) || '',
       app_secret: '', // Don't show existing secret
       client_id: (channel.config?.client_id as string) || '',
       client_secret: '', // Don't show existing secret
