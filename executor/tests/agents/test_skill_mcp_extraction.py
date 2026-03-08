@@ -18,6 +18,7 @@ from executor.agents.claude_code.config_manager import (
     _check_mcp_server_reachable,
     _extract_skill_mcp_servers,
     _filter_reachable_mcp_servers,
+    _normalize_mcp_server_types,
     extract_claude_options,
 )
 from shared.models.execution import ExecutionRequest
@@ -189,6 +190,60 @@ class TestExtractSkillMcpServers:
         assert result == {}
 
 
+class TestNormalizeMcpServerTypes:
+    """Tests for _normalize_mcp_server_types."""
+
+    def test_empty_dict(self):
+        assert _normalize_mcp_server_types({}) == {}
+
+    def test_none_returns_none(self):
+        assert _normalize_mcp_server_types(None) is None
+
+    def test_streamable_http_converted_to_http(self):
+        """streamable-http type is converted to http."""
+        servers = {
+            "server1": {
+                "type": "streamable-http",
+                "url": "http://example.com/mcp",
+            }
+        }
+        result = _normalize_mcp_server_types(servers)
+        assert result["server1"]["type"] == "http"
+
+    def test_http_type_unchanged(self):
+        """http type remains unchanged."""
+        servers = {
+            "server1": {
+                "type": "http",
+                "url": "http://example.com/mcp",
+            }
+        }
+        result = _normalize_mcp_server_types(servers)
+        assert result["server1"]["type"] == "http"
+
+    def test_mixed_types_normalized(self):
+        """Only streamable-http is converted, others remain unchanged."""
+        servers = {
+            "s1": {"type": "streamable-http", "url": "http://a.com"},
+            "s2": {"type": "http", "url": "http://b.com"},
+            "s3": {"type": "sse", "url": "http://c.com"},
+        }
+        result = _normalize_mcp_server_types(servers)
+        assert result["s1"]["type"] == "http"
+        assert result["s2"]["type"] == "http"
+        assert result["s3"]["type"] == "sse"
+
+    def test_non_dict_config_skipped(self):
+        """Non-dict server configs are skipped without error."""
+        servers = {
+            "good": {"type": "streamable-http", "url": "http://example.com"},
+            "bad": "not-a-dict",
+        }
+        result = _normalize_mcp_server_types(servers)
+        assert result["good"]["type"] == "http"
+        assert result["bad"] == "not-a-dict"
+
+
 class TestFilterReachableMcpServers:
     """Tests for _filter_reachable_mcp_servers and _check_mcp_server_reachable."""
 
@@ -228,7 +283,7 @@ class TestExtractClaudeOptionsWithSkillMcp:
         _mock_reachable,
     )
     def test_skill_mcp_merged_into_options(self):
-        """Skill MCP servers appear in the final options mcp_servers dict."""
+        """Skill MCP servers appear in the final options with normalized type."""
         task_data = ExecutionRequest(
             task_id=1,
             bot=[{"system_prompt": "You are helpful."}],
@@ -248,13 +303,15 @@ class TestExtractClaudeOptionsWithSkillMcp:
 
         assert "mcp_servers" in options
         assert "image-toolkit_imageServer" in options["mcp_servers"]
+        # streamable-http should be normalized to http
+        assert options["mcp_servers"]["image-toolkit_imageServer"]["type"] == "http"
 
     @patch(
         "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
         _mock_reachable,
     )
     def test_skill_mcp_merged_with_ghost_mcp(self):
-        """Skill MCP servers merge alongside existing Ghost-level MCP servers."""
+        """Skill MCP servers merge alongside Ghost-level MCP with type normalization."""
         task_data = ExecutionRequest(
             task_id=1,
             bot=[
@@ -284,6 +341,9 @@ class TestExtractClaudeOptionsWithSkillMcp:
         mcp = options["mcp_servers"]
         assert "ghost-server" in mcp
         assert "my-skill_skillServer" in mcp
+        # Ghost server type remains http, skill server streamable-http normalized to http
+        assert mcp["ghost-server"]["type"] == "http"
+        assert mcp["my-skill_skillServer"]["type"] == "http"
 
     @patch(
         "executor.agents.claude_code.config_manager._check_mcp_server_reachable",
