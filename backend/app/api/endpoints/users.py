@@ -93,6 +93,16 @@ async def change_password(
             detail="Passwords do not match",
         )
 
+    # Prevent admin from "changing" to the same default password
+    if current_user.user_name == "admin":
+        from app.core.yaml_init import DEFAULT_ADMIN_Password
+
+        if request.new_password == DEFAULT_ADMIN_Password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password cannot be the same as the default password",
+            )
+
     # Hash and update the password
     current_user.password_hash = security.get_password_hash(request.new_password)
     db.commit()

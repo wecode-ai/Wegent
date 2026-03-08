@@ -1,5 +1,6 @@
 import { APIRequestContext } from '@playwright/test'
 import { ApiClient, createApiClient } from './api-client'
+import { ADMIN_USER } from '../config/test-users'
 
 /**
  * Test resource types that need cleanup
@@ -29,7 +30,7 @@ export class CleanupManager {
   /**
    * Initialize with API client
    */
-  async initialize(username: string = 'admin', password: string = 'Wegent2025!'): Promise<void> {
+  async initialize(username: string = ADMIN_USER.username, password: string = ADMIN_USER.password): Promise<void> {
     if (!this.request) {
       throw new Error('APIRequestContext is required for cleanup')
     }

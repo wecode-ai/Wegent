@@ -1,5 +1,6 @@
 import { test as setup, expect } from '@playwright/test'
 import { login, TEST_USER } from '../utils/auth'
+import { E2E_ADMIN_Password } from '../config/test-users'
 import * as path from 'path'
 import { promises as fsPromises } from 'fs'
 
@@ -33,20 +34,19 @@ setup('authenticate', async ({ page, request }) => {
     const token = await page.evaluate(() => localStorage.getItem('auth_token'))
     if (token) {
       // First, change the admin password via API to satisfy the password change requirement
-      // We change it to the same value - bcrypt will generate a different hash due to random salt,
-      // so admin_password_changed will become true while keeping the same login credentials
+      // This changes the password from the default to a dedicated E2E password
       const passwordResponse = await page.request.put(`${apiBaseUrl}/api/users/me/password`, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         data: {
-          new_password: TEST_USER.password,
-          confirm_password: TEST_USER.password,
+          new_password: E2E_ADMIN_Password,
+          confirm_password: E2E_ADMIN_Password,
         },
       })
       if (passwordResponse.ok()) {
-        console.log('Admin password changed successfully (same credentials, different hash)')
+        console.log('Admin password changed successfully to E2E password')
       } else {
         throw new Error(
           `Failed to change admin password: ${passwordResponse.status()} - ${await passwordResponse.text()}`
@@ -95,12 +95,12 @@ setup('authenticate', async ({ page, request }) => {
             'Content-Type': 'application/json',
           },
           data: {
-            new_password: TEST_USER.password,
-            confirm_password: TEST_USER.password,
+            new_password: E2E_ADMIN_Password,
+            confirm_password: E2E_ADMIN_Password,
           },
         })
         .catch(() => {
-          // Ignore - may already be done
+          // Ignore - may already be done or password is already different from default
         })
 
       const response = await request.post(`${baseURL}/api/admin/setup-complete`, {

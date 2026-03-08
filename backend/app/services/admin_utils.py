@@ -6,7 +6,8 @@
 
 from sqlalchemy.orm import Session
 
-from app.core.yaml_init import DEFAULT_ADMIN_Password_HASH
+from app.core.security import verify_password
+from app.core.yaml_init import DEFAULT_ADMIN_Password
 from app.models.user import User
 
 
@@ -14,8 +15,9 @@ def is_admin_password_default(db: Session) -> bool:
     """
     Check if the admin user's password is still the default value.
 
-    Queries the admin user from the database and compares the password hash
-    with the known default admin password hash.
+    Uses bcrypt verification to compare the known default plaintext password
+    against the stored hash. This correctly handles re-hashed passwords
+    (same plaintext with different salt) unlike direct hash comparison.
 
     Args:
         db: Database session
@@ -27,4 +29,4 @@ def is_admin_password_default(db: Session) -> bool:
     admin_user = db.query(User).filter(User.user_name == "admin").first()
     if not admin_user:
         return False
-    return admin_user.password_hash == DEFAULT_ADMIN_Password_HASH
+    return verify_password(DEFAULT_ADMIN_Password, admin_user.password_hash)

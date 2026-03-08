@@ -498,8 +498,7 @@ export class ApiClient {
 
   /**
    * Change admin password (required before marking setup as complete)
-   * In E2E tests, we change to the same password - bcrypt generates a different hash
-   * which satisfies the password change requirement while keeping the same credentials
+   * Changes the admin password from the default to a new value
    */
   async changeAdminPassword(
     newPassword: string,

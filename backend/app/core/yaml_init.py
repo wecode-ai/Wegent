@@ -23,7 +23,10 @@ from app.services.k_batch import batch_service
 
 logger = logging.getLogger(__name__)
 
-# Default admin password hash for "Wegent2025!" - used to detect if admin has changed default password
+# Default admin password plaintext - used to verify if admin still uses default credentials
+DEFAULT_ADMIN_Password = "Wegent2025!"
+
+# Default admin password hash for "Wegent2025!" - used for initial user creation
 DEFAULT_ADMIN_Password_HASH = (
     "$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW"
 )

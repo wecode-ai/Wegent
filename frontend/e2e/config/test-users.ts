@@ -10,11 +10,22 @@ export interface TestUser {
 }
 
 /**
+ * Default admin password (before change) - used only for initial login in global-setup
+ */
+export const DEFAULT_ADMIN_Password = 'Wegent2025!'
+
+/**
+ * E2E admin password (after change) - used for all API calls after setup
+ */
+export const E2E_ADMIN_Password = 'WegentE2E2025!'
+
+/**
  * Default admin user for E2E tests
+ * Note: password is the E2E password (changed during global-setup), not the default
  */
 export const ADMIN_USER: TestUser = {
   username: 'admin',
-  password: 'Wegent2025!',
+  password: E2E_ADMIN_Password,
   role: 'admin',
   description: 'Default admin user with full access',
 }
