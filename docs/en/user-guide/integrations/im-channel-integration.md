@@ -41,7 +41,7 @@ IM Channel Integration connects Wegent agents to instant messaging platforms, al
 | Platform | Status | Features |
 |----------|--------|----------|
 | **DingTalk** | ✅ Available | Stream mode, AI Card streaming, multi-turn conversations |
-| **Feishu/Lark** | 🔜 Planned | Coming soon |
+| **Feishu/Lark** | ✅ Available | Event subscription webhook, text message handling, multi-turn conversations |
 | **WeChat Work** | 🔜 Planned | Coming soon |
 
 ---
