@@ -915,8 +915,6 @@ wait_for_services() {
     local wait_interval=3
     local elapsed=0
 
-    ui_info "Waiting for services to be ready..."
-
     # Determine which service to check based on deploy mode
     local service_name=""
     local health_url=""
@@ -928,44 +926,87 @@ wait_for_services() {
         health_url="http://localhost:8000/health"
     fi
 
-    # Show spinner while waiting
-    local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    local spinner_pid=""
+    echo ""
+    ui_info "Waiting for services to be ready (this may take 30-60 seconds)..."
+    echo ""
 
-    # Start spinner in background
-    (
-        local i=0
-        local len=${#spinner_chars}
-        while true; do
-            printf "\r${MUTED}%s${NC} Waiting for services to be ready..." "${spinner_chars:$i:1}"
-            i=$(( (i + 1) % len ))
-            sleep 0.1
+    # Phase 1: Wait for containers to start
+    local phase1_max=30
+    local phase1_elapsed=0
+    echo -ne "  ${MUTED}[1/3]${NC} Starting containers..."
+
+    while [[ $phase1_elapsed -lt $phase1_max ]]; do
+        local container_status
+        container_status=$($COMPOSE_CMD $compose_args ps --format json 2>/dev/null | head -1)
+        if [[ -n "$container_status" ]]; then
+            echo -e "\r  ${GREEN}✓${NC} [1/3] Containers started                    "
+            break
+        fi
+        sleep 2
+        phase1_elapsed=$((phase1_elapsed + 2))
+        local dots=$(( (phase1_elapsed / 2) % 4 ))
+        local dot_str=""
+        for ((i=0; i<dots; i++)); do dot_str+="."; done
+        echo -ne "\r  ${MUTED}[1/3]${NC} Starting containers${dot_str}   "
+    done
+
+    if [[ $phase1_elapsed -ge $phase1_max ]]; then
+        echo -e "\r  ${YELLOW}!${NC} [1/3] Containers starting (continuing...)    "
+    fi
+
+    # Phase 2: Wait for database initialization (for standard mode)
+    if [[ "$DEPLOY_MODE" != "standalone" ]]; then
+        echo -ne "  ${MUTED}[2/3]${NC} Initializing database..."
+        local phase2_max=40
+        local phase2_elapsed=0
+
+        while [[ $phase2_elapsed -lt $phase2_max ]]; do
+            # Check if MySQL is accepting connections by checking backend logs
+            if $COMPOSE_CMD $compose_args logs backend 2>/dev/null | grep -q "Application startup complete\|Uvicorn running"; then
+                echo -e "\r  ${GREEN}✓${NC} [2/3] Database initialized                   "
+                break
+            fi
+            sleep 3
+            phase2_elapsed=$((phase2_elapsed + 3))
+            local dots=$(( (phase2_elapsed / 3) % 4 ))
+            local dot_str=""
+            for ((i=0; i<dots; i++)); do dot_str+="."; done
+            echo -ne "\r  ${MUTED}[2/3]${NC} Initializing database${dot_str}   "
         done
-    ) &
-    spinner_pid=$!
 
-    # Wait for health endpoint to respond
-    while [[ $elapsed -lt $max_wait ]]; do
+        if [[ $phase2_elapsed -ge $phase2_max ]]; then
+            echo -e "\r  ${YELLOW}!${NC} [2/3] Database initializing (continuing...)  "
+        fi
+    else
+        echo -e "  ${GREEN}✓${NC} [2/3] Database initialized (SQLite)          "
+    fi
+
+    # Phase 3: Wait for health endpoint
+    echo -ne "  ${MUTED}[3/3]${NC} Checking service health..."
+    local phase3_max=50
+    local phase3_elapsed=0
+
+    while [[ $phase3_elapsed -lt $phase3_max ]]; do
         # Try to hit the health endpoint
         if curl -fsSL --connect-timeout 2 --max-time 5 "$health_url" >/dev/null 2>&1; then
-            # Stop spinner
-            kill "$spinner_pid" 2>/dev/null || true
-            wait "$spinner_pid" 2>/dev/null || true
-            printf "\r\033[K"
-            ui_success "Services are ready"
+            echo -e "\r  ${GREEN}✓${NC} [3/3] Service health check passed            "
+            echo ""
+            ui_success "All services are ready!"
             return 0
         fi
 
-        sleep $wait_interval
-        elapsed=$((elapsed + wait_interval))
+        sleep 3
+        phase3_elapsed=$((phase3_elapsed + 3))
+        local dots=$(( (phase3_elapsed / 3) % 4 ))
+        local dot_str=""
+        for ((i=0; i<dots; i++)); do dot_str+="."; done
+        echo -ne "\r  ${MUTED}[3/3]${NC} Checking service health${dot_str}   "
     done
 
-    # Stop spinner
-    kill "$spinner_pid" 2>/dev/null || true
-    wait "$spinner_pid" 2>/dev/null || true
-    printf "\r\033[K"
-
+    echo -e "\r  ${YELLOW}!${NC} [3/3] Health check pending                   "
+    echo ""
     ui_warn "Services may not be fully ready yet (timeout after ${max_wait}s)"
+    ui_info "The services are still starting in the background."
     ui_info "You can check the status with: $COMPOSE_CMD $compose_args ps"
     ui_info "View logs with: $COMPOSE_CMD $compose_args logs -f"
     return 0  # Don't fail, just warn
