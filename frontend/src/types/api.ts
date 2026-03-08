@@ -113,6 +113,140 @@ export interface SkillList {
   items: Skill[]
 }
 
+// ==================== Skill Marketplace Types ====================
+
+/** Skill category for marketplace */
+export interface SkillCategory {
+  name: string
+  displayName: string
+  displayNameEn: string
+  description?: string
+  descriptionEn?: string
+  icon?: string
+  sortOrder: number
+  skillCount?: number
+}
+
+/** Skill category list response */
+export interface SkillCategoryListResponse {
+  items: SkillCategory[]
+}
+
+/** Reference to source skill for marketplace skills */
+export interface SourceSkillRef {
+  skill_id: number
+  namespace: string
+  name: string
+  user_id: number
+}
+
+/** Marketplace skill specification */
+export interface MarketplaceSkillSpec {
+  description: string
+  displayName?: string
+  version?: string
+  author?: string
+  tags?: string[]
+  bindShells?: string[]
+  category: string
+  marketDescription?: string
+  readme?: string
+  downloadCount: number
+  sourceSkillRef: SourceSkillRef
+}
+
+/** Marketplace skill status */
+export interface MarketplaceSkillStatus {
+  state: 'Available' | 'Unavailable'
+}
+
+/** Marketplace skill CRD */
+export interface MarketplaceSkill {
+  apiVersion: string
+  kind: 'MarketplaceSkill'
+  metadata: SkillMetadata
+  spec: MarketplaceSkillSpec
+  status?: MarketplaceSkillStatus
+}
+
+/** Publisher info for marketplace skill detail */
+export interface MarketplacePublisherInfo {
+  id: number
+  username: string
+  avatar?: string
+}
+
+/** Category info for marketplace skill detail */
+export interface MarketplaceCategoryInfo {
+  name: string
+  displayName: string
+}
+
+/** Marketplace skill detail response */
+export interface MarketplaceSkillDetailResponse {
+  skill: MarketplaceSkill
+  publisher: MarketplacePublisherInfo
+  category: MarketplaceCategoryInfo
+  is_collected: boolean
+}
+
+/** Paginated marketplace skill list response */
+export interface MarketplaceSkillListResponse {
+  items: MarketplaceSkill[]
+  total: number
+  skip: number
+  limit: number
+}
+
+/** Publish to marketplace request */
+export interface PublishToMarketplaceRequest {
+  skill_id: number
+  category: string
+  market_description?: string
+  readme?: string
+}
+
+/** Publish to marketplace response */
+export interface PublishToMarketplaceResponse {
+  marketplace_skill_id: number
+  message: string
+}
+
+/** Update marketplace skill request */
+export interface UpdateMarketplaceSkillRequest {
+  category?: string
+  market_description?: string
+  readme?: string
+}
+
+/** Collect skill response */
+export interface CollectSkillResponse {
+  skill_id: number
+  message: string
+}
+
+/** Collection item with marketplace skill info */
+export interface CollectionItem {
+  collection_id: number
+  collected_at: string
+  marketplace_skill: MarketplaceSkill | null
+  is_available: boolean
+}
+
+/** My collections response */
+export interface MyCollectionsResponse {
+  items: CollectionItem[]
+}
+
+/** Reference to marketplace skill (for collected skills) */
+export interface SkillRef {
+  marketplace_skill_id: number
+  namespace: string
+  name: string
+  user_id: number
+  collected_at: string
+}
+
 // Shell Types
 export interface Shell {
   id: number
