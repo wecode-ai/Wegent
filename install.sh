@@ -406,6 +406,7 @@ install_docker_linux() {
 
 install_docker_debian() {
     ui_info "Installing Docker using official Docker repository..."
+    ui_info "This may take a few minutes, please wait..."
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[DRY RUN] Would install Docker via apt"
@@ -417,11 +418,13 @@ install_docker_debian() {
         sudo_cmd="sudo"
     fi
 
-    # Remove old versions
-    $sudo_cmd apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+    # Remove old versions (ignore errors if packages don't exist)
+    ui_info "Removing old Docker versions..."
+    $sudo_cmd apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
+    ui_success "Old Docker versions removed"
 
     # Install prerequisites
-    run_quiet_step "Installing prerequisites" $sudo_cmd apt-get update
+    run_quiet_step "Updating package index" $sudo_cmd apt-get update
     run_quiet_step "Installing prerequisites" $sudo_cmd apt-get install -y \
         ca-certificates \
         curl \
@@ -429,11 +432,15 @@ install_docker_debian() {
         lsb-release
 
     # Add Docker's official GPG key
+    ui_info "Adding Docker GPG key..."
     $sudo_cmd install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | $sudo_cmd gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
+    $sudo_cmd rm -f /etc/apt/keyrings/docker.gpg 2>/dev/null || true
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | $sudo_cmd gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
     $sudo_cmd chmod a+r /etc/apt/keyrings/docker.gpg
+    ui_success "Docker GPG key added"
 
     # Set up the repository
+    ui_info "Setting up Docker repository..."
     local arch
     arch="$(dpkg --print-architecture)"
     local codename
@@ -442,10 +449,11 @@ install_docker_debian() {
     echo \
         "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
         ${codename} stable" | $sudo_cmd tee /etc/apt/sources.list.d/docker.list > /dev/null
+    ui_success "Docker repository configured"
 
     # Install Docker Engine
     run_quiet_step "Updating package index" $sudo_cmd apt-get update
-    run_quiet_step "Installing Docker Engine" $sudo_cmd apt-get install -y \
+    run_quiet_step "Installing Docker Engine (this may take a while)" $sudo_cmd apt-get install -y \
         docker-ce \
         docker-ce-cli \
         containerd.io \
@@ -459,14 +467,15 @@ install_docker_debian() {
     fi
 
     # Start Docker service
-    $sudo_cmd systemctl enable docker 2>/dev/null || true
-    $sudo_cmd systemctl start docker 2>/dev/null || true
+    run_quiet_step "Starting Docker service" $sudo_cmd systemctl enable docker 2>/dev/null || true
+    run_quiet_step "Starting Docker service" $sudo_cmd systemctl start docker 2>/dev/null || true
 
     ui_success "Docker installed successfully"
 }
 
 install_docker_rhel() {
     ui_info "Installing Docker using official Docker repository..."
+    ui_info "This may take a few minutes, please wait..."
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[DRY RUN] Would install Docker via dnf/yum"
@@ -483,20 +492,24 @@ install_docker_rhel() {
         pkg_manager="yum"
     fi
 
-    # Remove old versions
+    # Remove old versions (ignore errors if packages don't exist)
+    ui_info "Removing old Docker versions..."
     $sudo_cmd $pkg_manager remove -y docker docker-client docker-client-latest \
         docker-common docker-latest docker-latest-logrotate \
-        docker-logrotate docker-engine 2>/dev/null || true
+        docker-logrotate docker-engine >/dev/null 2>&1 || true
+    ui_success "Old Docker versions removed"
 
     # Install prerequisites
     run_quiet_step "Installing prerequisites" $sudo_cmd $pkg_manager install -y yum-utils
 
     # Add Docker repository
+    ui_info "Adding Docker repository..."
     $sudo_cmd yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo 2>/dev/null || \
     $sudo_cmd yum-config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo 2>/dev/null || true
+    ui_success "Docker repository added"
 
     # Install Docker Engine
-    run_quiet_step "Installing Docker Engine" $sudo_cmd $pkg_manager install -y \
+    run_quiet_step "Installing Docker Engine (this may take a while)" $sudo_cmd $pkg_manager install -y \
         docker-ce \
         docker-ce-cli \
         containerd.io \
@@ -506,17 +519,19 @@ install_docker_rhel() {
     # Add current user to docker group
     if ! is_root; then
         $sudo_cmd usermod -aG docker "$USER" 2>/dev/null || true
+        ui_info "Added $USER to docker group"
     fi
 
     # Start Docker service
-    $sudo_cmd systemctl enable docker 2>/dev/null || true
-    $sudo_cmd systemctl start docker 2>/dev/null || true
+    run_quiet_step "Starting Docker service" $sudo_cmd systemctl enable docker 2>/dev/null || true
+    run_quiet_step "Starting Docker service" $sudo_cmd systemctl start docker 2>/dev/null || true
 
     ui_success "Docker installed successfully"
 }
 
 install_docker_arch() {
     ui_info "Installing Docker via pacman..."
+    ui_info "This may take a few minutes, please wait..."
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[DRY RUN] Would install Docker via pacman"
@@ -528,41 +543,46 @@ install_docker_arch() {
         sudo_cmd="sudo"
     fi
 
-    run_quiet_step "Installing Docker" $sudo_cmd pacman -S --noconfirm docker docker-compose
+    run_quiet_step "Installing Docker (this may take a while)" $sudo_cmd pacman -S --noconfirm docker docker-compose
 
     # Add current user to docker group
     if ! is_root; then
         $sudo_cmd usermod -aG docker "$USER" 2>/dev/null || true
+        ui_info "Added $USER to docker group"
     fi
 
     # Start Docker service
-    $sudo_cmd systemctl enable docker 2>/dev/null || true
-    $sudo_cmd systemctl start docker 2>/dev/null || true
+    run_quiet_step "Starting Docker service" $sudo_cmd systemctl enable docker 2>/dev/null || true
+    run_quiet_step "Starting Docker service" $sudo_cmd systemctl start docker 2>/dev/null || true
 
     ui_success "Docker installed successfully"
 }
 
 install_docker_generic() {
     ui_info "Installing Docker using convenience script..."
+    ui_info "This may take a few minutes, please wait..."
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[DRY RUN] Would install Docker via get.docker.com"
         return 0
     fi
 
+    ui_info "Downloading Docker installation script..."
     local tmp
     tmp="$(mktempfile)"
     curl -fsSL https://get.docker.com -o "$tmp"
+    ui_success "Docker installation script downloaded"
 
     if is_root; then
-        run_quiet_step "Installing Docker" sh "$tmp"
+        run_quiet_step "Installing Docker (this may take a while)" sh "$tmp"
     else
-        run_quiet_step "Installing Docker" sudo sh "$tmp"
+        run_quiet_step "Installing Docker (this may take a while)" sudo sh "$tmp"
     fi
 
     # Add current user to docker group
     if ! is_root; then
         sudo usermod -aG docker "$USER" 2>/dev/null || true
+        ui_info "Added $USER to docker group"
     fi
 
     ui_success "Docker installed successfully"
