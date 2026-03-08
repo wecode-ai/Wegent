@@ -8,7 +8,6 @@ from app.api.endpoints import (
     auth,
     deep_research,
     devices,
-    feishu,
     groups,
     health,
     knowledge,
@@ -70,7 +69,6 @@ api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
-api_router.include_router(feishu.router, prefix="/feishu", tags=["feishu"])
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])

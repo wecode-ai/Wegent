@@ -107,6 +107,8 @@ dependencies = [
     "dingtalk-stream>=0.24.0",
     # Telegram Bot SDK for IM channel integration
     "python-telegram-bot>=21.0",
+    # Feishu/Lark official long-connection SDK
+    "lark-oapi>=1.4.18",
     # RAG (Retrieval-Augmented Generation) dependencies
     "llama-index-core>=0.12.0",
     "llama-index-vector-stores-elasticsearch>=0.4.0",
