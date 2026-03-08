@@ -16,6 +16,12 @@ test.describe('Admin - Public Model Management', () => {
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
 
     // Mark admin setup as complete via API to prevent GlobalAdminSetupWizard from showing
+    // First change password (required before setup can be completed)
+    await apiClient
+      .changeAdminPassword(ADMIN_USER.password, ADMIN_USER.password)
+      .catch(() => {
+        // Ignore errors - password may already be changed
+      })
     await apiClient.markAdminSetupComplete().catch(() => {
       // Ignore errors - setup may already be complete
     })

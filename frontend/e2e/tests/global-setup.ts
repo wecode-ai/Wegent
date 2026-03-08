@@ -32,6 +32,26 @@ setup('authenticate', async ({ page, request }) => {
     // Get auth token from localStorage
     const token = await page.evaluate(() => localStorage.getItem('auth_token'))
     if (token) {
+      // First, change the admin password via API to satisfy the password change requirement
+      // We change it to the same value - bcrypt will generate a different hash due to random salt,
+      // so admin_password_changed will become true while keeping the same login credentials
+      const passwordResponse = await page.request.put(`${apiBaseUrl}/api/users/me/password`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        data: {
+          new_password: TEST_USER.password,
+          confirm_password: TEST_USER.password,
+        },
+      })
+      if (passwordResponse.ok()) {
+        console.log('Admin password changed successfully (same credentials, different hash)')
+      } else {
+        console.warn(`Failed to change admin password: ${passwordResponse.status()}`)
+      }
+
+      // Now mark setup as complete
       const response = await page.request.post(`${apiBaseUrl}/api/admin/setup-complete`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -54,16 +74,32 @@ setup('authenticate', async ({ page, request }) => {
 
   console.log('Authentication successful, storage state saved')
 
-  // Mark admin setup as complete to prevent GlobalAdminSetupWizard from showing
-  // This is done via API to ensure it's completed before any tests run
+  // Double-check: Mark admin setup as complete using request context
+  // This is a backup in case the first attempt failed
   try {
-    // Get auth token from localStorage
     const authToken = await page.evaluate(() => {
       return localStorage.getItem('auth_token')
     })
 
     if (authToken) {
       const baseURL = process.env.E2E_API_URL || 'http://localhost:8000'
+
+      // Ensure password is changed first (idempotent - safe to call again)
+      await request
+        .put(`${baseURL}/api/users/me/password`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+            'Content-Type': 'application/json',
+          },
+          data: {
+            new_password: TEST_USER.password,
+            confirm_password: TEST_USER.password,
+          },
+        })
+        .catch(() => {
+          // Ignore - may already be done
+        })
+
       const response = await request.post(`${baseURL}/api/admin/setup-complete`, {
         headers: {
           Authorization: `Bearer ${authToken}`,

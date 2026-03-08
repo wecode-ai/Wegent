@@ -497,8 +497,24 @@ export class ApiClient {
   }
 
   /**
+   * Change admin password (required before marking setup as complete)
+   * In E2E tests, we change to the same password - bcrypt generates a different hash
+   * which satisfies the password change requirement while keeping the same credentials
+   */
+  async changeAdminPassword(
+    newPassword: string,
+    confirmPassword: string
+  ): Promise<ApiResponse> {
+    return this.call('PUT', '/api/users/me/password', {
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    })
+  }
+
+  /**
    * Mark admin setup as complete (admin only)
    * This is used to dismiss the GlobalAdminSetupWizard in E2E tests
+   * Note: Requires admin password to have been changed from default first
    */
   async markAdminSetupComplete(): Promise<ApiResponse> {
     return this.call('POST', '/api/admin/setup-complete')
