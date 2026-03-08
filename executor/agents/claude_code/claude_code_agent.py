@@ -454,7 +454,6 @@ class ClaudeCodeAgent(Agent):
             )
             return TaskStatus.FAILED
 
-
     def execute(self) -> TaskStatus:
         """
         Execute the Claude Code Agent task
@@ -676,9 +675,7 @@ class ClaudeCodeAgent(Agent):
                         f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
                     )
                 if self.options.get("cwd"):
-                    cwd_text = "\nCurrent working directory: " + self.options.get(
-                        "cwd"
-                    )
+                    cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
                     git_url = self.task_data.git_url
                     if git_url:
                         cwd_text += "\n project url:" + git_url
@@ -738,9 +735,7 @@ class ClaudeCodeAgent(Agent):
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
-            prompt_length = (
-                len(prompt) if isinstance(prompt, str) else len(str(prompt))
-            )
+            prompt_length = len(prompt) if isinstance(prompt, str) else len(str(prompt))
             logger.info(
                 f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
@@ -842,6 +837,37 @@ class ClaudeCodeAgent(Agent):
 
         # Create client with options
         if self.options:
+            # Log MCP servers being passed to SDK
+            mcp_in_opts = self.options.get("mcp_servers") or self.options.get(
+                "mcpServers"
+            )
+            if mcp_in_opts:
+                if isinstance(mcp_in_opts, dict):
+                    logger.info(
+                        "[SDK-INIT] Passing %d MCP server(s) to Claude SDK: %s",
+                        len(mcp_in_opts),
+                        list(mcp_in_opts.keys()),
+                    )
+                    for sname, scfg in mcp_in_opts.items():
+                        logger.info(
+                            "[SDK-INIT]   %s -> type=%s, url=%s",
+                            sname,
+                            scfg.get("type", "?") if isinstance(scfg, dict) else "?",
+                            scfg.get("url", "?") if isinstance(scfg, dict) else "?",
+                        )
+                elif isinstance(mcp_in_opts, str):
+                    logger.info(
+                        "[SDK-INIT] MCP servers via config file: %s", mcp_in_opts
+                    )
+                else:
+                    logger.info(
+                        "[SDK-INIT] MCP servers (type=%s): %s",
+                        type(mcp_in_opts).__name__,
+                        mcp_in_opts,
+                    )
+            else:
+                logger.info("[SDK-INIT] No MCP servers in options")
+
             code_options = ClaudeAgentOptions(**self.options)
             self.client = ClaudeSDKClient(options=code_options)
         else:
@@ -933,16 +959,12 @@ class ClaudeCodeAgent(Agent):
             )
 
             # Terminate the CC process
-            await SessionManager._terminate_client_process(
-                self.client, self.session_id
-            )
+            await SessionManager._terminate_client_process(self.client, self.session_id)
 
             # Remove all in-memory tracking (client cache + session_id_map)
             # but preserve the on-disk .claude_session_id file for resume
             internal_key = getattr(self, "_internal_session_key", None)
-            SessionManager.cleanup_session_tracking(
-                self.session_id, internal_key
-            )
+            SessionManager.cleanup_session_tracking(self.session_id, internal_key)
 
             # Clear local client reference
             self.client = None
@@ -957,9 +979,7 @@ class ClaudeCodeAgent(Agent):
                         if asyncio.iscoroutine(result):
                             await result
                 except Exception as e:
-                    logger.warning(
-                        f"Error in heartbeat callback after auto-close: {e}"
-                    )
+                    logger.warning(f"Error in heartbeat callback after auto-close: {e}")
 
             logger.info(
                 f"Auto-closed CC session: session_id={self.session_id}, "
