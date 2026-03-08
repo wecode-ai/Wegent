@@ -1,0 +1,283 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Tests for Skill MCP server extraction in Claude Code executor.
+
+Verifies that MCP servers declared in skill_configs are correctly
+extracted, variable-substituted, prefix-namespaced, and merged into
+the final Claude Code SDK options alongside Ghost-level MCP servers.
+"""
+
+import pytest
+
+from executor.agents.claude_code.config_manager import (
+    _extract_skill_mcp_servers,
+    extract_claude_options,
+)
+from shared.models.execution import ExecutionRequest
+
+
+class TestExtractSkillMcpServers:
+    """Tests for _extract_skill_mcp_servers helper."""
+
+    def test_no_skill_configs(self):
+        """Returns empty dict when no skill_configs."""
+        task_data = ExecutionRequest(task_id=1, skill_configs=[])
+        result = _extract_skill_mcp_servers(task_data)
+        assert result == {}
+
+    def test_skill_without_mcp_servers(self):
+        """Returns empty dict when skills have no mcpServers."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            skill_configs=[
+                {"name": "code-review", "description": "Reviews code"},
+            ],
+        )
+        result = _extract_skill_mcp_servers(task_data)
+        assert result == {}
+
+    def test_single_skill_single_mcp(self):
+        """Extracts MCP from a single skill with one server."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            skill_configs=[
+                {
+                    "name": "image-toolkit",
+                    "mcpServers": {
+                        "imageFetchServer": {
+                            "type": "streamable-http",
+                            "url": "http://mcp.example.com/fetch-image",
+                            "headers": {"Authorization": "Bearer token123"},
+                        }
+                    },
+                }
+            ],
+        )
+        result = _extract_skill_mcp_servers(task_data)
+
+        assert "image-toolkit_imageFetchServer" in result
+        server = result["image-toolkit_imageFetchServer"]
+        assert server["type"] == "streamable-http"
+        assert server["url"] == "http://mcp.example.com/fetch-image"
+        assert server["headers"]["Authorization"] == "Bearer token123"
+
+    def test_single_skill_multiple_mcps(self):
+        """Extracts multiple MCP servers from a single skill."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            skill_configs=[
+                {
+                    "name": "image-toolkit",
+                    "mcpServers": {
+                        "imageFetchServer": {
+                            "type": "streamable-http",
+                            "url": "http://mcp.example.com/fetch-image",
+                        },
+                        "nanoBananaServer": {
+                            "type": "streamable-http",
+                            "url": "http://mcp.example.com/nano-banana",
+                        },
+                    },
+                }
+            ],
+        )
+        result = _extract_skill_mcp_servers(task_data)
+
+        assert len(result) == 2
+        assert "image-toolkit_imageFetchServer" in result
+        assert "image-toolkit_nanoBananaServer" in result
+
+    def test_multiple_skills_with_mcps(self):
+        """Extracts and merges MCP servers from multiple skills."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            skill_configs=[
+                {
+                    "name": "image-toolkit",
+                    "mcpServers": {
+                        "imageServer": {
+                            "type": "streamable-http",
+                            "url": "http://mcp.example.com/image",
+                        },
+                    },
+                },
+                {
+                    "name": "knowledge-base",
+                    "mcpServers": {
+                        "kbServer": {
+                            "type": "streamable-http",
+                            "url": "http://mcp.example.com/kb",
+                        },
+                    },
+                },
+            ],
+        )
+        result = _extract_skill_mcp_servers(task_data)
+
+        assert len(result) == 2
+        assert "image-toolkit_imageServer" in result
+        assert "knowledge-base_kbServer" in result
+
+    def test_variable_substitution(self):
+        """Verifies ${{...}} placeholders are replaced with task_data values."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            user={"name": "testuser"},
+            skill_configs=[
+                {
+                    "name": "my-skill",
+                    "mcpServers": {
+                        "server1": {
+                            "type": "streamable-http",
+                            "url": "http://mcp.example.com/api",
+                            "headers": {
+                                "mcp-proxy-wegent-user": "${{user.name}}",
+                            },
+                        },
+                    },
+                }
+            ],
+        )
+        result = _extract_skill_mcp_servers(task_data)
+
+        server = result["my-skill_server1"]
+        assert server["headers"]["mcp-proxy-wegent-user"] == "testuser"
+
+    def test_mixed_skills_with_and_without_mcp(self):
+        """Skills without mcpServers are skipped cleanly."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            skill_configs=[
+                {"name": "no-mcp-skill", "description": "No MCP"},
+                {
+                    "name": "with-mcp",
+                    "mcpServers": {
+                        "server1": {
+                            "type": "streamable-http",
+                            "url": "http://example.com",
+                        },
+                    },
+                },
+            ],
+        )
+        result = _extract_skill_mcp_servers(task_data)
+
+        assert len(result) == 1
+        assert "with-mcp_server1" in result
+
+    def test_invalid_mcp_servers_type_skipped(self):
+        """Non-dict mcpServers values are skipped."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            skill_configs=[
+                {"name": "bad-skill", "mcpServers": "not-a-dict"},
+            ],
+        )
+        result = _extract_skill_mcp_servers(task_data)
+        assert result == {}
+
+
+class TestExtractClaudeOptionsWithSkillMcp:
+    """Tests for skill MCP integration in extract_claude_options."""
+
+    def test_skill_mcp_merged_into_options(self):
+        """Skill MCP servers appear in the final options mcp_servers dict."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[{"system_prompt": "You are helpful."}],
+            skill_configs=[
+                {
+                    "name": "image-toolkit",
+                    "mcpServers": {
+                        "imageServer": {
+                            "type": "streamable-http",
+                            "url": "http://mcp.example.com/image",
+                        },
+                    },
+                }
+            ],
+        )
+        options = extract_claude_options(task_data)
+
+        assert "mcp_servers" in options
+        assert "image-toolkit_imageServer" in options["mcp_servers"]
+
+    def test_skill_mcp_merged_with_ghost_mcp(self):
+        """Skill MCP servers merge alongside existing Ghost-level MCP servers."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[
+                {
+                    "mcp_servers": {
+                        "ghost-server": {
+                            "type": "http",
+                            "url": "http://ghost.example.com/mcp",
+                        },
+                    },
+                }
+            ],
+            skill_configs=[
+                {
+                    "name": "my-skill",
+                    "mcpServers": {
+                        "skillServer": {
+                            "type": "streamable-http",
+                            "url": "http://skill.example.com/mcp",
+                        },
+                    },
+                }
+            ],
+        )
+        options = extract_claude_options(task_data)
+
+        mcp = options["mcp_servers"]
+        # Both Ghost and Skill MCP servers should be present
+        assert "ghost-server" in mcp
+        assert "my-skill_skillServer" in mcp
+
+    def test_no_skill_configs_preserves_ghost_mcp(self):
+        """When no skill_configs, Ghost MCP remains unchanged."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[
+                {
+                    "mcp_servers": {
+                        "ghost-server": {
+                            "type": "http",
+                            "url": "http://ghost.example.com/mcp",
+                        },
+                    },
+                }
+            ],
+            skill_configs=[],
+        )
+        options = extract_claude_options(task_data)
+
+        mcp = options["mcp_servers"]
+        assert "ghost-server" in mcp
+        assert len(mcp) == 1
+
+    def test_skill_mcp_only_no_ghost_mcp(self):
+        """Skill MCP works when Ghost has no MCP servers configured."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[{"system_prompt": "You are helpful."}],
+            skill_configs=[
+                {
+                    "name": "my-skill",
+                    "mcpServers": {
+                        "server1": {
+                            "type": "streamable-http",
+                            "url": "http://example.com/mcp",
+                        },
+                    },
+                }
+            ],
+        )
+        options = extract_claude_options(task_data)
+
+        assert "mcp_servers" in options
+        assert "my-skill_server1" in options["mcp_servers"]

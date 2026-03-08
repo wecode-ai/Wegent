@@ -272,10 +272,64 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     )
     return {}
 
+
+def _extract_skill_mcp_servers(task_data: ExecutionRequest) -> Dict[str, Any]:
+    """Extract and merge MCP servers from skill_configs.
+
+    Each skill may declare mcpServers in its configuration. This function
+    collects them all, applies variable substitution, and returns a merged
+    dict keyed by prefixed server names (to avoid cross-skill conflicts).
+
+    Args:
+        task_data: The task data object containing skill_configs
+
+    Returns:
+        Dict of MCP server configs in Claude Code SDK format, e.g.
+        {"skillName_serverName": {"type": "streamable-http", "url": "..."}}
+    """
+    from shared.utils.mcp_utils import replace_mcp_server_variables
+
+    skill_configs = task_data.skill_configs
+    if not skill_configs:
+        return {}
+
+    merged: Dict[str, Any] = {}
+    for skill_config in skill_configs:
+        skill_name = skill_config.get("name", "unknown")
+        mcp_servers = skill_config.get("mcpServers")
+        if not mcp_servers or not isinstance(mcp_servers, dict):
+            continue
+
+        # Replace ${{...}} placeholders with actual values from task_data
+        mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
+
+        # Prefix server names with skill name to avoid cross-skill conflicts
+        for server_name, server_config in mcp_servers.items():
+            prefixed_name = f"{skill_name}_{server_name}"
+            merged[prefixed_name] = server_config
+
+        logger.info(
+            "Extracted %d MCP server(s) from skill '%s': %s",
+            len(mcp_servers),
+            skill_name,
+            list(mcp_servers.keys()),
+        )
+
+    if merged:
+        logger.info(
+            "Total skill MCP servers collected: %d from %d skill(s)",
+            len(merged),
+            len(skill_configs),
+        )
+
+    return merged
+
+
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
-    Collects all non-None configuration parameters from task_data.
+    Collects all non-None configuration parameters from task_data,
+    including Ghost-level MCP servers and Skill-level MCP servers.
 
     Args:
         task_data: The task data object
@@ -323,7 +377,7 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     if bot_config:
         # Create a shallow copy of bot_config to avoid modifying the original
         bot_config = bot_config.copy()
-        # Extract MCP servers configuration
+        # Extract Ghost-level MCP servers configuration
         mcp_servers = extract_mcp_servers_config(bot_config)
         if mcp_servers:
             # Replace placeholders in MCP servers config with actual values
@@ -331,6 +385,15 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
             # Convert list format to dict format for Claude Code SDK
             mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
             bot_config["mcp_servers"] = mcp_servers
+
+        # Extract Skill-level MCP servers and merge into bot_config
+        skill_mcp_servers = _extract_skill_mcp_servers(task_data)
+        if skill_mcp_servers:
+            existing = bot_config.get("mcp_servers")
+            if isinstance(existing, dict):
+                existing.update(skill_mcp_servers)
+            else:
+                bot_config["mcp_servers"] = skill_mcp_servers
 
         # Add wegent MCP server for subscription tasks
         if task_data.is_subscription:
