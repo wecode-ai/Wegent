@@ -634,7 +634,10 @@ export default function ChatInput({
   // Calculate min height based on device
   // Figma design shows input card ~140px total, text area takes most of it
   // Text area should be ~60-70px minimum (about 2-3 lines with 26px line-height)
-  const minHeight = isMobile ? '3.5rem' : '4rem'
+  const baseMinHeight = isMobile ? '3.5rem' : '4rem'
+  // When expanded, increase min height to show the expanded state visually
+  const expandedMinHeight = isMobile ? '9rem' : '10rem'
+  const minHeight = !isMobile && isExpanded ? expandedMinHeight : baseMinHeight
   // When expanded, double the max height for easier editing of large text
   // Only apply expansion on desktop - mobile has no toggle button to collapse
   const baseMaxHeight = isMobile ? '9rem' : '10rem'
