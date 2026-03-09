@@ -182,6 +182,10 @@
         "splitterSubtype": "分段子类型"
       }
     },
+    "accessDenied": {
+      "title": "无权限查看文档",
+      "consumerMessage": "您在该组的角色为「消费者」，仅可通过对话使用知识库，无法查看文档内容。如需查看文档，请联系组管理员提升您的权限。"
+    },
     "upload": {
       "dropzoneHint": "一次最多选择 {{max}} 个文件",
       "fileList": "已选择 {{count}} 个文件",

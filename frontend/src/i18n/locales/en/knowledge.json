@@ -182,6 +182,10 @@
         "splitterSubtype": "Splitter Subtype"
       }
     },
+    "accessDenied": {
+      "title": "No Permission to View Documents",
+      "consumerMessage": "Your role in this group is \"Consumer\", which only allows using the knowledge base via chat. You cannot view document content. Please contact the group administrator to upgrade your permissions if needed."
+    },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
       "fileList": "{{count}} files selected",
