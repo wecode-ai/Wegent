@@ -151,6 +151,9 @@ class OIDCService:
         self, code: str, state: str
     ) -> Dict[str, Any]:
         """Exchange Authorization Code for Tokens"""
+        # Lazy import authlib for memory optimization
+        from authlib.integrations.httpx_client import AsyncOAuth2Client
+
         metadata = await self.get_metadata()
         token_endpoint = metadata.get("token_endpoint")
 
