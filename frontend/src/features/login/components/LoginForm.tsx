@@ -16,19 +16,20 @@ import LanguageSwitcher from '@/components/LanguageSwitcher'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
 import Image from 'next/image'
-import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { getRuntimeConfigSync, getApiBaseUrl } from '@/lib/runtime-config'
 
 export default function LoginForm() {
   const { t } = useTranslation()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [formData, setFormData] = useState({
-    user_name: 'admin',
-    password: 'Wegent2025!',
+    user_name: '',
+    password: '',
   })
   const [showPassword, setShowPassword] = useState(false)
   // Used antd message.error for unified error prompt, no need for local error state
   const [isLoading, setIsLoading] = useState(false)
+  const [showDefaultCredentials, setShowDefaultCredentials] = useState(false)
 
   // Get login mode configuration from runtime config
   const runtimeConfig = getRuntimeConfigSync()
@@ -41,6 +42,31 @@ export default function LoginForm() {
   const loginPath = paths.auth.login.getHref()
   const defaultRedirect = paths.chat.getHref()
   const [redirectPath, setRedirectPath] = useState(defaultRedirect)
+
+  // Check if admin password has been changed to determine whether to show default credentials
+  useEffect(() => {
+    const checkAdminPasswordStatus = async () => {
+      try {
+        const baseUrl = getApiBaseUrl()
+        const response = await fetch(`${baseUrl}/health`)
+        if (response.ok) {
+          const data = await response.json()
+          if (data.admin_password_changed === false) {
+            // Admin still uses default password - show default credentials
+            setShowDefaultCredentials(true)
+            setFormData({
+              user_name: 'admin',
+              password: 'Wegent2025!',
+            })
+          }
+        }
+      } catch {
+        // Health check failed, keep form empty
+      }
+    }
+
+    checkAdminPasswordStatus()
+  }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -206,10 +232,12 @@ export default function LoginForm() {
             </Button>
           </div>
 
-          {/* Show test account info */}
-          <div className="mt-6 text-center text-xs text-text-muted">
-            {t('common:login.test_account')}
-          </div>
+          {/* Show test account info only when admin password hasn't been changed */}
+          {showDefaultCredentials && (
+            <div className="mt-6 text-center text-xs text-text-muted">
+              {t('common:login.test_account')}
+            </div>
+          )}
         </form>
       )}
 

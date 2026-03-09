@@ -641,6 +641,16 @@
     "skip_confirm_message": "You can configure public models and skills later in the administration panel. Are you sure you want to skip the setup wizard?",
     "skip_confirm_yes": "Yes, skip",
     "skip_confirm_no": "Continue setup",
+    "password_step": {
+      "title": "Change Password",
+      "description": "For account security, please change the default password before continuing",
+      "new_password": "New Password",
+      "confirm_password": "Confirm Password",
+      "password_min_length": "Password must be at least 6 characters",
+      "password_mismatch": "Passwords do not match",
+      "change_password_success": "Password changed successfully",
+      "change_password_button": "Change Password"
+    },
     "model_step": {
       "title": "Configure Public Models",
       "description": "Set up AI models that will be available to all users. You can add multiple models.",

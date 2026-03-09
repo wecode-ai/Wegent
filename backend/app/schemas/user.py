@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class MCPProviderKeys(BaseModel):
@@ -167,3 +167,10 @@ class CLIPollResponse(BaseModel):
     access_token: Optional[str] = None
     username: Optional[str] = None
     error: Optional[str] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    """Password change request model"""
+
+    new_password: str = Field(..., min_length=6)
+    confirm_password: str = Field(..., min_length=6)

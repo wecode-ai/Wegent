@@ -4,7 +4,7 @@
 
 """Admin system configuration endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -229,9 +229,20 @@ async def mark_admin_setup_complete(
     Mark admin setup wizard as completed.
     This will prevent the wizard from showing on subsequent admin logins.
 
+    Requires that the admin password has been changed from default.
+
     Returns:
         AdminSetupCompleteResponse: Contains success status and message
     """
+    # Verify admin password has been changed from default
+    from app.services.admin_utils import is_admin_password_default
+
+    if is_admin_password_default(db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please change the default password before completing setup",
+        )
+
     config = (
         db.query(SystemConfig)
         .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)

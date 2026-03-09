@@ -641,6 +641,16 @@
     "skip_confirm_message": "您可以稍后在管理面板中配置公共模型和技能。确定要跳过设置向导吗？",
     "skip_confirm_yes": "是的，跳过",
     "skip_confirm_no": "继续设置",
+    "password_step": {
+      "title": "修改密码",
+      "description": "为了账户安全，请修改默认密码后再继续",
+      "new_password": "新密码",
+      "confirm_password": "确认密码",
+      "password_min_length": "密码长度至少为 6 位",
+      "password_mismatch": "两次输入的密码不一致",
+      "change_password_success": "密码修改成功",
+      "change_password_button": "确认修改"
+    },
     "model_step": {
       "title": "配置公共模型",
       "description": "设置所有用户可用的 AI 模型。您可以添加多个模型。",

@@ -32,10 +32,11 @@ import { adminApis } from '@/apis/admin'
 import { userApis } from '@/apis/user'
 import { useUser } from '@/features/common/UserContext'
 import { useSetupWizard } from '../contexts/SetupWizardContext'
+import SetupPasswordStep from './SetupPasswordStep'
 import SetupModelStep from './SetupModelStep'
 import SetupSkillStep from './SetupSkillStep'
 
-const TOTAL_STEPS = 2
+const TOTAL_STEPS = 3
 
 /**
  * Global Admin Setup Wizard component that shows on any page when:
@@ -44,6 +45,11 @@ const TOTAL_STEPS = 2
  *
  * This component should be placed in the root layout to ensure it shows
  * regardless of which page the admin first lands on.
+ *
+ * Setup steps:
+ * - Step 1: Change default password (mandatory, cannot be skipped)
+ * - Step 2: Configure public models (can be skipped)
+ * - Step 3: Configure public skills (can be skipped)
  *
  * Setup status is fetched from the welcome-config API to avoid extra API calls.
  */
@@ -58,6 +64,7 @@ const GlobalAdminSetupWizard: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(1)
   const [isSkipDialogOpen, setIsSkipDialogOpen] = useState(false)
   const [completing, setCompleting] = useState(false)
+  const [passwordChanged, setPasswordChanged] = useState(false)
 
   // Sync open state with context so other components can know when wizard is open
   useEffect(() => {
@@ -84,6 +91,16 @@ const GlobalAdminSetupWizard: React.FC = () => {
         // admin_setup_completed is only returned for admin users
         if (response.admin_setup_completed === false) {
           setOpen(true)
+
+          // Check if password has already been changed
+          if (response.admin_password_changed === true) {
+            setPasswordChanged(true)
+            // Skip password step, start from step 2
+            setCurrentStep(2)
+          } else {
+            setPasswordChanged(false)
+            setCurrentStep(1)
+          }
         }
       } catch (error) {
         console.error('Failed to check setup status:', error)
@@ -104,10 +121,12 @@ const GlobalAdminSetupWizard: React.FC = () => {
   }, [currentStep])
 
   const handlePrevious = useCallback(() => {
-    if (currentStep > 1) {
+    // Don't go back to password step if already changed
+    const minStep = passwordChanged ? 2 : 1
+    if (currentStep > minStep) {
       setCurrentStep(prev => prev - 1)
     }
-  }, [currentStep])
+  }, [currentStep, passwordChanged])
 
   const handleComplete = useCallback(async () => {
     setCompleting(true)
@@ -150,6 +169,15 @@ const GlobalAdminSetupWizard: React.FC = () => {
     }
   }, [toast, t])
 
+  const handlePasswordChanged = useCallback(() => {
+    setPasswordChanged(true)
+    // Automatically move to next step after password change
+    setCurrentStep(2)
+  }, [])
+
+  // Whether the current step allows skipping/closing
+  const canSkipOrClose = passwordChanged || currentStep > 1
+
   // Don't render anything while checking status or if not admin
   if (loading || userLoading || !user || user.role !== 'admin') {
     return null
@@ -175,8 +203,10 @@ const GlobalAdminSetupWizard: React.FC = () => {
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
-        return <SetupModelStep />
+        return <SetupPasswordStep onPasswordChanged={handlePasswordChanged} />
       case 2:
+        return <SetupModelStep />
+      case 3:
         return <SetupSkillStep />
       default:
         return null
@@ -189,7 +219,10 @@ const GlobalAdminSetupWizard: React.FC = () => {
         open={open}
         onOpenChange={nextOpen => {
           if (!nextOpen && !completing) {
-            setIsSkipDialogOpen(true)
+            if (canSkipOrClose) {
+              setIsSkipDialogOpen(true)
+            }
+            // If password not changed, don't allow closing
           }
         }}
       >
@@ -222,18 +255,22 @@ const GlobalAdminSetupWizard: React.FC = () => {
               <Button
                 variant="ghost"
                 onClick={() => setIsSkipDialogOpen(true)}
-                disabled={completing}
+                disabled={completing || !canSkipOrClose}
               >
                 {t('setup_wizard.skip')}
               </Button>
               <div className="flex gap-2">
-                {currentStep > 1 && (
+                {currentStep > 1 && (passwordChanged ? currentStep > 2 : true) && (
                   <Button variant="outline" onClick={handlePrevious} disabled={completing}>
                     {t('setup_wizard.previous')}
                   </Button>
                 )}
                 {currentStep < TOTAL_STEPS ? (
-                  <Button variant="primary" onClick={handleNext} disabled={completing}>
+                  <Button
+                    variant="primary"
+                    onClick={handleNext}
+                    disabled={completing || (currentStep === 1 && !passwordChanged)}
+                  >
                     {t('setup_wizard.next')}
                   </Button>
                 ) : (

@@ -1,5 +1,6 @@
 import { test as setup, expect } from '@playwright/test'
 import { login, TEST_USER } from '../utils/auth'
+import { E2E_ADMIN_Password } from '../config/test-users'
 import * as path from 'path'
 import { promises as fsPromises } from 'fs'
 
@@ -32,6 +33,27 @@ setup('authenticate', async ({ page, request }) => {
     // Get auth token from localStorage
     const token = await page.evaluate(() => localStorage.getItem('auth_token'))
     if (token) {
+      // First, change the admin password via API to satisfy the password change requirement
+      // This changes the password from the default to a dedicated E2E password
+      const passwordResponse = await page.request.put(`${apiBaseUrl}/api/users/me/password`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        data: {
+          new_password: E2E_ADMIN_Password,
+          confirm_password: E2E_ADMIN_Password,
+        },
+      })
+      if (passwordResponse.ok()) {
+        console.log('Admin password changed successfully to E2E password')
+      } else {
+        throw new Error(
+          `Failed to change admin password: ${passwordResponse.status()} - ${await passwordResponse.text()}`
+        )
+      }
+
+      // Now mark setup as complete
       const response = await page.request.post(`${apiBaseUrl}/api/admin/setup-complete`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -41,12 +63,13 @@ setup('authenticate', async ({ page, request }) => {
       if (response.ok()) {
         console.log('Admin setup marked as complete')
       } else {
-        console.warn(`Failed to mark admin setup as complete: ${response.status()}`)
+        throw new Error(
+          `Failed to mark admin setup as complete: ${response.status()} - ${await response.text()}`
+        )
       }
     }
   } catch (error) {
-    console.warn('Warning: Could not mark admin setup as complete:', error)
-    // Continue anyway - this is not critical for all tests
+    throw new Error(`Admin setup failed during global-setup: ${error}`)
   }
 
   // Save storage state (cookies, localStorage)
@@ -54,16 +77,32 @@ setup('authenticate', async ({ page, request }) => {
 
   console.log('Authentication successful, storage state saved')
 
-  // Mark admin setup as complete to prevent GlobalAdminSetupWizard from showing
-  // This is done via API to ensure it's completed before any tests run
+  // Double-check: Mark admin setup as complete using request context
+  // This is a backup in case the first attempt failed
   try {
-    // Get auth token from localStorage
     const authToken = await page.evaluate(() => {
       return localStorage.getItem('auth_token')
     })
 
     if (authToken) {
       const baseURL = process.env.E2E_API_URL || 'http://localhost:8000'
+
+      // Ensure password is changed first (idempotent - safe to call again)
+      await request
+        .put(`${baseURL}/api/users/me/password`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+            'Content-Type': 'application/json',
+          },
+          data: {
+            new_password: E2E_ADMIN_Password,
+            confirm_password: E2E_ADMIN_Password,
+          },
+        })
+        .catch(() => {
+          // Ignore - may already be done or password is already different from default
+        })
+
       const response = await request.post(`${baseURL}/api/admin/setup-complete`, {
         headers: {
           Authorization: `Bearer ${authToken}`,

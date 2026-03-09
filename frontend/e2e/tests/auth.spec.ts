@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { TEST_USER } from '../utils/auth'
+import { ADMIN_USER } from '../config/test-users'
 
 test.describe('Authentication', () => {
   test.use({ storageState: { cookies: [], origins: [] } })
@@ -24,11 +24,11 @@ test.describe('Authentication', () => {
     await page
       .locator('input[name="user_name"], input[name="username"], input[type="text"]')
       .first()
-      .fill(TEST_USER.username)
+      .fill(ADMIN_USER.username)
     await page
       .locator('input[name="password"], input[type="password"]')
       .first()
-      .fill(TEST_USER.password)
+      .fill(ADMIN_USER.password)
 
     // Submit form
     await page.locator('button[type="submit"]').click()
@@ -93,8 +93,8 @@ test.describe('Logout', () => {
       .first()
     const passwordInput = page.locator('input[name="password"], input[type="password"]').first()
 
-    await usernameInput.fill(TEST_USER.username)
-    await passwordInput.fill(TEST_USER.password)
+    await usernameInput.fill(ADMIN_USER.username)
+    await passwordInput.fill(ADMIN_USER.password)
     await page.locator('button[type="submit"]').click()
 
     // Wait for login to complete

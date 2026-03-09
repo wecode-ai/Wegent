@@ -1,11 +1,13 @@
 import { Page } from '@playwright/test'
+import { DEFAULT_ADMIN_Password } from '../config/test-users'
 
 /**
  * Test credentials for E2E testing
+ * Uses default admin password for initial login (before password change in global-setup)
  */
 export const TEST_USER = {
   username: 'admin',
-  password: 'Wegent2025!',
+  password: DEFAULT_ADMIN_Password,
 }
 
 /**

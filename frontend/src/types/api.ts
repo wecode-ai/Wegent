@@ -595,6 +595,8 @@ export interface WelcomeConfigResponse {
   tips: ChatTipItem[]
   /** Whether admin setup wizard has been completed (only returned for admin users) */
   admin_setup_completed?: boolean | null
+  /** Whether admin password has been changed from default (only returned for admin users) */
+  admin_password_changed?: boolean | null
 }
 
 // Default Teams Configuration Types

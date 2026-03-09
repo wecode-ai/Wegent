@@ -497,8 +497,23 @@ export class ApiClient {
   }
 
   /**
+   * Change admin password (required before marking setup as complete)
+   * Changes the admin password from the default to a new value
+   */
+  async changeAdminPassword(
+    newPassword: string,
+    confirmPassword: string
+  ): Promise<ApiResponse> {
+    return this.call('PUT', '/api/users/me/password', {
+      new_password: newPassword,
+      confirm_password: confirmPassword,
+    })
+  }
+
+  /**
    * Mark admin setup as complete (admin only)
    * This is used to dismiss the GlobalAdminSetupWizard in E2E tests
+   * Note: Requires admin password to have been changed from default first
    */
   async markAdminSetupComplete(): Promise<ApiResponse> {
     return this.call('POST', '/api/admin/setup-complete')
