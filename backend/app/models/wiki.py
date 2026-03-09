@@ -41,7 +41,14 @@ class WikiProject(WikiBase):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    __table_args__ = ({"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},)
+    __table_args__ = (
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
+    )
 
 
 class WikiGenerationStatus(str, PyEnum):
@@ -96,7 +103,12 @@ class WikiGeneration(WikiBase):
 
     __table_args__ = (
         Index("idx_user_project", "user_id", "project_id"),
-        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
     )
 
 
@@ -120,4 +132,11 @@ class WikiContent(WikiBase):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    __table_args__ = ({"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},)
+    __table_args__ = (
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
+    )

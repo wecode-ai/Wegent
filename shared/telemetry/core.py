@@ -7,23 +7,19 @@ OpenTelemetry core initialization module.
 
 Provides the main entry point for initializing and managing
 OpenTelemetry tracing and metrics.
+
+NOTE: OpenTelemetry imports are lazy-loaded to reduce memory usage
+when telemetry is disabled (e.g., in standalone mode).
 """
 
 import logging
 import os
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from opentelemetry import metrics, trace
-from opentelemetry.metrics import Meter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.trace import Tracer
-
-from shared.telemetry.config import set_http_capture_settings
-from shared.telemetry.providers import (
-    init_meter_provider,
-    init_tracer_provider,
-    shutdown_providers,
-)
+# Type hints only - not imported at runtime
+if TYPE_CHECKING:
+    from opentelemetry.metrics import Meter
+    from opentelemetry.trace import Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +68,9 @@ def init_telemetry(
         logger.warning("Telemetry already initialized, skipping re-initialization")
         return _telemetry_enabled
 
+    # Lazy import config module
+    from shared.telemetry.config import set_http_capture_settings
+
     # Store HTTP capture settings globally
     set_http_capture_settings(
         capture_request_headers=capture_request_headers,
@@ -88,6 +87,14 @@ def init_telemetry(
         return False
 
     try:
+        # Lazy import OpenTelemetry modules only when enabled
+        from opentelemetry.sdk.resources import Resource
+
+        from shared.telemetry.providers import (
+            init_meter_provider,
+            init_tracer_provider,
+        )
+
         # Create resource attributes
         resource_attributes = {
             "service.name": service_name,
@@ -154,6 +161,9 @@ def shutdown_telemetry() -> None:
         return
 
     try:
+        # Lazy import only when needed
+        from shared.telemetry.providers import shutdown_providers
+
         shutdown_providers()
         logger.info("OpenTelemetry shutdown completed")
     except Exception as e:
@@ -173,7 +183,7 @@ def is_telemetry_enabled() -> bool:
     return _telemetry_enabled
 
 
-def get_tracer(name: str) -> Tracer:
+def get_tracer(name: str) -> "Tracer":
     """
     Get a Tracer instance for creating spans.
 
@@ -183,10 +193,13 @@ def get_tracer(name: str) -> Tracer:
     Returns:
         Tracer: OpenTelemetry Tracer instance
     """
+    # Lazy import
+    from opentelemetry import trace
+
     return trace.get_tracer(name)
 
 
-def get_meter(name: str) -> Meter:
+def get_meter(name: str) -> "Meter":
     """
     Get a Meter instance for creating metrics.
 
@@ -196,4 +209,7 @@ def get_meter(name: str) -> Meter:
     Returns:
         Meter: OpenTelemetry Meter instance
     """
+    # Lazy import
+    from opentelemetry import metrics
+
     return metrics.get_meter(name)

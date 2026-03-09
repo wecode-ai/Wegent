@@ -697,7 +697,6 @@ class DifyAgent(Agent):
         )
         return TaskStatus.SUCCESS
 
-
     def execute(self) -> TaskStatus:
         """
         Execute the Dify Agent task

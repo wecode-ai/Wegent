@@ -272,10 +272,15 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     )
     return {}
 
+
+
+
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
-    Collects all non-None configuration parameters from task_data.
+    Collects all non-None configuration parameters from task_data,
+    including Ghost-level MCP servers. Skill-level MCP merging, type
+    normalization, and reachability filtering are handled by the backend.
 
     Args:
         task_data: The task data object
@@ -323,14 +328,30 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     if bot_config:
         # Create a shallow copy of bot_config to avoid modifying the original
         bot_config = bot_config.copy()
-        # Extract MCP servers configuration
+
+        # Extract Ghost-level MCP servers configuration
+        logger.info("[MCP] Extracting Ghost-level MCP servers from bot_config...")
         mcp_servers = extract_mcp_servers_config(bot_config)
         if mcp_servers:
+            logger.info(
+                "[MCP] Ghost-level raw MCP servers: %s",
+                (
+                    list(mcp_servers.keys())
+                    if isinstance(mcp_servers, dict)
+                    else type(mcp_servers).__name__
+                ),
+            )
             # Replace placeholders in MCP servers config with actual values
             mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
             # Convert list format to dict format for Claude Code SDK
             mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
             bot_config["mcp_servers"] = mcp_servers
+            logger.info(
+                "[MCP] Ghost-level MCP servers after processing: %s",
+                list(mcp_servers.keys()),
+            )
+        else:
+            logger.info("[MCP] No Ghost-level MCP servers configured")
 
         # Add wegent MCP server for subscription tasks
         if task_data.is_subscription:
@@ -359,6 +380,16 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
         for key in valid_options:
             if key in bot_config and bot_config[key] is not None:
                 options[key] = bot_config[key]
+
+    # Final summary log
+    final_mcp = options.get("mcp_servers", options.get("mcpServers"))
+    if final_mcp:
+        logger.info(
+            "[MCP] Final MCP servers in options: %s",
+            list(final_mcp.keys()) if isinstance(final_mcp, dict) else final_mcp,
+        )
+    else:
+        logger.info("[MCP] No MCP servers in final options")
 
     return options
 

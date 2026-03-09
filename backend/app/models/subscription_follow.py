@@ -104,6 +104,12 @@ class SubscriptionFollow(Base):
             "follower_user_id",
             "invitation_status",
         ),
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
     )
 
 
@@ -134,4 +140,10 @@ class SubscriptionShareNamespace(Base):
     __table_args__ = (
         # Unique constraint: a subscription can only be shared to a namespace once
         Index("ix_sub_share_ns_unique", "subscription_id", "namespace_id", unique=True),
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
     )

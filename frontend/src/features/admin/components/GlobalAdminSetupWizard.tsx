@@ -31,6 +31,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis } from '@/apis/admin'
 import { userApis } from '@/apis/user'
 import { useUser } from '@/features/common/UserContext'
+import { useSetupWizard } from '../contexts/SetupWizardContext'
 import SetupModelStep from './SetupModelStep'
 import SetupSkillStep from './SetupSkillStep'
 
@@ -50,12 +51,18 @@ const GlobalAdminSetupWizard: React.FC = () => {
   const { t } = useTranslation('admin')
   const { toast } = useToast()
   const { user, isLoading: userLoading } = useUser()
+  const setupWizardContext = useSetupWizard()
 
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [currentStep, setCurrentStep] = useState(1)
   const [isSkipDialogOpen, setIsSkipDialogOpen] = useState(false)
   const [completing, setCompleting] = useState(false)
+
+  // Sync open state with context so other components can know when wizard is open
+  useEffect(() => {
+    setupWizardContext?.setSetupWizardOpen(open)
+  }, [open, setupWizardContext])
 
   // Check setup status when user is loaded and is admin
   useEffect(() => {

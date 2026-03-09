@@ -535,7 +535,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             f"content_preview={message_context.content[:50] if message_context.content else 'empty'}"
         )
 
-        if not message_context.content and not message_context.images and not message_context.files:
+        if (
+            not message_context.content
+            and not message_context.images
+            and not message_context.files
+        ):
             self.logger.warning(
                 f"[{self._channel_type.value}Handler] Empty message content, skipping"
             )
@@ -1456,10 +1460,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     binary_data=file_info["binary_data"],
                     subtask_id=subtask_id,
                 )
-                attachment_metas.append({
-                    "id": context.id,
-                    "original_filename": file_info["filename"],
-                })
+                attachment_metas.append(
+                    {
+                        "id": context.id,
+                        "original_filename": file_info["filename"],
+                    }
+                )
                 self.logger.info(
                     "[%sHandler] Persisted IM file as attachment: "
                     "context_id=%d, subtask_id=%d, filename=%s, size=%d bytes",

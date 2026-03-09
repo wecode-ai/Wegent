@@ -589,7 +589,7 @@ When `base_image` is specified in bot configuration:
 
 ```bash
 # Start services
-docker-compose up -d
+docker compose up -d
 
 # Run tests (Python modules use uv)
 cd backend && uv run pytest
