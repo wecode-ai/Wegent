@@ -154,7 +154,7 @@ graph TB
 
 ## 🚀 快速开始
 
-### 方式一：快速安装（推荐）
+**一条命令启动：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
@@ -162,74 +162,45 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 
 然后在浏览器中访问 http://localhost:3000
 
-> 可选：启用 RAG 功能 `docker compose --profile rag up -d`
+### 其他部署方式
 
-### 方式二：源码安装
-
-如果你已经克隆了源码，可以直接运行安装脚本，它会自动检测源码环境并从本地构建镜像：
-
-```bash
-git clone https://github.com/wecode-ai/Wegent.git
-cd Wegent
-./install.sh
-```
-
-或者在源码目录中手动指定使用本地构建：
+| 模式 | 说明 |
+|------|------|
+| **Standalone**（默认） | 单容器，SQLite，推荐大多数用户使用 |
+| **Standard** | 多容器，MySQL，适合生产环境 |
+| **Development** | 热重载，适合开发者 |
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+# Standard 模式（多容器 + MySQL）
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
+
+# 开发模式（从源码安装，支持热重载）
+git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
 ```
 
-**常用命令（源码模式）：**
-```bash
-# 查看日志
-docker compose -f docker-compose.yml -f docker-compose.build.yml logs -f
-
-# 停止服务
-docker compose -f docker-compose.yml -f docker-compose.build.yml down
-
-# 启动服务
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
-
-# 重新构建镜像
-docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache
-```
-
-### 方式三：本地开发模式
-
-如果你是开发者，想要快速调试和热重载，可以使用本地开发模式：
+<details>
+<summary><b>🔧 常用命令</b></summary>
 
 ```bash
-git clone https://github.com/wecode-ai/Wegent.git
-cd Wegent
-./start.sh
+# Standalone 模式
+docker compose -f docker-compose.standalone.yml logs -f   # 查看日志
+docker compose -f docker-compose.standalone.yml down      # 停止
+docker compose -f docker-compose.standalone.yml up -d     # 启动
+
+# Standard 模式
+docker compose logs -f   # 查看日志
+docker compose down      # 停止
+docker compose up -d     # 启动
+
+# 开发模式
+./start.sh --status      # 查看状态
+./start.sh --stop        # 停止
+./start.sh --restart     # 重启
 ```
 
-**本地开发模式特点：**
-- 直接运行服务，不使用 Docker
-- 代码修改后自动热重载
-- 适合日常开发调试
+</details>
 
-**常用命令（本地开发模式）：**
-```bash
-# 启动服务
-./start.sh
-
-# 停止服务
-./start.sh --stop
-
-# 重启服务
-./start.sh --restart
-
-# 查看状态
-./start.sh --status
-
-# 初始化配置
-./start.sh --init
-
-# 查看帮助
-./start.sh --help
-```
+> 📖 详情请参阅 [Standalone 模式文档](docs/zh/deployment/standalone-mode.md)。
 
 ---
 
@@ -303,17 +274,17 @@ cd Wegent
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/yixiangxx">
-            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
-            <br />
-            <sub><b>Yi Xiang</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/kissghosts">
             <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
             <br />
             <sub><b>Yanhe</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/yixiangxx">
+            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+            <br />
+            <sub><b>Yi Xiang</b></sub>
         </a>
     </td></tr>
 <tr>
@@ -332,10 +303,10 @@ cd Wegent
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
-            <sub><b>Xuemin</b></sub>
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -346,17 +317,10 @@ cd Wegent
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
             <br />
-            <sub><b>Icycrystal4</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/maquan0927">
-            <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
-            <br />
-            <sub><b>Just Quan</b></sub>
+            <sub><b>Xuemin</b></sub>
         </a>
     </td>
     <td align="center">
@@ -364,6 +328,13 @@ cd Wegent
             <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
             <br />
             <sub><b>Kerwin Bryant</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/maquan0927">
+            <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+            <br />
+            <sub><b>Just Quan</b></sub>
         </a>
     </td>
     <td align="center">
@@ -375,17 +346,17 @@ cd Wegent
     </td></tr>
 <tr>
     <td align="center">
-        <a href="https://github.com/fingki">
-            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-            <br />
-            <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+            <br />
+            <sub><b>Fingki</b></sub>
         </a>
     </td>
     <td align="center">
@@ -431,6 +402,20 @@ cd Wegent
         </a>
     </td></tr>
 <tr>
+    <td align="center">
+        <a href="https://github.com/haosenwang1018">
+            <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
+            <br />
+            <sub><b>Sense_wang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/Ged0">
+            <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
+            <br />
+            <sub><b>_</b></sub>
+        </a>
+    </td>
     <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>

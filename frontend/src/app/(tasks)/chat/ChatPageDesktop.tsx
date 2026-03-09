@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -68,9 +68,6 @@ export function ChatPageDesktop() {
 
   // User state for git token check
   const { user } = useUser()
-
-  // Router for navigation
-  const router = useRouter()
 
   // Check for share_id in URL
   const searchParams = useSearchParams()
@@ -144,7 +141,8 @@ export function ChatPageDesktop() {
     // This prevents the UI from being stuck showing the previous task's messages
     setSelectedTask(null)
     clearAllStreams()
-    router.replace(paths.chat.getHref())
+    // Force a hard reload to ensure a fresh start when already on /chat
+    window.location.href = paths.chat.getHref()
   }
 
   return (

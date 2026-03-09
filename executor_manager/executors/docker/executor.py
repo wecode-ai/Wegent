@@ -253,9 +253,12 @@ class DockerExecutor(Executor):
             True if container should be recreated, False if it can be reused
         """
         container_status = self.get_container_status(executor_name)
-        
+
         # Container is running and healthy, can be reused
-        if container_status.get("exists", False) and container_status.get("status") == "running":
+        if (
+            container_status.get("exists", False)
+            and container_status.get("status") == "running"
+        ):
             return False
 
         # Container is stale or not running, needs recreation

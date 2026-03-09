@@ -9,12 +9,11 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from opentelemetry import trace
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,14 +26,39 @@ from app.schemas.user import TokenData
 from app.services.k_batch import apply_default_resources_sync
 from app.services.readers.users import userReader
 from app.services.user import user_service
-from shared.telemetry.context import set_user_context
+
+# Lazy imports for telemetry - only import SpanAttributes which is a pure Python class
 from shared.telemetry.context.attributes import SpanAttributes
 from shared.telemetry.core import is_telemetry_enabled
 
+# Type hints only
+if TYPE_CHECKING:
+    from opentelemetry.trace import Tracer
+
 logger = logging.getLogger(__name__)
 
-# Create a tracer for authentication operations
-_tracer = trace.get_tracer(__name__)
+# Lazy tracer - will be initialized on first use when telemetry is enabled
+_tracer: Optional["Tracer"] = None
+
+
+def _get_tracer() -> "Tracer":
+    """Get or create the tracer instance lazily."""
+    global _tracer
+    if _tracer is None:
+        from opentelemetry import trace
+
+        _tracer = trace.get_tracer(__name__)
+    return _tracer
+
+
+def _set_user_context(user_id: str, user_name: str) -> None:
+    """Set user context for telemetry (lazy import from span.py directly)."""
+    if is_telemetry_enabled():
+        # Import directly from span.py to avoid loading propagation.py which imports opentelemetry
+        from shared.telemetry.context.span import set_user_context
+
+        set_user_context(user_id=user_id, user_name=user_name)
+
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -51,9 +75,10 @@ def get_current_user(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> User:
     """Get current authenticated user"""
-    with _tracer.start_as_current_span("auth.get_current_user") as span:
+    with _get_tracer().start_as_current_span("auth.get_current_user") as span:
         # Set auth method attributes
         if is_telemetry_enabled():
+
             span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
             span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
             span.set_attribute(SpanAttributes.AUTH_SOURCE, "authorization_header")
@@ -93,9 +118,10 @@ def get_current_user(
 
             # Set user context for tracing
             if is_telemetry_enabled():
+
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                 span.set_attribute(SpanAttributes.USER_ID, str(user.id))
-                set_user_context(user_id=str(user.id), user_name=user.user_name)
+                _set_user_context(user_id=str(user.id), user_name=user.user_name)
 
             return user
         except HTTPException:
@@ -179,7 +205,7 @@ def authenticate_user(
     Returns:
         User object if authentication is successful, None otherwise
     """
-    with _tracer.start_as_current_span("auth.authenticate_user") as span:
+    with _get_tracer().start_as_current_span("auth.authenticate_user") as span:
         if is_telemetry_enabled():
             span.set_attribute(SpanAttributes.AUTH_METHOD, "password")
             span.set_attribute(SpanAttributes.AUTH_SOURCE, "login_form")
@@ -219,7 +245,7 @@ def authenticate_user(
         if is_telemetry_enabled():
             span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
             span.set_attribute(SpanAttributes.USER_ID, str(user.id))
-            set_user_context(user_id=str(user.id), user_name=user.user_name)
+            _set_user_context(user_id=str(user.id), user_name=user.user_name)
 
         return user
 
@@ -296,7 +322,7 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     Raises:
         HTTPException: If user is not admin
     """
-    with _tracer.start_as_current_span("auth.get_admin_user") as span:
+    with _get_tracer().start_as_current_span("auth.get_admin_user") as span:
         if is_telemetry_enabled():
             span.set_attribute(SpanAttributes.USER_ID, str(current_user.id))
             span.set_attribute(SpanAttributes.USER_NAME, current_user.user_name)
@@ -336,7 +362,9 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
     Returns:
         User object if token is valid and user exists, None otherwise
     """
-    with _tracer.start_as_current_span("auth.get_current_user_from_token") as span:
+    with _get_tracer().start_as_current_span(
+        "auth.get_current_user_from_token"
+    ) as span:
         if is_telemetry_enabled():
             span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
             span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
@@ -362,7 +390,7 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
-                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    _set_user_context(user_id=str(user.id), user_name=user.user_name)
             else:
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -444,7 +472,7 @@ def get_auth_context(
     Raises:
         HTTPException: If no authentication method succeeds
     """
-    with _tracer.start_as_current_span("auth.get_auth_context") as span:
+    with _get_tracer().start_as_current_span("auth.get_auth_context") as span:
         # Set initial auth attributes
         if is_telemetry_enabled():
             span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
@@ -530,7 +558,7 @@ def get_auth_context(
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    _set_user_context(user_id=str(user.id), user_name=user.user_name)
                 return AuthContext(user=user, api_key_name=api_key_record.name)
 
             if is_telemetry_enabled():
@@ -596,7 +624,7 @@ def get_auth_context(
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.AUTH_USER_CREATED, False)
-                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    _set_user_context(user_id=str(user.id), user_name=user.user_name)
                 return AuthContext(user=user, api_key_name=api_key_record.name)
 
             # User not found, auto-create for service key authentication
@@ -645,7 +673,9 @@ def get_auth_context(
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                 span.set_attribute(SpanAttributes.USER_ID, str(new_user.id))
                 span.set_attribute(SpanAttributes.AUTH_USER_CREATED, True)
-                set_user_context(user_id=str(new_user.id), user_name=new_user.user_name)
+                _set_user_context(
+                    user_id=str(new_user.id), user_name=new_user.user_name
+                )
 
             return AuthContext(user=new_user, api_key_name=api_key_record.name)
 
@@ -701,7 +731,7 @@ def get_current_user_flexible_for_executor(
     """
     from app.core.auth_utils import is_api_key, verify_api_key, verify_jwt_token_with_db
 
-    with _tracer.start_as_current_span(
+    with _get_tracer().start_as_current_span(
         "auth.get_current_user_flexible_for_executor"
     ) as span:
         # Priority 1: X-API-Key header
@@ -716,7 +746,7 @@ def get_current_user_flexible_for_executor(
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    _set_user_context(user_id=str(user.id), user_name=user.user_name)
                 return user
 
             if is_telemetry_enabled():
@@ -752,7 +782,9 @@ def get_current_user_flexible_for_executor(
                         span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                         span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                         span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                        set_user_context(user_id=str(user.id), user_name=user.user_name)
+                        _set_user_context(
+                            user_id=str(user.id), user_name=user.user_name
+                        )
                     return user
 
                 if is_telemetry_enabled():
@@ -777,7 +809,7 @@ def get_current_user_flexible_for_executor(
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    _set_user_context(user_id=str(user.id), user_name=user.user_name)
                 return user
 
             if is_telemetry_enabled():
@@ -834,7 +866,7 @@ def get_current_user_jwt_apikey_tasktoken(
     from app.core.auth_utils import is_api_key, verify_api_key, verify_jwt_token_with_db
     from app.services.auth.task_token import verify_task_token
 
-    with _tracer.start_as_current_span(
+    with _get_tracer().start_as_current_span(
         "auth.get_current_user_jwt_apikey_tasktoken"
     ) as span:
         # Priority 1: X-API-Key header
@@ -849,7 +881,7 @@ def get_current_user_jwt_apikey_tasktoken(
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    _set_user_context(user_id=str(user.id), user_name=user.user_name)
                 return user
 
             if is_telemetry_enabled():
@@ -885,7 +917,9 @@ def get_current_user_jwt_apikey_tasktoken(
                         span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                         span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                         span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                        set_user_context(user_id=str(user.id), user_name=user.user_name)
+                        _set_user_context(
+                            user_id=str(user.id), user_name=user.user_name
+                        )
                     return user
 
                 if is_telemetry_enabled():
@@ -910,7 +944,7 @@ def get_current_user_jwt_apikey_tasktoken(
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
-                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                    _set_user_context(user_id=str(user.id), user_name=user.user_name)
                 return user
 
             # Try task token as fallback
@@ -927,7 +961,9 @@ def get_current_user_jwt_apikey_tasktoken(
                         span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                         span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
                         span.set_attribute("auth.task_id", str(token_info.task_id))
-                        set_user_context(user_id=str(user.id), user_name=user.user_name)
+                        _set_user_context(
+                            user_id=str(user.id), user_name=user.user_name
+                        )
                     logger.debug(
                         f"Task token auth successful: user={user.user_name}, "
                         f"task_id={token_info.task_id}"
@@ -975,7 +1011,7 @@ def get_current_user_optional(
     if not token:
         return None
 
-    with _tracer.start_as_current_span("auth.get_current_user_optional") as span:
+    with _get_tracer().start_as_current_span("auth.get_current_user_optional") as span:
         if is_telemetry_enabled():
             span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt_optional")
             span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
@@ -1004,7 +1040,7 @@ def get_current_user_optional(
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
                 span.set_attribute(SpanAttributes.USER_ID, str(user.id))
-                set_user_context(user_id=str(user.id), user_name=user.user_name)
+                _set_user_context(user_id=str(user.id), user_name=user.user_name)
 
             return user
         except HTTPException:

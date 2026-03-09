@@ -230,8 +230,14 @@ class DeviceService:
         Returns:
             List of device info dicts
         """
-        provider = DeviceService._get_provider(DeviceType.LOCAL)
-        return await provider.list_devices(db, user_id, include_offline=True)
+        from app.services.device.provider_factory import DeviceProviderFactory
+
+        devices: List[Dict[str, Any]] = []
+        for provider in DeviceProviderFactory.get_all_providers().values():
+            devices.extend(
+                await provider.list_devices(db, user_id, include_offline=True)
+            )
+        return devices
 
     @staticmethod
     async def get_online_devices(db: Session, user_id: int) -> List[Dict[str, Any]]:
@@ -244,8 +250,14 @@ class DeviceService:
         Returns:
             List of online device info dicts
         """
-        provider = DeviceService._get_provider(DeviceType.LOCAL)
-        return await provider.list_devices(db, user_id, include_offline=False)
+        from app.services.device.provider_factory import DeviceProviderFactory
+
+        devices: List[Dict[str, Any]] = []
+        for provider in DeviceProviderFactory.get_all_providers().values():
+            devices.extend(
+                await provider.list_devices(db, user_id, include_offline=False)
+            )
+        return devices
 
     @staticmethod
     def upsert_device_crd(
@@ -303,7 +315,7 @@ class DeviceService:
             logger.info(f"Updated device CRD: user_id={user_id}, device_id={device_id}")
         else:
             # Check if this is the first device for the user
-            existing_device_count = (
+            existing_devices = (
                 db.query(Kind)
                 .filter(
                     and_(
@@ -313,7 +325,13 @@ class DeviceService:
                         Kind.is_active == True,
                     )
                 )
-                .count()
+                .all()
+            )
+            existing_device_count = sum(
+                1
+                for device in existing_devices
+                if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
+                == DeviceType.LOCAL.value
             )
             is_first_device = existing_device_count == 0
 
@@ -388,13 +406,24 @@ class DeviceService:
         )
 
         found = False
+        target_type = None
+        for device_kind in devices:
+            if device_kind.name == device_id:
+                target_type = device_kind.json.get("spec", {}).get(
+                    "deviceType", DeviceType.LOCAL.value
+                )
+                break
+
         for device_kind in devices:
             device_json = device_kind.json.copy()
+            device_type = device_json.get("spec", {}).get(
+                "deviceType", DeviceType.LOCAL.value
+            )
 
             if device_kind.name == device_id:
                 device_json["spec"]["isDefault"] = True
                 found = True
-            else:
+            elif target_type and device_type == target_type:
                 device_json["spec"]["isDefault"] = False
 
             device_kind.json = device_json
@@ -475,6 +504,46 @@ class DeviceService:
             )
             .first()
         )
+
+    @staticmethod
+    def get_default_device_for_type(
+        db: Session,
+        user_id: int,
+        device_type: DeviceType,
+    ) -> Optional[Kind]:
+        """Get the default device for a specific device type.
+
+        If no explicit default exists for the type and there is exactly one active
+        device of the requested type, that device is returned.
+        """
+        devices = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+            )
+            .all()
+        )
+
+        matching_devices = []
+        default_device = None
+        for device in devices:
+            spec = device.json.get("spec", {})
+            if spec.get("deviceType", DeviceType.LOCAL.value) != device_type.value:
+                continue
+            matching_devices.append(device)
+            if spec.get("isDefault", False):
+                default_device = device
+
+        if default_device:
+            return default_device
+        if len(matching_devices) == 1:
+            return matching_devices[0]
+        return None
 
 
 # Singleton instance

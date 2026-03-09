@@ -556,7 +556,7 @@ t('actions.save')             // Ambiguous - which namespace?
 
 ```bash
 # Start services
-docker-compose up -d
+docker compose up -d
 
 # Run tests (Python modules use uv)
 cd backend && uv run pytest

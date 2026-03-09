@@ -11,7 +11,7 @@ This module provides attachment lifecycle management for Claude Code agents.
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
@@ -23,7 +23,7 @@ logger = setup_logger("claude_code_attachment_handler")
 class AttachmentProcessResult:
     """Result of attachment processing operation."""
 
-    prompt: str  # Modified prompt with attachment references
+    prompt: Union[str, list]  # Modified prompt with attachment references
     image_content_blocks: List[Dict[str, Any]]  # Image content blocks for vision
     success_count: int  # Number of successfully downloaded attachments
     failed_count: int  # Number of failed attachments
@@ -33,7 +33,7 @@ def download_attachments(
     task_data: ExecutionRequest,
     task_id: int,
     subtask_id: int,
-    prompt: str,
+    prompt: Union[str, list],
 ) -> AttachmentProcessResult:
     """Download attachments from Backend API to workspace.
 
@@ -52,6 +52,17 @@ def download_attachments(
     attachments = task_data.attachments
     if not attachments:
         logger.debug("No attachments to download for this task")
+        return AttachmentProcessResult(
+            prompt=prompt,
+            image_content_blocks=[],
+            success_count=0,
+            failed_count=0,
+        )
+
+    # List prompts (vision content) already contain image data inline;
+    # skip file-based attachment processing for them.
+    if isinstance(prompt, list):
+        logger.debug("Prompt is vision content list, skipping attachment download")
         return AttachmentProcessResult(
             prompt=prompt,
             image_content_blocks=[],

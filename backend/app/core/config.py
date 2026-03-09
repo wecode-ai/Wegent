@@ -58,7 +58,16 @@ class Settings(BaseSettings):
     MCP_ALLOWED_HOSTS: list[str] = []
     MCP_ALLOWED_ORIGINS: list[str] = []
 
+    # Standalone mode configuration
+    # When enabled, Backend runs in a simplified single-process mode suitable for local development
+    STANDALONE_MODE: bool = False
+    # Enable in-process executor (no Docker required) when in standalone mode
+    STANDALONE_EXECUTOR_ENABLED: bool = True
+
     # Database configuration
+    # Supports both MySQL and SQLite:
+    # - MySQL: "mysql+pymysql://user:pass@localhost/db"
+    # - SQLite: "sqlite:///./data/wegent.db"
     DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
 
     # Database auto-migration configuration (only in development)

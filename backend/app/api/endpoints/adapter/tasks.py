@@ -39,7 +39,6 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.export.docx_generator import generate_task_docx
 from app.services.shared_task import shared_task_service
 
 router = APIRouter()
@@ -166,22 +165,6 @@ def get_personal_tasks_lite(
         db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
     )
     return {"total": total, "items": items}
-
-
-@router.get("/lite/new", response_model=TaskLiteListResponse)
-def get_new_tasks_lite(
-    since_id: int = Query(..., ge=1, description="Get tasks with ID greater than this"),
-    limit: int = Query(
-        50, ge=1, le=100, description="Maximum number of new tasks to return"
-    ),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Get new tasks created after the specified task ID, excluding DELETE status tasks"""
-    items = task_kinds_service.get_new_tasks_since_id(
-        db=db, user_id=current_user.id, since_id=since_id, limit=limit
-    )
-    return {"total": len(items), "items": items}
 
 
 @router.get("/search", response_model=TaskListResponse)
@@ -479,6 +462,9 @@ async def export_task_docx(
             ) from e
 
     try:
+        # Lazy import docx_generator to avoid loading python-docx at startup
+        from app.services.export.docx_generator import generate_task_docx
+
         # Generate DOCX document with optional message filter
         docx_buffer = generate_task_docx(task, db, message_ids=filter_message_ids)
 

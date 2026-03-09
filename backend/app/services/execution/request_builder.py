@@ -11,7 +11,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -62,7 +62,7 @@ class TaskRequestBuilder:
         task: TaskResource,
         user: User,
         team: Kind,
-        message: str,
+        message: Union[str, list],
         *,
         # Feature toggles
         enable_tools: bool = True,
@@ -198,6 +198,15 @@ class TaskRequestBuilder:
             override_model_name=override_model_name,
             force_override=force_override,
         )
+
+        # Merge user-selected skills into bot_config so Executor downloads them
+        if bot_config and resolved_skills:
+            all_skill_names = [s["name"] for s in resolved_skills]
+            existing_skills = set(bot_config[0].get("skills", []))
+            for name in all_skill_names:
+                if name not in existing_skills:
+                    bot_config[0].setdefault("skills", []).append(name)
+                    existing_skills.add(name)
 
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)

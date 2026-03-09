@@ -80,6 +80,8 @@ services:
       # To customize init data, uncomment the following line to override the built-in data:
       # - ./custom_init_data:/app/init_data:ro
     environment:
+      # Disable litellm network request for model cost map to prevent startup blocking
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
       ENVIRONMENT: ${BACKEND_ENVIRONMENT:-development}
       DB_AUTO_MIGRATE: "${DB_AUTO_MIGRATE:-True}"
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
@@ -164,7 +166,8 @@ services:
     ports:
       - "${CHAT_SHELL_PORT:-8100}:8100"
     environment:
-      - PORT=${CHAT_SHELL_PORT:-8100}
+      # Disable litellm network request for model cost map to prevent startup blocking
+      - LITELLM_LOCAL_MODEL_COST_MAP=True
       - HOST=${CHAT_SHELL_HOST:-0.0.0.0}
       - CHAT_SHELL_MODE=${CHAT_SHELL_MODE:-http}
       - CHAT_SHELL_STORAGE_TYPE=${CHAT_SHELL_STORAGE_TYPE:-remote}
@@ -206,7 +209,7 @@ services:
           echo "=== Failed to pull executor image, will use cached version ===" >&2
         fi
         echo "=== Starting executor manager ===" >&2
-        exec uvicorn main:app --host 0.0.0.0 --port $${PORT:-8001}
+        exec uvicorn main:app --host 0.0.0.0 --port 8001
     ports:
       - "${EXECUTOR_MANAGER_PORT:-8001}:8001"
     environment:
@@ -215,7 +218,6 @@ services:
       - EXECUTOR_MANAGER_EXTERNAL_URL=${EXECUTOR_MANAGER_EXTERNAL_URL:-http://executor_manager:8001}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - MAX_CONCURRENT_TASKS=${EXECUTOR_MAX_CONCURRENT_TASKS:-30}
-      - PORT=${EXECUTOR_MANAGER_PORT:-8001}
       - CALLBACK_HOST=${EXECUTOR_CALLBACK_HOST:-http://executor_manager:8001}
       - NETWORK=${EXECUTOR_NETWORK:-wegent-network}
       - EXECUTOR_IMAGE=${EXECUTOR_IMAGE:-ghcr.io/wecode-ai/wegent-executor:latest}
