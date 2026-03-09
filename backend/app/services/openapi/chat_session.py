@@ -219,16 +219,37 @@ def setup_chat_session(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        task = TaskResource(
-            id=new_task_id,
-            user_id=user.id,
-            kind="Task",
-            name=f"task-{new_task_id}",
-            namespace="default",
-            json=task_json,
-            is_active=True,
+        # Check if a Placeholder record exists for this task_id
+        # If so, update it instead of inserting to avoid PRIMARY KEY conflict
+        existing_placeholder = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == new_task_id,
+                TaskResource.kind == "Placeholder",
+            )
+            .first()
         )
-        db.add(task)
+
+        if existing_placeholder:
+            # Update the existing Placeholder record to become a Task
+            existing_placeholder.user_id = user.id
+            existing_placeholder.kind = "Task"
+            existing_placeholder.name = f"task-{new_task_id}"
+            existing_placeholder.namespace = "default"
+            existing_placeholder.json = task_json
+            existing_placeholder.is_active = True
+            task = existing_placeholder
+        else:
+            task = TaskResource(
+                id=new_task_id,
+                user_id=user.id,
+                kind="Task",
+                name=f"task-{new_task_id}",
+                namespace="default",
+                json=task_json,
+                is_active=True,
+            )
+            db.add(task)
         task_id = new_task_id
 
     # Get existing subtasks
