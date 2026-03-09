@@ -137,7 +137,7 @@ export default function ResizableSidebar({
 
   return (
     <div
-      className={`hidden lg:flex relative ${isInitialized ? 'transition-all duration-200' : ''} ${isCollapsed ? '' : 'border-r border-border'}`}
+      className={`hidden lg:flex relative ${isInitialized ? 'transition-all duration-200' : ''} ${isCollapsed ? '' : 'border-r border-primary/10'}`}
       style={{ width: `${sidebarWidth}px`, overflow: isCollapsed ? 'hidden' : 'visible' }}
     >
       {/* Sidebar content container - hidden when collapsed */}

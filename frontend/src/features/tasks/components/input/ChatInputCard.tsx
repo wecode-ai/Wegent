@@ -27,6 +27,8 @@ export interface ChatInputCardProps extends Omit<
 
   // Team and external API
   selectedTeam: Team | null
+  /** Available teams for team selector */
+  teams?: Team[]
   externalApiParams: Record<string, string>
   onExternalApiParamsChange: (params: Record<string, string>) => void
   onAppModeChange: (mode: string | undefined) => void
@@ -92,6 +94,7 @@ export function ChatInputCard({
   taskInputMessage,
   setTaskInputMessage,
   selectedTeam,
+  teams = [],
   onTeamChange,
   externalApiParams,
   onExternalApiParamsChange,
@@ -214,7 +217,7 @@ export function ChatInputCard({
 
       {/* Chat Input Card */}
       <div
-        className={`relative w-full flex flex-col rounded-3xl border border-border bg-base shadow-[0px_4px_24px_0px_rgba(111,79,191,0.06)] transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+        className={`relative w-full flex flex-col rounded-3xl border bg-base shadow-card-hover transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
@@ -307,6 +310,7 @@ export function ChatInputCard({
         <div ref={inputControlsRef}>
           <ChatInputControls
             selectedTeam={selectedTeam}
+            teams={teams}
             onTeamChange={onTeamChange}
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}

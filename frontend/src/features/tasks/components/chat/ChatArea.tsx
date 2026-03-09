@@ -863,6 +863,7 @@ function ChatAreaContent({
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
     selectedTeam: chatState.selectedTeam,
+    teams: teams,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,

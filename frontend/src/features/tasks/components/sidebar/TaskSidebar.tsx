@@ -269,11 +269,11 @@ export default function TaskSidebar({
               <Image
                 src="/weibo-logo.png"
                 alt="Weibo Logo"
-                width={24}
-                height={23}
-                className="object-container"
+                width={36}
+                height={35}
+                className="object-contain"
               />
-              <span className="text-sm font-medium text-text-primary">Wegent</span>
+              <span className="text-base font-semibold text-text-primary">Wegent</span>
             </div>
             {onToggleCollapsed && (
               <TooltipProvider>
@@ -303,19 +303,17 @@ export default function TaskSidebar({
       <div data-tour="mode-toggle" className="px-2.5">
         {/* New Conversation Button - only show in expanded mode, collapsed mode has it in the top combined button */}
         {!isCollapsed && (
-          <div className="mb-1">
+          <div className="mb-1 flex justify-center">
             <Button
               variant="ghost"
               onClick={handleNewAgentClick}
-              className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-hover rounded-md group"
+              className="justify-center px-3 text-sm font-medium text-primary bg-primary/[0.06] hover:bg-primary/10 rounded-md"
+              style={{ width: '234px', height: '44px' }}
               size="sm"
             >
               <span className="flex items-center">
-                <Plus className="h-4 w-4 flex-shrink-0" />
+                <Plus className="h-4 w-4 flex-shrink-0 text-primary" />
                 <span className="ml-1.5">{t('common:tasks.new_conversation')}</span>
-              </span>
-              <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
-                ›
               </span>
             </Button>
           </div>
@@ -377,7 +375,7 @@ export default function TaskSidebar({
       <ProjectProvider>
         <TaskDndProvider>
           <div
-            className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border mt-3`}
+            className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-primary/10 mt-3`}
             ref={scrollRef}
           >
             {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
@@ -531,7 +529,7 @@ export default function TaskSidebar({
       </ProjectProvider>
 
       {/* User Menu - matches Figma: left-[20px] top-[852px] with border */}
-      <div className="px-2.5 py-3 border-t border-border" data-tour="settings-link">
+      <div className="px-2.5 py-3 border-t border-primary/10" data-tour="settings-link">
         <UserFloatingMenu />
       </div>
     </>
