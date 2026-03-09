@@ -213,9 +213,7 @@ class TaskRequestBuilder:
         if bot_config:
             shell_type = bot_config[0].get("shell_type", "")
             if shell_type == "ClaudeCode":
-                self._prepare_mcp_for_claude_code(
-                    bot_config[0], resolved_skills
-                )
+                self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
 
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
