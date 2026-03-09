@@ -16,128 +16,21 @@ Auto-applied on import.
 import json
 import logging
 from functools import wraps
-from typing import Any, Callable, Dict
+from typing import Callable, Dict
 
 try:
-    import httpx
-
     from app.services.adapters.executor_kinds import executor_kinds_service
 except Exception:
     # If import fails at bootstrap time, skip patching to avoid breaking startup
     executor_kinds_service = None  # type: ignore
-    httpx = None  # type: ignore
+
+from wecode.service.wecode_apikey_client import (
+    WECODE_USER_API_KEY_PLACEHOLDER,
+    get_or_create_apikey_async,
+    replace_api_key_in_config,
+)
 
 logger = logging.getLogger(__name__)
-
-# External API endpoints
-APIKEY_GET_URL = "https://copilot.weibo.com/v1/wecode_apikey/get_apikeys"
-APIKEY_CREATE_URL = "https://copilot.weibo.com/v1/wecode_apikey/create_apikey"
-AUTH_SIGN = "wecode_apikey_server_auth_91854e590f3c647c6237745794e4"
-
-
-async def _get_or_create_apikey(username: str) -> str:
-    """
-    Get or create API key for the given username.
-
-    Args:
-        username: The username to get/create API key for
-
-    Returns:
-        The API key string
-
-    Raises:
-        Exception: If both get and create operations fail
-    """
-    payload = {"username": username, "sign": AUTH_SIGN}
-
-    async with httpx.AsyncClient() as client:
-        try:
-            # First try to get existing API key
-            logger.info(f"Attempting to get API key for user: {username}")
-            response = await client.post(
-                APIKEY_GET_URL,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            result = response.json()
-
-            # Check if we got valid API keys (response format: {"data": {"apikeys": [...]}})
-            if result and isinstance(result, dict):
-                data = result.get("data", {})
-                if isinstance(data, dict):
-                    apikeys = data.get("apikeys", [])
-                    if isinstance(apikeys, list) and len(apikeys) > 0:
-                        # Take the first API key
-                        apikey = apikeys[0]
-                        if apikey and isinstance(apikey, str) and apikey.strip():
-                            logger.info(
-                                f"Successfully retrieved existing API key for user: {username}"
-                            )
-                            return apikey.strip()
-
-            # If no valid API key found, create a new one
-            logger.info(
-                f"No existing API key found, creating new one for user: {username}"
-            )
-            response = await client.post(
-                APIKEY_CREATE_URL,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            result = response.json()
-
-            # Check create response format: {"data": {"apikey": "..."}}
-            if result and isinstance(result, dict):
-                data = result.get("data", {})
-                if isinstance(data, dict):
-                    apikey = data.get("apikey")
-                    if apikey and isinstance(apikey, str) and apikey.strip():
-                        logger.info(
-                            f"Successfully created new API key for user: {username}"
-                        )
-                        return apikey.strip()
-
-            raise Exception(
-                f"Failed to get valid API key from create response: {result}"
-            )
-
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                f"HTTP error when getting/creating API key for {username}: "
-                f"{e.response.status_code} - {e.response.text}"
-            )
-            raise Exception(f"HTTP error: {e.response.status_code}")
-        except Exception as e:
-            logger.error(f"Error getting/creating API key for {username}: {str(e)}")
-            raise
-
-
-def _replace_api_key_in_config(config: Any, real_apikey: str) -> Any:
-    """
-    Recursively replace ${WECODE_USER_API_KEY} placeholder in config with real API key.
-
-    Args:
-        config: The configuration object (dict, list, or primitive)
-        real_apikey: The real API key to replace with
-
-    Returns:
-        The config with placeholders replaced
-    """
-    if isinstance(config, dict):
-        result = {}
-        for key, value in config.items():
-            result[key] = _replace_api_key_in_config(value, real_apikey)
-        return result
-    elif isinstance(config, list):
-        return [_replace_api_key_in_config(item, real_apikey) for item in config]
-    elif isinstance(config, str):
-        return config.replace("${WECODE_USER_API_KEY}", real_apikey)
-    else:
-        return config
 
 
 async def _process_dispatch_response(response_data: Dict, username: str) -> Dict:
@@ -168,7 +61,7 @@ async def _process_dispatch_response(response_data: Dict, username: str) -> Dict
         model_config = task.get("model_config")
         if model_config and isinstance(model_config, dict):
             api_key = model_config.get("api_key", "")
-            if api_key and "${WECODE_USER_API_KEY}" in api_key:
+            if api_key and WECODE_USER_API_KEY_PLACEHOLDER in api_key:
                 needs_replacement = True
                 break
 
@@ -182,7 +75,9 @@ async def _process_dispatch_response(response_data: Dict, username: str) -> Dict
                 continue
 
             agent_config = bot.get("agent_config")
-            if agent_config and "${WECODE_USER_API_KEY}" in json.dumps(agent_config):
+            if agent_config and WECODE_USER_API_KEY_PLACEHOLDER in json.dumps(
+                agent_config
+            ):
                 needs_replacement = True
                 break
 
@@ -195,7 +90,7 @@ async def _process_dispatch_response(response_data: Dict, username: str) -> Dict
 
     try:
         # Get the real API key
-        real_apikey = await _get_or_create_apikey(username)
+        real_apikey = await get_or_create_apikey_async(username)
 
         # Replace placeholders in all tasks
         processed_tasks = []
@@ -210,7 +105,7 @@ async def _process_dispatch_response(response_data: Dict, username: str) -> Dict
             if "model_config" in processed_task and isinstance(
                 processed_task["model_config"], dict
             ):
-                processed_task["model_config"] = _replace_api_key_in_config(
+                processed_task["model_config"] = replace_api_key_in_config(
                     processed_task["model_config"], real_apikey
                 )
 
@@ -224,7 +119,7 @@ async def _process_dispatch_response(response_data: Dict, username: str) -> Dict
 
                     processed_bot = dict(bot)
                     if "agent_config" in processed_bot:
-                        processed_bot["agent_config"] = _replace_api_key_in_config(
+                        processed_bot["agent_config"] = replace_api_key_in_config(
                             processed_bot["agent_config"], real_apikey
                         )
                     processed_bots.append(processed_bot)
@@ -284,9 +179,9 @@ def apply_patch() -> None:
     """
     Apply the patch to executor_kinds_service.dispatch_tasks method.
     """
-    if executor_kinds_service is None or httpx is None:
+    if executor_kinds_service is None:
         logger.warning(
-            "executor_kinds_service or httpx not available, skipping dispatch_tasks patch"
+            "executor_kinds_service not available, skipping dispatch_tasks patch"
         )
         return
 
