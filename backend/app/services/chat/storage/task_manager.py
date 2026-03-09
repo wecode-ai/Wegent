@@ -296,7 +296,7 @@ def create_new_task(
         task_type = "code" if params.git_url else "chat"
 
     logger.info(
-        f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
+        f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}, linked_group={params.linked_group}"
     )
 
     # Build knowledgeBaseRefs if knowledge_base_id is provided
@@ -406,7 +406,8 @@ def create_new_task(
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
-        f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}"
+        f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}, "
+        f"linked_group={task_json.get('spec', {}).get('linked_group', 'NOT_SET')}"
     )
 
     return task
