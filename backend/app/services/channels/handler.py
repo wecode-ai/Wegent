@@ -16,13 +16,14 @@ implement channel-specific message parsing while sharing common processing logic
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, Generic, Optional, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
@@ -57,6 +58,7 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,10 @@ class MessageContext:
     is_mention: bool  # Whether the bot was mentioned (for group chats)
     raw_message: Any  # Original message object from the channel SDK
     extra_data: Dict[str, Any]  # Channel-specific extra data
+    images: List[Dict[str, str]] = field(default_factory=list)
+    # Each image dict: {"mime_type": "image/png", "base64_data": "iVBOR..."}
+    files: List[Dict[str, Any]] = field(default_factory=list)
+    # Each file dict: {"filename": "doc.pdf", "binary_data": b"...", "file_size": 12345}
 
 
 @dataclass
@@ -385,6 +391,45 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         return team
 
+    def _get_task_mode_team(self, db: Session, user_id: int) -> Optional[Kind]:
+        """Get the default team for task mode (device/cloud execution).
+
+        Uses the DEFAULT_TEAM_TASK config (e.g. "wegent-wework#default") to look up
+        the team by name and namespace, matching the behavior of the PC/Web frontend.
+        Falls back to the channel's default_team_id if not configured.
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            Team Kind object or None
+        """
+        config_value = settings.DEFAULT_TEAM_TASK
+        if not config_value or not config_value.strip():
+            return self._get_default_team(db, user_id)
+
+        parts = config_value.strip().split("#", 1)
+        name = parts[0].strip()
+        namespace = parts[1].strip() if len(parts) > 1 else "default"
+
+        if not name:
+            return self._get_default_team(db, user_id)
+
+        team = kindReader.get_by_name_and_namespace(
+            db, user_id, KindType.TEAM, namespace, name
+        )
+
+        if not team:
+            self.logger.warning(
+                f"[{self._channel_type.value}Handler] Task mode team not found: "
+                f"name={name}, namespace={namespace}, user_id={user_id}. "
+                f"Falling back to channel default team."
+            )
+            return self._get_default_team(db, user_id)
+
+        return team
+
     async def _get_user_model_override(
         self, user_id: int
     ) -> tuple[Optional[str], Optional[str]]:
@@ -490,7 +535,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             f"content_preview={message_context.content[:50] if message_context.content else 'empty'}"
         )
 
-        if not message_context.content:
+        if (
+            not message_context.content
+            and not message_context.images
+            and not message_context.files
+        ):
             self.logger.warning(
                 f"[{self._channel_type.value}Handler] Empty message content, skipping"
             )
@@ -686,6 +735,16 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                         model_display_name = m.get("displayName") or override_model_name
                         break
 
+            # Clear conversation cache if switching mode or device
+            current_selection = await device_selection_manager.get_selection(user.id)
+            if (
+                current_selection.device_type != DeviceType.LOCAL
+                or current_selection.device_id != matched_device["device_id"]
+            ):
+                await self._delete_conversation_task_id(
+                    message_context.conversation_id, user.id
+                )
+
             await device_selection_manager.set_local_device(
                 user.id,
                 matched_device["device_id"],
@@ -758,6 +817,21 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         argument = argument.strip().lower()
+
+        # Check if mode is changing; if so, clear conversation cache
+        # so the next message creates a new task with the correct team
+        current_selection = await device_selection_manager.get_selection(user.id)
+        current_mode = current_selection.device_type
+        target_mode_map = {
+            "chat": DeviceType.CHAT,
+            "cloud": DeviceType.CLOUD,
+            "device": DeviceType.LOCAL,
+        }
+        target_mode = target_mode_map.get(argument)
+        if target_mode and target_mode != current_mode:
+            await self._delete_conversation_task_id(
+                message_context.conversation_id, user.id
+            )
 
         # Helper to get current model display name
         async def get_model_display() -> str:
@@ -1282,19 +1356,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            slot_info = await device_service.get_device_slot_usage_async(
-                db, user.id, device_id
-            )
-            if slot_info["used"] >= slot_info["max"]:
-                await self.send_text_reply(
-                    message_context,
-                    f"❌ 设备 **{device_selection.device_name}** 槽位已满 "
-                    f"({slot_info['used']}/{slot_info['max']})\n\n"
-                    "请等待当前任务完成或选择其他设备",
-                )
-                return
-
-            team = self._get_default_team(db, user.id)
+            team = self._get_task_mode_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -1323,7 +1385,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Use short-lived db session for database operations
         db = SessionLocal()
         try:
-            team = self._get_default_team(db, user.id)
+            team = self._get_task_mode_team(db, user.id)
             if not team:
                 await self.send_text_reply(
                     message_context, "配置错误: 未配置默认智能体"
@@ -1341,6 +1403,172 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if response:
             await self.send_text_reply(message_context, response)
+
+    # Mapping from MIME type to file extension for IM channel images
+    _MIME_TO_EXT = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/webp": ".webp",
+    }
+
+    def _get_display_text(self, message_context: MessageContext) -> str:
+        """Get display text for DB storage, with fallbacks for media-only messages."""
+        if message_context.content:
+            return message_context.content
+        if message_context.files:
+            filenames = ", ".join(f["filename"] for f in message_context.files)
+            return f"[文件] {filenames}"
+        if message_context.images:
+            return "[图片]"
+        return ""
+
+    def _persist_im_files_as_attachments(
+        self,
+        db: Session,
+        user_id: int,
+        subtask_id: int,
+        files: List[Dict[str, Any]],
+    ) -> List[int]:
+        """Persist IM channel files as SubtaskContext attachments.
+
+        Downloads from IM channels (DingTalk, Feishu, etc.) provide files as
+        binary data. This method saves them into the subtask_contexts table
+        so they are processed (text extraction) and available for the AI.
+
+        Args:
+            db: Database session (must be open, caller handles commit)
+            user_id: Owner user ID
+            subtask_id: User subtask ID to link the files to
+            files: List of file dicts with filename and binary_data
+
+        Returns:
+            List of attachment metadata dicts for executor (id, original_filename)
+        """
+        from app.services.context.context_service import ContextService
+
+        context_service = ContextService()
+        attachment_metas: List[Dict[str, Any]] = []
+
+        for file_info in files:
+            try:
+                context, _ = context_service.upload_attachment(
+                    db=db,
+                    user_id=user_id,
+                    filename=file_info["filename"],
+                    binary_data=file_info["binary_data"],
+                    subtask_id=subtask_id,
+                )
+                attachment_metas.append(
+                    {
+                        "id": context.id,
+                        "original_filename": file_info["filename"],
+                    }
+                )
+                self.logger.info(
+                    "[%sHandler] Persisted IM file as attachment: "
+                    "context_id=%d, subtask_id=%d, filename=%s, size=%d bytes",
+                    self._channel_type.value,
+                    context.id,
+                    subtask_id,
+                    file_info["filename"],
+                    len(file_info["binary_data"]),
+                )
+            except Exception as e:
+                self.logger.error(
+                    "[%sHandler] Failed to persist IM file %s: %s",
+                    self._channel_type.value,
+                    file_info.get("filename", "unknown"),
+                    e,
+                )
+                continue
+
+        return attachment_metas
+
+    def _persist_im_images_as_attachments(
+        self,
+        db: Session,
+        user_id: int,
+        subtask_id: int,
+        images: List[Dict[str, str]],
+    ) -> List[int]:
+        """Persist IM channel images as SubtaskContext attachments.
+
+        Downloads from IM channels (DingTalk, Feishu, etc.) provide images as
+        base64-encoded data. This method saves them into the subtask_contexts
+        table so they can be displayed when viewing the task on PC/Web.
+
+        Args:
+            db: Database session (must be open, caller handles commit)
+            user_id: Owner user ID
+            subtask_id: User subtask ID to link the images to
+            images: List of image dicts with mime_type and base64_data
+
+        Returns:
+            List of created SubtaskContext IDs
+        """
+        import base64
+
+        from app.services.context.context_service import ContextService
+
+        context_service = ContextService()
+        created_ids: List[int] = []
+
+        for idx, img in enumerate(images):
+            try:
+                binary_data = base64.b64decode(img["base64_data"])
+                mime_type = img.get("mime_type", "image/png")
+                ext = self._MIME_TO_EXT.get(mime_type, ".png")
+                filename = f"im_image_{idx + 1}{ext}"
+
+                context, _ = context_service.upload_attachment(
+                    db=db,
+                    user_id=user_id,
+                    filename=filename,
+                    binary_data=binary_data,
+                    subtask_id=subtask_id,
+                )
+                created_ids.append(context.id)
+                self.logger.info(
+                    "[%sHandler] Persisted IM image as attachment: "
+                    "context_id=%d, subtask_id=%d, size=%d bytes",
+                    self._channel_type.value,
+                    context.id,
+                    subtask_id,
+                    len(binary_data),
+                )
+            except Exception as e:
+                self.logger.error(
+                    "[%sHandler] Failed to persist IM image %d: %s",
+                    self._channel_type.value,
+                    idx,
+                    e,
+                )
+                continue
+
+        return created_ids
+
+    @staticmethod
+    def _build_vision_content(
+        text: str, images: List[Dict[str, str]]
+    ) -> list[dict[str, Any]]:
+        """Build OpenAI Responses API vision content from text and images.
+
+        Args:
+            text: Text content (may be empty for image-only messages)
+            images: List of image dicts with mime_type and base64_data
+
+        Returns:
+            List of content items in OpenAI Responses API vision format
+        """
+        content: list[dict[str, Any]] = []
+        if text:
+            content.append({"type": "input_text", "text": text})
+        for img in images:
+            data_uri = f"data:{img['mime_type']};base64,{img['base64_data']}"
+            content.append({"type": "input_image", "image_url": data_uri})
+        return content
 
     async def _create_and_process_chat(
         self,
@@ -1368,12 +1596,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
+        display_text = self._get_display_text(message_context)
         params = TaskCreationParams(
-            message=message,
+            message=display_text,
             title=(
-                f"{self._channel_type.value}: {message[:30]}..."
-                if len(message) > 30
-                else f"{self._channel_type.value}: {message}"
+                f"{self._channel_type.value}: {display_text[:30]}..."
+                if len(display_text) > 30
+                else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
             task_type="chat",
@@ -1425,6 +1654,24 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"subtask_id={result.assistant_subtask.id}"
             )
 
+            # Persist IM channel images as attachments for PC/Web display
+            if message_context.images:
+                self._persist_im_images_as_attachments(
+                    db=db,
+                    user_id=user.id,
+                    subtask_id=result.user_subtask.id,
+                    images=message_context.images,
+                )
+
+            # Persist IM channel files as attachments
+            if message_context.files:
+                self._persist_im_files_as_attachments(
+                    db=db,
+                    user_id=user.id,
+                    subtask_id=result.user_subtask.id,
+                    files=message_context.files,
+                )
+
             # Extract needed data from ORM objects before closing session
             task_id = result.task.id
             user_subtask_id = result.user_subtask.id
@@ -1472,15 +1719,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         task_room = f"task_{task_id}"
 
-        # Append IM channel context hint to help AI understand available commands
-        message_with_hint = message + IM_CHANNEL_CONTEXT_HINT
+        # Build message for AI: always use plain text here.
+        # When images exist, they've been persisted as SubtaskContext attachments
+        # above. prepare_contexts_for_chat (called inside trigger_ai_response_unified)
+        # will read them from the DB and inject as vision content automatically,
+        # following the same path as PC-uploaded image attachments.
+        ai_message = (message or "") + IM_CHANNEL_CONTEXT_HINT
 
         await trigger_ai_response_unified(
             task=trigger_data["task"],
             assistant_subtask=trigger_data["assistant_subtask"],
             team=trigger_data["team"],
             user=trigger_data["user"],
-            message=message_with_hint,
+            message=ai_message,
             payload=self._build_chat_payload(params, override_model_name),
             task_room=task_room,
             namespace=None,
@@ -1555,17 +1806,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
+        display_text = self._get_display_text(message_context)
+
         # Get model for device mode (uses default Claude if user hasn't selected one)
         override_model_name, override_model_type = (
             await self._get_device_mode_model_override(db, user)
         )
 
         params = TaskCreationParams(
-            message=message,
+            message=display_text,
             title=(
-                f"{self._channel_type.value}: {message[:30]}..."
-                if len(message) > 30
-                else f"{self._channel_type.value}: {message}"
+                f"{self._channel_type.value}: {display_text[:30]}..."
+                if len(display_text) > 30
+                else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
             task_type="task",
@@ -1593,6 +1846,25 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if not result.assistant_subtask:
             return "创建任务失败，请重试"
+
+        # Persist IM channel images as attachments for PC/Web display
+        if message_context.images:
+            self._persist_im_images_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                images=message_context.images,
+            )
+
+        # Persist IM channel files as attachments
+        file_attachment_metas: List[Dict[str, Any]] = []
+        if message_context.files:
+            file_attachment_metas = self._persist_im_files_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                files=message_context.files,
+            )
 
         if conversation_id:
             await self._set_conversation_task_id(
@@ -1635,6 +1907,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 offset=0,
             )
 
+        # Build message for device: vision content if images present
+        if message_context.images:
+            device_message = self._build_vision_content(
+                message or "", message_context.images
+            )
+        else:
+            device_message = None  # Let route_task_to_device use subtask.prompt
+
         try:
             await route_task_to_device(
                 db=db,
@@ -1645,6 +1925,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 team=team,
                 user=user,
                 user_subtask=result.user_subtask,
+                message=device_message,
+                attachments=file_attachment_metas or None,
             )
 
             # Save callback info
@@ -1681,17 +1963,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message = message_context.content
         conversation_id = message_context.conversation_id
 
+        display_text = self._get_display_text(message_context)
+
         # Get user's model selection
         override_model_name, override_model_type = await self._get_user_model_override(
             user.id
         )
 
         params = TaskCreationParams(
-            message=message,
+            message=display_text,
             title=(
-                f"{self._channel_type.value}: {message[:30]}..."
-                if len(message) > 30
-                else f"{self._channel_type.value}: {message}"
+                f"{self._channel_type.value}: {display_text[:30]}..."
+                if len(display_text) > 30
+                else f"{self._channel_type.value}: {display_text}"
             ),
             is_group_chat=False,
             task_type="task",
@@ -1719,6 +2003,24 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if not result.assistant_subtask:
             return "创建任务失败，请重试"
+
+        # Persist IM channel images as attachments for PC/Web display
+        if message_context.images:
+            self._persist_im_images_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                images=message_context.images,
+            )
+
+        # Persist IM channel files as attachments
+        if message_context.files:
+            self._persist_im_files_as_attachments(
+                db=db,
+                user_id=user.id,
+                subtask_id=result.user_subtask.id,
+                files=message_context.files,
+            )
 
         if conversation_id:
             await self._set_conversation_task_id(

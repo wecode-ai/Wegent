@@ -88,4 +88,10 @@ class BackgroundExecution(Base):
         Index("ix_bg_exec_subscription_created", "subscription_id", "created_at"),
         # Index for status filtering
         Index("ix_bg_exec_user_status", "user_id", "status"),
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
     )

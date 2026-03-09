@@ -25,6 +25,7 @@ type TopNavigationProps = {
   onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
   isSidebarCollapsed?: boolean
   hideGroupChatOptions?: boolean // Hide group chat management options (e.g., in notebook mode)
+  isRightPanelCollapsed?: boolean // Whether right panel is collapsed (adds right padding for expand button)
 }
 
 export default function TopNavigation({
@@ -39,6 +40,7 @@ export default function TopNavigation({
   onMembersChanged,
   isSidebarCollapsed = false,
   hideGroupChatOptions = false,
+  isRightPanelCollapsed = false,
 }: TopNavigationProps) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
@@ -50,11 +52,13 @@ export default function TopNavigation({
   // Determine if we should show the logo
   const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile)
 
+  // Compute padding classes separately to avoid conflicts
+  const leftPaddingClass = isSidebarCollapsed && isDesktop ? 'pl-24' : 'pl-4 sm:pl-6'
+  const rightPaddingClass = isRightPanelCollapsed && isDesktop ? 'pr-20' : 'pr-4 sm:pr-6'
+
   return (
     <div
-      className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${
-        isSidebarCollapsed && isDesktop ? 'pl-24 pr-4 sm:pr-6' : 'px-4 sm:px-6'
-      }`}
+      className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${leftPaddingClass} ${rightPaddingClass}`}
     >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
       <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">

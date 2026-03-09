@@ -16,7 +16,9 @@
     "retry": "Retry",
     "edit": "Edit",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "re_edit": "Re-edit",
+    "re_edit_tooltip": "Re-edit"
   },
   "edit": {
     "tooltip": "Edit message",
@@ -30,7 +32,7 @@
   },
   "regenerate": {
     "failed": "Failed to regenerate response",
-    "tooltip": "Regenerate response",
+    "tooltip": "Regenerate",
     "select_model": "Select Model",
     "select_model_desc": "Choose a model for regeneration"
   },
@@ -95,7 +97,8 @@
     "found": "Found",
     "expand_content": "Expand",
     "collapse_content": "Collapse",
-    "lines": "lines"
+    "lines": "lines",
+    "video_generation": "Video Generation"
   },
   "thinking": {
     "tool_group": "Tool Group",
@@ -326,6 +329,7 @@
   },
   "upload": {
     "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
+    "image_tooltip": "Supported file types: Images (JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nUpload reference images for generation",
     "wait_for_upload": "Please wait for file upload to complete"
   },
   "clarification_toggle": {
@@ -534,7 +538,9 @@
     "no_task_id": "No task ID available"
   },
   "generate": {
-    "mode_selector": "Generation Type"
+    "mode_selector": "Generation Type",
+    "max_attachments": "Upload up to {{count}} attachments as reference",
+    "attachment_limit_reached": "Attachment limit reached"
   },
   "video": {
     "title": "Video Generation",
@@ -587,6 +593,7 @@
     "failed": "Image generation failed",
     "download": "Download image",
     "expand": "View full size",
+    "use_as_reference": "Use as reference",
     "generated_image": "Generated image",
     "lightbox": "Image preview",
     "no_models": "No image models available"

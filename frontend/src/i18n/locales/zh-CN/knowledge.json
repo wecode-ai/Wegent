@@ -411,7 +411,20 @@
       "configHint": "这些配置仅用于测试，不会保存到数据库。",
       "modified": "已修改"
     },
-    "goToSettings": "前往设置"
+    "goToSettings": "前往设置",
+    "groupChat": {
+      "create": "创建群聊",
+      "createForGroup": "为组创建群聊",
+      "createForKb": "为知识库创建群聊",
+      "defaultTitle": "{{groupName}} 群聊",
+      "defaultTitleWithKb": "{{groupName}} - {{kbName}} 群聊",
+      "addingMembers": "正在添加组成员...",
+      "addMembersSuccess": "已成功添加 {{count}} 位组成员",
+      "addMembersPartialFail": "部分成员添加失败（{{failed}}/{{total}}），可在群聊中手动添加",
+      "addMembersFailed": "添加组成员失败，可在群聊中手动添加",
+      "bindKbPartialFail": "部分知识库关联失败（{{failed}}/{{total}}）",
+      "bindKbFailed": "关联知识库失败"
+    }
   },
   "add_repository": "添加仓库",
   "add_repository_desc": "功能调整中，暂时不可用",

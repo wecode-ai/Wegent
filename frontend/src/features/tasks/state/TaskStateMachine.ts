@@ -79,6 +79,13 @@ export interface UnifiedMessage {
     reasoning_content?: string
     reasoning_chunk?: string
     blocks?: MessageBlock[]
+    /** Video generation config (stored in user message subtask for display) */
+    video_config?: {
+      model?: string
+      resolution?: string
+      ratio?: string
+      duration?: number
+    }
   }
   sources?: Array<{
     index: number

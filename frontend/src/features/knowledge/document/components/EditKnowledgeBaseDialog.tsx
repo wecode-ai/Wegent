@@ -158,57 +158,63 @@ export function EditKnowledgeBaseDialog({
           <DialogTitle>{t('knowledge:document.knowledgeBase.edit')}</DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto space-y-4 py-4">
-            <KnowledgeBaseForm
-              name={name}
-              description={description}
-              onNameChange={value => setName(value)}
-              onDescriptionChange={value => setDescription(value)}
-              summaryEnabled={summaryEnabled}
-              onSummaryEnabledChange={checked => {
-                setSummaryEnabled(checked)
-                if (!checked) {
-                  setSummaryModelRef(null)
-                  setSummaryModelError('')
-                }
-              }}
-              summaryModelRef={summaryModelRef}
-              summaryModelError={summaryModelError}
-              onSummaryModelChange={value => {
-                setSummaryModelRef(value)
+          <KnowledgeBaseForm
+            name={name}
+            description={description}
+            onNameChange={value => setName(value)}
+            onDescriptionChange={value => setDescription(value)}
+            summaryEnabled={summaryEnabled}
+            onSummaryEnabledChange={checked => {
+              setSummaryEnabled(checked)
+              if (!checked) {
+                setSummaryModelRef(null)
                 setSummaryModelError('')
-              }}
-              knowledgeDefaultTeamId={
-                !knowledgeBase?.summary_model_ref ? knowledgeDefaultTeamId : undefined
               }
-              callLimits={{ maxCalls, exemptCalls }}
-              onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
-                setMaxCalls(nextMax)
-                setExemptCalls(nextExempt)
-              }}
-              advancedVariant="collapsible"
-              advancedOpen={showAdvanced}
-              onAdvancedOpenChange={setShowAdvanced}
-              showRetrievalSection={!!knowledgeBase?.retrieval_config}
-              retrievalConfig={retrievalConfig}
-              onRetrievalConfigChange={handleRetrievalConfigChange}
-              retrievalReadOnly={false}
-              retrievalPartialReadOnly={true}
-            />
+            }}
+            summaryModelRef={summaryModelRef}
+            summaryModelError={summaryModelError}
+            onSummaryModelChange={value => {
+              setSummaryModelRef(value)
+              setSummaryModelError('')
+            }}
+            knowledgeDefaultTeamId={
+              !knowledgeBase?.summary_model_ref ? knowledgeDefaultTeamId : undefined
+            }
+            callLimits={{ maxCalls, exemptCalls }}
+            onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
+              setMaxCalls(nextMax)
+              setExemptCalls(nextExempt)
+            }}
+            advancedVariant="collapsible"
+            advancedOpen={showAdvanced}
+            onAdvancedOpenChange={setShowAdvanced}
+            showRetrievalSection={!!knowledgeBase?.retrieval_config}
+            retrievalConfig={retrievalConfig}
+            onRetrievalConfigChange={handleRetrievalConfigChange}
+            retrievalReadOnly={false}
+            retrievalPartialReadOnly={true}
+          />
 
-            {error && <p className="text-sm text-error">{error}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-              disabled={loading}
-            >
-              {t('common:actions.cancel')}
-            </Button>
-            <Button onClick={handleSubmit} variant="primary" disabled={loading}>
-              {loading ? t('common:actions.saving') : t('common:actions.save')}
-            </Button>
-          </DialogFooter>
+          {error && <p className="text-sm text-error">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
+            {t('common:actions.cancel')}
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            variant="primary"
+            disabled={loading}
+            className="h-11 min-w-[44px]"
+          >
+            {loading ? t('common:actions.saving') : t('common:actions.save')}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

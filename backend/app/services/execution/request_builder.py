@@ -11,7 +11,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -62,7 +62,7 @@ class TaskRequestBuilder:
         task: TaskResource,
         user: User,
         team: Kind,
-        message: str,
+        message: Union[str, list],
         *,
         # Feature toggles
         enable_tools: bool = True,
@@ -198,6 +198,15 @@ class TaskRequestBuilder:
             override_model_name=override_model_name,
             force_override=force_override,
         )
+
+        # Merge user-selected skills into bot_config so Executor downloads them
+        if bot_config and resolved_skills:
+            all_skill_names = [s["name"] for s in resolved_skills]
+            existing_skills = set(bot_config[0].get("skills", []))
+            for name in all_skill_names:
+                if name not in existing_skills:
+                    bot_config[0].setdefault("skills", []).append(name)
+                    existing_skills.add(name)
 
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
@@ -415,9 +424,10 @@ class TaskRequestBuilder:
             task_data=task_data,
         )
 
-        # Handle secondaryModelRef for video models
-        # When modelType is 'video', resolve secondary model for intent analysis
-        if model_config.get("modelType") == "video":
+        # Handle secondaryModelRef for generation models (video and image).
+        # When modelType is 'video' or 'image', resolve secondary model for intent analysis
+        # used in multi-turn follow-up generation.
+        if model_config.get("modelType") in ("video", "image"):
             secondary_model_config = self._get_secondary_model_config(
                 bot=bot,
                 user_id=user_id,
@@ -440,7 +450,8 @@ class TaskRequestBuilder:
     ) -> dict[str, Any] | None:
         """Get secondary model configuration from bot's secondaryModelRef.
 
-        Used for auxiliary tasks like intent analysis in video generation.
+        Used for auxiliary tasks like intent analysis in video/image generation
+        follow-up conversations.
 
         Args:
             bot: Bot Kind object

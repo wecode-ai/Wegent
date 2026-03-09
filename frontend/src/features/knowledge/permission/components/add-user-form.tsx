@@ -54,10 +54,7 @@ export function AddUserForm({
         {/* Role Select */}
         <div className="space-y-2">
           <Label htmlFor="role">{t('document.permission.role.label')}</Label>
-          <Select
-            value={role}
-            onValueChange={v => onRoleChange(v as MemberRole)}
-          >
+          <Select value={role} onValueChange={v => onRoleChange(v as MemberRole)}>
             <SelectTrigger id="role">
               <SelectValue />
             </SelectTrigger>

@@ -9,9 +9,26 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useModelSelection, type Model } from '../../hooks/useModelSelection'
-import type { Team } from '@/types/api'
+import type { Team, TaskType } from '@/types/api'
+import type { ModelCategoryType } from '@/apis/models'
 import { cn } from '@/lib/utils'
 import { Globe, User } from 'lucide-react'
+
+/**
+ * Maps task type to the corresponding model category type.
+ * This ensures the regenerate model popover shows the correct model list
+ * based on the current task type (e.g., image task shows image models).
+ */
+function getModelCategoryFromTaskType(taskType?: TaskType): ModelCategoryType {
+  switch (taskType) {
+    case 'image':
+      return 'image'
+    case 'video':
+      return 'video'
+    default:
+      return 'llm'
+  }
+}
 
 export interface RegenerateModelPopoverProps {
   open: boolean
@@ -22,6 +39,8 @@ export interface RegenerateModelPopoverProps {
   trigger: React.ReactNode
   /** Tooltip text for the trigger button */
   tooltipText?: string
+  /** Current task type to determine which model category to show */
+  taskType?: TaskType
 }
 
 /**
@@ -36,8 +55,12 @@ export function RegenerateModelPopover({
   isLoading = false,
   trigger,
   tooltipText,
+  taskType,
 }: RegenerateModelPopoverProps) {
   const { t } = useTranslation('chat')
+
+  // Determine model category based on task type
+  const modelCategoryType = getModelCategoryFromTaskType(taskType)
 
   // Use the model selection hook to get filtered models
   const {
@@ -48,6 +71,7 @@ export function RegenerateModelPopover({
     teamId: selectedTeam?.id ?? null,
     taskId: null,
     selectedTeam,
+    modelCategoryType,
   })
 
   const handleModelSelect = (model: Model) => {

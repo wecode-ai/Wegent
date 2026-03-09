@@ -104,6 +104,17 @@
   "creating": "Creating...",
   "local_devices_section": "Local Devices",
   "cloud_devices_section": "Cloud Devices",
-  "no_local_devices": "No local devices connected. Add a device using the guide above.",
-  "cloud_devices_coming_soon": "Cloud device support coming soon."
+  "no_local_devices": "No local devices connected. Add a device using the button above.",
+  "cloud_devices_coming_soon": "Cloud device support coming soon.",
+  "select_device_type": "Select Device Type",
+  "select_device_type_description": "Choose the type of device you want to add",
+  "local_device": "Local Device",
+  "local_device_description": "Run Executor on your own machine for full control and privacy",
+  "cloud_device": "Cloud Device",
+  "cloud_device_description": "Use Wegent's managed cloud infrastructure (no setup required)",
+  "recommended": "Recommended",
+  "continue": "Continue",
+  "cloud_coming_soon_title": "Cloud Devices Coming Soon",
+  "cloud_coming_soon_description": "Cloud device support is under active development. Stay tuned for updates!",
+  "got_it": "Got it"
 }

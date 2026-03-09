@@ -91,6 +91,7 @@ class Project(Base):
 
     __table_args__ = (
         {
+            "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
             "mysql_collate": "utf8mb4_unicode_ci",

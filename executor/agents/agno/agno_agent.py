@@ -351,7 +351,6 @@ class AgnoAgent(Agent):
 
         return TaskStatus.SUCCESS
 
-
     def execute(self) -> TaskStatus:
         """
         Execute the Agno Agent task

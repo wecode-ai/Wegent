@@ -434,8 +434,10 @@ def add_member(
         Created member response
 
     Raises:
-        HTTPException: If group not found, user already member, or insufficient permissions
+        HTTPException: If group not found, user not found, user already member, or insufficient permissions
     """
+    from app.models.user import User
+
     # Check group exists
     group = (
         db.query(Namespace)
@@ -448,6 +450,13 @@ def add_member(
 
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+
+    # Check target user exists
+    target_user = (
+        db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    )
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
 
     # Check inviter has permission (must be at least Maintainer)
     if not check_group_permission(

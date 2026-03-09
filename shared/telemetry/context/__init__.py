@@ -7,57 +7,82 @@ OpenTelemetry context utilities module.
 
 Provides tools for enhancing spans with business context attributes
 and propagating trace context across service boundaries.
+
+NOTE: Imports are lazy-loaded to reduce memory usage when telemetry is disabled.
+Only SpanAttributes, TelemetryEventNames, and SpanNames are imported at module load
+since they are pure Python classes without opentelemetry dependencies.
 """
 
-# Span attribute keys
-from shared.telemetry.context.attributes import SpanAttributes
 
-# Event and span names
-from shared.telemetry.context.events import SpanNames, TelemetryEventNames
+def __getattr__(name: str):
+    """Lazy import for telemetry context utilities."""
+    # Pure Python classes - can be imported directly
+    if name == "SpanAttributes":
+        from shared.telemetry.context.attributes import SpanAttributes
 
-# Span manager
-from shared.telemetry.context.manager import SpanManager
+        return SpanAttributes
+    if name in ("TelemetryEventNames", "SpanNames"):
+        from shared.telemetry.context.events import SpanNames, TelemetryEventNames
 
-# Trace context propagation
-from shared.telemetry.context.propagation import (
-    TRACE_PARENT_ENV,
-    TRACE_STATE_ENV,
-    extract_trace_context_from_headers,
-    get_trace_context_env_vars,
-    get_trace_context_for_propagation,
-    inject_trace_context_to_headers,
-    restore_trace_context_from_env,
-)
+        if name == "TelemetryEventNames":
+            return TelemetryEventNames
+        return SpanNames
 
-# Context setters for common business entities
-# Span manipulation utilities
-from shared.telemetry.context.span import (
-    add_span_event,
-    attach_otel_context,
-    copy_context_vars,
-    create_child_span,
-    detach_otel_context,
-    get_business_context,
-    get_current_span,
-    get_request_id,
-    get_server_ip,
-    init_request_context,
-    is_websocket_context,
-    record_stream_error,
-    restore_context_vars,
-    set_agent_context,
-    set_bot_context,
-    set_model_context,
-    set_repository_context,
-    set_request_context,
-    set_span_attributes,
-    set_span_error,
-    set_span_ok,
-    set_task_context,
-    set_team_context,
-    set_user_context,
-    set_websocket_context,
-)
+    # Span manager - requires opentelemetry
+    if name == "SpanManager":
+        from shared.telemetry.context.manager import SpanManager
+
+        return SpanManager
+
+    # Propagation utilities - require opentelemetry
+    if name in (
+        "TRACE_PARENT_ENV",
+        "TRACE_STATE_ENV",
+        "extract_trace_context_from_headers",
+        "get_trace_context_env_vars",
+        "get_trace_context_for_propagation",
+        "inject_trace_context_to_headers",
+        "restore_trace_context_from_env",
+    ):
+        from shared.telemetry.context import propagation
+
+        return getattr(propagation, name)
+
+    # Span utilities - require opentelemetry (but lazy loaded in span.py)
+    span_exports = (
+        "add_span_event",
+        "attach_otel_context",
+        "copy_context_vars",
+        "create_child_span",
+        "detach_otel_context",
+        "get_business_context",
+        "get_current_span",
+        "get_request_id",
+        "get_server_ip",
+        "init_request_context",
+        "is_websocket_context",
+        "record_stream_error",
+        "restore_context_vars",
+        "set_agent_context",
+        "set_bot_context",
+        "set_model_context",
+        "set_repository_context",
+        "set_request_context",
+        "set_span_attributes",
+        "set_span_error",
+        "set_span_ok",
+        "set_task_context",
+        "set_team_context",
+        "set_user_context",
+        "set_websocket_context",
+    )
+    if name in span_exports:
+        from shared.telemetry.context import span
+
+        return getattr(span, name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Attributes
