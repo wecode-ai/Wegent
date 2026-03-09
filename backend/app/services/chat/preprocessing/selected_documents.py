@@ -10,12 +10,17 @@ in notebook mode. It implements intelligent context injection that:
 2. Estimates token count to determine if direct injection is feasible
 3. Either injects content directly into the message or falls back to RAG retrieval
 
-The injection strategy follows the same threshold as KnowledgeBaseTool:
+The injection strategy uses conservative token estimation:
 - If estimated tokens <= 30% of context window, inject directly
 - Otherwise, create KnowledgeBaseTool with document_ids filter for RAG retrieval
+
+Token estimation uses a conservative multiplier to handle multilingual content
+(e.g., Chinese characters where 1 char ≈ 1-2 tokens) and avoid exceeding the
+model's context window limit.
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.tools import BaseTool
@@ -29,8 +34,17 @@ logger = logging.getLogger(__name__)
 # Default context window size (same as InjectionStrategy.DEFAULT_CONTEXT_WINDOW)
 DEFAULT_CONTEXT_WINDOW = 128000
 
-# Maximum ratio of context window that can be used for document injection
-MAX_INJECTION_RATIO = 0.5
+# Maximum ratio of context window that can be used for document injection.
+# Set to 0.3 (30%) to leave sufficient room for system prompt, chat history,
+# KB metadata, and dynamic context that are added separately.
+MAX_INJECTION_RATIO = 0.3
+
+# Regex pattern to detect CJK (Chinese, Japanese, Korean) characters
+_CJK_PATTERN = re.compile(
+    r"[\u4e00-\u9fff\u3400-\u4dbf\u2e80-\u2eff\u3000-\u303f"
+    r"\u3040-\u309f\u30a0-\u30ff\u31f0-\u31ff\uac00-\ud7af"
+    r"\uf900-\ufaff\ufe30-\ufe4f]"
+)
 
 # Prompt template for selected documents context (direct injection mode)
 SELECTED_DOCUMENTS_PROMPT_TEMPLATE = """
@@ -143,10 +157,11 @@ def process_selected_documents_contexts(
             user_subtask_id=user_subtask_id,
         )
 
-    # Estimate token count
+    # Estimate token count using content-aware estimation
     total_chars = sum(len(doc["content"]) for doc in documents_content)
-    # Estimate tokens: approximately 4 characters per token
-    estimated_tokens = total_chars // 4
+    estimated_tokens = _estimate_tokens(
+        "".join(doc["content"] for doc in documents_content)
+    )
 
     # Calculate threshold
     max_tokens_for_injection = int(context_window * MAX_INJECTION_RATIO)
@@ -154,7 +169,8 @@ def process_selected_documents_contexts(
     logger.info(
         f"[process_selected_documents_contexts] Token estimation: "
         f"total_chars={total_chars}, estimated_tokens={estimated_tokens}, "
-        f"threshold={max_tokens_for_injection}, context_window={context_window}"
+        f"threshold={max_tokens_for_injection}, context_window={context_window}, "
+        f"injection_ratio={MAX_INJECTION_RATIO}"
     )
 
     if estimated_tokens <= max_tokens_for_injection:
@@ -185,6 +201,44 @@ def process_selected_documents_contexts(
             extra_tools=extra_tools,
             user_subtask_id=user_subtask_id,
         )
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count for text with content-aware heuristics.
+
+    Uses different estimation ratios depending on character composition:
+    - CJK characters (Chinese/Japanese/Korean): ~1.5 tokens per character
+    - Latin/ASCII characters: ~0.25 tokens per character (4 chars/token)
+
+    This is more conservative than the naive `len // 4` approach, which
+    dramatically underestimates tokens for CJK-heavy text and can cause
+    the model's context window to overflow.
+
+    Args:
+        text: Input text to estimate tokens for
+
+    Returns:
+        Estimated token count (conservative upper bound)
+    """
+    if not text:
+        return 0
+
+    cjk_chars = len(_CJK_PATTERN.findall(text))
+    non_cjk_chars = len(text) - cjk_chars
+
+    # CJK characters: ~1.5 tokens per character (conservative estimate)
+    # Non-CJK characters: ~0.25 tokens per character (4 chars/token)
+    estimated = int(cjk_chars * 1.5 + non_cjk_chars * 0.25)
+
+    # Apply a safety margin of 10% to account for tokenizer overhead
+    estimated = int(estimated * 1.1)
+
+    logger.debug(
+        f"[_estimate_tokens] chars={len(text)}, cjk={cjk_chars}, "
+        f"non_cjk={non_cjk_chars}, estimated_tokens={estimated}"
+    )
+
+    return estimated
 
 
 def _load_documents_content(

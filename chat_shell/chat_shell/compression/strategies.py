@@ -160,16 +160,21 @@ class AttachmentTruncationStrategy(CompressionStrategy):
     def name(self) -> str:
         return "attachment_truncation"
 
-    # Pattern to match attachment content blocks wrapped in <attachment> XML tags
-    # or legacy format without tags
+    # Pattern to match attachment content blocks wrapped in <attachment> XML tags,
+    # <selected_documents> XML tags, or legacy format without tags
     ATTACHMENT_PATTERN = re.compile(
-        r"(?:<attachment>)?\[(?:Attachment \d+|File Content|Document)(?:\s*[:-]\s*[^\]]+)?\](.*?)(?:</attachment>|(?=\[(?:Attachment \d+|File Content|Document)|<attachment>|$))",
+        r"(?:<attachment>|<selected_documents>)?"
+        r"(?:\[(?:Attachment \d+|File Content|Document)(?:\s*[:-]\s*[^\]]+)?\]|"
+        r"# Reference Documents\s*\n\s*[^\n]*\n\s*)"
+        r"(.*?)"
+        r"(?:</attachment>|</selected_documents>|(?=\[(?:Attachment \d+|File Content|Document)|<attachment>|<selected_documents>|$))",
         re.DOTALL,
     )
 
     # Pattern for document content markers (including XML tag)
     DOCUMENT_MARKERS = [
         "<attachment>",  # New XML tag format
+        "<selected_documents>",  # Notebook mode selected documents
         "[Attachment",
         "[File Content",  # New format for file attachments
         "[Document:",  # History loader format
@@ -484,9 +489,19 @@ class AttachmentTruncationStrategy(CompressionStrategy):
             full_match = match.group(0)
             attachment_content = match.group(1) if match.lastindex else ""
 
-            # Get the header (e.g., "[Attachment 1 - document.pdf]")
-            header_end = full_match.find("]") + 1
-            header = full_match[:header_end]
+            # Extract the header portion before the main content body
+            # Handles both bracket-style headers (e.g., "[Attachment 1 - doc.pdf]")
+            # and XML-style headers (e.g., "<selected_documents># Reference Documents\n...")
+            bracket_pos = full_match.find("]")
+            content_start = (
+                full_match.find(attachment_content) if attachment_content else -1
+            )
+            if bracket_pos >= 0 and (content_start < 0 or bracket_pos < content_start):
+                header = full_match[: bracket_pos + 1]
+            elif content_start > 0:
+                header = full_match[:content_start]
+            else:
+                header = ""
 
             original_length = len(attachment_content)
 
