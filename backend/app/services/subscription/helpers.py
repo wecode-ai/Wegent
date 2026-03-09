@@ -53,6 +53,9 @@ TEMPLATE_VARIABLES = {
     "timestamp": lambda: str(int(datetime.now().timestamp())),
 }
 
+MIN_TRIGGER_INTERVAL_MINUTES = 30
+CRON_INTERVAL_VALIDATION_OCCURRENCES = 10
+
 
 def resolve_prompt_template(
     template: str,
@@ -249,6 +252,97 @@ def build_trigger_config(
         )
 
     raise ValueError(f"Unknown trigger type: {trigger_type}")
+
+
+def _get_min_interval_error_message(min_interval_minutes: int) -> str:
+    """Build a consistent minimum interval validation error message."""
+    return f"Minimum execution interval is {min_interval_minutes} minutes"
+
+
+def _to_interval_timedelta(trigger_config: Dict[str, Any]) -> timedelta:
+    """Convert interval trigger config to timedelta."""
+    value = trigger_config.get("value")
+    unit = trigger_config.get("unit")
+
+    if value is None or unit is None:
+        raise ValueError("Invalid interval trigger configuration")
+
+    value = int(value)
+    if value <= 0:
+        raise ValueError("Invalid interval trigger configuration")
+
+    if unit == "minutes":
+        return timedelta(minutes=value)
+    if unit == "hours":
+        return timedelta(hours=value)
+    if unit == "days":
+        return timedelta(days=value)
+
+    raise ValueError("Invalid interval trigger configuration")
+
+
+def validate_min_trigger_interval(
+    trigger_type: SubscriptionTriggerType | str,
+    trigger_config: Dict[str, Any],
+    *,
+    min_interval_minutes: int = MIN_TRIGGER_INTERVAL_MINUTES,
+) -> None:
+    """Validate minimum execution interval for scheduled triggers.
+
+    Enforces minimum interval for:
+    - interval trigger: direct value/unit duration check
+    - cron trigger: checks interval between consecutive runs
+    """
+    from zoneinfo import ZoneInfo
+
+    trigger_type_enum = (
+        trigger_type
+        if isinstance(trigger_type, SubscriptionTriggerType)
+        else SubscriptionTriggerType(trigger_type)
+    )
+    min_interval = timedelta(minutes=min_interval_minutes)
+
+    if trigger_type_enum == SubscriptionTriggerType.INTERVAL:
+        interval_delta = _to_interval_timedelta(trigger_config)
+        if interval_delta < min_interval:
+            raise ValueError(_get_min_interval_error_message(min_interval_minutes))
+        return
+
+    if trigger_type_enum != SubscriptionTriggerType.CRON:
+        return
+
+    cron_expr = trigger_config.get("expression")
+    if not cron_expr:
+        raise ValueError("Invalid cron expression")
+
+    timezone_str = trigger_config.get("timezone", "UTC")
+    try:
+        user_tz = ZoneInfo(timezone_str)
+    except Exception as exc:
+        raise ValueError(f"Invalid timezone: {timezone_str}") from exc
+
+    try:
+        from croniter import croniter
+
+        now_user_tz = datetime.now(timezone.utc).astimezone(user_tz)
+        iterator = croniter(cron_expr, now_user_tz)
+
+        previous = iterator.get_next(datetime)
+        if previous.tzinfo is None:
+            previous = previous.replace(tzinfo=user_tz)
+
+        for _ in range(CRON_INTERVAL_VALIDATION_OCCURRENCES - 1):
+            current = iterator.get_next(datetime)
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=user_tz)
+
+            if current - previous < min_interval:
+                raise ValueError(_get_min_interval_error_message(min_interval_minutes))
+            previous = current
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"Invalid cron expression: {cron_expr}") from exc
 
 
 def extract_trigger_config(trigger: SubscriptionTriggerConfig) -> Dict[str, Any]:

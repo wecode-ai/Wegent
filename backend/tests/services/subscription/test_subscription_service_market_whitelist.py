@@ -6,6 +6,8 @@
 
 import uuid
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
@@ -13,6 +15,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.subscription import (
     SubscriptionCreate,
+    SubscriptionTriggerType,
     SubscriptionUpdate,
     SubscriptionVisibility,
 )
@@ -140,3 +143,52 @@ def test_update_subscription_persists_filtered_market_whitelist_ids(
     assert updated_kind.json["_internal"]["market_whitelist_user_ids"] == [
         allowed_user.id
     ]
+
+
+def test_create_subscription_rejects_interval_below_30_minutes(
+    test_db: Session, test_user: User
+):
+    """Create should reject interval trigger below 30 minutes."""
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+
+    payload = _build_create_payload(team.id, [])
+    payload.trigger_type = SubscriptionTriggerType.INTERVAL
+    payload.trigger_config = {"value": 10, "unit": "minutes"}
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.create_subscription(
+            test_db,
+            subscription_in=payload,
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Minimum execution interval is 30 minutes"
+
+
+def test_update_subscription_rejects_second_level_cron(
+    test_db: Session, test_user: User
+):
+    """Update should reject second-level cron trigger."""
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    created = service.create_subscription(
+        test_db,
+        subscription_in=_build_create_payload(team.id, []),
+        user_id=test_user.id,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.update_subscription(
+            test_db,
+            subscription_id=created.id,
+            subscription_in=SubscriptionUpdate(
+                trigger_type=SubscriptionTriggerType.CRON,
+                trigger_config={"expression": "* * * * * *", "timezone": "UTC"},
+            ),
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Minimum execution interval is 30 minutes"

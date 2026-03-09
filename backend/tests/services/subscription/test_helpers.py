@@ -10,7 +10,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.schemas.subscription import SubscriptionTriggerType
-from app.services.subscription.helpers import calculate_next_execution_time
+from app.services.subscription.helpers import (
+    calculate_next_execution_time,
+    validate_min_trigger_interval,
+)
 
 
 class TestCalculateNextExecutionTimeOneTime:
@@ -172,3 +175,41 @@ class TestCalculateNextExecutionTimeEvent:
         )
 
         assert result is None
+
+
+class TestValidateMinTriggerInterval:
+    """Tests for minimum trigger interval validation."""
+
+    def test_interval_minutes_below_30_is_rejected(self):
+        """Interval trigger below 30 minutes should be rejected."""
+        with pytest.raises(
+            ValueError, match="Minimum execution interval is 30 minutes"
+        ):
+            validate_min_trigger_interval(
+                SubscriptionTriggerType.INTERVAL,
+                {"value": 10, "unit": "minutes"},
+            )
+
+    def test_interval_minutes_30_is_allowed(self):
+        """Interval trigger at 30 minutes should be allowed."""
+        validate_min_trigger_interval(
+            SubscriptionTriggerType.INTERVAL,
+            {"value": 30, "unit": "minutes"},
+        )
+
+    def test_cron_second_level_is_rejected(self):
+        """Second-level cron should be rejected by min interval guard."""
+        with pytest.raises(
+            ValueError, match="Minimum execution interval is 30 minutes"
+        ):
+            validate_min_trigger_interval(
+                SubscriptionTriggerType.CRON,
+                {"expression": "* * * * * *", "timezone": "UTC"},
+            )
+
+    def test_cron_every_30_minutes_is_allowed(self):
+        """Cron that runs every 30 minutes should be allowed."""
+        validate_min_trigger_interval(
+            SubscriptionTriggerType.CRON,
+            {"expression": "*/30 * * * *", "timezone": "UTC"},
+        )
