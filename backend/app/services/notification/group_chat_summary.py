@@ -18,9 +18,10 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
-from app.models.task_member import MemberStatus, TaskMember
 from app.models.user import User
 from app.services.notification.email_client import EmailClient
 from app.services.simple_chat import simple_chat_service
@@ -324,26 +325,27 @@ class GroupChatSummaryService:
         if not task_ids:
             return {}
 
-        # Query task_members to find all active members
+        # Query resource_members to find all approved members
         members = (
-            db.query(TaskMember.task_id, TaskMember.user_id)
+            db.query(ResourceMember.resource_id, ResourceMember.user_id)
             .filter(
-                TaskMember.task_id.in_(task_ids),
-                TaskMember.status == MemberStatus.ACTIVE.value,
-                TaskMember.user_id > 0,
+                ResourceMember.resource_type == ResourceType.TASK.value,
+                ResourceMember.resource_id.in_(task_ids),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.user_id > 0,
             )
             .all()
         )
 
-        # Build user_task_map from task_members
+        # Build user_task_map from resource_members
         user_task_map: Dict[int, List[int]] = {}
-        for task_id, user_id in members:
+        for resource_id, user_id in members:
             if user_id not in user_task_map:
                 user_task_map[user_id] = []
-            if task_id not in user_task_map[user_id]:
-                user_task_map[user_id].append(task_id)
+            if resource_id not in user_task_map[user_id]:
+                user_task_map[user_id].append(resource_id)
 
-        # Also include task owners (in case they are not in task_members)
+        # Also include task owners (in case they are not in resource_members)
         for task in tasks:
             user_id = task.user_id
             if user_id > 0:
