@@ -11,6 +11,7 @@ import MessagesArea from '../message/MessagesArea'
 import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
 import WeCodeGettingStarted from '../WeCodeGettingStarted'
+import PoweredByFooter from '@/components/common/PoweredByFooter'
 import { ChatInputCard } from '../input/ChatInputCard'
 import PipelineStageIndicator from './PipelineStageIndicator'
 import { ScrollToBottomIndicator } from './ScrollToBottomIndicator'
@@ -1084,13 +1085,15 @@ function ChatAreaContent({
             </div>
           </div>
         )}
-
         {/* WeCode Getting Started Area - only show when no messages and it's code task type */}
         {!hasMessages && taskType === 'code' && (
           <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 mb-8">
             <WeCodeGettingStarted />
           </div>
         )}
+
+        {/* Powered By Footer - only show on chat home page when no messages */}
+        {!hasMessages && taskType === 'chat' && <PoweredByFooter />}
 
         {/* Floating Input Area for messages view */}
         {hasMessages && (
