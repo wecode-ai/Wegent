@@ -82,10 +82,18 @@ def can_access_task_sync(db: Session, user_id: int, task_id: int) -> bool:
     spec = task_json.get("spec", {})
     linked_group = spec.get("linked_group")
 
+    logger.info(
+        f"[can_access_task_sync] Checking access for user={user_id}, task={task_id}, "
+        f"task_owner={task.user_id}, linked_group={linked_group}"
+    )
+
     if linked_group:
         from app.services.group_permission import get_effective_role_in_group
 
         role = get_effective_role_in_group(db, user_id, linked_group)
+        logger.info(
+            f"[can_access_task_sync] User {user_id} role in linked group '{linked_group}': {role}"
+        )
         if role is not None:
             logger.info(
                 f"[can_access_task_sync] User {user_id} has access via linked group '{linked_group}' with role '{role}'"
