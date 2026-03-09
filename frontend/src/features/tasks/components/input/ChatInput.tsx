@@ -717,7 +717,7 @@ export default function ChatInput({
       {/* Scrollable container that includes both badge and editable content */}
       <div className="relative">
         <div
-          className="w-full custom-scrollbar transition-[max-height] duration-300 ease-in-out"
+          className="w-full custom-scrollbar transition-all duration-300 ease-in-out"
           style={{
             minHeight,
             maxHeight,
@@ -751,7 +751,7 @@ export default function ChatInput({
                     onCompositionEnd={handleCompositionEnd}
                     onFocus={handleFocus}
                     data-testid="message-input"
-                    className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none ${isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none transition-all duration-300 ease-in-out ${isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                     style={{
                       minHeight,
                       whiteSpace: 'pre-wrap',
