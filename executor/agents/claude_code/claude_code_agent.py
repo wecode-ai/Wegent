@@ -837,6 +837,37 @@ class ClaudeCodeAgent(Agent):
 
         # Create client with options
         if self.options:
+            # Log MCP servers being passed to SDK
+            mcp_in_opts = self.options.get("mcp_servers") or self.options.get(
+                "mcpServers"
+            )
+            if mcp_in_opts:
+                if isinstance(mcp_in_opts, dict):
+                    logger.info(
+                        "[SDK-INIT] Passing %d MCP server(s) to Claude SDK: %s",
+                        len(mcp_in_opts),
+                        list(mcp_in_opts.keys()),
+                    )
+                    for sname, scfg in mcp_in_opts.items():
+                        logger.info(
+                            "[SDK-INIT]   %s -> type=%s, url=%s",
+                            sname,
+                            scfg.get("type", "?") if isinstance(scfg, dict) else "?",
+                            scfg.get("url", "?") if isinstance(scfg, dict) else "?",
+                        )
+                elif isinstance(mcp_in_opts, str):
+                    logger.info(
+                        "[SDK-INIT] MCP servers via config file: %s", mcp_in_opts
+                    )
+                else:
+                    logger.info(
+                        "[SDK-INIT] MCP servers (type=%s): %s",
+                        type(mcp_in_opts).__name__,
+                        mcp_in_opts,
+                    )
+            else:
+                logger.info("[SDK-INIT] No MCP servers in options")
+
             code_options = ClaudeAgentOptions(**self.options)
             self.client = ClaudeSDKClient(options=code_options)
         else:
