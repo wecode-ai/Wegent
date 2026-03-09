@@ -14,9 +14,8 @@ import json
 import os
 import random
 import string
-import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 from executor.config.config import get_wegent_mcp_url
 from shared.logger import setup_logger
@@ -274,192 +273,14 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     return {}
 
 
-def _check_mcp_server_reachable(name: str, server_config: Dict[str, Any]) -> bool:
-    """Check if an MCP server URL is reachable with a short timeout.
-
-    Args:
-        name: Server name for logging
-        server_config: Server configuration dict containing 'url'
-
-    Returns:
-        True if the server responded (any HTTP status), False on connection failure
-    """
-    url = server_config.get("url", "")
-    if not url:
-        logger.warning("[MCP-CHECK] Server '%s' has no URL configured, skipping", name)
-        return False
-
-    try:
-        req = urllib.request.Request(url, method="HEAD")
-        # Add auth headers if present so the server doesn't reject immediately
-        headers = server_config.get("headers", {})
-        for k, v in headers.items():
-            req.add_header(k, v)
-        urllib.request.urlopen(req, timeout=5)
-        logger.info("[MCP-CHECK] Server '%s' is reachable: %s", name, url)
-        return True
-    except urllib.error.HTTPError:
-        # Any HTTP response (4xx, 5xx) means the server is reachable
-        logger.info("[MCP-CHECK] Server '%s' is reachable (HTTP error): %s", name, url)
-        return True
-    except Exception as e:
-        logger.warning(
-            "[MCP-CHECK] Server '%s' is NOT reachable: %s (error: %s)", name, url, e
-        )
-        return False
-
-
-def _filter_reachable_mcp_servers(
-    mcp_servers: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Filter out unreachable MCP servers to prevent SDK initialization timeout.
-
-    Args:
-        mcp_servers: Dict of MCP server configs
-
-    Returns:
-        Dict containing only reachable MCP servers
-    """
-    if not mcp_servers:
-        return mcp_servers
-
-    reachable = {}
-    unreachable_names: List[str] = []
-
-    for name, config in mcp_servers.items():
-        if _check_mcp_server_reachable(name, config):
-            reachable[name] = config
-        else:
-            unreachable_names.append(name)
-
-    if unreachable_names:
-        logger.warning(
-            "[MCP-FILTER] Removed %d unreachable MCP server(s): %s",
-            len(unreachable_names),
-            unreachable_names,
-        )
-
-    return reachable
-
-
-def _normalize_mcp_server_types(mcp_servers: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize MCP server types for Claude Code SDK compatibility.
-
-    Claude Code SDK only supports "http" type, but skill configurations
-    may use "streamable-http". This function converts unsupported types.
-
-    Args:
-        mcp_servers: Dict of MCP server configs
-
-    Returns:
-        Dict with normalized server types
-    """
-    if not mcp_servers:
-        return mcp_servers
-
-    # Claude Code SDK supported types
-    TYPE_MAPPING = {
-        "streamable-http": "http",
-    }
-
-    for name, config in mcp_servers.items():
-        if not isinstance(config, dict):
-            continue
-        original_type = config.get("type", "")
-        mapped_type = TYPE_MAPPING.get(original_type)
-        if mapped_type:
-            config["type"] = mapped_type
-            logger.info(
-                "[MCP-NORMALIZE] Server '%s': type '%s' -> '%s'",
-                name,
-                original_type,
-                mapped_type,
-            )
-
-    return mcp_servers
-
-
-def _extract_skill_mcp_servers(task_data: ExecutionRequest) -> Dict[str, Any]:
-    """Extract and merge MCP servers from skill_configs.
-
-    Each skill may declare mcpServers in its configuration. This function
-    collects them all, applies variable substitution, and returns a merged
-    dict keyed by prefixed server names (to avoid cross-skill conflicts).
-
-    Args:
-        task_data: The task data object containing skill_configs
-
-    Returns:
-        Dict of MCP server configs in Claude Code SDK format, e.g.
-        {"skillName_serverName": {"type": "http", "url": "..."}}
-    """
-    from shared.utils.mcp_utils import replace_mcp_server_variables
-
-    skill_configs = task_data.skill_configs
-    if not skill_configs:
-        logger.debug("[SKILL-MCP] No skill_configs present")
-        return {}
-
-    logger.info(
-        "[SKILL-MCP] Processing %d skill config(s): %s",
-        len(skill_configs),
-        [s.get("name", "?") for s in skill_configs],
-    )
-
-    merged: Dict[str, Any] = {}
-    for skill_config in skill_configs:
-        skill_name = skill_config.get("name", "unknown")
-        mcp_servers = skill_config.get("mcpServers")
-        if not mcp_servers or not isinstance(mcp_servers, dict):
-            logger.debug("[SKILL-MCP] Skill '%s' has no mcpServers", skill_name)
-            continue
-
-        logger.info(
-            "[SKILL-MCP] Skill '%s' raw mcpServers: %s",
-            skill_name,
-            json.dumps(
-                {
-                    k: {**v, "headers": "***"} if "headers" in v else v
-                    for k, v in mcp_servers.items()
-                },
-                ensure_ascii=False,
-            ),
-        )
-
-        # Replace ${{...}} placeholders with actual values from task_data
-        mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
-
-        # Prefix server names with skill name to avoid cross-skill conflicts
-        for server_name, server_config in mcp_servers.items():
-            prefixed_name = f"{skill_name}_{server_name}"
-            merged[prefixed_name] = server_config
-            logger.info(
-                "[SKILL-MCP] Registered: %s -> type=%s, url=%s",
-                prefixed_name,
-                server_config.get("type", "?"),
-                server_config.get("url", "?"),
-            )
-
-    if merged:
-        logger.info(
-            "[SKILL-MCP] Total skill MCP servers collected: %d",
-            len(merged),
-        )
-    else:
-        logger.info(
-            "[SKILL-MCP] No skill MCP servers found in %d skill(s)", len(skill_configs)
-        )
-
-    return merged
-
 
 
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
     Collects all non-None configuration parameters from task_data,
-    including Ghost-level MCP servers and Skill-level MCP servers.
-    Unreachable MCP servers are filtered out to prevent initialization timeout.
+    including Ghost-level MCP servers. Skill-level MCP merging, type
+    normalization, and reachability filtering are handled by the backend.
 
     Args:
         task_data: The task data object
@@ -532,19 +353,6 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
         else:
             logger.info("[MCP] No Ghost-level MCP servers configured")
 
-        # Extract Skill-level MCP servers and merge into bot_config
-        skill_mcp_servers = _extract_skill_mcp_servers(task_data)
-        if skill_mcp_servers:
-            existing = bot_config.get("mcp_servers")
-            if isinstance(existing, dict):
-                existing.update(skill_mcp_servers)
-            else:
-                bot_config["mcp_servers"] = skill_mcp_servers
-            logger.info(
-                "[MCP] After merging skill MCP: %s",
-                list(bot_config["mcp_servers"].keys()),
-            )
-
         # Add wegent MCP server for subscription tasks
         if task_data.is_subscription:
             wegent_mcp_url = get_wegent_mcp_url()
@@ -568,31 +376,6 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
             logger.info(
                 f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
             )
-
-        # Normalize MCP server types for Claude Code SDK compatibility
-        # (e.g., "streamable-http" -> "http")
-        final_mcp = bot_config.get("mcp_servers")
-        if isinstance(final_mcp, dict) and final_mcp:
-            bot_config["mcp_servers"] = _normalize_mcp_server_types(final_mcp)
-
-        # Filter out unreachable MCP servers to prevent SDK initialization timeout
-        final_mcp = bot_config.get("mcp_servers")
-        if isinstance(final_mcp, dict) and final_mcp:
-            logger.info(
-                "[MCP] Pre-filter: %d MCP server(s): %s",
-                len(final_mcp),
-                list(final_mcp.keys()),
-            )
-            bot_config["mcp_servers"] = _filter_reachable_mcp_servers(final_mcp)
-            logger.info(
-                "[MCP] Post-filter: %d MCP server(s): %s",
-                len(bot_config["mcp_servers"]),
-                list(bot_config["mcp_servers"].keys()),
-            )
-            # Remove empty mcp_servers to avoid passing {} to SDK
-            if not bot_config["mcp_servers"]:
-                del bot_config["mcp_servers"]
-                logger.info("[MCP] All MCP servers unreachable, removed from options")
 
         for key in valid_options:
             if key in bot_config and bot_config[key] is not None:
