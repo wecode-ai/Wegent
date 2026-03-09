@@ -160,6 +160,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
     CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
 
+    # Celery default queue name (useful for separating preview and prod environments)
+    CELERY_TASK_DEFAULT_QUEUE: str = "wegent_online"
+
     # Celery Beat scheduler configuration
     # "default" = SQLite file (single instance only)
     # "sqlalchemy" = MySQL database (multi-instance deployment)
