@@ -758,7 +758,7 @@ export default function ChatInput({
                       // only inserts <br> tags (not new <div> blocks), so text-indent
                       // correctly affects only the first line and subsequent lines start from left edge
                       textIndent: badge ? `${badgeWidth}px` : 0,
-                      // Add padding at bottom right to prevent text overlapping with expand button
+                      // Add padding at top right to prevent text overlapping with expand button
                       paddingRight: onExpandToggle && !isMobile ? '2rem' : undefined,
                     }}
                     suppressContentEditableWarning
@@ -772,7 +772,7 @@ export default function ChatInput({
           </div>
         </div>
 
-        {/* Expand/Collapse button - positioned outside scroll container for fixed position */}
+        {/* Expand/Collapse button - positioned at top-right corner */}
         {onExpandToggle && !isMobile && (
           <TooltipProvider>
             <Tooltip>
@@ -780,7 +780,7 @@ export default function ChatInput({
                 <button
                   type="button"
                   onClick={onExpandToggle}
-                  className="absolute bottom-1 right-0 p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text-secondary transition-colors z-10"
+                  className="absolute top-1 right-0 p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text-secondary transition-colors z-10"
                   aria-label={isExpanded ? t('chat:input.collapse') : t('chat:input.expand')}
                 >
                   {isExpanded ? (
