@@ -431,11 +431,10 @@ class CallbackTransport(EventTransport):
             event["executor_namespace"] = executor_namespace
 
         import asyncio
+
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self.client.send_event_dict, event
-            )
+            return await loop.run_in_executor(None, self.client.send_event_dict, event)
         except RuntimeError:
             return self.client.send_event_dict(event)
 

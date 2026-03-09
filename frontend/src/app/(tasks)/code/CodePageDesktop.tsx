@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -71,9 +71,6 @@ export function CodePageDesktop() {
     refreshTasks()
     refreshSelectedTaskDetail(false)
   }
-
-  // Router for navigation
-  const router = useRouter()
 
   // User state for git token check
   const { user } = useUser()
@@ -197,7 +194,8 @@ export function CodePageDesktop() {
     // This prevents the UI from being stuck showing the previous task's messages
     setSelectedTask(null)
     clearAllStreams()
-    router.replace(paths.code.getHref())
+    // Force a hard reload to ensure a fresh start when already on /code
+    window.location.href = paths.code.getHref()
   }
 
   return (

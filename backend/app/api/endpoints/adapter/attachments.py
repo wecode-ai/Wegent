@@ -13,7 +13,7 @@ from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -439,6 +439,18 @@ async def download_attachment(
 
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Check if attachment has an external URL (e.g., generated video)
+    # For such attachments, redirect to the external URL instead of serving binary data
+    if context.type_data and isinstance(context.type_data, dict):
+        video_metadata = context.type_data.get("video_metadata")
+        if video_metadata and isinstance(video_metadata, dict):
+            video_url = video_metadata.get("video_url")
+            if video_url:
+                logger.info(
+                    f"Redirecting attachment {attachment_id} to external video URL"
+                )
+                return RedirectResponse(url=video_url, status_code=302)
 
     # Get binary data from the appropriate storage backend
     binary_data = context_service.get_attachment_binary_data(

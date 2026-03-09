@@ -81,5 +81,10 @@ class TaskResource(Base):
         UniqueConstraint(
             "user_id", "kind", "name", "namespace", name="uniq_user_kind_name_namespace"
         ),
-        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
     )

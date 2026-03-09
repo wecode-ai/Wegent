@@ -152,3 +152,30 @@ def get_wegent_mcp_url() -> str:
         The Streamable HTTP endpoint URL for the MCP server.
     """
     return f"{WEGENT_MCP_URL}"
+
+
+def sync_device_config(device_config: "DeviceConfig") -> None:
+    """Sync device config values to global config variables.
+
+    Called once at startup in local mode. The device_config already has
+    env overrides applied (env var > config file > defaults), so we
+    simply propagate those final values to the module-level globals
+    that other modules read.
+
+    Args:
+        device_config: DeviceConfig instance (already env-overridden).
+    """
+    global EXECUTOR_MODE, WEGENT_BACKEND_URL, WEGENT_AUTH_TOKEN
+    global WEGENT_EXECUTOR_LOG_MAX_SIZE, WEGENT_EXECUTOR_LOG_BACKUP_COUNT
+    global WEGENT_MCP_URL
+
+    EXECUTOR_MODE = device_config.mode
+    WEGENT_BACKEND_URL = device_config.connection.backend_url
+    WEGENT_AUTH_TOKEN = device_config.connection.auth_token
+    WEGENT_EXECUTOR_LOG_MAX_SIZE = device_config.logging.max_size_mb
+    WEGENT_EXECUTOR_LOG_BACKUP_COUNT = device_config.logging.backup_count
+
+    # Recompute derived variables
+    WEGENT_MCP_URL = os.environ.get(
+        "WEGENT_MCP_URL", f"{WEGENT_BACKEND_URL}/api/mcp/system"
+    )

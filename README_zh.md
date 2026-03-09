@@ -154,13 +154,53 @@ graph TB
 
 ## 🚀 快速开始
 
+**一条命令启动：**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
 
 然后在浏览器中访问 http://localhost:3000
 
-> 可选：启用 RAG 功能 `docker compose --profile rag up -d`
+### 其他部署方式
+
+| 模式 | 说明 |
+|------|------|
+| **Standalone**（默认） | 单容器，SQLite，推荐大多数用户使用 |
+| **Standard** | 多容器，MySQL，适合生产环境 |
+| **Development** | 热重载，适合开发者 |
+
+```bash
+# Standard 模式（多容器 + MySQL）
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
+
+# 开发模式（从源码安装，支持热重载）
+git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
+```
+
+<details>
+<summary><b>🔧 常用命令</b></summary>
+
+```bash
+# Standalone 模式
+docker compose -f docker-compose.standalone.yml logs -f   # 查看日志
+docker compose -f docker-compose.standalone.yml down      # 停止
+docker compose -f docker-compose.standalone.yml up -d     # 启动
+
+# Standard 模式
+docker compose logs -f   # 查看日志
+docker compose down      # 停止
+docker compose up -d     # 启动
+
+# 开发模式
+./start.sh --status      # 查看状态
+./start.sh --stop        # 停止
+./start.sh --restart     # 重启
+```
+
+</details>
+
+> 📖 详情请参阅 [Standalone 模式文档](docs/zh/deployment/standalone-mode.md)。
 
 ---
 
@@ -263,10 +303,10 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
-            <sub><b>Xuemin</b></sub>
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -277,10 +317,17 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
             <br />
-            <sub><b>Icycrystal4</b></sub>
+            <sub><b>Xuemin</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/kerwin612">
+            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
+            <br />
+            <sub><b>Kerwin Bryant</b></sub>
         </a>
     </td>
     <td align="center">
@@ -296,13 +343,6 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
             <br />
             <sub><b>Junbaor</b></sub>
         </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/fingki">
-            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-            <br />
-            <sub><b>Fingki</b></sub>
-        </a>
     </td></tr>
 <tr>
     <td align="center">
@@ -310,6 +350,13 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+            <br />
+            <sub><b>Fingki</b></sub>
         </a>
     </td>
     <td align="center">
@@ -341,6 +388,35 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/LiDaiyan">
+            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+            <br />
+            <sub><b>Li Daiyan</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/RichardoMrMu">
+            <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
+            <br />
+            <sub><b>RichardoMu</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
+        <a href="https://github.com/haosenwang1018">
+            <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
+            <br />
+            <sub><b>Sense_wang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/Ged0">
+            <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
+            <br />
+            <sub><b>_</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
@@ -352,6 +428,13 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
             <sub><b>Graindt</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qingchengliu">
+            <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
+            <br />
+            <sub><b>Qingcheng</b></sub>
         </a>
     </td>
     <td align="center">

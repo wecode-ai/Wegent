@@ -153,13 +153,53 @@ All features above are fully customizable:
 
 ## 🚀 Quick Start
 
+**One command to start:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
 
 Then open http://localhost:3000 in your browser.
 
-> Optional: Enable RAG features with `docker compose --profile rag up -d`
+### Other Deployment Options
+
+| Mode | Description |
+|------|-------------|
+| **Standalone** (default) | Single container, SQLite, recommended for most users |
+| **Standard** | Multi-container, MySQL, for production |
+| **Development** | Hot reload, for developers |
+
+```bash
+# Standard mode (multi-container with MySQL)
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
+
+# Development mode (from source, with hot reload)
+git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
+```
+
+<details>
+<summary><b>🔧 Common Commands</b></summary>
+
+```bash
+# Standalone mode
+docker compose -f docker-compose.standalone.yml logs -f   # View logs
+docker compose -f docker-compose.standalone.yml down      # Stop
+docker compose -f docker-compose.standalone.yml up -d     # Start
+
+# Standard mode
+docker compose logs -f   # View logs
+docker compose down      # Stop
+docker compose up -d     # Start
+
+# Development mode
+./start.sh --status      # Check status
+./start.sh --stop        # Stop
+./start.sh --restart     # Restart
+```
+
+</details>
+
+> 📖 See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
 
 ---
 
@@ -262,10 +302,10 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
-            <sub><b>Xuemin</b></sub>
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -276,10 +316,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
             <br />
-            <sub><b>Icycrystal4</b></sub>
+            <sub><b>Xuemin</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/kerwin612">
+            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
+            <br />
+            <sub><b>Kerwin Bryant</b></sub>
         </a>
     </td>
     <td align="center">
@@ -295,13 +342,6 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Junbaor</b></sub>
         </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/fingki">
-            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-            <br />
-            <sub><b>Fingki</b></sub>
-        </a>
     </td></tr>
 <tr>
     <td align="center">
@@ -309,6 +349,13 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+            <br />
+            <sub><b>Fingki</b></sub>
         </a>
     </td>
     <td align="center">
@@ -340,6 +387,35 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/LiDaiyan">
+            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+            <br />
+            <sub><b>Li Daiyan</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/RichardoMrMu">
+            <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
+            <br />
+            <sub><b>RichardoMu</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
+        <a href="https://github.com/haosenwang1018">
+            <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
+            <br />
+            <sub><b>Sense_wang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/Ged0">
+            <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
+            <br />
+            <sub><b>_</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
@@ -351,6 +427,13 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
             <sub><b>Graindt</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qingchengliu">
+            <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
+            <br />
+            <sub><b>Qingcheng</b></sub>
         </a>
     </td>
     <td align="center">

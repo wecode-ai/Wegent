@@ -16,7 +16,9 @@
     "retry": "重试",
     "edit": "编辑",
     "save": "保存",
-    "cancel": "取消"
+    "cancel": "取消",
+    "re_edit": "重新编辑",
+    "re_edit_tooltip": "重新编辑"
   },
   "edit": {
     "tooltip": "编辑消息",
@@ -30,7 +32,7 @@
   },
   "regenerate": {
     "failed": "重新生成失败",
-    "tooltip": "重新生成回复",
+    "tooltip": "再次生成",
     "select_model": "选择模型",
     "select_model_desc": "选择用于重新生成的模型"
   },
@@ -95,7 +97,8 @@
     "found": "找到",
     "expand_content": "展开显示",
     "collapse_content": "收起内容",
-    "lines": "行"
+    "lines": "行",
+    "video_generation": "视频生成"
   },
   "shared_task": {
     "share_task": "分享",
@@ -304,6 +307,7 @@
   },
   "upload": {
     "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
+    "image_tooltip": "支持的文件类型: 图片 (JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n上传参考图片用于生成",
     "wait_for_upload": "请等待文件上传完成"
   },
   "clarification_toggle": {
@@ -510,5 +514,66 @@
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
     "no_task_id": "没有可用的任务 ID"
+  },
+  "generate": {
+    "mode_selector": "生成类型",
+    "max_attachments": "最多可上传 {{count}} 个附件作为参考图",
+    "attachment_limit_reached": "已达到附件数量上限"
+  },
+  "video": {
+    "title": "视频生成",
+    "model_selector": "选择视频模型",
+    "search_model": "搜索视频模型...",
+    "resolution_selector": "选择分辨率",
+    "resolution": {
+      "480p": "480p (标清)",
+      "720p": "720p (高清)",
+      "1080p": "1080p (全高清)",
+      "4k": "4K (超高清)"
+    },
+    "ratio": {
+      "16_9": "16:9 (横屏)",
+      "9_16": "9:16 (竖屏)",
+      "1_1": "1:1 (方形)",
+      "4_3": "4:3",
+      "3_4": "3:4",
+      "21_9": "21:9 (超宽)",
+      "adaptive": "自适应"
+    },
+    "generating": "正在生成视频...",
+    "preparing": "准备中...",
+    "progress": "生成进度: {{progress}}%",
+    "completed": "视频生成完成",
+    "failed": "视频生成失败",
+    "download": "下载视频",
+    "reference_image": "参考图片（可选）",
+    "no_models": "暂无可用的视频模型"
+  },
+  "image": {
+    "title": "图片生成",
+    "model_selector": "选择图片模型",
+    "search_model": "搜索图片模型...",
+    "size_selector": "选择尺寸",
+    "size": {
+      "1024x1024": "1K (1024×1024)",
+      "2048x2048": "2K (2048×2048)",
+      "2K": "2K (自适应)",
+      "3K": "3K (自适应)",
+      "2304x1728": "2K 4:3 横屏",
+      "1728x2304": "2K 3:4 竖屏",
+      "2848x1600": "2K 16:9 横屏",
+      "1600x2848": "2K 9:16 竖屏"
+    },
+    "generating": "正在生成图片...",
+    "preparing": "准备中...",
+    "progress": "生成进度: {{progress}}%",
+    "completed": "图片生成完成",
+    "failed": "图片生成失败",
+    "download": "下载图片",
+    "expand": "查看大图",
+    "use_as_reference": "用作参考图",
+    "generated_image": "生成的图片",
+    "lightbox": "图片预览",
+    "no_models": "暂无可用的图片模型"
   }
 }

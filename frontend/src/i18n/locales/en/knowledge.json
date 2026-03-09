@@ -291,7 +291,18 @@
       "noPermission": "You don't have access to this knowledge base",
       "pendingApproval": "Pending Approval",
       "pendingApprovalDescription": "Your request to access \"{{name}}\" is awaiting approval",
-      "selectPermission": "Select Permission Level",
+      "selectPermission": "Select Role",
+      "role": {
+        "label": "Role",
+        "Owner": "Owner",
+        "Maintainer": "Maintainer",
+        "Developer": "Developer",
+        "Reporter": "Reporter",
+        "OwnerDescription": "Creator with full permissions (only the creator can have this role)",
+        "MaintainerDescription": "Maintainer who can manage members and edit content",
+        "DeveloperDescription": "Developer who can edit content",
+        "ReporterDescription": "User who can only view content"
+      },
       "viewDescription": "Can browse knowledge base content only",
       "editDescription": "Can add, modify, and delete documents",
       "manageDescription": "Can manage other users' access permissions",
@@ -400,7 +411,20 @@
       "configHint": "These settings are for testing only and will not be saved to the database.",
       "modified": "Modified"
     },
-    "goToSettings": "Go to Settings"
+    "goToSettings": "Go to Settings",
+    "groupChat": {
+      "create": "Create Group Chat",
+      "createForGroup": "Create group chat for group",
+      "createForKb": "Create group chat for knowledge base",
+      "defaultTitle": "{{groupName}} Group Chat",
+      "defaultTitleWithKb": "{{groupName}} - {{kbName}} Group Chat",
+      "addingMembers": "Adding group members...",
+      "addMembersSuccess": "Successfully added {{count}} group members",
+      "addMembersPartialFail": "Some members failed to add ({{failed}}/{{total}}). You can add them manually in the group chat.",
+      "addMembersFailed": "Failed to add group members. You can add them manually in the group chat.",
+      "bindKbPartialFail": "Some knowledge bases failed to bind ({{failed}}/{{total}})",
+      "bindKbFailed": "Failed to bind knowledge bases"
+    }
   },
   "add_repository": "Add Repository",
   "add_repository_desc": "Under maintenance, temporarily unavailable",

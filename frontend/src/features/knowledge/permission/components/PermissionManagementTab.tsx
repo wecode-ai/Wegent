@@ -19,7 +19,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserDialog } from './add-user-dialog'
-import type { PermissionLevel, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
+import type { MemberRole, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
 
 interface PermissionManagementTabProps {
   kbId: number
@@ -29,9 +29,9 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
   const { t } = useTranslation('knowledge')
   const [showAddUser, setShowAddUser] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [editingLevel, setEditingLevel] = useState<PermissionLevel>('view')
-  // Track selected approval levels for pending requests
-  const [approvalLevels, setApprovalLevels] = useState<Record<number, PermissionLevel>>({})
+  const [editingRole, setEditingRole] = useState<MemberRole>('Reporter')
+  // Track selected approval roles for pending requests
+  const [approvalRoles, setApprovalRoles] = useState<Record<number, MemberRole>>({})
 
   const {
     permissions,
@@ -49,14 +49,15 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     fetchPermissions()
   }, [fetchPermissions])
 
-  // Initialize approval levels when pending requests change
+  // Initialize approval roles when pending requests change
   useEffect(() => {
     if (permissions?.pending) {
-      setApprovalLevels(prev => {
-        const additions: Record<number, PermissionLevel> = {}
+      setApprovalRoles(prev => {
+        const additions: Record<number, MemberRole> = {}
         permissions.pending.forEach(p => {
           if (!(p.id in prev)) {
-            additions[p.id] = p.permission_level
+            // Use role if available, otherwise fallback to permission_level
+            additions[p.id] = p.role || 'Reporter'
           }
         })
         return Object.keys(additions).length ? { ...prev, ...additions } : prev
@@ -64,30 +65,22 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     }
   }, [permissions?.pending])
 
-  const handleApprovalLevelChange = (permissionId: number, level: PermissionLevel) => {
-    setApprovalLevels(prev => ({ ...prev, [permissionId]: level }))
+  const handleApprovalRoleChange = (permissionId: number, role: MemberRole) => {
+    setApprovalRoles(prev => ({ ...prev, [permissionId]: role }))
   }
 
   const handleApprove = async (permission: PendingPermissionInfo) => {
     try {
-      const level = approvalLevels[permission.id] || permission.permission_level
-      await reviewPermission(permission.id, 'approve', level)
+      const role = approvalRoles[permission.id] || permission.role || 'Reporter'
+      await reviewPermission(permission.id, 'approve', role)
     } catch (_err) {
       // Error is handled by the hook
     }
   }
 
-  const handleReject = async (permission: PendingPermissionInfo) => {
+  const handleUpdateRole = async (permissionId: number, role: MemberRole) => {
     try {
-      await reviewPermission(permission.id, 'reject')
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
-
-  const handleUpdateLevel = async (permissionId: number, level: PermissionLevel) => {
-    try {
-      await updatePermission(permissionId, level)
+      await updatePermission(permissionId, role)
       setEditingId(null)
     } catch (_err) {
       // Error is handled by the hook
@@ -105,7 +98,15 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
 
   const startEditing = (permission: PermissionUserInfo) => {
     setEditingId(permission.id)
-    setEditingLevel(permission.permission_level)
+    setEditingRole(permission.role || 'Reporter')
+  }
+
+  const handleReject = async (permission: PendingPermissionInfo) => {
+    try {
+      await reviewPermission(permission.id, 'reject')
+    } catch (_err) {
+      // Error is handled by the hook
+    }
   }
 
   const cancelEditing = () => {
@@ -122,9 +123,10 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
 
   const pendingCount = permissions?.pending.length || 0
   const approvedCount =
-    (permissions?.approved.view.length || 0) +
-    (permissions?.approved.edit.length || 0) +
-    (permissions?.approved.manage.length || 0)
+    (permissions?.approved.Owner?.length || 0) +
+    (permissions?.approved.Maintainer?.length || 0) +
+    (permissions?.approved.Developer?.length || 0) +
+    (permissions?.approved.Reporter?.length || 0)
 
   return (
     <div className="space-y-6 p-4">
@@ -180,23 +182,31 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                   </div>
                   <div className="text-xs text-text-muted mt-1">
                     {t('document.permission.requesting')}:{' '}
-                    {t(`document.permission.${permission.permission_level}`)}
+                    {permission.role
+                      ? t(`document.permission.role.${permission.role}`)
+                      : permission.permission_level || 'view'}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Select
-                    value={approvalLevels[permission.id] || permission.permission_level}
+                    value={approvalRoles[permission.id] || permission.role || 'Reporter'}
                     onValueChange={value =>
-                      handleApprovalLevelChange(permission.id, value as PermissionLevel)
+                      handleApprovalRoleChange(permission.id, value as MemberRole)
                     }
                   >
-                    <SelectTrigger className="w-24 h-8">
+                    <SelectTrigger className="w-28 h-11 min-w-[44px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="view">{t('document.permission.view')}</SelectItem>
-                      <SelectItem value="edit">{t('document.permission.edit')}</SelectItem>
-                      <SelectItem value="manage">{t('document.permission.manage')}</SelectItem>
+                      <SelectItem value="Maintainer">
+                        {t('document.permission.role.Maintainer')}
+                      </SelectItem>
+                      <SelectItem value="Developer">
+                        {t('document.permission.role.Developer')}
+                      </SelectItem>
+                      <SelectItem value="Reporter">
+                        {t('document.permission.role.Reporter')}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <Button
@@ -242,49 +252,65 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
           </p>
         ) : (
           <div className="space-y-4">
-            {/* Manage permissions */}
-            {(permissions?.approved.manage.length || 0) > 0 && (
+            {/* Owner permissions */}
+            {(permissions?.approved.Owner?.length || 0) > 0 && (
               <PermissionGroup
-                title={t('document.permission.manage')}
-                users={permissions!.approved.manage}
+                title={t('document.permission.role.Owner')}
+                users={permissions!.approved.Owner}
                 editingId={editingId}
-                editingLevel={editingLevel}
-                setEditingLevel={setEditingLevel}
+                editingRole={editingRole}
+                setEditingRole={setEditingRole}
                 onStartEditing={startEditing}
                 onCancelEditing={cancelEditing}
-                onUpdateLevel={handleUpdateLevel}
+                onUpdateRole={handleUpdateRole}
                 onDelete={handleDelete}
                 loading={loading}
                 t={t}
               />
             )}
-            {/* Edit permissions */}
-            {(permissions?.approved.edit.length || 0) > 0 && (
+            {/* Maintainer permissions */}
+            {(permissions?.approved.Maintainer?.length || 0) > 0 && (
               <PermissionGroup
-                title={t('document.permission.edit')}
-                users={permissions!.approved.edit}
+                title={t('document.permission.role.Maintainer')}
+                users={permissions!.approved.Maintainer}
                 editingId={editingId}
-                editingLevel={editingLevel}
-                setEditingLevel={setEditingLevel}
+                editingRole={editingRole}
+                setEditingRole={setEditingRole}
                 onStartEditing={startEditing}
                 onCancelEditing={cancelEditing}
-                onUpdateLevel={handleUpdateLevel}
+                onUpdateRole={handleUpdateRole}
                 onDelete={handleDelete}
                 loading={loading}
                 t={t}
               />
             )}
-            {/* View permissions */}
-            {(permissions?.approved.view.length || 0) > 0 && (
+            {/* Developer permissions */}
+            {(permissions?.approved.Developer?.length || 0) > 0 && (
               <PermissionGroup
-                title={t('document.permission.view')}
-                users={permissions!.approved.view}
+                title={t('document.permission.role.Developer')}
+                users={permissions!.approved.Developer}
                 editingId={editingId}
-                editingLevel={editingLevel}
-                setEditingLevel={setEditingLevel}
+                editingRole={editingRole}
+                setEditingRole={setEditingRole}
                 onStartEditing={startEditing}
                 onCancelEditing={cancelEditing}
-                onUpdateLevel={handleUpdateLevel}
+                onUpdateRole={handleUpdateRole}
+                onDelete={handleDelete}
+                loading={loading}
+                t={t}
+              />
+            )}
+            {/* Reporter permissions */}
+            {(permissions?.approved.Reporter?.length || 0) > 0 && (
+              <PermissionGroup
+                title={t('document.permission.role.Reporter')}
+                users={permissions!.approved.Reporter}
+                editingId={editingId}
+                editingRole={editingRole}
+                setEditingRole={setEditingRole}
+                onStartEditing={startEditing}
+                onCancelEditing={cancelEditing}
+                onUpdateRole={handleUpdateRole}
                 onDelete={handleDelete}
                 loading={loading}
                 t={t}
@@ -310,11 +336,11 @@ interface PermissionGroupProps {
   title: string
   users: PermissionUserInfo[]
   editingId: number | null
-  editingLevel: PermissionLevel
-  setEditingLevel: (level: PermissionLevel) => void
+  editingRole: MemberRole
+  setEditingRole: (role: MemberRole) => void
   onStartEditing: (user: PermissionUserInfo) => void
   onCancelEditing: () => void
-  onUpdateLevel: (id: number, level: PermissionLevel) => void
+  onUpdateRole: (id: number, role: MemberRole) => void
   onDelete: (id: number) => void
   loading: boolean
   t: (key: string) => string
@@ -324,11 +350,11 @@ function PermissionGroup({
   title,
   users,
   editingId,
-  editingLevel,
-  setEditingLevel,
+  editingRole,
+  setEditingRole,
   onStartEditing,
   onCancelEditing,
-  onUpdateLevel,
+  onUpdateRole,
   onDelete,
   loading,
   t,
@@ -350,24 +376,27 @@ function PermissionGroup({
             </div>
             {editingId === user.id ? (
               <div className="flex items-center gap-2">
-                <Select
-                  value={editingLevel}
-                  onValueChange={v => setEditingLevel(v as PermissionLevel)}
-                >
-                  <SelectTrigger className="w-24 h-8">
+                <Select value={editingRole} onValueChange={v => setEditingRole(v as MemberRole)}>
+                  <SelectTrigger className="w-28 h-11 min-w-[44px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="view">{t('document.permission.view')}</SelectItem>
-                    <SelectItem value="edit">{t('document.permission.edit')}</SelectItem>
-                    <SelectItem value="manage">{t('document.permission.manage')}</SelectItem>
+                    <SelectItem value="Maintainer">
+                      {t('document.permission.role.Maintainer')}
+                    </SelectItem>
+                    <SelectItem value="Developer">
+                      {t('document.permission.role.Developer')}
+                    </SelectItem>
+                    <SelectItem value="Reporter">
+                      {t('document.permission.role.Reporter')}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 text-success"
-                  onClick={() => onUpdateLevel(user.id, editingLevel)}
+                  onClick={() => onUpdateRole(user.id, editingRole)}
                   disabled={loading}
                 >
                   <Check className="w-3.5 h-3.5" />

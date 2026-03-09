@@ -286,6 +286,7 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
         if is_subscription:
             if validation_id and status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
                 import json
+
                 done_result = {"validation_id": validation_id, "stage": "completed"}
                 try:
                     agent = agent_service.get_agent(task_data.task_id)
@@ -302,14 +303,11 @@ async def process_async(request: Union[ExecutionRequest, Dict[str, Any]]) -> Tas
             )
             os._exit(exit_code)
 
-
     asyncio.create_task(_run_in_background())
     logger.info(
         f"Task {task_data.task_id} dispatched to background, returning RUNNING immediately"
     )
     return TaskStatus.RUNNING
-
-
 
 
 def run_task() -> TaskStatus:

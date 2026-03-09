@@ -21,10 +21,12 @@ import asyncio
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
-from openai import AsyncOpenAI
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
+from app.core.async_utils import run_in_main_loop
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -339,6 +341,8 @@ class ExecutionDispatcher:
                 await self._dispatch_websocket(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.POLLING:
                 await self._dispatch_polling(request, target, wrapped_emitter)
+            elif target.mode == CommunicationMode.INPROCESS:
+                await self._dispatch_inprocess(request, target, wrapped_emitter)
             else:
                 await self._dispatch_http_callback(request, target, wrapped_emitter)
         except Exception as e:
@@ -456,6 +460,19 @@ class ExecutionDispatcher:
             return request.bot[0].get("shell_type", "Chat")
         return "Chat"
 
+    @staticmethod
+    def _get_model_type(request: ExecutionRequest) -> str:
+        """Get model type from request's model_config.
+
+        Args:
+            request: Execution request
+
+        Returns:
+            Model type string (e.g., "llm", "image")
+        """
+        model_config = request.model_config or {}
+        return model_config.get("modelType", "llm")
+
     async def dispatch_with_composite(
         self,
         request: ExecutionRequest,
@@ -485,7 +502,11 @@ class ExecutionDispatcher:
         target: ExecutionTarget,
         emitter: ResultEmitter,
     ) -> None:
-        """Dispatch task via SSE using OpenAI client.
+        """Dispatch task via SSE.
+
+        Routes based on modelType:
+        - modelType == "image" -> ImageAgent (direct API call)
+        - modelType == "llm" or default -> chat_shell via OpenAI client
 
         Uses AsyncOpenAI client to consume OpenAI Responses API compatible endpoint.
         Converts ExecutionRequest to OpenAI format, sends request, and processes
@@ -499,6 +520,15 @@ class ExecutionDispatcher:
             target: Execution target configuration
             emitter: Result emitter for event emission
         """
+        # Check if this is an image generation request
+        model_type = self._get_model_type(request)
+
+        if model_type == "image":
+            # Route to ImageAgent for direct image generation
+            await self._dispatch_image_generation(request, emitter)
+            return
+
+        # Default: route to chat_shell via OpenAI client
         from app.services.chat.storage.session import session_manager
 
         # OpenAI client appends /responses to base_url, so we need to include /v1
@@ -519,6 +549,9 @@ class ExecutionDispatcher:
             message_id=request.message_id,
             data={"shell_type": self._get_shell_type(request)},
         )
+
+        # Lazy import OpenAI SDK for memory optimization
+        from openai import AsyncOpenAI
 
         # Create OpenAI client pointing to chat_shell
         client = AsyncOpenAI(
@@ -663,6 +696,32 @@ class ExecutionDispatcher:
             # Unregister stream to clean up
             await session_manager.unregister_stream(request.subtask_id)
 
+    async def _dispatch_image_generation(
+        self,
+        request: ExecutionRequest,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Dispatch image generation task to ImageAgent.
+
+        ImageAgent handles:
+        1. Calling Seedream API directly
+        2. Uploading result as attachment
+        3. Emitting events via emitter
+
+        Args:
+            request: Execution request
+            emitter: Result emitter for event emission
+        """
+        from .agents.image.image_agent import ImageAgent
+
+        logger.info(
+            f"[ExecutionDispatcher] Dispatching to ImageAgent: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
+
+        agent = ImageAgent()
+        await agent.execute(request, emitter)
+
     async def _dispatch_polling(
         self,
         request: ExecutionRequest,
@@ -712,12 +771,7 @@ class ExecutionDispatcher:
         )
 
         # Send task to specified room
-        await sio.emit(
-            target.event,
-            request.to_dict(),
-            room=target.room,
-            namespace=target.namespace,
-        )
+        await self._emit_socketio_in_main_loop(sio, target, request.to_dict())
 
         logger.info(
             f"[ExecutionDispatcher] WebSocket dispatch: "
@@ -727,6 +781,148 @@ class ExecutionDispatcher:
         # In WebSocket mode, subsequent events are handled by DeviceNamespace's
         # on_task_progress/on_task_complete
         # No need to wait for response here
+
+    async def _emit_socketio_in_main_loop(
+        self,
+        sio: Any,
+        target: ExecutionTarget,
+        payload: dict,
+    ) -> None:
+        """Emit Socket.IO events from the main application loop.
+
+        Socket.IO and its Redis manager are owned by the main app loop. Subscription
+        device execution runs in a background thread with a separate event loop, so
+        direct awaits against `sio.emit()` can fail with cross-loop Future errors.
+        """
+
+        async def _emit() -> None:
+            await sio.emit(
+                target.event,
+                payload,
+                room=target.room,
+                namespace=target.namespace,
+            )
+
+        await run_in_main_loop(_emit)
+
+    async def _dispatch_inprocess(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Dispatch task via in-process execution (standalone mode).
+
+        Directly executes tasks within the Backend process. For Chat shell type,
+        uses chat_shell module. For ClaudeCode/Agno, uses executor module.
+
+        Args:
+            request: Execution request
+            target: Execution target configuration (not used, kept for interface consistency)
+            emitter: Result emitter for event emission
+        """
+        shell_type = self._get_shell_type(request)
+
+        logger.info(
+            f"[ExecutionDispatcher] In-process dispatch: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
+            f"shell_type={shell_type}"
+        )
+
+        # Send START event to frontend (creates AI message placeholder)
+        await emitter.emit_start(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            message_id=request.message_id,
+            data={"shell_type": shell_type},
+        )
+
+        if shell_type == "Chat":
+            # Use chat_shell module for Chat type
+            await self._dispatch_inprocess_chat(request, emitter)
+        else:
+            # Use executor module for ClaudeCode/Agno
+            from .inprocess_executor import InprocessExecutor
+
+            executor = InprocessExecutor()
+            await executor.execute(request, emitter)
+
+        logger.info(
+            f"[ExecutionDispatcher] In-process dispatch completed: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
+
+    async def _dispatch_inprocess_chat(
+        self,
+        request: ExecutionRequest,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Dispatch Chat type task via in-process chat_shell module.
+
+        Uses chat_shell's ChatService directly for in-process execution.
+        Creates a bridge emitter that converts ResponsesAPIEmitter events
+        to ResultEmitter events.
+
+        Args:
+            request: Execution request
+            emitter: Result emitter for event emission
+        """
+        logger.info(
+            f"[ExecutionDispatcher] In-process chat dispatch: "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
+
+        try:
+            # Import chat_shell's ChatService
+            from chat_shell.services.chat_service import ChatService
+            from shared.models import EmitterBuilder, ResponsesAPIEmitter
+
+            # Create a bridge transport that forwards events to our ResultEmitter
+            bridge_transport = ChatShellBridgeTransport(
+                emitter=emitter,
+                event_parser=self.event_parser,
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                message_id=request.message_id,
+            )
+
+            # Create ResponsesAPIEmitter with bridge transport
+            responses_emitter = (
+                EmitterBuilder()
+                .with_task(request.task_id, request.subtask_id)
+                .with_transport(bridge_transport)
+                .with_executor_info(name="inprocess-chat", namespace="standalone")
+                .build()
+            )
+
+            # Create ChatService and process request
+            chat_service = ChatService()
+
+            logger.info(
+                f"[ExecutionDispatcher] In-process chat: "
+                f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+            )
+
+            # Call ChatService.chat() which handles all the streaming internally
+            await chat_service.chat(request, responses_emitter)
+
+            logger.info(
+                f"[ExecutionDispatcher] In-process chat completed: "
+                f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+            )
+        except Exception as e:
+            logger.exception(
+                f"[ExecutionDispatcher] In-process chat error: "
+                f"task_id={request.task_id}, error={e}"
+            )
+            # Emit error event
+            await emitter.emit_error(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                error=str(e),
+                message_id=request.message_id,
+            )
+            raise
 
     async def _dispatch_http_callback(
         self,
@@ -765,6 +961,9 @@ class ExecutionDispatcher:
             f"base_url={base_url}, model={openai_request.get('model')}, "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
+
+        # Lazy import OpenAI SDK for memory optimization
+        from openai import AsyncOpenAI
 
         # Create OpenAI client pointing to executor-manager
         client = AsyncOpenAI(
@@ -855,8 +1054,44 @@ class ExecutionDispatcher:
             return await self._cancel_websocket(request, target)
         elif target.mode == CommunicationMode.POLLING:
             return await self._cancel_sse(request, target)
+        elif target.mode == CommunicationMode.INPROCESS:
+            return await self._cancel_inprocess(request, target)
         else:
             return await self._cancel_http(request, target)
+
+    async def _cancel_inprocess(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+    ) -> bool:
+        """Cancel in-process task.
+
+        For in-process mode, we directly call the executor's cancel method.
+
+        Args:
+            request: Execution request
+            target: Execution target configuration (not used, kept for interface consistency)
+
+        Returns:
+            True if cancel was successful
+        """
+        from .inprocess_executor import InprocessExecutor
+
+        try:
+            executor = InprocessExecutor()
+            success = await executor.cancel(request.task_id)
+            if success:
+                logger.info(
+                    f"[ExecutionDispatcher] In-process task cancelled: "
+                    f"task_id={request.task_id}"
+                )
+            return success
+        except Exception as e:
+            logger.error(
+                f"[ExecutionDispatcher] Failed to cancel in-process task: "
+                f"task_id={request.task_id}, error={e}"
+            )
+            return False
 
     async def _cancel_sse(
         self,
@@ -1057,6 +1292,77 @@ class ExecutionDispatcher:
             room=target.room,
             namespace=target.namespace,
         )
+
+
+class ChatShellBridgeTransport:
+    """Transport that bridges chat_shell's ResponsesAPIEmitter to Backend's ResultEmitter.
+
+    This transport receives OpenAI Responses API format events from chat_shell
+    and converts them to ExecutionEvent format for the Backend's ResultEmitter.
+    """
+
+    def __init__(
+        self,
+        emitter: ResultEmitter,
+        event_parser: ResponsesAPIEventParser,
+        task_id: int,
+        subtask_id: int,
+        message_id: Optional[int] = None,
+    ):
+        """Initialize the bridge transport.
+
+        Args:
+            emitter: Backend's ResultEmitter to forward events to
+            event_parser: Parser for converting OpenAI events to ExecutionEvent
+            task_id: Task ID
+            subtask_id: Subtask ID
+            message_id: Optional message ID
+        """
+        self.emitter = emitter
+        self.event_parser = event_parser
+        self.task_id = task_id
+        self.subtask_id = subtask_id
+        self.message_id = message_id
+
+    async def send(
+        self,
+        event_type: str,
+        task_id: int,
+        subtask_id: int,
+        data: dict,
+        message_id: Optional[int] = None,
+        executor_name: Optional[str] = None,
+        executor_namespace: Optional[str] = None,
+    ) -> dict:
+        """Send event by converting and forwarding to ResultEmitter.
+
+        Args:
+            event_type: OpenAI Responses API event type
+            task_id: Task ID
+            subtask_id: Subtask ID
+            data: Event data
+            message_id: Optional message ID
+            executor_name: Optional executor name
+            executor_namespace: Optional executor namespace
+
+        Returns:
+            Status dict indicating success
+        """
+        msg_id = message_id or self.message_id
+
+        # Parse event using shared parser
+        parsed_event = self.event_parser.parse(
+            task_id=self.task_id,
+            subtask_id=self.subtask_id,
+            message_id=msg_id,
+            event_type=event_type,
+            data=data,
+        )
+
+        if parsed_event:
+            await self.emitter.emit(parsed_event)
+
+        return {"status": "success"}
 
 
 # Global instance

@@ -49,6 +49,27 @@ class SubscriptionEventType(str, Enum):
     GIT_PUSH = "git_push"  # Git push trigger
 
 
+class SubscriptionExecutionTargetType(str, Enum):
+    """Execution target type enumeration."""
+
+    MANAGED = "managed"
+    LOCAL = "local"
+    CLOUD = "cloud"
+
+
+class SubscriptionExecutionTarget(BaseModel):
+    """Execution target for a subscription."""
+
+    type: SubscriptionExecutionTargetType = Field(
+        SubscriptionExecutionTargetType.MANAGED,
+        description="Execution target type: managed, local, or cloud",
+    )
+    device_id: Optional[str] = Field(
+        None,
+        description="Device ID for local or cloud execution targets",
+    )
+
+
 class BackgroundExecutionStatus(str, Enum):
     """Background execution status enumeration."""
 
@@ -193,6 +214,10 @@ class SubscriptionSpec(BaseModel):
         description="Execution timeout in seconds (60-3600, default: 600)",
     )
     enabled: bool = Field(True, description="Whether the subscription is enabled")
+    executionTarget: SubscriptionExecutionTarget = Field(
+        default_factory=SubscriptionExecutionTarget,
+        description="Execution target configuration",
+    )
     description: Optional[str] = Field(None, description="Subscription description")
     # History preservation settings
     preserveHistory: bool = Field(
@@ -315,6 +340,10 @@ class SubscriptionBase(BaseModel):
         600, ge=60, le=3600, description="Execution timeout (60-3600s)"
     )
     enabled: bool = Field(True, description="Whether enabled")
+    execution_target: SubscriptionExecutionTarget = Field(
+        default_factory=SubscriptionExecutionTarget,
+        description="Execution target configuration",
+    )
     # History preservation settings
     preserve_history: bool = Field(
         False,
@@ -368,6 +397,7 @@ class SubscriptionUpdate(BaseModel):
     retry_count: Optional[int] = Field(None, ge=0, le=3)
     timeout_seconds: Optional[int] = Field(None, ge=60, le=3600)
     enabled: Optional[bool] = None
+    execution_target: Optional[SubscriptionExecutionTarget] = None
     # History preservation settings
     preserve_history: Optional[bool] = None
     history_message_count: Optional[int] = Field(None, ge=0, le=50)

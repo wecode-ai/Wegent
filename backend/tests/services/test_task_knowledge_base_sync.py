@@ -2,14 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Tests for subtask knowledge base sync to task level functionality.
+"""Tests for subtask knowledge base sync to task level functionality.
 
 This module tests the following features:
 1. sync_subtask_kb_to_task method in TaskKnowledgeBaseService
 2. Knowledge base priority logic (subtask > task level)
 3. Deduplication and limit enforcement
 4. ID-based lookup and automatic migration from name-only refs
+
+NOTE:
+- KB meta prompt formatting is tested separately in chat preprocessing.
 """
 
 from unittest.mock import MagicMock, Mock, patch
@@ -292,23 +294,23 @@ class TestKBPriorityLogic:
         ) as mock_get_bound:
             mock_get_bound.return_value = []  # No task-level KBs
 
-            with patch(
-                "app.services.chat.preprocessing.contexts._build_historical_kb_meta_prompt"
-            ) as mock_history:
-                mock_history.return_value = ""
+            kb_result = _prepare_kb_tools_from_contexts(
+                kb_contexts=[],  # No subtask KB
+                user_id=1,
+                db=mock_db,
+                base_system_prompt="Base prompt",
+                task_id=100,
+                user_subtask_id=1,
+            )
 
-                kb_result = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[],  # No subtask KB
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
-
-                # Should return empty tools
-                assert kb_result.extra_tools == []
-                assert kb_result.enhanced_system_prompt == "Base prompt"
+            # Should return empty tools
+            assert kb_result.extra_tools == []
+            assert kb_result.enhanced_system_prompt == "Base prompt"
+            assert kb_result.kb_meta_prompt == ""
+            # New KB fields must also default to empty/False
+            assert kb_result.knowledge_base_ids == []
+            assert kb_result.is_user_selected_kb is False
+            assert kb_result.document_ids == []
 
 
 @pytest.mark.unit

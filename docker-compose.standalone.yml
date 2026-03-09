@@ -1,0 +1,103 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Standalone deployment with Redis
+# This compose file runs Wegent in standalone mode with all services in a single container
+
+services:
+  redis:
+    image: redis:7
+    container_name: wegent-redis
+    restart: always
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - wegent-standalone-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  wegent:
+    image: ${WEGENT_IMAGE:-ghcr.io/wecode-ai/wegent-standalone:latest}
+    container_name: wegent-standalone
+    restart: always
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      # Disable litellm network request for model cost map to prevent startup blocking
+      - LITELLM_LOCAL_MODEL_COST_MAP=True
+      # Standalone mode configuration
+      - STANDALONE_MODE=true
+      # Note: SQLite absolute path requires 4 slashes: sqlite:////path/to/db
+      - DATABASE_URL=sqlite:////app/data/wegent.db
+      - CHAT_SHELL_MODE=package
+      
+      # Redis configuration
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Frontend WebSocket configuration (for remote access)
+      # Set this to your server's IP or domain if accessing remotely
+      # Example: http://192.168.1.100:8000 or http://your-domain.com:8000
+      - RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-}
+      
+      # Backend configuration
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DB_AUTO_MIGRATE=True
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - ALGORITHM=${ALGORITHM:-HS256}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+      - INIT_DATA_DIR=/app/init_data
+      - INIT_DATA_ENABLED=True
+      - MAX_UPLOAD_FILE_SIZE_MB=${MAX_UPLOAD_FILE_SIZE_MB:-50}
+      - MAX_EXTRACTED_TEXT_LENGTH=${MAX_EXTRACTED_TEXT_LENGTH:-1000000}
+      
+      # Task configuration
+      - APPEND_CHAT_TASK_EXPIRE_HOURS=${APPEND_CHAT_TASK_EXPIRE_HOURS:-2}
+      - APPEND_CODE_TASK_EXPIRE_HOURS=${APPEND_CODE_TASK_EXPIRE_HOURS:-2}
+      - CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS=${CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS:-2}
+      - CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS=${CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS:-2}
+      
+      # Share URLs
+      - TEAM_SHARE_BASE_URL=${TEAM_SHARE_BASE_URL:-http://localhost:3000/chat}
+      - TASK_SHARE_BASE_URL=${TASK_SHARE_BASE_URL:-http://localhost:3000}
+      - TEAM_SHARE_QUERY_PARAM=${TEAM_SHARE_QUERY_PARAM:-teamShare}
+      
+      # API Keys (add your own keys)
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      
+      # Graceful shutdown timeout (seconds)
+      - GRACEFUL_SHUTDOWN_TIMEOUT=${GRACEFUL_SHUTDOWN_TIMEOUT:-600}
+      
+    volumes:
+      - wegent_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - wegent-standalone-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health && curl -f http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  redis_data:
+    driver: local
+  wegent_data:
+    driver: local
+
+networks:
+  wegent-standalone-network:
+    driver: bridge
+    name: wegent-standalone-network

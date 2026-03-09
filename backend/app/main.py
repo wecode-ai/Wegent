@@ -247,6 +247,13 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
     logger.info("✓ Subscription task completion handler registered")
 
+    # Register IM channel task completion handler
+    # This sends task results back to IM channels (DingTalk, Feishu, etc.)
+    from app.services.channels import handle_channel_task_completed
+
+    event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
+    logger.info("✓ IM channel task completion handler registered")
+
     logger.info("✓ Event bus initialized and handlers registered")
 
     # Initialize PendingRequestRegistry for skill frontend interactions
@@ -709,3 +716,13 @@ async def root():
         "docs_url": f"{settings.API_PREFIX}/docs",
         "socketio_path": "/socket.io",
     }
+
+
+# Health check endpoint (registered on FastAPI app)
+@_fastapi_app.get("/health")
+async def health():
+    """
+    Health check endpoint for container orchestration and load balancers.
+    Returns a simple status indicating the service is running.
+    """
+    return {"status": "healthy"}

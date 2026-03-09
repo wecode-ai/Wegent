@@ -7,8 +7,12 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.namespace import Namespace
-from app.models.namespace_member import NamespaceMember
 from app.schemas.namespace import GroupRole
+from app.services.group_member_helper import (
+    NAMESPACE_RESOURCE_TYPE,
+    get_user_groups_with_roles,
+    get_user_role_in_group,
+)
 
 
 def get_user_role_in_group(
@@ -25,19 +29,16 @@ def get_user_role_in_group(
     Returns:
         GroupRole if user is a member, None otherwise
     """
-    member = (
-        db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.user_id == user_id,
-            NamespaceMember.is_active == True,
-        )
-        .first()
+    from app.services.group_member_helper import (
+        get_user_role_in_group as helper_get_role,
     )
 
-    if member:
-        return GroupRole(member.role)
-
+    role_str = helper_get_role(db, user_id, group_name)
+    if role_str:
+        try:
+            return GroupRole(role_str)
+        except ValueError:
+            return None
     return None
 
 
@@ -95,17 +96,11 @@ def get_user_groups(db: Session, user_id: int) -> list[str]:
     # Get all active groups
     all_groups = db.query(Namespace).filter(Namespace.is_active == True).all()
 
-    # Get user's direct memberships
-    direct_memberships = (
-        db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.user_id == user_id,
-            NamespaceMember.is_active == True,
-        )
-        .all()
-    )
+    # Get user's direct memberships with roles
+    direct_memberships = get_user_groups_with_roles(db, user_id)
 
-    direct_group_names = {m.group_name for m in direct_memberships}
+    # Create a mapping of group_name -> role
+    direct_group_names = {name for name, _ in direct_memberships}
     accessible_groups = set(direct_group_names)
 
     # Check permission inheritance for all groups

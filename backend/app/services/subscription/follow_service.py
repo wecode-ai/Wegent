@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.namespace import Namespace
-from app.models.namespace_member import NamespaceMember
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.subscription_follow import (
     FollowType,
     InvitationStatus,
@@ -39,6 +39,7 @@ from app.schemas.subscription import InvitationStatus as SchemaInvitationStatus
 from app.schemas.subscription import NotificationLevel as SchemaNotificationLevel
 from app.schemas.subscription import (
     Subscription,
+    SubscriptionExecutionTarget,
     SubscriptionFollowConfig,
     SubscriptionFollowerResponse,
     SubscriptionFollowersListResponse,
@@ -592,10 +593,14 @@ class SubscriptionFollowService:
             )
             db.add(share)
 
-        # Get namespace members
+        # Get namespace members using ResourceMember
         members = (
-            db.query(NamespaceMember)
-            .filter(NamespaceMember.namespace_id == namespace_id)
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == namespace_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
             .all()
         )
 
@@ -761,10 +766,14 @@ class SubscriptionFollowService:
         if share:
             db.delete(share)
 
-        # Get namespace members and delete their pending invitations
+        # Get namespace members using ResourceMember and delete their pending invitations
         members = (
-            db.query(NamespaceMember)
-            .filter(NamespaceMember.namespace_id == namespace_id)
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == namespace_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
             .all()
         )
 
@@ -1263,6 +1272,11 @@ class SubscriptionFollowService:
         # Get owner username
         owner = db.query(User).filter(User.id == subscription.user_id).first()
         owner_username = owner.user_name if owner else None
+        execution_target = getattr(
+            subscription_crd.spec,
+            "executionTarget",
+            SubscriptionExecutionTarget(),
+        )
 
         # Get visibility with default
         visibility = getattr(
@@ -1300,6 +1314,7 @@ class SubscriptionFollowService:
             retry_count=subscription_crd.spec.retryCount,
             timeout_seconds=subscription_crd.spec.timeoutSeconds,
             enabled=internal.get("enabled", True),
+            execution_target=execution_target,
             preserve_history=subscription_crd.spec.preserveHistory,
             history_message_count=subscription_crd.spec.historyMessageCount,
             bound_task_id=internal.get("bound_task_id", 0),

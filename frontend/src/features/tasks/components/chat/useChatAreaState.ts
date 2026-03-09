@@ -12,6 +12,7 @@ import type {
   ChatTipItem,
   MultiAttachmentUploadState,
   DefaultTeamsResponse,
+  TaskType,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
@@ -27,7 +28,7 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
 export interface UseChatAreaStateOptions {
   teams: Team[]
-  taskType: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType: TaskType
   selectedTeamForNewTask?: Team | null
   /**
    * Initial knowledge base to pre-select when starting a new chat from knowledge page.
@@ -40,6 +41,12 @@ export interface UseChatAreaStateOptions {
     namespace: string
     document_count?: number
   } | null
+  /**
+   * Maximum number of attachments allowed (for image/video generation modes).
+   * This value comes from the selected model's imageConfig.max_reference_images.
+   * Falls back to 1 if not provided.
+   */
+  maxAttachments?: number
 }
 
 export interface ChatAreaState {
@@ -106,6 +113,8 @@ export interface ChatAreaState {
   attachmentState: MultiAttachmentUploadState
   handleFileSelect: (files: File | File[]) => Promise<void>
   handleAttachmentRemove: (attachmentId: number) => Promise<void>
+  /** Add an already-uploaded attachment as reference (e.g., from ImageGallery follow-up) */
+  addExistingAttachment: (attachment: import('@/types/api').Attachment) => void
   resetAttachment: () => void
   isAttachmentReadyToSend: boolean
   isUploading: boolean
@@ -165,6 +174,7 @@ export function useChatAreaState({
   taskType,
   selectedTeamForNewTask,
   initialKnowledgeBase,
+  maxAttachments: externalMaxAttachments,
 }: UseChatAreaStateOptions): ChatAreaState {
   // In notebook mode (taskType === 'knowledge'), don't show the current notebook's KB in selectedContexts
   // because it's automatically bound to the task on creation
@@ -249,15 +259,31 @@ export function useChatAreaState({
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)')
 
+  // Compute effective maxAttachments for image/video modes
+  // Priority: external value (from model config) -> default (2 for image/video, undefined otherwise)
+  const effectiveMaxAttachments = useMemo(() => {
+    if (taskType === 'image' || taskType === 'video') {
+      // Normalize and clamp external value from model config
+      if (typeof externalMaxAttachments === 'number' && Number.isFinite(externalMaxAttachments)) {
+        return Math.min(10, Math.max(1, Math.floor(externalMaxAttachments)))
+      }
+      return 2 // Default to 2 for image/video modes when not configured
+    }
+    return undefined
+  }, [taskType, externalMaxAttachments])
+
   // Attachment state (multi-attachment)
   const {
     state: attachmentState,
     handleFileSelect,
+    addExistingAttachment,
     handleRemove: handleAttachmentRemove,
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
     isUploading,
-  } = useMultiAttachment()
+  } = useMultiAttachment({
+    maxAttachments: effectiveMaxAttachments,
+  })
 
   // Refs for random indices (stable across taskType changes)
   const sloganRandomIndexRef = useRef<number | null>(null)
@@ -607,6 +633,7 @@ export function useChatAreaState({
     // Attachment state (multi-attachment)
     attachmentState,
     handleFileSelect,
+    addExistingAttachment,
     handleAttachmentRemove,
     resetAttachment,
     isAttachmentReadyToSend,
