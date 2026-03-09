@@ -1,0 +1,102 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Weibo, Inc.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Custom scrollbar styles */
+
+/* Base scrollbar styles for all scrollable elements */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-scrollbar-thumb));
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-text-secondary));
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* Firefox scrollbar styles */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
+}
+
+/* Fix scrollbar overflow on rounded dialogs - ensure scrollbar respects border-radius */
+[data-radix-dialog-content] {
+  overflow: hidden;
+}
+
+[data-radix-dialog-content] > * {
+  overflow: auto;
+  max-height: calc(100vh - 8rem);
+}
+
+/* Style scrollbar within dialog content to respect rounded corners */
+[data-radix-dialog-content] > *::-webkit-scrollbar {
+  width: 8px;
+}
+
+[data-radix-dialog-content] > *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-radix-dialog-content] > *::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-scrollbar-thumb));
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+[data-radix-dialog-content] > *::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-text-secondary));
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* Reserve scrollbar gutter to prevent layout shifts */
+[data-radix-dialog-content] > * {
+  scrollbar-gutter: stable;
+}
+
+/* Firefox scrollbar for dialog content */
+[data-radix-dialog-content] > * {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Dark mode scrollbar adjustments */
+[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-scrollbar-thumb));
+}
+
+[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-text-secondary));
+}
+
+[data-theme='dark'] * {
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
+}
