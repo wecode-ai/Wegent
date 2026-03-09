@@ -11,6 +11,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
+import urllib.request
 from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
@@ -207,6 +208,14 @@ class TaskRequestBuilder:
                 if name not in existing_skills:
                     bot_config[0].setdefault("skills", []).append(name)
                     existing_skills.add(name)
+
+        # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
+        if bot_config:
+            shell_type = bot_config[0].get("shell_type", "")
+            if shell_type == "ClaudeCode":
+                self._prepare_mcp_for_claude_code(
+                    bot_config[0], resolved_skills
+                )
 
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
@@ -1283,6 +1292,186 @@ class TaskRequestBuilder:
             )
 
         return merged_servers
+
+    # =========================================================================
+    # Claude Code MCP Processing
+    # =========================================================================
+
+    def _prepare_mcp_for_claude_code(
+        self, bot_config: dict, skill_configs: list
+    ) -> None:
+        """Prepare MCP servers for Claude Code executor.
+
+        For ClaudeCode shell type, this method:
+        1. Extracts skill MCP servers and merges into bot mcp_servers
+        2. Normalizes types (streamable-http -> http) for Claude Code SDK
+        3. Filters out unreachable servers to prevent SDK initialization timeout
+
+        Modifies bot_config in-place.
+
+        Args:
+            bot_config: Single bot configuration dict (modified in-place)
+            skill_configs: List of resolved skill config dicts
+        """
+        # Step 1: Extract skill MCP servers and merge
+        skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
+        if skill_mcp:
+            bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
+            logger.info(
+                "[MCP-CLAUDE] Merged %d skill MCP server(s): %s",
+                len(skill_mcp),
+                [s.get("name", "?") for s in skill_mcp],
+            )
+
+        mcp_list = bot_config.get("mcp_servers", [])
+        if not mcp_list:
+            return
+
+        # Step 2: Normalize types (streamable-http -> http)
+        self._normalize_mcp_types_for_claude_code(mcp_list)
+
+        # Step 3: Filter out unreachable servers
+        bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
+        if not bot_config["mcp_servers"]:
+            logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
+
+    @staticmethod
+    def _extract_skill_mcp_to_list(skill_configs: list) -> list:
+        """Extract MCP servers from skill configs in list format.
+
+        Each skill may declare mcpServers in dict format. This converts them
+        to list format with prefixed names to avoid cross-skill conflicts.
+
+        Args:
+            skill_configs: List of resolved skill config dicts
+
+        Returns:
+            List of MCP server dicts in list format:
+            [{"name": "skillName_serverName", "type": "...", "url": "...", ...}]
+        """
+        if not skill_configs:
+            return []
+
+        result: list[dict] = []
+        for skill_config in skill_configs:
+            skill_name = skill_config.get("name", "unknown")
+            mcp_servers = skill_config.get("mcpServers")
+            if not mcp_servers or not isinstance(mcp_servers, dict):
+                continue
+
+            for server_name, server_config in mcp_servers.items():
+                if not isinstance(server_config, dict):
+                    continue
+                entry = {
+                    "name": f"{skill_name}_{server_name}",
+                    **server_config,
+                }
+                result.append(entry)
+                logger.info(
+                    "[SKILL-MCP] Extracted: %s -> type=%s, url=%s",
+                    entry["name"],
+                    server_config.get("type", "?"),
+                    server_config.get("url", "?"),
+                )
+
+        return result
+
+    @staticmethod
+    def _normalize_mcp_types_for_claude_code(mcp_servers: list) -> None:
+        """Normalize MCP server types for Claude Code SDK compatibility.
+
+        Claude Code SDK supports "http" but skill/ghost configs use
+        "streamable-http". Converts in-place.
+
+        Args:
+            mcp_servers: List of MCP server config dicts (modified in-place)
+        """
+        TYPE_MAPPING = {"streamable-http": "http"}
+
+        for server in mcp_servers:
+            if not isinstance(server, dict):
+                continue
+            original_type = server.get("type", "")
+            mapped = TYPE_MAPPING.get(original_type)
+            if mapped:
+                server["type"] = mapped
+                logger.info(
+                    "[MCP-NORMALIZE] '%s': type '%s' -> '%s'",
+                    server.get("name", "?"),
+                    original_type,
+                    mapped,
+                )
+
+    @staticmethod
+    def _check_mcp_server_reachable(server: dict) -> bool:
+        """Check if an MCP server URL is reachable with a short timeout.
+
+        Sends a HEAD request. Any HTTP response (including 4xx/5xx) means
+        the server is reachable. Only connection failures are treated as
+        unreachable.
+
+        Args:
+            server: Server config dict with 'url' and optional 'headers'
+
+        Returns:
+            True if server responded, False on connection failure
+        """
+        url = server.get("url", "")
+        if not url:
+            return False
+
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            # Add headers, skipping unresolved placeholders
+            headers = server.get("headers", server.get("auth", {}))
+            if isinstance(headers, dict):
+                for k, v in headers.items():
+                    if isinstance(v, str) and not v.startswith("${{"):
+                        req.add_header(k, v)
+            urllib.request.urlopen(req, timeout=5)
+            return True
+        except urllib.error.HTTPError:
+            # Any HTTP response means the server is reachable
+            return True
+        except Exception:
+            return False
+
+    def _filter_reachable_mcp_servers(self, mcp_servers: list) -> list:
+        """Filter out unreachable MCP servers.
+
+        Args:
+            mcp_servers: List of MCP server config dicts
+
+        Returns:
+            List containing only reachable MCP servers
+        """
+        if not mcp_servers:
+            return mcp_servers
+
+        reachable = []
+        unreachable_names: list[str] = []
+
+        for server in mcp_servers:
+            name = server.get("name", "?")
+            if self._check_mcp_server_reachable(server):
+                reachable.append(server)
+                logger.info("[MCP-CHECK] '%s' is reachable", name)
+            else:
+                unreachable_names.append(name)
+                logger.warning(
+                    "[MCP-CHECK] '%s' is NOT reachable: %s",
+                    name,
+                    server.get("url", "?"),
+                )
+
+        if unreachable_names:
+            logger.warning(
+                "[MCP-FILTER] Removed %d unreachable server(s): %s",
+                len(unreachable_names),
+                unreachable_names,
+            )
+
+        return reachable
 
     # =========================================================================
     # Helper Methods
