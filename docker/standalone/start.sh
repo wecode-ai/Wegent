@@ -75,8 +75,11 @@ echo "[3/4] Starting Frontend (port ${FRONTEND_PORT})..."
 cd /app/frontend
 
 # Set runtime environment variables for Frontend
+# RUNTIME_INTERNAL_API_URL is always localhost (internal container communication)
 export RUNTIME_INTERNAL_API_URL=http://localhost:${BACKEND_PORT}
-export RUNTIME_SOCKET_DIRECT_URL=http://localhost:${BACKEND_PORT}
+# RUNTIME_SOCKET_DIRECT_URL can be overridden via docker-compose for remote access
+# Only set default if not already provided
+export RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-http://localhost:${BACKEND_PORT}}
 export NODE_ENV=production
 export PORT=${FRONTEND_PORT}
 export HOSTNAME="0.0.0.0"

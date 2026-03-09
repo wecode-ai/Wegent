@@ -98,6 +98,32 @@ class SessionManager:
             logger.warning(f"Failed to save session ID for task {task_id}: {e}")
 
     @classmethod
+    def delete_saved_session_id(cls, task_id: int) -> bool:
+        """Delete saved Claude session ID file for a task.
+
+        This is used when a saved session ID is invalid or expired,
+        allowing a fresh session to be created on retry.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            True if file was deleted, False otherwise
+        """
+        session_file = cls.get_session_id_file_path(task_id)
+        try:
+            if os.path.exists(session_file):
+                os.remove(session_file)
+                logger.info(
+                    f"Deleted invalid session ID file for task {task_id}: {session_file}"
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to delete session ID file for task {task_id}: {e}")
+            return False
+
+    @classmethod
     def get_client(cls, session_id: str) -> Optional[ClaudeSDKClient]:
         """Get cached client by session_id.
 

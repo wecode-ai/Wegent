@@ -1,0 +1,125 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Lint
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+
+jobs:
+  lint-backend:
+    name: Lint Backend (Black & isort)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          source $HOME/.cargo/env
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          source $HOME/.cargo/env
+          uv sync --dev
+
+      - name: Run Black format check
+        working-directory: ./backend
+        run: |
+          source $HOME/.cargo/env
+          uv run black --check app/
+
+      - name: Run isort check
+        working-directory: ./backend
+        run: |
+          source $HOME/.cargo/env
+          uv run isort --check-only --diff app/
+
+  lint-frontend:
+    name: Lint Frontend (ESLint & TypeScript)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+          cache-dependency-path: ./frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Run ESLint
+        working-directory: ./frontend
+        run: npm run lint
+
+      - name: Run TypeScript check
+        working-directory: ./frontend
+        run: npx tsc --noEmit
+
+  check-settings-config:
+    name: Check Settings Configuration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run settings configuration check
+        run: |
+          chmod +x ./scripts/hooks/check-settings-config.sh
+          ./scripts/hooks/check-settings-config.sh
+
+  check-alembic-heads:
+    name: Check Alembic Multi-Head
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Alembic multi-head check
+        run: |
+          chmod +x ./scripts/hooks/check-alembic-heads.sh
+          ./scripts/hooks/check-alembic-heads.sh
+
+  lint-summary:
+    name: Lint Summary
+    runs-on: ubuntu-latest
+    needs: [lint-backend, lint-frontend, check-settings-config, check-alembic-heads]
+    if: always()
+
+    steps:
+      - name: Check lint results
+        run: |
+          echo "All lint jobs completed"
+          if [[ "${{ needs.lint-backend.result }}" == "failure" ]] || \
+             [[ "${{ needs.lint-frontend.result }}" == "failure" ]] || \
+             [[ "${{ needs.check-settings-config.result }}" == "failure" ]] || \
+             [[ "${{ needs.check-alembic-heads.result }}" == "failure" ]]; then
+            echo "One or more lint jobs failed"
+            exit 1
+          fi

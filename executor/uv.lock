@@ -294,6 +294,15 @@ wheels = [
 ]
 
 [[package]]
+name = "chardet"
+version = "6.0.0.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/42/fb9436c103a881a377e34b9f58d77b5f503461c702ff654ebe86151bcfe9/chardet-6.0.0.post1.tar.gz", hash = "sha256:6b78048c3c97c7b2ed1fbad7a18f76f5a6547f7d34dbab536cc13887c9a92fa4", size = 12521798, upload-time = "2026-02-22T15:09:17.925Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/42/5de54f632c2de53cd3415b3703383d5fff43a94cbc0567ef362515261a21/chardet-6.0.0.post1-py3-none-any.whl", hash = "sha256:c894a36800549adf7bb5f2af47033281b75fdfcd2aa0f0243be0ad22a52e2dcb", size = 627245, upload-time = "2026-02-22T15:09:15.876Z" },
+]
+
+[[package]]
 name = "charset-normalizer"
 version = "3.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2223,6 +2232,8 @@ dependencies = [
     { name = "agno" },
     { name = "aiohttp" },
     { name = "anthropic" },
+    { name = "chardet" },
+    { name = "charset-normalizer" },
     { name = "claude-agent-sdk" },
     { name = "cryptography" },
     { name = "dacite" },
@@ -2273,6 +2284,8 @@ requires-dist = [
     { name = "agno", specifier = "==2.1.5" },
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "anthropic", specifier = "==0.67.0" },
+    { name = "chardet", specifier = ">=5.0.0,<7.0.0" },
+    { name = "charset-normalizer", specifier = ">=3.0.0,<3.4.5" },
     { name = "claude-agent-sdk", specifier = "==0.1.31" },
     { name = "cryptography", specifier = "==46.0.3" },
     { name = "dacite", specifier = ">=1.8.0" },
