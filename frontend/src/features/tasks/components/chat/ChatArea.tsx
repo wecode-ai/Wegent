@@ -579,6 +579,27 @@ function ChatAreaContent({
   const shouldCollapseSelectors =
     controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD
 
+  // Keep latest mutable values in refs so callbacks passed to MessagesArea remain stable.
+  const taskInputMessageRef = useRef(chatState.taskInputMessage)
+  taskInputMessageRef.current = chatState.taskInputMessage
+
+  const stateMessagesRef = useRef(taskState?.messages)
+  stateMessagesRef.current = taskState?.messages
+
+  const handleSendMessageRef = useRef(streamHandlers.handleSendMessage)
+  handleSendMessageRef.current = streamHandlers.handleSendMessage
+
+  const handleSendMessageWithModelRef = useRef(streamHandlers.handleSendMessageWithModel)
+  handleSendMessageWithModelRef.current = streamHandlers.handleSendMessageWithModel
+
+  const handleRetryRef = useRef(streamHandlers.handleRetry)
+  handleRetryRef.current = streamHandlers.handleRetry
+
+  const setTaskInputMessage = chatState.setTaskInputMessage
+  const setSelectedContexts = chatState.setSelectedContexts
+  const resetAttachment = chatState.resetAttachment
+  const addExistingAttachment = chatState.addExistingAttachment
+
   // Load prompt from sessionStorage - single remaining useEffect
   useEffect(() => {
     if (hasMessages) return
@@ -590,7 +611,7 @@ function ChatAreaContent({
         const isRecent = Date.now() - data.timestamp < 5 * 60 * 1000
 
         if (isRecent && data.prompt) {
-          chatState.setTaskInputMessage(data.prompt)
+          setTaskInputMessage(data.prompt)
           sessionStorage.removeItem('pendingTaskPrompt')
         }
       } catch (error) {
@@ -598,7 +619,7 @@ function ChatAreaContent({
         sessionStorage.removeItem('pendingTaskPrompt')
       }
     }
-  }, [hasMessages, chatState])
+  }, [hasMessages, setTaskInputMessage])
 
   // Use attachment upload hook - centralizes all attachment upload logic
   const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
@@ -621,21 +642,29 @@ function ChatAreaContent({
   // Callback for child components to send messages
   const handleSendMessageFromChild = useCallback(
     async (content: string) => {
-      const existingInput = chatState.taskInputMessage.trim()
+      const existingInput = taskInputMessageRef.current.trim()
       const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content
-      chatState.setTaskInputMessage('')
-      await streamHandlers.handleSendMessage(combinedMessage)
+      setTaskInputMessage('')
+      await handleSendMessageRef.current(combinedMessage)
     },
-    [chatState, streamHandlers]
+    [setTaskInputMessage]
   )
 
   // Callback for child components to send messages with a specific model (for regeneration)
   // Accepts optional existingContexts to preserve attachments/knowledge bases from the original message
   const handleSendMessageWithModelFromChild = useCallback(
     async (content: string, model: Model, existingContexts?: SubtaskContextBrief[]) => {
-      await streamHandlers.handleSendMessageWithModel(content, model, existingContexts)
+      await handleSendMessageWithModelRef.current(content, model, existingContexts)
     },
-    [streamHandlers]
+    []
+  )
+
+  // Keep retry callback stable so MessagesArea can skip re-render on input typing.
+  const handleRetryFromMessagesArea = useCallback(
+    (message: import('../message/MessageBubble').Message) => {
+      void handleRetryRef.current(message)
+    },
+    []
   )
 
   // Callback for re-selecting a context from a message badge
@@ -663,17 +692,15 @@ function ChatAreaContent({
 
       if (!contextItem) return
 
-      // Check if context is already selected
-      const isAlreadySelected = chatState.selectedContexts.some(
-        c => c.type === contextItem!.type && c.id === contextItem!.id
-      )
-
-      // If not already selected, add it to selectedContexts
-      if (!isAlreadySelected) {
-        chatState.setSelectedContexts([...chatState.selectedContexts, contextItem!])
-      }
+      setSelectedContexts(prev => {
+        const isAlreadySelected = prev.some(
+          c => c.type === contextItem.type && c.id === contextItem.id
+        )
+        if (isAlreadySelected) return prev
+        return [...prev, contextItem]
+      })
     },
-    [chatState]
+    [setSelectedContexts]
   )
 
   // Callback when user wants to use a previously generated image as reference
@@ -683,7 +710,7 @@ function ChatAreaContent({
       if (!item.attachmentId) return
       try {
         const detail = await getAttachment(item.attachmentId)
-        chatState.addExistingAttachment({
+        addExistingAttachment({
           id: detail.id,
           filename: detail.filename,
           file_size: detail.file_size,
@@ -701,7 +728,7 @@ function ChatAreaContent({
         console.error('Failed to use image as reference:', error)
       }
     },
-    [chatState]
+    [addExistingAttachment]
   )
 
   // Callback when user clicks re-edit on an AI message
@@ -711,7 +738,7 @@ function ChatAreaContent({
       if (!aiMsg.subtaskId) return
 
       // Locate the AI message in the state machine to get its messageId (shared with the user message)
-      const stateMessages = taskState?.messages
+      const stateMessages = stateMessagesRef.current
       if (!stateMessages) return
 
       const aiStateMsg = stateMessages.get(`ai-${aiMsg.subtaskId}`)
@@ -755,13 +782,13 @@ function ChatAreaContent({
 
       // Restore text prompt to input
       if (userStateMsg.content) {
-        chatState.setTaskInputMessage(userStateMsg.content)
+        setTaskInputMessage(userStateMsg.content)
       }
 
       // Clear any existing draft attachments and contexts before restoring the original ones
       // so the restored set exactly matches the original user message
-      chatState.resetAttachment()
-      chatState.setSelectedContexts([])
+      resetAttachment()
+      setSelectedContexts([])
 
       // Restore all contexts (attachments and knowledge bases) from the user message
       const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
@@ -771,7 +798,7 @@ function ChatAreaContent({
       for (const ctx of attachmentContexts) {
         try {
           const detail = await getAttachment(ctx.id)
-          chatState.addExistingAttachment({
+          addExistingAttachment({
             id: detail.id,
             filename: detail.filename,
             file_size: detail.file_size,
@@ -810,10 +837,10 @@ function ChatAreaContent({
         }
       }
       if (restoredContextItems.length > 0) {
-        chatState.setSelectedContexts(restoredContextItems)
+        setSelectedContexts(restoredContextItems)
       }
     },
-    [taskState, chatState]
+    [setTaskInputMessage, resetAttachment, setSelectedContexts, addExistingAttachment]
   )
 
   // Handle access denied state
@@ -1027,7 +1054,7 @@ function ChatAreaContent({
               onSendMessage={handleSendMessageFromChild}
               onSendMessageWithModel={handleSendMessageWithModelFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
-              onRetry={streamHandlers.handleRetry}
+              onRetry={handleRetryFromMessagesArea}
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
