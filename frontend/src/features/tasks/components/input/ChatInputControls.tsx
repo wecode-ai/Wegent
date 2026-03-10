@@ -530,19 +530,21 @@ export function ChatInputControls({
             )}
 
             {/* Model Selector */}
-            {selectedTeam && !hideSelectors && (
-              <ModelSelector
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
-                selectedTeam={selectedTeam}
-                disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
-                compact={shouldCollapseSelectors}
-                teamId={teamId}
-                taskId={taskId}
-                taskModelId={taskModelId}
-              />
+            {selectedTeam && (
+              <div className={hideSelectors ? 'hidden' : ''}>
+                <ModelSelector
+                  selectedModel={selectedModel}
+                  setSelectedModel={setSelectedModel}
+                  forceOverride={forceOverride}
+                  setForceOverride={setForceOverride}
+                  selectedTeam={selectedTeam}
+                  disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+                  compact={shouldCollapseSelectors}
+                  teamId={teamId}
+                  taskId={taskId}
+                  taskModelId={taskModelId}
+                />
+              </div>
             )}
           </div>
         )}
