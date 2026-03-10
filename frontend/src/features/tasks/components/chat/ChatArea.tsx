@@ -66,6 +66,8 @@ interface ChatAreaProps {
   selectedDocumentIds?: number[]
   /** Reason why input is disabled (e.g., device offline). If set, input will be disabled and show this message. */
   disabledReason?: string
+  /** When true, hide all selectors (team, model, skills, attachments, etc.) - only show text input + send button */
+  hideSelectors?: boolean
   /** Callback when user switches between video and image mode (only used in generate page) */
   onGenerateModeChange?: (mode: GenerateMode) => void
 }
@@ -87,6 +89,7 @@ function ChatAreaContent({
   knowledgeBaseId,
   selectedDocumentIds,
   disabledReason,
+  hideSelectors,
   onGenerateModeChange,
 }: ChatAreaProps) {
   const { t } = useTranslation()
@@ -536,6 +539,8 @@ function ChatAreaContent({
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
+    // OpenClaw devices handle model on device side, no model selection required
+    if (hideSelectors) return false
     // Video mode uses video model selection, not regular model selection
     if (taskType === 'video') {
       // In video mode, we need a video model selected
@@ -554,6 +559,7 @@ function ChatAreaContent({
     chatState.selectedTeam,
     chatState.selectedModel,
     taskType,
+    hideSelectors,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
   ])
@@ -1004,6 +1010,8 @@ function ChatAreaContent({
     onImageSizeChange: setSelectedImageSize,
     // Generate mode switch props - only passed when in generate page
     onGenerateModeChange,
+    // Hide all selectors (for OpenClaw devices)
+    hideSelectors,
   }
 
   return (
@@ -1092,7 +1100,7 @@ function ChatAreaContent({
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              {taskType !== 'knowledge' && (
+              {taskType !== 'knowledge' && !hideSelectors && (
                 <QuickAccessCards
                   teams={teams}
                   selectedTeam={chatState.selectedTeam}

@@ -289,6 +289,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "latest_version": latest_version,
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
+            "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
     async def _get_online_info(
@@ -331,9 +332,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
             spec = device_json.get("spec", {})
             device_id = device_kind.name
 
-            # Skip non-local devices (future-proofing)
+            # Skip cloud devices (cloud devices have their own provider)
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type != DeviceType.LOCAL.value:
+            if device_type == DeviceType.CLOUD.value:
                 continue
 
             # Get online status from Redis
@@ -382,6 +383,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "latest_version": latest_version,
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
+                    "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
 

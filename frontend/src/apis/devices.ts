@@ -16,6 +16,9 @@ export type DeviceStatus = 'online' | 'offline' | 'busy'
 // Device type enum matching backend DeviceType
 export type DeviceType = 'local' | 'cloud'
 
+// Bind shell type enum matching backend BindShell
+export type BindShell = 'claudecode' | 'openclaw'
+
 // Device connection mode enum matching backend DeviceConnectionMode
 export type DeviceConnectionMode = 'websocket' // Future: 'api'
 
@@ -53,6 +56,8 @@ export interface DeviceInfo {
   update_available: boolean
   // Cloud device specific config
   cloud_config?: CloudDeviceConfig
+  // Shell binding type
+  bind_shell?: BindShell
 }
 
 export interface DeviceListResponse {

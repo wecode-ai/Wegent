@@ -148,6 +148,9 @@ export interface ChatInputControlsProps {
   // Generate mode switch props (only used when taskType is 'video' or 'image')
   /** Callback when user switches between video and image mode */
   onGenerateModeChange?: (mode: GenerateMode) => void
+
+  /** When true, hide all selectors - only show send button + quota */
+  hideSelectors?: boolean
 }
 
 /**
@@ -239,6 +242,8 @@ export function ChatInputControls({
   onImageSizeChange,
   // Generate mode switch props
   onGenerateModeChange,
+  // Hide all selectors (for OpenClaw devices)
+  hideSelectors,
 }: ChatInputControlsProps) {
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
@@ -363,6 +368,7 @@ export function ChatInputControls({
         preloadedSkillNames={preloadedSkillNames}
         selectedSkillNames={selectedSkillNames}
         onToggleSkill={onToggleSkill}
+        hideSelectors={hideSelectors}
       />
     )
   }
@@ -460,7 +466,16 @@ export function ChatInputControls({
 
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
-          <>
+          <div className={hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'}>
+            {/* Context Selection - only show for chat shell */}
+            {isChatShell(selectedTeam) && (
+              <ChatContextInput
+                selectedContexts={selectedContexts}
+                onContextsChange={setSelectedContexts}
+                excludeKnowledgeBaseId={knowledgeBaseId}
+              />
+            )}
+
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
@@ -504,15 +519,6 @@ export function ChatInputControls({
               />
             )}
 
-            {/* Context Selection - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
-              <ChatContextInput
-                selectedContexts={selectedContexts}
-                onContextsChange={setSelectedContexts}
-                excludeKnowledgeBaseId={knowledgeBaseId}
-              />
-            )}
-
             {/* Clarification Toggle Button - only show for chat shell */}
             {isChatShell(selectedTeam) && (
               <ClarificationToggle
@@ -551,20 +557,22 @@ export function ChatInputControls({
 
             {/* Model Selector - placed at the end of left side buttons */}
             {selectedTeam && (
-              <ModelSelector
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
-                selectedTeam={selectedTeam}
-                disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
-                compact={shouldCollapseSelectors}
-                teamId={teamId}
-                taskId={taskId}
-                taskModelId={taskModelId}
-              />
+              <div className={hideSelectors ? 'hidden' : ''}>
+                <ModelSelector
+                  selectedModel={selectedModel}
+                  setSelectedModel={setSelectedModel}
+                  forceOverride={forceOverride}
+                  setForceOverride={setForceOverride}
+                  selectedTeam={selectedTeam}
+                  disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+                  compact={shouldCollapseSelectors}
+                  teamId={teamId}
+                  taskId={taskId}
+                  taskModelId={taskModelId}
+                />
+              </div>
             )}
-          </>
+          </div>
         )}
       </div>
 
