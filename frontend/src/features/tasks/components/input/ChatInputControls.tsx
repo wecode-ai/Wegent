@@ -530,7 +530,7 @@ export function ChatInputControls({
             )}
 
             {/* Model Selector */}
-            {selectedTeam && (
+            {selectedTeam && !hideSelectors && (
               <ModelSelector
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}

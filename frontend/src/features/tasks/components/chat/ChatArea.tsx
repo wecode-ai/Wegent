@@ -925,9 +925,8 @@ function ChatAreaContent({
     },
     onPasteFile: handlePasteFile,
     // ChatInputControls props
-    // OpenClaw devices handle model selection on device side, so pass null to prevent auto-selection
-    selectedModel: hideSelectors ? null : chatState.selectedModel,
-    setSelectedModel: hideSelectors ? () => {} : chatState.setSelectedModel,
+    selectedModel: chatState.selectedModel,
+    setSelectedModel: chatState.setSelectedModel,
     forceOverride: chatState.forceOverride,
     setForceOverride: chatState.setForceOverride,
     teamId: chatState.selectedTeam?.id,
