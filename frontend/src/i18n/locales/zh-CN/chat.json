@@ -306,11 +306,13 @@
     "chars": "字符"
   },
   "upload": {
+    "attachment": "附件",
     "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
     "image_tooltip": "支持的文件类型: 图片 (JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n上传参考图片用于生成",
     "wait_for_upload": "请等待文件上传完成"
   },
   "clarification_toggle": {
+    "label": "智能追问",
     "enable": "启用智能追问模式",
     "disable": "禁用智能追问模式"
   },
@@ -448,6 +450,7 @@
     "exportSuccess": "图片已导出"
   },
   "correction": {
+    "label": "交叉验证",
     "enable": "启用 AI 交叉验证",
     "disable": "禁用 AI 交叉验证",
     "select_model": "选择交叉验证模型",

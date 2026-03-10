@@ -88,6 +88,8 @@ export interface ChatMessageRequest {
   enable_deep_thinking?: boolean
   /** Mark this as a group chat task */
   is_group_chat?: boolean
+  /** Linked group name for group chat (members derived from group) */
+  linked_group?: string
   /** Context items (knowledge bases, etc.) */
   contexts?: Array<{
     type: string
@@ -718,6 +720,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         force_override_bot_model: request.model_id,
         force_override_bot_model_type: request.force_override_bot_model_type,
         is_group_chat: request.is_group_chat,
+        linked_group: request.linked_group,
         contexts: request.contexts,
         git_url: request.git_url,
         git_repo: request.git_repo,

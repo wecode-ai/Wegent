@@ -206,20 +206,26 @@ class ExtendedEventEmitter:
             status: Current task status (e.g., "PENDING", "COMPLETED")
             progress: Task progress percentage (0-100)
         """
+        logger.info(
+            f"[ExtendedEmitter] emit_group_chat_new_message called: user_id={user_id}, task_id={task_id}, status={status}, progress={progress}"
+        )
         ws_emitter = self._get_ws_emitter()
         if not ws_emitter:
             logger.warning(
                 "[ExtendedEmitter] Cannot emit group chat new message - emitter not initialized"
             )
             return
+        logger.info(
+            f"[ExtendedEmitter] Calling ws_emitter.emit_task_status for user_id={user_id}, task_id={task_id}"
+        )
         await ws_emitter.emit_task_status(
             user_id=user_id,
             task_id=task_id,
             status=status,
             progress=progress,
         )
-        logger.debug(
-            f"[ExtendedEmitter] emit group_chat_new_message user={user_id} task={task_id}"
+        logger.info(
+            f"[ExtendedEmitter] emit_group_chat_new_message completed: user={user_id} task={task_id}"
         )
 
     # ============================================================

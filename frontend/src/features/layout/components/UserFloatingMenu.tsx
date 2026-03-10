@@ -95,13 +95,13 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
         onClick={handleToggleMenu}
         aria-expanded={isExpanded}
         aria-haspopup="true"
-        className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-all duration-200 group"
+        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-all duration-200 group"
       >
         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
           <UserCircleIcon className="w-5 h-5 text-primary" />
         </div>
-        <div className="flex flex-col items-start">
-          <span className="text-sm font-medium text-text-primary leading-tight">
+        <div className="flex flex-col items-start flex-1 min-w-0">
+          <span className="text-sm font-medium text-text-primary leading-tight truncate">
             {userDisplayName}
           </span>
           {isAdmin && (
@@ -112,7 +112,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           )}
         </div>
         <ChevronUpIcon
-          className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 ${
+          className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 flex-shrink-0 ${
             isExpanded ? 'rotate-180' : ''
           }`}
         />

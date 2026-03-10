@@ -328,11 +328,13 @@
     "chars": "chars"
   },
   "upload": {
+    "attachment": "Attachment",
     "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
     "image_tooltip": "Supported file types: Images (JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nUpload reference images for generation",
     "wait_for_upload": "Please wait for file upload to complete"
   },
   "clarification_toggle": {
+    "label": "Smart Follow-up",
     "enable": "Enable smart follow-up mode",
     "disable": "Disable smart follow-up mode"
   },
@@ -470,6 +472,7 @@
     "exportSuccess": "Image exported"
   },
   "correction": {
+    "label": "Cross-Validation",
     "enable": "Enable AI correction mode",
     "disable": "Disable AI correction mode",
     "select_model": "Select Correction Model",

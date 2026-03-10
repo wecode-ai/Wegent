@@ -20,8 +20,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { Check, Brain, ChevronDown, Video, ImageIcon } from 'lucide-react'
+import { Check, ChevronDown, Video, ImageIcon } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { ModelIcon } from '@/components/icons/ModelIcon'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
@@ -145,7 +146,7 @@ export default function ModelSelector({
       case 'image':
         return ImageIcon
       default:
-        return Brain
+        return ModelIcon
     }
   }, [modelCategoryType])
 
@@ -245,11 +246,11 @@ export default function ModelSelector({
                   aria-controls="model-selector-popover"
                   disabled={isDisabled}
                   className={cn(
-                    'flex items-center gap-1 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
-                    'border transition-colors',
+                    'flex items-center gap-1 min-w-0 rounded-[24px] pl-2.5 pr-3 py-2.5 h-9',
+                    'transition-colors',
                     modelSelection.isModelRequired
-                      ? 'border-error text-error bg-error/5 hover:bg-error/10'
-                      : 'border-border bg-base text-text-primary hover:bg-hover',
+                      ? 'border border-error text-error bg-error/5 hover:bg-error/10'
+                      : 'bg-transparent text-text-primary hover:bg-hover',
                     modelSelection.isLoading || externalLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     'disabled:cursor-not-allowed disabled:opacity-50'
