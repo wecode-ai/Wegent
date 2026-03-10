@@ -616,8 +616,8 @@ function TaskHistorySection({
   loadingMorePersonalTasks,
   viewStatusVersion,
   getUnreadCount,
-  totalUnreadCount: _totalUnreadCount,
-  handleMarkAllAsViewed: _handleMarkAllAsViewed,
+  totalUnreadCount,
+  handleMarkAllAsViewed,
   handleOpenSearchDialog,
   shortcutDisplayText,
   setIsMobileSidebarOpen,
@@ -803,28 +803,38 @@ function TaskHistorySection({
                   <span>{t('common:tasks.history_title')}</span>
                 )}
               </div>
-              <TooltipProvider>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={handleOpenSearchDialog}
-                      className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
-                      aria-label={t('common:tasks.search_placeholder_chat')}
-                    >
-                      <Search className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    <p>
-                      {shortcutDisplayText
-                        ? t('common:tasks.search_hint_with_shortcut', {
-                          shortcut: shortcutDisplayText,
-                        })
-                        : t('common:tasks.search_placeholder_chat')}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              <div className="flex items-center gap-2">
+                {totalUnreadCount > 0 && (
+                  <button
+                    onClick={handleMarkAllAsViewed}
+                    className="text-xs text-text-muted hover:text-text-primary transition-colors whitespace-nowrap"
+                  >
+                    {t('common:tasks.mark_all_read')}
+                  </button>
+                )}
+                <TooltipProvider>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={handleOpenSearchDialog}
+                        className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
+                        aria-label={t('common:tasks.search_placeholder_chat')}
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      <p>
+                        {shortcutDisplayText
+                          ? t('common:tasks.search_hint_with_shortcut', {
+                            shortcut: shortcutDisplayText,
+                          })
+                          : t('common:tasks.search_placeholder_chat')}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
             </div>
           )}
           {isCollapsed && filteredGroupTasks.length > 0 && (
