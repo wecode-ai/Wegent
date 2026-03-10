@@ -214,6 +214,8 @@ class TaskQueryMixin:
         1. Tasks with ResourceMember records (regular group chats)
         2. Tasks with is_group_chat=true explicitly set
         3. Tasks with linked_group where user is a member of the linked group (namespace)
+
+        Performance optimized: Uses linked_group_id column with index instead of JSON_EXTRACT.
         """
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
@@ -240,44 +242,84 @@ class TaskQueryMixin:
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get tasks where is_group_chat is explicitly set to true
-        explicit_group_sql = text(
+        # Using application-layer filtering to avoid JSON_EXTRACT in SQL
+        candidate_tasks_sql = text(
             """
-            SELECT DISTINCT k.id
+            SELECT DISTINCT k.id, k.json
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-            AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
         """
         )
-        explicit_group_result = db.execute(
-            explicit_group_sql, {"user_id": user_id}
+        candidate_tasks_result = db.execute(
+            candidate_tasks_sql, {"user_id": user_id}
         ).fetchall()
-        explicit_group_ids = {row[0] for row in explicit_group_result}
+
+        # Filter tasks with is_group_chat=true in application layer
+        explicit_group_ids = set()
+        for row in candidate_tasks_result:
+            task_id, task_json = row
+            if task_id in member_task_ids:
+                continue  # Already counted
+            try:
+                if isinstance(task_json, dict):
+                    if task_json.get("spec", {}).get("is_group_chat") is True:
+                        explicit_group_ids.add(task_id)
+            except Exception:
+                pass
 
         # Get tasks with linked_group where user is a member of the linked namespace (group)
-        # This handles group chats created from group knowledge bases
-        linked_group_sql = text(
+        # Optimized: Use linked_group_id column with index instead of JSON_EXTRACT
+        # First, get user's group namespace IDs
+        user_namespace_ids_sql = text(
             """
-            SELECT DISTINCT k.id
-            FROM tasks k
-            INNER JOIN namespace ns ON ns.name = JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.spec.linked_group'))
-            INNER JOIN resource_members rm ON rm.resource_id = ns.id AND rm.resource_type = 'Namespace'
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND JSON_EXTRACT(k.json, '$.spec.linked_group') IS NOT NULL
+            SELECT DISTINCT rm.resource_id
+            FROM resource_members rm
+            WHERE rm.resource_type = 'Namespace'
             AND rm.user_id = :user_id
             AND rm.status = 'approved'
-            AND ns.is_active = true
         """
         )
-        linked_group_result = db.execute(
-            linked_group_sql, {"user_id": user_id}
+        user_namespace_ids_result = db.execute(
+            user_namespace_ids_sql, {"user_id": user_id}
         ).fetchall()
-        linked_group_ids = {row[0] for row in linked_group_result}
+        user_namespace_ids = {row[0] for row in user_namespace_ids_result}
+
+        linked_group_ids = set()
+        if user_namespace_ids:
+            # Query tasks using linked_group_id column (indexed) instead of JSON_EXTRACT
+            linked_group_sql = text(
+                """
+                SELECT DISTINCT k.id
+                FROM tasks k
+                WHERE k.kind = 'Task'
+                AND k.is_active = true
+                AND k.namespace != 'system'
+                AND k.linked_group_id IN :namespace_ids
+                AND (k.user_id = :user_id OR k.id IN :member_task_ids)
+            """
+            )
+            # Use a list for the IN clause
+            namespace_ids_list = list(user_namespace_ids)
+            member_task_ids_list = (
+                list(member_task_ids) if member_task_ids else [0]
+            )  # Dummy value if empty
+
+            linked_group_result = db.execute(
+                linked_group_sql,
+                {
+                    "user_id": user_id,
+                    "namespace_ids": tuple(namespace_ids_list),
+                    "member_task_ids": tuple(member_task_ids_list),
+                },
+            ).fetchall()
+            linked_group_ids = {row[0] for row in linked_group_result}
+
+            # Remove already counted tasks
+            linked_group_ids -= member_task_ids
 
         logger.info(
             f"[get_user_group_tasks_lite] user_id={user_id}, member_task_ids={len(member_task_ids)}, "
@@ -329,6 +371,8 @@ class TaskQueryMixin:
         Args:
             types: List of task types to include. Options: 'online', 'offline', 'subscription'.
                    Default is ['online', 'offline'] if None.
+
+        Performance optimized: Uses application-layer filtering instead of JSON_EXTRACT.
         """
         if types is None:
             types = ["online", "offline"]
@@ -355,21 +399,33 @@ class TaskQueryMixin:
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get task IDs where is_group_chat is explicitly set to true
+        # Using application-layer filtering to avoid JSON_EXTRACT in SQL
         explicit_group_sql = text(
             """
-            SELECT DISTINCT k.id
+            SELECT DISTINCT k.id, k.json
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND k.user_id = :user_id
-            AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
         """
         )
         explicit_group_result = db.execute(
             explicit_group_sql, {"user_id": user_id}
         ).fetchall()
-        explicit_group_ids = {row[0] for row in explicit_group_result}
+
+        # Filter tasks with is_group_chat=true in application layer
+        explicit_group_ids = set()
+        for row in explicit_group_result:
+            task_id, task_json = row
+            if task_id in member_task_ids:
+                continue  # Already counted
+            try:
+                if isinstance(task_json, dict):
+                    if task_json.get("spec", {}).get("is_group_chat") is True:
+                        explicit_group_ids.add(task_id)
+            except Exception:
+                pass
 
         # Combine all group task IDs to exclude
         all_group_task_ids = member_task_ids | explicit_group_ids
@@ -555,22 +611,28 @@ class TaskQueryMixin:
         Get Task by ID and user ID (only active tasks).
 
         Allows access if user is the owner OR a member of the group chat.
+
+        Performance optimized: Uses application-layer status check instead of JSON_EXTRACT.
         """
         from app.services.task_member_service import task_member_service
 
-        # Check if task exists
+        # Check if task exists (without JSON_EXTRACT in SQL)
         task = (
             db.query(TaskResource)
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
                 TaskResource.is_active.is_(True),
-                text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
             )
             .first()
         )
 
         if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check DELETE status in application layer to avoid JSON_EXTRACT in SQL
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status and task_crd.status.status == "DELETE":
             raise HTTPException(status_code=404, detail="Task not found")
 
         # Check if user has access (owner or active member)

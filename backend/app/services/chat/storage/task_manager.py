@@ -385,6 +385,27 @@ def create_new_task(
         "apiVersion": "agent.wecode.io/v1",
     }
 
+    # Lookup linked_group_id if linked_group is provided
+    # This avoids slow JSON_EXTRACT queries by using indexed column
+    linked_group_id = 0
+    if params.linked_group:
+        from app.models.namespace import Namespace
+
+        namespace = (
+            db.query(Namespace)
+            .filter(Namespace.name == params.linked_group, Namespace.is_active == True)
+            .first()
+        )
+        if namespace:
+            linked_group_id = namespace.id
+            logger.info(
+                f"[create_new_task] Found linked_group_id={linked_group_id} for linked_group='{params.linked_group}'"
+            )
+        else:
+            logger.warning(
+                f"[create_new_task] Could not find namespace for linked_group='{params.linked_group}'"
+            )
+
     # Check if a Placeholder record exists for this task_id
     # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
     existing_placeholder = (
@@ -404,6 +425,9 @@ def create_new_task(
         existing_placeholder.namespace = "default"
         existing_placeholder.json = task_json
         existing_placeholder.is_active = True
+        existing_placeholder.linked_group_id = (
+            linked_group_id  # Set linked_group_id for fast queries
+        )
         existing_placeholder.updated_at = datetime.now()
         task = existing_placeholder
     else:
@@ -416,13 +440,15 @@ def create_new_task(
             namespace="default",
             json=task_json,
             is_active=True,
+            linked_group_id=linked_group_id,  # Set linked_group_id for fast queries
         )
         db.add(task)
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
         f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}, "
-        f"linked_group={task_json.get('spec', {}).get('linked_group', 'NOT_SET')}"
+        f"linked_group={task_json.get('spec', {}).get('linked_group', 'NOT_SET')}, "
+        f"linked_group_id={linked_group_id}"
     )
 
     return task
