@@ -1521,7 +1521,12 @@ class TaskRequestBuilder:
         except urllib.error.HTTPError:
             # Any HTTP response means the server is reachable
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "[MCP-CHECK] Failed to check server reachability: url=%s, error=%s",
+                url,
+                str(e),
+            )
             return False
 
     def _filter_reachable_mcp_servers(self, mcp_servers: list) -> list:
