@@ -571,14 +571,13 @@ class KnowledgeOrchestrator:
             group_name=group_name,
         )
 
-        # Batch fetch document counts to avoid N+1 query problem
-        kb_ids = [kb.id for kb in knowledge_bases]
-        doc_counts = KnowledgeService.get_document_counts_batch(db, kb_ids)
-
+        # Use cached document_count from spec to avoid N+1 query problem
         return KnowledgeBaseListResponse(
             total=len(knowledge_bases),
             items=[
-                KnowledgeBaseResponse.from_kind(kb, doc_counts.get(kb.id, 0))
+                KnowledgeBaseResponse.from_kind(
+                    kb, kb.json.get("spec", {}).get("document_count", 0)
+                )
                 for kb in knowledge_bases
             ],
         )

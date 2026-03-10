@@ -750,43 +750,40 @@ class KnowledgeService:
         )
 
     @staticmethod
-    def get_document_counts_batch(
+    def _update_document_count_cache(
         db: Session,
-        knowledge_base_ids: list[int],
-    ) -> dict[int, int]:
+        knowledge_base_id: int,
+    ) -> None:
         """
-        Get document counts for multiple knowledge bases in a single query.
+        Update the cached document_count in knowledge base spec.
 
-        This method optimizes the N+1 query problem by fetching all counts
-        in one database query instead of one query per knowledge base.
+        This method queries the actual document count from the database
+        and updates the spec.document_count field to keep it in sync.
+        Called after document creation/deletion.
 
         Args:
             db: Database session
-            knowledge_base_ids: List of knowledge base IDs
-
-        Returns:
-            Dictionary mapping knowledge_base_id to document count
+            knowledge_base_id: Knowledge base ID
         """
-        if not knowledge_base_ids:
-            return {}
-
-        # Single query to get counts for all knowledge bases
-        results = (
-            db.query(
-                KnowledgeDocument.kind_id,
-                func.count(KnowledgeDocument.id).label("count"),
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
             )
-            .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
-            .group_by(KnowledgeDocument.kind_id)
-            .all()
+            .first()
         )
 
-        # Build result dictionary with default 0 for KBs without documents
-        counts = {kb_id: 0 for kb_id in knowledge_base_ids}
-        for kind_id, count in results:
-            counts[kind_id] = count
+        if kb:
+            # Query actual document count from database
+            actual_count = KnowledgeService.get_document_count(db, knowledge_base_id)
 
-        return counts
+            kb_json = kb.json
+            spec = kb_json.get("spec", {})
+            spec["document_count"] = actual_count
+            kb_json["spec"] = spec
+            kb.json = kb_json
+            flag_modified(kb, "json")
 
     @staticmethod
     def get_active_document_count(
@@ -944,6 +941,10 @@ class KnowledgeService:
             source_config=data.source_config if data.source_config else {},
         )
         db.add(document)
+        db.flush()  # Flush to persist document before counting
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, knowledge_base_id)
 
         db.commit()
         db.refresh(document)
@@ -1172,6 +1173,10 @@ class KnowledgeService:
 
         # Physically delete document from database
         db.delete(doc)
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, kind_id)
+
         db.commit()
 
         # Delete RAG index if knowledge base has retrieval_config
