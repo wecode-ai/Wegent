@@ -312,19 +312,15 @@ class KnowledgeService:
             bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
 
             # Single query to get personal, shared, and bound knowledge bases
-            # Only return KBs in "default" namespace (personal KBs).
-            # Group KBs (namespace != "default") are excluded — they are
-            # shown on the "Group" tab instead.
             # Personal: user_id matches and namespace is "default"
-            # Shared: id is in shared_kb_ids (only personal KBs)
-            # Bound: id is in bound_kb_ids (only personal KBs bound to group chats)
+            # Shared: id is in shared_kb_ids
+            # Bound: id is in bound_kb_ids (personal KBs bound to group chats)
             all_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
-                    Kind.namespace == "default",
-                    (Kind.user_id == user_id)
+                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
                     | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False)
                     | (Kind.id.in_(bound_kb_ids) if bound_kb_ids else False),
                 )
@@ -535,44 +531,25 @@ class KnowledgeService:
         if data.description is not None:
             spec["description"] = data.description
 
-        # Update retrieval config if provided
-        # Allow updating all fields including retriever_name and embedding_config
-        # Note: Changing retriever/embedding requires reindexing documents
+        # Update retrieval config if provided (only allowed fields)
         if data.retrieval_config is not None:
-            current_retrieval_config = spec.get("retrievalConfig", {}) or {}
-
-            # Update retriever_name and retriever_namespace if provided
-            if data.retrieval_config.retriever_name:
-                current_retrieval_config["retriever_name"] = (
-                    data.retrieval_config.retriever_name
-                )
-                current_retrieval_config["retriever_namespace"] = (
-                    data.retrieval_config.retriever_namespace or "default"
-                )
-
-            # Update embedding_config if provided
-            if data.retrieval_config.embedding_config is not None:
-                current_retrieval_config["embedding_config"] = (
-                    data.retrieval_config.embedding_config.model_dump()
-                )
-
-            # Update tunable fields
-            if data.retrieval_config.retrieval_mode is not None:
-                current_retrieval_config["retrieval_mode"] = (
-                    data.retrieval_config.retrieval_mode
-                )
-            if data.retrieval_config.top_k is not None:
-                current_retrieval_config["top_k"] = data.retrieval_config.top_k
-            if data.retrieval_config.score_threshold is not None:
-                current_retrieval_config["score_threshold"] = (
-                    data.retrieval_config.score_threshold
-                )
-            if data.retrieval_config.hybrid_weights is not None:
-                current_retrieval_config["hybrid_weights"] = (
-                    data.retrieval_config.hybrid_weights.model_dump()
-                )
-
+            current_retrieval_config = spec.get("retrievalConfig", {})
             if current_retrieval_config:
+                # Only update allowed fields, keep retriever and embedding_config unchanged
+                if data.retrieval_config.retrieval_mode is not None:
+                    current_retrieval_config["retrieval_mode"] = (
+                        data.retrieval_config.retrieval_mode
+                    )
+                if data.retrieval_config.top_k is not None:
+                    current_retrieval_config["top_k"] = data.retrieval_config.top_k
+                if data.retrieval_config.score_threshold is not None:
+                    current_retrieval_config["score_threshold"] = (
+                        data.retrieval_config.score_threshold
+                    )
+                if data.retrieval_config.hybrid_weights is not None:
+                    current_retrieval_config["hybrid_weights"] = (
+                        data.retrieval_config.hybrid_weights.model_dump()
+                    )
                 spec["retrievalConfig"] = current_retrieval_config
 
         # Update summary_enabled if provided

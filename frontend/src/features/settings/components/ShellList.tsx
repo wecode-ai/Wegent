@@ -31,10 +31,7 @@ import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 interface ShellListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-  groupRoleMap?: Map<
-    string,
-    'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedObserver'
-  >
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
   onEditResource?: (namespace: string) => void
 }
 

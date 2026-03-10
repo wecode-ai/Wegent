@@ -27,6 +27,7 @@ import { teamService } from '@/features/tasks/service/teamService'
 import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
+import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
 import { useDeviceVncState } from '@wecode/hooks'
 
@@ -132,6 +133,9 @@ export default function DeviceChatPage() {
 
   // Show VNC panel only when open and device is a cloud device with sandboxId
   const showVncPanel = isVncOpen && sandboxId && selectedDeviceId && !isMobile
+
+  // Check if selected device is OpenClaw type (used for conditional rendering)
+  const _isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">

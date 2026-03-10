@@ -21,8 +21,6 @@
   "view_permission_desc": "可以查看此知识库中的文档",
   "edit_permission": "编辑",
   "edit_permission_desc": "可以查看和编辑此知识库中的文档",
-  "use_permission": "使用",
-  "use_permission_desc": "仅可通过对话使用知识库，不可查看文档内容",
   "submit_request": "提交申请",
   "request_submitted": "申请已提交",
   "request_submitted_desc": "您的访问请求已提交，请等待所有者审批。",

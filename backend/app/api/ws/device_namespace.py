@@ -158,7 +158,12 @@ def _handle_device_disconnect(user_id: int, device_id: str) -> list[FailedSubtas
 
 
 def _register_device(
-    user_id: int, device_id: str, name: str, client_ip: Optional[str] = None
+    user_id: int,
+    device_id: str,
+    name: str,
+    client_ip: Optional[str] = None,
+    device_type: Optional[str] = None,
+    bind_shell: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """
     Register or update device CRD in database.
@@ -168,6 +173,8 @@ def _register_device(
         device_id: Device unique identifier (stored in Kind.name)
         name: Device display name
         client_ip: Device's client IP address
+        device_type: Device type ('local' or 'cloud')
+        bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
 
     Returns (success, error_message).
     """
@@ -179,6 +186,8 @@ def _register_device(
                 device_id=device_id,
                 name=name,
                 client_ip=client_ip,
+                device_type=device_type,
+                bind_shell=bind_shell,
             )
         return True, None
     except Exception as e:
@@ -651,7 +660,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Pass client_ip to _register_device for tracking
         if not is_cloud_device:
             success, error = _register_device(
-                user_id, payload.device_id, payload.name, payload.client_ip
+                user_id,
+                payload.device_id,
+                payload.name,
+                payload.client_ip,
+                device_type=payload.device_type.value,
+                bind_shell=payload.bind_shell.value,
             )
             if not success:
                 return {"error": f"Registration failed: {error}"}
