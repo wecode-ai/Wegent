@@ -304,6 +304,10 @@
       "join_description_suffix": "」将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。"
     }
   },
+  "teamSelector": {
+    "agent_label": "智能体",
+    "select_agent_tooltip": "选择智能体"
+  },
   "team": {
     "name": "名称",
     "name_required": "智能体名称不能为空",
@@ -1280,6 +1284,7 @@
     "no_matching_skills": "没有匹配的技能",
     "already_selected": "已选择",
     "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "skill_button_label": "技能",
     "manage_skills": "管理技能"
   },
   "mcpProviders": {

@@ -55,12 +55,14 @@ class ResourceRole(str, PyEnum):
     - Maintainer: Can manage members, has manage permission
     - Developer: Can edit content, has edit permission
     - Reporter: Can only view, has view permission
+    - RestrictedObserver: Can use KB via RAG in chat, but cannot view document content
     """
 
     OWNER = "Owner"
     MAINTAINER = "Maintainer"
     DEVELOPER = "Developer"
     REPORTER = "Reporter"
+    RESTRICTED_OBSERVER = "RestrictedObserver"
 
 
 class ResourceMember(Base):
@@ -115,7 +117,7 @@ class ResourceMember(Base):
         nullable=False,
         default="",
         server_default="",
-        comment="Member role: Owner, Maintainer, Developer, Reporter",
+        comment="Member role: Owner, Maintainer, Developer, Reporter, RestrictedObserver",
     )
 
     # Permission level (legacy field, kept for backward compatibility)
@@ -240,7 +242,7 @@ class ResourceMember(Base):
         for backward compatibility during migration.
 
         Returns:
-            Role string: Owner, Maintainer, Developer, or Reporter
+            Role string: Owner, Maintainer, Developer, Reporter, or RestrictedObserver
         """
         # If role is set, use it
         if self.role:
@@ -248,6 +250,7 @@ class ResourceMember(Base):
 
         # Otherwise, derive from permission_level for backward compatibility
         level_map = {
+            PermissionLevel.USE.value: ResourceRole.RESTRICTED_OBSERVER.value,
             PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
             PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
             PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
@@ -258,7 +261,7 @@ class ResourceMember(Base):
         """Set role and update permission_level for backward compatibility.
 
         Args:
-            role: The role to set (Owner, Maintainer, Developer, Reporter)
+            role: The role to set (Owner, Maintainer, Developer, Reporter, RestrictedObserver)
         """
         self.role = role
 
@@ -268,5 +271,6 @@ class ResourceMember(Base):
             ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
             ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
             ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
+            ResourceRole.RESTRICTED_OBSERVER.value: PermissionLevel.USE.value,
         }
         self.permission_level = role_to_permission.get(role, PermissionLevel.VIEW.value)

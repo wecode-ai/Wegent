@@ -7,6 +7,7 @@
 import React from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
+import TeamSelectorButton from '../selector/TeamSelectorButton'
 import UnifiedRepositorySelector from '../selector/UnifiedRepositorySelector'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
@@ -44,6 +45,8 @@ export interface ChatInputControlsProps {
   taskType?: TaskType
   // Team and Model
   selectedTeam: Team | null
+  /** Available teams for team selector */
+  teams?: Team[]
   onTeamChange?: (team: Team) => void
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
@@ -169,6 +172,7 @@ export interface ChatInputControlsProps {
 export function ChatInputControls({
   taskType,
   selectedTeam,
+  teams = [],
   onTeamChange: _onTeamChange,
   selectedModel,
   setSelectedModel,
@@ -372,10 +376,10 @@ export function ChatInputControls({
   // Desktop layout: original full layout
   return (
     <div
-      className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
+      className={`flex items-center justify-between px-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 -mt-2.5'}`}
     >
       <div
-        className="flex-1 min-w-0 overflow-visible flex items-center gap-3 flex-wrap"
+        className="flex-1 min-w-0 overflow-visible flex items-center gap-0 flex-wrap"
         data-tour="input-controls"
       >
         {/* Generate Mode Selector - show when in video or image mode */}
@@ -477,6 +481,28 @@ export function ChatInputControls({
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
             )}
 
+            {/* Divider between attachment and other controls */}
+            {supportsAttachments(selectedTeam) && selectedTeam && (
+              <div className="w-px h-4 bg-border mx-1 flex-shrink-0" />
+            )}
+
+            {/* Team Selector - show when teams are available, onTeamChange is provided, and no messages yet */}
+            {teams.length > 0 && _onTeamChange && !hasMessages && (
+              <TeamSelectorButton
+                selectedTeam={selectedTeam}
+                setSelectedTeam={(team: Team | null) => {
+                  if (team) {
+                    _onTeamChange(team)
+                  }
+                }}
+                teams={teams}
+                disabled={isLoading || isStreaming}
+                taskDetail={selectedTaskDetail}
+                hideSettingsLink={true}
+                currentMode={taskType}
+              />
+            )}
+
             {/* Skill Selector - show when skills are available */}
             {/* Skill selection is read-only after task creation (hasMessages) */}
             {availableSkills.length > 0 && onToggleSkill && (
@@ -529,7 +555,7 @@ export function ChatInputControls({
               />
             )}
 
-            {/* Model Selector */}
+            {/* Model Selector - placed at the end of left side buttons */}
             {selectedTeam && (
               <div className={hideSelectors ? 'hidden' : ''}>
                 <ModelSelector
@@ -555,15 +581,6 @@ export function ChatInputControls({
         {!shouldHideQuotaUsage && (
           <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
         )}
-
-        {/* Deep Thinking Toggle Button - hidden for now */}
-        {/* {isChatShell(selectedTeam) && (
-          <DeepThinkingToggle
-            enabled={enableDeepThinking}
-            onToggle={setEnableDeepThinking}
-            disabled={isLoading || isStreaming}
-          />
-        )} */}
 
         {/* Send/Stop Button */}
         {renderSendButton()}

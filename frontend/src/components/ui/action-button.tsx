@@ -12,6 +12,8 @@ interface ActionButtonProps {
   disabled?: boolean
   title?: string
   icon: React.ReactNode
+  /** Optional text label to display next to the icon */
+  label?: string
   variant?: 'default' | 'outline' | 'loading'
   className?: string
   asChild?: boolean
@@ -66,11 +68,20 @@ export function ActionButton({
   disabled = false,
   title,
   icon,
+  label,
   variant = 'default',
   className = '',
 }: ActionButtonProps) {
-  // Base styles shared by all variants
-  const baseStyles = 'h-9 w-9 rounded-full flex-shrink-0'
+  // Determine if this is an icon-only button or has a label
+  const hasLabel = Boolean(label)
+
+  // Base styles - different for icon-only vs with-label buttons
+  // Design spec: height 36px, border-radius 24px, border 1px #E4E4E4, bg white
+  // With label: padding 10px 12px 10px 10px, gap 4px
+  // Icon only: 36x36 circle with centered icon
+  const baseStyles = hasLabel
+    ? 'h-9 rounded-[24px] flex-shrink-0 pl-2.5 pr-3 py-2.5 gap-1 inline-flex items-center'
+    : 'h-9 w-9 rounded-full flex-shrink-0'
 
   if (variant === 'loading') {
     // Static loading state (non-clickable)
@@ -79,24 +90,27 @@ export function ActionButton({
         className={`relative ${baseStyles} flex items-center justify-center border border-border bg-base ${className}`}
       >
         {icon}
+        {label && <span className="text-sm text-text-primary">{label}</span>}
       </div>
     )
   }
 
   // Clickable button (default or outline)
   const buttonVariant = variant === 'outline' ? 'outline' : 'ghost'
-  const defaultClassName = variant === 'outline' ? '' : 'border border-border'
+  // No border for default variant, create clean flat button style
+  const defaultClassName = variant === 'outline' ? 'border border-border' : ''
 
   return (
     <Button
       variant={buttonVariant}
-      size="icon"
+      size={hasLabel ? 'default' : 'icon'}
       onClick={onClick}
       disabled={disabled}
       title={title}
       className={`${baseStyles} ${defaultClassName} ${className}`}
     >
       {icon}
+      {label && <span className="text-sm text-text-primary">{label}</span>}
     </Button>
   )
 }
