@@ -1,13 +1,17 @@
 /**
  * Authentication Setup Script
  *
- * This script opens a browser for QR code login, detects successful login,
+ * This script opens a browser for manual login, detects successful login,
  * and saves the browser state for reuse in tests.
+ *
+ * Supports two login modes:
+ * - Username/password login (local testing environment)
+ * - OIDC login with QR code (online environment)
  *
  * Usage: npm run setup-auth
  */
 
-import { chromium } from '@playwright/test'
+import { chromium, Page } from '@playwright/test'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -30,6 +34,28 @@ function getAuthFilePath(): string {
 
 const AUTH_FILE = getAuthFilePath()
 
+// Detect if the page has username/password login form
+async function hasPasswordLoginForm(page: Page): Promise<boolean> {
+  try {
+    const usernameInput = await page.$('input[name="user_name"], input[name="username"]')
+    const passwordInput = await page.$('input[name="password"], input[type="password"]')
+    return !!(usernameInput && passwordInput)
+  } catch {
+    return false
+  }
+}
+
+// Detect if the page has OIDC login button
+async function hasOidcLogin(page: Page): Promise<boolean> {
+  try {
+    // Look for OIDC login button (usually links to /api/auth/oidc/login)
+    const oidcButton = await page.$('a[href*="oidc"], button:has-text("OIDC"), button:has-text("SSO")')
+    return !!oidcButton
+  } catch {
+    return false
+  }
+}
+
 async function setupAuth() {
   console.log('Starting authentication setup...')
   console.log(`Target URL: ${BASE_URL}`)
@@ -40,7 +66,7 @@ async function setupAuth() {
     fs.mkdirSync(authDir, { recursive: true })
   }
 
-  // Launch browser in headed mode for QR code scanning
+  // Launch browser in headed mode for manual login
   const browser = await chromium.launch({
     headless: false,
     slowMo: 100,
@@ -53,19 +79,53 @@ async function setupAuth() {
   const page = await context.newPage()
 
   try {
-    // Navigate to the target URL
+    // Navigate to the target URL with longer timeout for slow local servers
     console.log('Opening login page...')
-    await page.goto(BASE_URL, { waitUntil: 'networkidle' })
+    await page.goto(BASE_URL, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000, // 60 seconds for slow local servers
+    })
+
+    // Wait for page to stabilize
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
+      // Ignore networkidle timeout, page might still be usable
+      console.log('Note: Page did not reach networkidle state, continuing anyway...')
+    })
+
+    // Detect login mode
+    const hasPasswordForm = await hasPasswordLoginForm(page)
+    const hasOidc = await hasOidcLogin(page)
 
     console.log('')
     console.log('='.repeat(50))
-    console.log('Please scan the QR code to login.')
-    console.log('Waiting for sidebar to appear (login success)...')
+
+    if (hasPasswordForm) {
+      console.log('Detected: Username/password login form')
+      console.log('')
+      console.log('Please enter your credentials in the browser:')
+      console.log('  1. Enter your username')
+      console.log('  2. Enter your password')
+      console.log('  3. Click the login button')
+    } else if (hasOidc) {
+      console.log('Detected: OIDC/SSO login')
+      console.log('')
+      console.log('Please complete the OIDC login:')
+      console.log('  - Click the OIDC/SSO login button')
+      console.log('  - Scan QR code or enter credentials as required')
+    } else {
+      console.log('Login method not detected automatically.')
+      console.log('')
+      console.log('Please complete the login manually in the browser.')
+    }
+
+    console.log('')
+    console.log('Waiting for successful login (sidebar to appear)...')
+    console.log('Timeout: 5 minutes')
     console.log('='.repeat(50))
     console.log('')
 
     // Wait for sidebar to appear (indicates successful login)
-    // Timeout: 5 minutes for user to scan QR code
+    // Timeout: 5 minutes for user to complete login
     await page.waitForSelector('[data-tour="task-sidebar"]', {
       state: 'visible',
       timeout: 300000, // 5 minutes
