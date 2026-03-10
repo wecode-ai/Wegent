@@ -197,6 +197,7 @@ class TestKnowledgeFactoryDynamicContext:
                 model_id="claude-3-5-sonnet",
                 skip_prompt_enhancement=False,
                 is_user_selected=True,
+                is_restricted_observer=False,
             )
 
             # kb_meta_prompt is always empty in chat_shell (Backend generates it)
@@ -219,6 +220,7 @@ class TestKnowledgeFactoryDynamicContext:
                 model_id="claude-3-5-sonnet",
                 skip_prompt_enhancement=False,
                 is_user_selected=True,
+                is_restricted_observer=False,
             )
 
             assert "{kb_meta_list}" not in result.enhanced_system_prompt
@@ -242,6 +244,7 @@ class TestKnowledgeFactoryDynamicContext:
                 base_system_prompt=base_prompt,
                 model_id="claude-3-5-sonnet",
                 skip_prompt_enhancement=True,
+                is_restricted_observer=False,
             )
 
             # Should return 3 KB tools (knowledge_base_search, kb_ls, kb_head)
@@ -272,6 +275,7 @@ class TestKnowledgeFactoryDynamicContext:
                 model_id="claude-3-5-sonnet",
                 skip_prompt_enhancement=False,
                 is_user_selected=True,
+                is_restricted_observer=False,
             )
 
             # Should return 3 KB tools (knowledge_base_search, kb_ls, kb_head)
@@ -295,6 +299,7 @@ class TestKnowledgeFactoryDynamicContext:
             task_id=1,
             model_id="claude-3-5-sonnet",
             skip_prompt_enhancement=True,
+            is_restricted_observer=False,
         )
 
         # Should return base prompt unchanged when no KB IDs

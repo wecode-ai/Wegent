@@ -157,6 +157,10 @@ class ChatSendPayload(BaseModel):
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
     )
+    linked_group: Optional[str] = Field(
+        None,
+        description="Linked group name for group chat. When set, members are derived from the group.",
+    )
     contexts: Optional[List[ContextItem]] = Field(
         None, description="Context items (knowledge bases, etc.)"
     )

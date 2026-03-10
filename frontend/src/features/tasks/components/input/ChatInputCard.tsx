@@ -27,6 +27,8 @@ export interface ChatInputCardProps extends Omit<
 
   // Team and external API
   selectedTeam: Team | null
+  /** Available teams for team selector */
+  teams?: Team[]
   externalApiParams: Record<string, string>
   onExternalApiParamsChange: (params: Record<string, string>) => void
   onAppModeChange: (mode: string | undefined) => void
@@ -92,6 +94,7 @@ export function ChatInputCard({
   taskInputMessage,
   setTaskInputMessage,
   selectedTeam,
+  teams = [],
   onTeamChange,
   externalApiParams,
   onExternalApiParamsChange,
@@ -214,13 +217,13 @@ export function ChatInputCard({
 
       {/* Chat Input Card */}
       <div
-        className={`relative w-full flex flex-col rounded-3xl border border-border bg-base shadow-[0px_4px_24px_0px_rgba(111,79,191,0.06)] transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+        className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-between ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
         onDrop={onDrop}
+        style={{ minHeight: '146px' }}
       >
-        {/* Drag Overlay */}
         {isDragging && (
           <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
             <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
@@ -250,7 +253,7 @@ export function ChatInputCard({
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
-          <div className="px-4 pt-2">
+          <div className="px-4 pt-3">
             <ChatInput
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
@@ -307,6 +310,7 @@ export function ChatInputCard({
         <div ref={inputControlsRef}>
           <ChatInputControls
             selectedTeam={selectedTeam}
+            teams={teams}
             onTeamChange={onTeamChange}
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}

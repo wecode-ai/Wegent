@@ -6,17 +6,19 @@
 Service for task member (group chat) management.
 
 Uses the unified ResourceMember model instead of the legacy TaskMember table.
+Supports linked group chats where members are derived from group membership.
 """
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import EPOCH_TIME, MemberStatus, ResourceMember
 from app.models.share_link import PermissionLevel, ResourceType
 from app.models.task import TaskResource
@@ -63,8 +65,24 @@ class TaskMemberService:
 
     def is_member(self, db: Session, task_id: int, user_id: int) -> bool:
         """Check if a user is an active member of a task"""
+        logger.info(
+            f"[is_member] Checking membership: task_id={task_id}, user_id={user_id}"
+        )
+
         # Task owner is always considered a member
-        if self.is_task_owner(db, task_id, user_id):
+        is_owner = self.is_task_owner(db, task_id, user_id)
+        logger.info(
+            f"[is_member] is_task_owner: task_id={task_id}, user_id={user_id}, result={is_owner}"
+        )
+        if is_owner:
+            return True
+
+        # For linked group chats, check membership via the linked group
+        is_linked_member = self.is_member_via_linked_group(db, task_id, user_id)
+        logger.info(
+            f"[is_member] is_member_via_linked_group: task_id={task_id}, user_id={user_id}, result={is_linked_member}"
+        )
+        if is_linked_member:
             return True
 
         # Check ResourceMember for approved status
@@ -80,7 +98,11 @@ class TaskMemberService:
             )
             .first()
         )
-        return member is not None
+        result = member is not None
+        logger.info(
+            f"[is_member] ResourceMember check: task_id={task_id}, user_id={user_id}, result={result}"
+        )
+        return result
 
     def is_group_chat(self, db: Session, task_id: int) -> bool:
         """Check if a task is configured as a group chat"""
@@ -133,6 +155,10 @@ class TaskMemberService:
 
     def get_member_count(self, db: Session, task_id: int) -> int:
         """Get the number of active members in a task (including owner)"""
+        # For linked group chats, get member count from the linked group
+        if self.is_linked_group_chat(db, task_id):
+            return self.get_linked_group_member_count(db, task_id)
+
         # Exclude share records (copied_resource_id > 0), only count actual group chat members
         member_count = (
             db.query(ResourceMember)
@@ -149,9 +175,22 @@ class TaskMemberService:
 
     def get_members(self, db: Session, task_id: int) -> TaskMemberListResponse:
         """Get all active members of a task"""
+        logger.info(f"[get_members] Getting members for task_id={task_id}")
         task = self.get_task(db, task_id)
         if not task:
+            logger.warning(f"[get_members] Task {task_id} not found")
             raise HTTPException(status_code=404, detail="Task not found")
+
+        # For linked group chats, get members from the linked group
+        is_linked = self.is_linked_group_chat(db, task_id)
+        logger.info(
+            f"[get_members] task_id={task_id}, is_linked_group_chat={is_linked}"
+        )
+        if is_linked:
+            logger.info(
+                f"[get_members] Delegating to get_linked_group_members for task_id={task_id}"
+            )
+            return self.get_linked_group_members(db, task_id)
 
         task_owner_id = task.user_id
 
@@ -232,6 +271,14 @@ class TaskMemberService:
             f"[add_member] Adding member: task_id={task_id}, user_id={user_id}, invited_by={invited_by}"
         )
 
+        # Linked group chats do not allow member modification
+        if self.is_linked_group_chat(db, task_id):
+            linked_group = self.get_linked_group(db, task_id)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot add members to a linked group chat. Members are managed through the group '{linked_group}'.",
+            )
+
         # Check if user already exists (even if rejected)
         existing = (
             db.query(ResourceMember)
@@ -303,6 +350,14 @@ class TaskMemberService:
         removed_by: int,
     ) -> bool:
         """Remove a member from a task (soft delete by setting status to rejected)"""
+        # Linked group chats do not allow member modification
+        if self.is_linked_group_chat(db, task_id):
+            linked_group = self.get_linked_group(db, task_id)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot remove members from a linked group chat. Members are managed through the group '{linked_group}'.",
+            )
+
         # Cannot remove the task owner
         if self.is_task_owner(db, task_id, user_id):
             raise HTTPException(status_code=400, detail="Cannot remove the task owner")
@@ -395,6 +450,214 @@ class TaskMemberService:
             logger.warning(f"Failed to get team name: {e}")
 
         return None
+
+    # =========================================================================
+    # Linked Group Chat Methods
+    # =========================================================================
+
+    def get_linked_group(self, db: Session, task_id: int) -> Optional[str]:
+        """Get the linked group name for a task.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            Linked group name if set, None otherwise
+        """
+        task = self.get_task(db, task_id)
+        if not task:
+            logger.info(f"[get_linked_group] Task {task_id} not found")
+            return None
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        linked_group = spec.get("linked_group")
+        logger.info(
+            f"[get_linked_group] task_id={task_id}, linked_group={linked_group}, spec_keys={list(spec.keys())}"
+        )
+        return linked_group
+
+    def is_linked_group_chat(self, db: Session, task_id: int) -> bool:
+        """Check if a task is a linked group chat.
+
+        A linked group chat has its members derived from a group,
+        and member management is disabled in the UI.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            True if the task is a linked group chat
+        """
+        return self.get_linked_group(db, task_id) is not None
+
+    def is_member_via_linked_group(
+        self, db: Session, task_id: int, user_id: int
+    ) -> bool:
+        """Check if a user is a member via linked group.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+
+        Returns:
+            True if user is a member of the linked group
+        """
+        linked_group = self.get_linked_group(db, task_id)
+        logger.info(
+            f"[is_member_via_linked_group] task_id={task_id}, user_id={user_id}, linked_group={linked_group}"
+        )
+        if not linked_group:
+            return False
+
+        from app.services.group_permission import get_effective_role_in_group
+
+        role = get_effective_role_in_group(db, user_id, linked_group)
+        result = role is not None
+        logger.info(
+            f"[is_member_via_linked_group] task_id={task_id}, user_id={user_id}, role={role}, result={result}"
+        )
+        return result
+
+    def get_linked_group_members(
+        self, db: Session, task_id: int
+    ) -> TaskMemberListResponse:
+        """Get members from the linked group.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            TaskMemberListResponse with members from the linked group
+
+        Raises:
+            HTTPException: If task not found or not a linked group chat
+        """
+        logger.info(f"[get_linked_group_members] Getting members for task_id={task_id}")
+        task = self.get_task(db, task_id)
+        if not task:
+            logger.warning(f"[get_linked_group_members] Task {task_id} not found")
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        linked_group = self.get_linked_group(db, task_id)
+        logger.info(
+            f"[get_linked_group_members] task_id={task_id}, linked_group={linked_group}"
+        )
+        if not linked_group:
+            raise HTTPException(
+                status_code=400, detail="Task is not a linked group chat"
+            )
+
+        # Get the namespace (group)
+        namespace = (
+            db.query(Namespace)
+            .filter(Namespace.name == linked_group, Namespace.is_active == True)
+            .first()
+        )
+        logger.info(
+            f"[get_linked_group_members] linked_group={linked_group}, namespace_found={namespace is not None}, namespace_id={namespace.id if namespace else None}"
+        )
+
+        if not namespace:
+            raise HTTPException(status_code=404, detail="Linked group not found")
+
+        # Get all approved members from the group
+        group_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == namespace.id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .all()
+        )
+        logger.info(
+            f"[get_linked_group_members] namespace_id={namespace.id}, group_members_count={len(group_members)}"
+        )
+
+        members = []
+        task_owner_id = task.user_id
+
+        for gm in group_members:
+            user = self.get_user(db, gm.user_id)
+            if not user:
+                logger.warning(
+                    f"[get_linked_group_members] User {gm.user_id} not found, skipping"
+                )
+                continue
+
+            # Determine if this user is the task owner
+            is_owner = gm.user_id == task_owner_id
+
+            member = TaskMemberResponse(
+                id=gm.id,
+                task_id=task_id,
+                user_id=gm.user_id,
+                username=user.user_name,
+                avatar=None,
+                invited_by=gm.invited_by_user_id or 0,
+                inviter_name="Group",  # Members come from group
+                status=SchemaMemberStatus.ACTIVE,
+                joined_at=gm.created_at,
+                is_owner=is_owner,
+                role=gm.role,  # Include group role
+            )
+            members.append(member)
+            logger.debug(
+                f"[get_linked_group_members] Added member: user_id={gm.user_id}, username={user.user_name}, role={gm.role}"
+            )
+
+        # Sort: owner first, then by username
+        members.sort(key=lambda m: (not m.is_owner, m.username.lower()))
+
+        logger.info(
+            f"[get_linked_group_members] Returning {len(members)} members for task_id={task_id}"
+        )
+        return TaskMemberListResponse(
+            members=members,
+            total=len(members),
+            task_owner_id=task_owner_id,
+            linked_group=linked_group,
+        )
+
+    def get_linked_group_member_count(self, db: Session, task_id: int) -> int:
+        """Get the number of members in the linked group.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            Number of members in the linked group, or 0 if not a linked group chat
+        """
+        linked_group = self.get_linked_group(db, task_id)
+        if not linked_group:
+            return 0
+
+        # Get the namespace (group)
+        namespace = (
+            db.query(Namespace)
+            .filter(Namespace.name == linked_group, Namespace.is_active == True)
+            .first()
+        )
+
+        if not namespace:
+            return 0
+
+        # Count approved members in the group
+        return (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == namespace.id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .count()
+        )
 
 
 task_member_service = TaskMemberService()

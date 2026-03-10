@@ -85,16 +85,81 @@ class CustomEmbedding(BaseEmbedding):
         Raises:
             requests.HTTPError: If API call fails after retries
         """
-        response = requests.post(
-            self.api_url,
-            json={"model": self.model, "input": text},
-            headers=self.headers,
-            timeout=30,
+        # DEBUG: Log request details for troubleshooting
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"[Embedding API Request] URL: {self.api_url}, "
+            f"Model: {self.model}, Text length: {len(text)}, "
+            f"Headers keys: {list(self.headers.keys())}"
         )
-        response.raise_for_status()
-        embedding = response.json()["data"][0]["embedding"]
 
-        if self._dimension is None:
-            self._dimension = len(embedding)
+        # Truncate text for logging if too long
+        text_preview = text[:200] + "..." if len(text) > 200 else text
+        logger.debug(f"[Embedding API Request] Text preview: {text_preview}")
 
-        return embedding
+        try:
+            response = requests.post(
+                self.api_url,
+                json={"model": self.model, "input": text},
+                headers=self.headers,
+                timeout=30,
+            )
+
+            # DEBUG: Log response details before raising
+            logger.info(
+                f"[Embedding API Response] Status: {response.status_code}, "
+                f"Content-Type: {response.headers.get('content-type', 'unknown')}"
+            )
+
+            if response.status_code >= 400:
+                # Log error response body for debugging
+                try:
+                    error_body = response.text[:500]  # Limit error body size
+                    logger.error(
+                        f"[Embedding API Error] Status {response.status_code}: {error_body}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[Embedding API Error] Could not read error body: {e}"
+                    )
+
+            response.raise_for_status()
+            response_data = response.json()
+
+            # Validate response structure
+            if "data" not in response_data:
+                logger.error(
+                    f"[Embedding API Error] Missing 'data' in response: {response_data.keys()}"
+                )
+                raise ValueError(f"Invalid response format: missing 'data' field")
+
+            if not response_data["data"] or len(response_data["data"]) == 0:
+                logger.error(f"[Embedding API Error] Empty data array in response")
+                raise ValueError(f"Invalid response format: empty data array")
+
+            embedding = response_data["data"][0]["embedding"]
+
+            if self._dimension is None:
+                self._dimension = len(embedding)
+                logger.info(
+                    f"[Embedding API] Detected embedding dimension: {self._dimension}"
+                )
+
+            logger.info(
+                f"[Embedding API] Successfully got embedding, dimension: {len(embedding)}"
+            )
+            return embedding
+
+        except requests.exceptions.Timeout:
+            logger.error(f"[Embedding API Error] Request timeout after 30s")
+            raise
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"[Embedding API Error] Connection error: {e}")
+            raise
+        except Exception as e:
+            logger.error(
+                f"[Embedding API Error] Unexpected error: {type(e).__name__}: {e}"
+            )
+            raise

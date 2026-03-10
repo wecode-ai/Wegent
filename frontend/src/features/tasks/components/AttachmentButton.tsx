@@ -138,11 +138,9 @@ export default function AttachmentButton({
           <TooltipTrigger asChild>
             <div>
               <ActionButton
-                variant="outline"
                 onClick={handleClick}
                 disabled={disabled}
                 icon={<Paperclip className="h-4 w-4" />}
-                className="border-border bg-base text-text-primary hover:bg-hover"
               />
             </div>
           </TooltipTrigger>

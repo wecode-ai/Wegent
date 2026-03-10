@@ -24,7 +24,8 @@
       "Owner": "创建者",
       "Maintainer": "管理员",
       "Developer": "开发者",
-      "Reporter": "使用者"
+      "Reporter": "使用者",
+      "RestrictedObserver": "受限观察者"
     },
     "actions": {
       "addMember": "添加成员",
@@ -135,6 +136,7 @@
         "updateRoles": "修改成员角色（除Owner外）",
         "canLeave": "可离开群组"
       },
+      "RestrictedObserver": "仅可通过对话使用群组知识库（RAG 搜索），无法查看文档内容或列表，可离开群组",
       "Owner": "拥有群组的完全控制权",
       "OwnerDetails": {
         "title": "包括：",
