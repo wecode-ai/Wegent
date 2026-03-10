@@ -239,10 +239,22 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
           await page.waitForTimeout(500)
           console.log('Clicked close/skip button')
         } else {
-          // Press Escape to dismiss
+          // Press Escape multiple times to dismiss all tour steps
+          console.log('Pressing Escape to dismiss overlay...')
+          await page.keyboard.press('Escape')
+          await page.waitForTimeout(300)
+          // Press Escape again to ensure all steps are dismissed
           await page.keyboard.press('Escape')
           await page.waitForTimeout(500)
           console.log('Pressed Escape to dismiss overlay')
+        }
+
+        // Verify overlay is gone
+        if (await driverOverlay.isVisible({ timeout: 500 }).catch(() => false)) {
+          console.warn('Overlay still visible, trying to click outside')
+          // Click outside the overlay to dismiss it
+          await page.mouse.click(10, 10)
+          await page.waitForTimeout(500)
         }
       }
     } catch (_error) {
@@ -594,8 +606,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       return
     }
 
+    // Dismiss any onboarding tour overlay before clicking input
+    await dismissOnboardingTour(page)
+
     // For contentEditable elements, we need to click first, then type
-    await messageInput.click()
+    await messageInput.click({ force: true })
     await page.keyboard.type('What is in this image?')
 
     // Step 5: Send message
@@ -734,8 +749,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       return
     }
 
+    // Dismiss any onboarding tour overlay before clicking input
+    await dismissOnboardingTour(page)
+
     // For contentEditable elements, we need to click first, then type
-    await messageInput.click()
+    await messageInput.click({ force: true })
     await page.keyboard.type('Describe this image')
 
     // Look for send button
