@@ -4,17 +4,17 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { usePageVisibility } from '@/hooks/usePageVisibility'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useExamTimer } from '@wecode/components/evaluation/exam/hooks/useExamTimer'
+import { useAutoSave } from '@wecode/components/evaluation/exam/hooks/useAutoSave'
 import { SlotBasedFileUpload } from '@wecode/components/evaluation/exam/SlotBasedFileUpload'
 import {
   getExamData,
-  submitExamAnswer,
   updateExamAttachments,
   selectExamQuestion,
   advanceExamPhase,
@@ -30,13 +30,10 @@ import {
   ExamInfoSection,
   BonusItemsSection,
   SupplementaryNotesSection,
-  SubmitSection,
   ParticipantInfoSection,
   CompletedState,
-  ConfirmModal,
-  SuccessModal,
-  EndExamConfirmModal,
-  LeaveExamConfirmModal,
+  PreviewConfirmModal,
+  FinalConfirmModal,
   TimeWarningModal,
 } from '@wecode/components/evaluation/exam'
 
@@ -47,10 +44,7 @@ import {
   type PermissionState,
   type QuestionDataMap,
   createInitialQuestionDataMap,
-  uploadSupplementaryNotes,
   buildQuestionDataMapFromAnswers,
-  getTotalFileCount,
-  hasRequiredFiles,
   hasSupplementaryNotes,
   getTimerColorClass,
 } from '@wecode/components/evaluation/exam'
@@ -94,7 +88,7 @@ export default function AIAssessment2026Page() {
     phase: examPhase,
     remainingSeconds: timeLeft,
     isCompleted,
-    submitCount,
+    examDurationSeconds,
     isOvertime,
     showTimer,
   } = useExamTimer({
@@ -107,10 +101,8 @@ export default function AIAssessment2026Page() {
   )
 
   // Modal states
-  const [showConfirmModal, setShowConfirmModal] = useState(false)
-  const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [showEndExamConfirm, setShowEndExamConfirm] = useState(false)
-  const [showLeaveExamConfirm, setShowLeaveExamConfirm] = useState(false)
+  const [showPreviewConfirmModal, setShowPreviewConfirmModal] = useState(false)
+  const [showFinalConfirmModal, setShowFinalConfirmModal] = useState(false)
   const [showTimeWarning, setShowTimeWarning] = useState(false)
   const [timeWarningShown, setTimeWarningShown] = useState(false)
 
@@ -231,8 +223,8 @@ export default function AIAssessment2026Page() {
                   bonusAgent: content.attachments?.bonusAgent?.files || [],
                   bonusMultimodal: content.attachments?.bonusMultimodal || [],
                 },
-                supplementaryNotesFiles: content.supplementaryNotesFiles || [],
-                supplementaryNotes: content.supplementaryNotes || '',
+                supplementaryNotesFiles: content.attachments?.supplementaryNotes || [],
+                supplementaryNotes: content.inputs?.supplementaryNotes || '',
                 linkValues: {
                   bonusAgent: content.attachments?.bonusAgent?.link || '',
                 },
@@ -248,6 +240,52 @@ export default function AIAssessment2026Page() {
     loadExistingAnswer()
   }, [examSession])
 
+  // Auto-save hook for supplementary notes - saves text directly to DB, NO S3 conversion
+  // S3 conversion only happens when entering review phase (handled by backend)
+  // Note: includes questionId in data to avoid race conditions when switching topics
+  const {
+    triggerSave: triggerNotesSave,
+    flushSave: flushNotesSave,
+    saveStatus: notesSaveStatus,
+    lastSavedAt: notesLastSavedAt,
+    manualSave: manualSaveNotes,
+  } = useAutoSave<{
+    questionId: number
+    notes: string
+  }>({
+    onSave: async ({ questionId, notes }) => {
+      try {
+        await updateExamAttachments(1, {
+          selectedQuestionId: questionId,
+          content_data: {
+            inputs: {
+              supplementaryNotes: notes,
+            },
+          },
+        })
+      } catch (error) {
+        console.error('Failed to auto-save supplementary notes:', error)
+        throw error
+      }
+    },
+    delay: 2000,
+    enabled: examPhase === 'exam' && selectedTopic !== null,
+  })
+
+  // Warn user if they try to leave with unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (notesSaveStatus === 'saving' || notesSaveStatus === 'error') {
+        e.preventDefault()
+        e.returnValue = '您有未保存的更改，确定要离开吗？'
+        return e.returnValue
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [notesSaveStatus])
+
   // Computed values
   const progressSteps = useMemo(() => {
     const anyQuestionSelected = selectedTopic !== null
@@ -255,12 +293,17 @@ export default function AIAssessment2026Page() {
     const currentData = currentQuestionId !== null ? questionData[currentQuestionId] : null
 
     return [
-      { label: '选择题目', done: anyQuestionSelected },
       { label: '填写说明', done: anyQuestionSelected && hasSupplementaryNotes(currentData) },
-      { label: '上传材料', done: anyQuestionSelected && hasRequiredFiles(currentData) },
-      { label: '确认提交', done: submitCount > 0 },
+      {
+        label: '上传交互记录',
+        done: anyQuestionSelected && (currentData?.attachments.interaction.length ?? 0) > 0,
+      },
+      {
+        label: '上传报告',
+        done: anyQuestionSelected && (currentData?.attachments.main.length ?? 0) > 0,
+      },
     ]
-  }, [selectedTopic, questionData, submitCount])
+  }, [selectedTopic, questionData])
 
   const timerColor = useMemo(() => getTimerColorClass(timeLeft, isOvertime), [timeLeft, isOvertime])
 
@@ -306,93 +349,16 @@ export default function AIAssessment2026Page() {
     }
   }
 
-  const endAnswering = () => setShowEndExamConfirm(true)
-
-  const confirmEndAnswering = async () => {
-    setShowEndExamConfirm(false)
-    setIsTransitioning(true)
-    try {
-      const result = await advanceExamPhase(1, 'review')
-      setExamSession(result.session)
-    } catch (error) {
-      console.error('Failed to end answering:', error)
-    } finally {
-      setIsTransitioning(false)
-    }
-  }
-
-  const finishExam = () => setShowLeaveExamConfirm(true)
-
-  const confirmFinishExam = async () => {
-    setShowLeaveExamConfirm(false)
-    setIsTransitioning(true)
-    try {
-      const result = await advanceExamPhase(1, 'completed')
-      setExamSession(result.session)
-    } catch (error) {
-      console.error('Failed to finish exam:', error)
-    } finally {
-      setIsTransitioning(false)
-    }
-  }
-
-  const saveCurrentQuestionData = async () => {
-    if (selectedTopic === null) return
-
-    const currentData = questionData[selectedTopic + 1]
-    if (!currentData) return
-
-    let updatedSupplementaryNotesFiles = currentData.supplementaryNotesFiles || []
-
-    if (currentData.supplementaryNotes.trim()) {
-      try {
-        const uploadedFile = await uploadSupplementaryNotes(
-          currentData.supplementaryNotes,
-          1,
-          selectedTopic + 1
-        )
-        if (uploadedFile) {
-          updatedSupplementaryNotesFiles = [uploadedFile]
-          setQuestionData(prev => ({
-            ...prev,
-            [selectedTopic + 1]: {
-              ...prev[selectedTopic + 1],
-              supplementaryNotesFiles: updatedSupplementaryNotesFiles,
-              supplementaryNotes: '',
-            },
-          }))
-        }
-      } catch (error) {
-        console.error('Failed to save supplementary notes:', error)
-      }
-    }
-
-    try {
-      await updateExamAttachments(1, {
-        selectedQuestionId: selectedTopic + 1,
-        content_data: {
-          attachments: {
-            main: currentData?.attachments?.main || [],
-            interaction: currentData?.attachments?.interaction || [],
-            bonusAgent: {
-              link: currentData?.linkValues?.bonusAgent || '',
-              files: currentData?.attachments?.bonusAgent || [],
-            },
-            bonusMultimodal: currentData?.attachments?.bonusMultimodal || [],
-          },
-          supplementaryNotesFiles: updatedSupplementaryNotesFiles,
-        },
-      })
-    } catch (error) {
-      console.error('Failed to sync supplementary notes files:', error)
-    }
-  }
+  const [selectingTopic, setSelectingTopic] = useState<number | null>(null)
 
   const handleTopicSelect = async (topicIndex: number | null) => {
-    await saveCurrentQuestionData()
-    setSelectedTopic(topicIndex)
+    if (selectingTopic !== null) return // Prevent multiple clicks
+
+    // Flush any pending saves before switching
+    await flushNotesSave()
 
     if (topicIndex !== null) {
+      setSelectingTopic(topicIndex)
       try {
         await selectExamQuestion(1, topicIndex + 1)
         const data = await getExamData(1)
@@ -409,80 +375,92 @@ export default function AIAssessment2026Page() {
                 bonusAgent: content.attachments?.bonusAgent?.files || [],
                 bonusMultimodal: content.attachments?.bonusMultimodal || [],
               },
-              supplementaryNotesFiles: content.supplementaryNotesFiles || [],
-              supplementaryNotes: content.supplementaryNotes || '',
+              supplementaryNotesFiles: content.attachments?.supplementaryNotes || [],
+              supplementaryNotes: content.inputs?.supplementaryNotes || '',
               linkValues: {
                 bonusAgent: content.attachments?.bonusAgent?.link || '',
               },
             },
           }))
         }
+        setSelectedTopic(topicIndex)
       } catch (error) {
         console.error('Failed to select question:', error)
+      } finally {
+        setSelectingTopic(null)
       }
+    } else {
+      setSelectedTopic(null)
     }
   }
 
-  const confirmSubmit = async () => {
-    setShowConfirmModal(false)
-    if (selectedTopic === null) return
-
-    const currentData = questionData[selectedTopic + 1]
-
-    try {
-      let supplementaryNotesFiles: ExamAttachment[] = currentData.supplementaryNotesFiles || []
-
-      if (currentData.supplementaryNotes.trim()) {
-        const uploadedFile = await uploadSupplementaryNotes(
-          currentData.supplementaryNotes,
-          1,
-          selectedTopic + 1
-        )
-        if (uploadedFile) {
-          supplementaryNotesFiles = [uploadedFile]
-        }
-      }
-
-      const result = await submitExamAnswer(1, {
-        selectedQuestionId: selectedTopic + 1,
-        participantName,
-        content_data: {
-          participantName,
-          selectedTopicId: selectedTopic + 1,
-          supplementaryNotes: currentData.supplementaryNotes,
-          supplementaryNotesFiles:
-            supplementaryNotesFiles.length > 0
-              ? supplementaryNotesFiles
-              : currentData.supplementaryNotesFiles,
-          attachments: {
-            main: currentData.attachments.main,
-            interaction: currentData.attachments.interaction,
-            bonusAgent: {
-              link: currentData.linkValues?.bonusAgent || '',
-              files: currentData.attachments.bonusAgent,
-            },
-            bonusMultimodal: currentData.attachments.bonusMultimodal,
-          },
+  const handleNotesChange = useCallback(
+    (notes: string) => {
+      const questionId = selectedTopic! + 1
+      setQuestionData(prev => ({
+        ...prev,
+        [questionId]: {
+          ...prev[questionId],
+          supplementaryNotes: notes,
         },
-      })
+      }))
+      // Pass both questionId and notes to avoid race conditions when switching topics
+      triggerNotesSave({ questionId, notes })
+    },
+    [selectedTopic, triggerNotesSave]
+  )
 
-      const newSubmitCount = result?.submit_count || 0
-      setExamSession(prev => (prev ? { ...prev, submit_count: newSubmitCount } : null))
+  // Handle blur - flush pending saves immediately
+  const handleNotesBlur = useCallback(async () => {
+    await flushNotesSave()
+  }, [flushNotesSave])
 
-      if (supplementaryNotesFiles.length > 0) {
-        setQuestionData(prev => ({
-          ...prev,
-          [selectedTopic + 1]: {
-            ...prev[selectedTopic + 1],
-            supplementaryNotesFiles,
-            supplementaryNotes: currentData.supplementaryNotes,
-          },
-        }))
-      }
+  // Handle manual save
+  const handleManualSave = useCallback(async () => {
+    if (selectedTopic === null) return
+    const notes = questionData[selectedTopic + 1]?.supplementaryNotes || ''
+    await manualSaveNotes({ questionId: selectedTopic + 1, notes })
+  }, [selectedTopic, questionData, manualSaveNotes])
 
-      setShowSuccessModal(true)
-    } catch {
-      // Error handled by API
+  const enterPreviewMode = async () => {
+    setShowPreviewConfirmModal(false)
+    setIsTransitioning(true)
+    try {
+      // Flush any pending saves
+      await flushNotesSave()
+
+      // Advance to review phase (triggers S3 conversion on backend)
+      const result = await advanceExamPhase(1, 'review')
+      setExamSession(result.session)
+    } catch (error) {
+      console.error('Failed to enter preview mode:', error)
+    } finally {
+      setIsTransitioning(false)
+    }
+  }
+
+  const returnToExam = async () => {
+    setIsTransitioning(true)
+    try {
+      const result = await advanceExamPhase(1, 'exam')
+      setExamSession(result.session)
+    } catch (error) {
+      console.error('Failed to return to exam:', error)
+    } finally {
+      setIsTransitioning(false)
+    }
+  }
+
+  const confirmFinalSubmit = async () => {
+    setShowFinalConfirmModal(false)
+    setIsTransitioning(true)
+    try {
+      const result = await advanceExamPhase(1, 'completed')
+      setExamSession(result.session)
+    } catch (error) {
+      console.error('Failed to complete exam:', error)
+    } finally {
+      setIsTransitioning(false)
     }
   }
 
@@ -553,12 +531,18 @@ export default function AIAssessment2026Page() {
             </div>
             {examPhase === 'review' && selectedTopic !== null ? (
               <div className="mb-6">
-                <AIAssessmentTopicCard
-                  topic={EXAM_DATA.topics[selectedTopic]}
-                  selected={true}
-                  disabled={true}
-                  onClick={() => {}}
-                />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+                  {EXAM_DATA.topics.map((topic, i) => (
+                    <AIAssessmentTopicCard
+                      key={topic.id}
+                      topic={topic}
+                      selected={selectedTopic === i}
+                      disabled={selectingTopic !== null} // Disable while loading
+                      onClick={() => handleTopicSelect(i)}
+                      displayIndex={i + 1}
+                    />
+                  ))}
+                </div>
                 <div className="mt-6">
                   <AIAssessmentTopicDetail topic={EXAM_DATA.topics[selectedTopic]} />
                 </div>
@@ -573,10 +557,13 @@ export default function AIAssessment2026Page() {
                       key={topic.id}
                       topic={topic}
                       selected={selectedTopic === i}
-                      disabled={isCompleted && selectedTopic !== i}
+                      disabled={(isCompleted && selectedTopic !== i) || selectingTopic !== null}
                       onClick={() =>
-                        !isCompleted && handleTopicSelect(selectedTopic === i ? null : i)
+                        !isCompleted &&
+                        !selectingTopic &&
+                        handleTopicSelect(selectedTopic === i ? null : i)
                       }
+                      displayIndex={i + 1}
                     />
                   ))}
                 </div>
@@ -597,15 +584,11 @@ export default function AIAssessment2026Page() {
             notes={questionData[selectedTopic + 1]?.supplementaryNotes || ''}
             disabled={examPhase !== 'exam'}
             required={true}
-            onNotesChange={notes =>
-              setQuestionData(prev => ({
-                ...prev,
-                [selectedTopic + 1]: {
-                  ...prev[selectedTopic + 1],
-                  supplementaryNotes: notes,
-                },
-              }))
-            }
+            onNotesChange={handleNotesChange}
+            onBlur={handleNotesBlur}
+            onManualSave={handleManualSave}
+            saveStatus={notesSaveStatus}
+            lastSavedAt={notesLastSavedAt}
           />
         )}
 
@@ -684,110 +667,129 @@ export default function AIAssessment2026Page() {
               questionData[selectedTopic + 1]?.supplementaryNotesFiles?.length || 0
             }
             onLimitExceeded={() => {
-              alert('每道题目总附件数（包括补充说明文件）不能超过 20 个，请先删除一些附件')
+              alert('每道题目总附件数（包括作答说明文件）不能超过 20 个，请先删除一些附件')
             }}
           />
         )}
 
-        {(examPhase === 'exam' || examPhase === 'review') &&
-          selectedTopic !== null &&
-          !isCompleted && (
-            <SubmitSection
-              checkItems={[
-                { label: '已填写说明', done: hasNotes, required: true },
-                { label: '已上传报告', done: hasMainReport, required: true },
-                { label: '已上传交互记录', done: hasInteractionRecord, required: true },
-              ]}
-              submitCount={submitCount}
-              totalFileCount={getTotalFileCount(questionData, selectedTopic + 1)}
-              isSubmitReady={isSubmitReady}
-              submitButtonText={
-                submitCount > 0 ? `再次提交 (第${submitCount + 1}次)` : '提交考核材料'
-              }
-              onSubmit={() => setShowConfirmModal(true)}
-            />
-          )}
-
-        {examPhase === 'exam' && submitCount > 0 && (
+        {/* Unified Submit Button - Exam Phase */}
+        {examPhase === 'exam' && selectedTopic !== null && !isCompleted && (
           <section className="animate-[slideDown_0.35s_ease-out]">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
+              {/* Submission Checklist */}
+              <h3 className="text-base font-bold text-gray-700 mb-5">提交检查</h3>
+              <div className="grid grid-cols-3 gap-3 mb-5">
+                {[
+                  { label: '已填写说明', done: hasNotes, required: true },
+                  { label: '已上传交互记录', done: hasInteractionRecord, required: true },
+                  { label: '已上传报告', done: hasMainReport, required: true },
+                ].map((item, index) => (
+                  <div
+                    key={index}
+                    className={`flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium ${
+                      item.done
+                        ? 'bg-green-50 text-green-700'
+                        : item.required
+                          ? 'bg-red-50 text-red-400'
+                          : 'bg-gray-50 text-gray-400'
+                    }`}
+                  >
+                    {item.done ? (
+                      <Icon name="checkCircle" size={18} className="text-green-500" />
+                    ) : (
+                      <div
+                        className={`w-[18px] h-[18px] rounded-full border-2 flex-shrink-0 ${
+                          item.required ? 'border-red-300' : 'border-gray-300'
+                        }`}
+                      />
+                    )}
+                    <span>
+                      {item.label}
+                      {item.required && !item.done ? ' *' : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* File Count Info */}
+              <div className="text-sm text-gray-400 mb-5 text-center">
+                <p>
+                  每道题目总附件数不能超过 20 个，当前已上传{' '}
+                  {(() => {
+                    const currentData = questionData[selectedTopic + 1]
+                    if (!currentData) return 0
+                    return (
+                      (currentData.attachments?.main?.length || 0) +
+                      (currentData.attachments?.interaction?.length || 0) +
+                      (currentData.attachments?.bonusAgent?.length || 0) +
+                      (currentData.attachments?.bonusMultimodal?.length || 0) +
+                      (currentData.supplementaryNotesFiles?.length || 0)
+                    )
+                  })()}{' '}
+                  个
+                </p>
+              </div>
+
               <div className="flex flex-col items-center gap-4">
-                <p className="text-sm text-gray-500">完成答题后可以提前结束进入检查阶段</p>
+                <div className="text-sm text-gray-500 text-center">
+                  <p>请确认所有材料已上传完毕</p>
+                  <p className="text-xs text-gray-400 mt-1">进入预览后仍可返回答题</p>
+                </div>
                 <button
-                  onClick={endAnswering}
-                  disabled={isTransitioning}
-                  className={`px-10 py-3.5 bg-orange-500 hover:bg-orange-600 text-white text-lg font-bold rounded-2xl shadow-lg shadow-orange-200/50 transition-all hover:shadow-orange-300/60 active:scale-[0.98] ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  onClick={() => setShowPreviewConfirmModal(true)}
+                  disabled={isTransitioning || !isSubmitReady}
+                  className={`px-10 py-3.5 text-lg font-bold rounded-2xl transition-all active:scale-[0.98] ${
+                    isSubmitReady
+                      ? 'bg-[#DF2029] hover:bg-[#c81d25] text-white shadow-lg shadow-red-200/50 hover:shadow-red-300/60'
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  } ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isTransitioning ? '加载中...' : '结束答题'}
+                  {isTransitioning ? '加载中...' : '交卷预览'}
                 </button>
               </div>
             </div>
           </section>
         )}
 
+        {/* Review Phase Actions */}
         {examPhase === 'review' && (
           <section className="animate-[slideDown_0.35s_ease-out]">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
-              <div className="flex flex-col items-center gap-4">
-                <p className="text-sm text-gray-500">确认无误后结束考试</p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <button
-                  onClick={finishExam}
+                  onClick={returnToExam}
+                  disabled={isTransitioning}
+                  className={`px-8 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-base font-bold rounded-2xl transition-all active:scale-[0.98] ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isTransitioning ? '加载中...' : '返回答题'}
+                </button>
+                <button
+                  onClick={() => setShowFinalConfirmModal(true)}
                   disabled={isTransitioning}
                   className={`px-10 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white text-lg font-bold rounded-2xl shadow-lg shadow-emerald-200/50 transition-all hover:shadow-emerald-300/60 active:scale-[0.98] ${isTransitioning ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isTransitioning ? '加载中...' : '离开考试'}
+                  {isTransitioning ? '加载中...' : '确认交卷'}
                 </button>
               </div>
             </div>
           </section>
         )}
 
-        {isCompleted && <CompletedState submitCount={submitCount} />}
+        {isCompleted && <CompletedState examDurationSeconds={examDurationSeconds} />}
 
         <div className="h-10" />
       </main>
 
-      <ConfirmModal
-        isOpen={showConfirmModal}
-        onClose={() => setShowConfirmModal(false)}
-        onConfirm={confirmSubmit}
-        participantName={participantName}
-        selectedTopicTitle={selectedTopic !== null ? EXAM_DATA.topics[selectedTopic].title : ''}
-        mainFilesCount={
-          questionData[selectedTopic !== null ? selectedTopic + 1 : 1]?.attachments.main.length || 0
-        }
-        interactionFilesCount={
-          questionData[selectedTopic !== null ? selectedTopic + 1 : 1]?.attachments.interaction
-            .length || 0
-        }
-        hasBonusAgent={
-          (questionData[selectedTopic !== null ? selectedTopic + 1 : 1]?.attachments.bonusAgent
-            .length || 0) > 0 ||
-          (questionData[selectedTopic !== null ? selectedTopic + 1 : 1]?.linkValues?.bonusAgent ||
-            '') !== ''
-        }
-        hasBonusMultimodal={
-          (questionData[selectedTopic !== null ? selectedTopic + 1 : 1]?.attachments.bonusMultimodal
-            .length || 0) > 0
-        }
-        supplementaryNotesLength={
-          questionData[selectedTopic !== null ? selectedTopic + 1 : 1]?.supplementaryNotes.length ||
-          0
-        }
+      <PreviewConfirmModal
+        isOpen={showPreviewConfirmModal}
+        onClose={() => setShowPreviewConfirmModal(false)}
+        onConfirm={enterPreviewMode}
       />
 
-      <SuccessModal isOpen={showSuccessModal} onClose={() => setShowSuccessModal(false)} />
-
-      <EndExamConfirmModal
-        isOpen={showEndExamConfirm}
-        onClose={() => setShowEndExamConfirm(false)}
-        onConfirm={confirmEndAnswering}
-      />
-
-      <LeaveExamConfirmModal
-        isOpen={showLeaveExamConfirm}
-        onClose={() => setShowLeaveExamConfirm(false)}
-        onConfirm={confirmFinishExam}
+      <FinalConfirmModal
+        isOpen={showFinalConfirmModal}
+        onClose={() => setShowFinalConfirmModal(false)}
+        onConfirm={confirmFinalSubmit}
       />
 
       <TimeWarningModal

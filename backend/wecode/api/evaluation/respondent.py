@@ -722,8 +722,8 @@ def get_exam_data(
                 "intro_end_at": None,
                 "exam_end_at": None,
                 "review_end_at": None,
-                "submit_count": 0,
                 "selected_question_id": None,
+                "exam_duration_seconds": None,
             }
 
     # Check for existing answers from current user
@@ -882,10 +882,6 @@ def submit_exam(
         "selectedTopicId": topic_id,
     }
 
-    # Include supplementaryNotesFiles if supplementaryNotes is provided
-    if request.content_data.get("supplementaryNotes"):
-        content_data["supplementaryNotes"] = request.content_data["supplementaryNotes"]
-
     # Check for existing answer to allow multiple submissions
     existing_answer = answer_service.get_latest_answer(
         db=db,
@@ -894,37 +890,10 @@ def submit_exam(
     )
 
     if existing_answer:
-        # Update existing answer (deep merge content data)
-        existing_content = existing_answer.content_data or {}
-        new_content = content_data
-
-        # Deep merge attachments if both exist
-        if "attachments" in existing_content and "attachments" in new_content:
-            merged_attachments = {
-                **existing_content["attachments"],
-                **new_content["attachments"],
-            }
-            new_content["attachments"] = merged_attachments
-
-        # Handle supplementaryNotesFiles - use new value if provided, otherwise keep existing
-        if "supplementaryNotesFiles" in new_content:
-            # Use the new value (for delete operations)
-            pass
-        elif "supplementaryNotesFiles" in existing_content:
-            # Keep existing value if not in new content
-            new_content["supplementaryNotesFiles"] = existing_content[
-                "supplementaryNotesFiles"
-            ]
-
-        # Handle supplementaryNotes text - preserve if not in new content
-        if (
-            "supplementaryNotes" not in new_content
-            and "supplementaryNotes" in existing_content
-        ):
-            new_content["supplementaryNotes"] = existing_content["supplementaryNotes"]
-
-        # Update content_data
-        updated_content = {**existing_content, **new_content}
+        # Update existing answer using service layer merge logic
+        updated_content = answer_service.merge_content_data(
+            existing_answer.content_data or {}, content_data
+        )
         existing_answer.content_data = updated_content
         existing_answer.submitted_at = datetime.now(timezone.utc)
         db.commit()
@@ -943,9 +912,6 @@ def submit_exam(
         )
         db.commit()
 
-    # Record submission in session
-    exam_session_service.record_submission(db, session)
-
     return {
         "id": answer.id,
         "question_id": answer.question_id,
@@ -957,7 +923,6 @@ def submit_exam(
             answer.submitted_at.isoformat() if answer.submitted_at else None
         ),
         "is_latest": answer.is_latest,
-        "submit_count": session.submit_count,
     }
 
 
@@ -1108,37 +1073,10 @@ def update_exam_attachments(
         db.commit()
         db.refresh(answer)
     else:
-        # Merge existing content_data with new data
-        existing_content = existing_answer.content_data or {}
-        new_content = request.content_data or {}
-
-        # Deep merge attachments if both exist
-        if "attachments" in existing_content and "attachments" in new_content:
-            merged_attachments = {
-                **existing_content["attachments"],
-                **new_content["attachments"],
-            }
-            new_content["attachments"] = merged_attachments
-
-        # Handle supplementaryNotesFiles - use new value if provided, otherwise keep existing
-        if "supplementaryNotesFiles" in new_content:
-            # Use the new value (for delete operations)
-            pass
-        elif "supplementaryNotesFiles" in existing_content:
-            # Keep existing value if not in new content
-            new_content["supplementaryNotesFiles"] = existing_content[
-                "supplementaryNotesFiles"
-            ]
-
-        # Handle supplementaryNotes text - preserve if not in new content
-        if (
-            "supplementaryNotes" not in new_content
-            and "supplementaryNotes" in existing_content
-        ):
-            new_content["supplementaryNotes"] = existing_content["supplementaryNotes"]
-
-        # Update content_data
-        updated_content = {**existing_content, **new_content}
+        # Merge existing content_data with new data using service layer
+        updated_content = answer_service.merge_content_data(
+            existing_answer.content_data or {}, request.content_data or {}
+        )
         existing_answer.content_data = updated_content
         db.commit()
         db.refresh(existing_answer)
@@ -1210,7 +1148,7 @@ def advance_exam_phase(
 
     # Advance phase
     try:
-        updated_session = exam_session_service.advance_phase(
+        updated_session = exam_session_service.advance_phase_with_conversion(
             db=db, session=session, target_phase=request.target_phase
         )
 

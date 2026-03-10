@@ -252,7 +252,7 @@ export function SlotBasedFileUpload({
                 onChange={e => onLinkChange?.(slot.key, e.target.value)}
                 placeholder={slot.linkPlaceholder || '粘贴可访问的链接'}
                 disabled={disabled}
-                className="flex-1 px-4 py-3 rounded-xl border border-gray-200 bg-white text-[1rem] text-gray-900 focus:border-[#DF2029] focus:ring-2 focus:ring-red-100 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100"
+                className="flex-1 px-4 py-3 rounded-xl border border-gray-200 bg-white text-[1rem] text-gray-900 transition placeholder:text-gray-300 disabled:opacity-50 disabled:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#DF2029]"
               />
             </div>
           </div>
@@ -394,7 +394,7 @@ export function SlotBasedFileUpload({
   return (
     <section className="slide-down">
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-1.5 h-7 bg-emerald-500 rounded-full" />
+        <div className="w-1.5 h-7 bg-[#DF2029] rounded-full" />
         <h2 className="text-xl font-bold text-gray-900">提交材料</h2>
       </div>
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9 space-y-6">

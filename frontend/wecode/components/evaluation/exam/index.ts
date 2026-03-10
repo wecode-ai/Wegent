@@ -47,6 +47,10 @@ export { EndExamConfirmModal } from './EndExamConfirmModal'
 export { LeaveExamConfirmModal } from './LeaveExamConfirmModal'
 export { TimeWarningModal } from './TimeWarningModal'
 
+// New confirmation modals for simplified submission flow
+export { PreviewConfirmModal } from './PreviewConfirmModal'
+export { FinalConfirmModal } from './FinalConfirmModal'
+
 // Types
 export type { Topic } from './AIAssessmentTopicCard'
 export type { PermissionState, QuestionDataMap, QuestionData } from './ai-assessment-types'
@@ -54,6 +58,7 @@ export { createEmptyQuestionData, createInitialQuestionDataMap } from './ai-asse
 
 // AI Assessment constants and utilities
 export { EXAM_DATA, UPLOAD_SLOTS_CONFIG } from './ai-assessment-constants'
+export { EXAM_DATA_V2, UPLOAD_SLOTS_CONFIG_V2 } from './ai-assessment-constants'
 export {
   uploadSupplementaryNotes,
   buildQuestionDataMapFromAnswers,
@@ -66,3 +71,6 @@ export {
 // Hooks
 export { useExamTimer } from './hooks/useExamTimer'
 export { useExamState } from './hooks/useExamState'
+
+// New hooks for simplified submission flow
+export { useAutoSave } from './hooks/useAutoSave'

@@ -62,7 +62,6 @@ export function ExamPage() {
     phase,
     formattedTime,
     isCompleted,
-    submitCount,
     isOvertime,
     showTimer,
     selectedQuestionId: _sessionSelectedQuestionId,
@@ -189,7 +188,7 @@ export function ExamPage() {
     { label: '选择题目', done: state.selectedQuestionId !== null },
     { label: '填写说明', done: state.supplementaryNotes.trim().length > 0 },
     { label: '上传材料', done: state.mainFiles.length > 0 },
-    { label: '确认提交', done: submitCount > 0 },
+    { label: '确认提交', done: isCompleted },
   ]
 
   /**
@@ -267,13 +266,15 @@ export function ExamPage() {
     if (!isSubmitReady || !state.selectedQuestionId) return
 
     try {
-      const result = await submitExamAnswer(topicId, {
+      await submitExamAnswer(topicId, {
         selectedQuestionId: state.selectedQuestionId,
         participantName: state.participantName,
         content_data: {
           participantName: state.participantName,
           selectedTopicId: state.selectedQuestionId,
-          supplementaryNotes: state.supplementaryNotes,
+          inputs: {
+            supplementaryNotes: state.supplementaryNotes,
+          },
           attachments: {
             main: state.mainFiles,
             interaction: state.interactionFiles,
@@ -285,17 +286,6 @@ export function ExamPage() {
           },
         },
       })
-
-      // Update exam data with new submit count
-      if (examData && result.submit_count) {
-        setExamData({
-          ...examData,
-          session: {
-            ...examData.session,
-            submit_count: result.submit_count,
-          },
-        })
-      }
 
       setShowSuccessModal(true)
     } catch (_error) {
@@ -576,14 +566,7 @@ export function ExamPage() {
         {phase !== 'ready' && state.selectedQuestionId && !isCompleted && (
           <section className="slide-down">
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
-              <h3 className="text-base font-bold text-gray-700 mb-5">
-                提交检查
-                {submitCount > 0 && (
-                  <span className="ml-2 text-sm font-normal text-gray-400">
-                    （第 {submitCount + 1} 次提交）
-                  </span>
-                )}
-              </h3>
+              <h3 className="text-base font-bold text-gray-700 mb-5">提交检查</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-7">
                 {[
                   { label: '已选择题目', done: state.selectedQuestionId !== null, required: true },
@@ -640,7 +623,7 @@ export function ExamPage() {
                   disabled={!isSubmitReady}
                   className={`w-full sm:w-auto px-10 py-3.5 rounded-2xl text-base font-bold transition-all ${isSubmitReady ? 'bg-[#DF2029] hover:bg-[#c81d25] text-white shadow-lg shadow-red-200/50 hover:shadow-red-300/60 active:scale-[0.98]' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                 >
-                  {submitCount > 0 ? '再次提交' : '提交考核材料'}
+                  提交考核材料
                 </button>
               </div>
             </div>
@@ -670,7 +653,7 @@ export function ExamPage() {
                 </svg>
               </div>
               <h3 className="text-lg font-bold text-gray-700 mb-2">考试已结束</h3>
-              <p className="text-sm text-gray-500">您的考试已结束，共提交了 {submitCount} 次答案</p>
+              <p className="text-sm text-gray-500">您的考试已结束</p>
             </div>
           </section>
         )}

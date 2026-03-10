@@ -274,6 +274,18 @@ class GradingService:
         answer_attachments = answer.content_data.get("attachments", [])
         all_attachments = self._collect_attachment_keys(answer_attachments)
 
+        # Also collect supplementary notes files (uploaded text files)
+        supplementary_notes_files = answer.content_data.get("supplementaryNotesFiles", [])
+        for att in supplementary_notes_files:
+            if att.get("key"):
+                all_attachments.append(
+                    {
+                        "key": att["key"],
+                        "filename": att.get("filename", "supplementary_notes.txt"),
+                        "content_type": att.get("content_type", "text/plain"),
+                    }
+                )
+
         prompt = GRADING_PROMPT_TEMPLATE.format(
             respondent_name=respondent_name,
             answer_content=answer_content,

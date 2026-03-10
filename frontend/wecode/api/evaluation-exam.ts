@@ -74,17 +74,14 @@ export async function getExamData(
 }
 
 /**
- * Submit an exam answer (multiple submissions allowed)
+ * Submit an exam answer (real-time auto-save)
  * @param topicId - The topic ID
  * @param data - The exam submission data
- * @returns The created/updated answer with submit_count
+ * @returns The created/updated answer
  */
-export async function submitExamAnswer(
-  topicId: number,
-  data: ExamSubmitRequest
-): Promise<Answer & { submit_count: number }> {
+export async function submitExamAnswer(topicId: number, data: ExamSubmitRequest): Promise<Answer> {
   const url = getRespondentUrl(`/topics/${topicId}/exam/submit`)
-  return fetchJson<Answer & { submit_count: number }>(url, {
+  return fetchJson<Answer>(url, {
     method: 'POST',
     body: JSON.stringify(data),
   })
@@ -128,14 +125,16 @@ export async function updateExamAttachments(
           files: { key: string; filename: string; size: number; content_type?: string }[]
         }
         bonusMultimodal?: { key: string; filename: string; size: number; content_type?: string }[]
+        supplementaryNotes?: {
+          key: string
+          filename: string
+          size: number
+          content_type?: string
+        }[]
       }
-      supplementaryNotes?: string
-      supplementaryNotesFiles?: {
-        key: string
-        filename: string
-        size: number
-        content_type?: string
-      }[]
+      inputs?: {
+        supplementaryNotes?: string
+      }
     }
   }
 ): Promise<Answer> {

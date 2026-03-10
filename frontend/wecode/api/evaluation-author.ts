@@ -23,11 +23,6 @@ import type {
   Permission,
   PermissionCreate,
   PermissionListResponse,
-  GradingTask,
-  GradingTaskExecuteRequest,
-  GradingTaskPublishRequest,
-  GradingTaskUpdateReportRequest,
-  GradingTaskListResponse,
   GradingConfig,
   GradingConfigUpdate,
 } from '../types/evaluation'
@@ -241,86 +236,6 @@ export async function batchGrantAuthorPermissions(
 }
 
 // ============================================================================
-// Grading Task API (Author)
-// ============================================================================
-
-export async function listAuthorGradingTasks(
-  topicId: number,
-  params: {
-    page?: number
-    limit?: number
-    status?: number
-    respondent_id?: number
-  }
-): Promise<GradingTaskListResponse> {
-  const searchParams = new URLSearchParams()
-  if (params.page) searchParams.set('page', params.page.toString())
-  if (params.limit) searchParams.set('limit', params.limit.toString())
-  if (params.status !== undefined) searchParams.set('status', params.status.toString())
-  if (params.respondent_id) searchParams.set('respondent_id', params.respondent_id.toString())
-
-  return fetchJson<GradingTaskListResponse>(
-    getAuthorUrl(`/topics/${topicId}/grading-tasks?${searchParams.toString()}`)
-  )
-}
-
-export async function getAuthorGradingTask(taskId: number): Promise<GradingTask> {
-  return fetchJson<GradingTask>(getAuthorUrl(`/grading-tasks/${taskId}`))
-}
-
-export async function executeAuthorGradingTask(
-  taskId: number,
-  data?: GradingTaskExecuteRequest
-): Promise<GradingTask> {
-  return fetchJson<GradingTask>(getAuthorUrl(`/grading-tasks/${taskId}/execute`), {
-    method: 'POST',
-    body: data ? JSON.stringify(data) : undefined,
-  })
-}
-
-export async function updateAuthorGradingReport(
-  taskId: number,
-  data: GradingTaskUpdateReportRequest
-): Promise<GradingTask> {
-  return fetchJson<GradingTask>(getAuthorUrl(`/grading-tasks/${taskId}/report`), {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  })
-}
-
-export async function publishAuthorGradingTask(
-  taskId: number,
-  data?: GradingTaskPublishRequest
-): Promise<GradingTask> {
-  return fetchJson<GradingTask>(getAuthorUrl(`/grading-tasks/${taskId}/publish`), {
-    method: 'POST',
-    body: data ? JSON.stringify(data) : undefined,
-  })
-}
-
-export async function batchExecuteAuthorGradingTasks(
-  topicId: number,
-  taskIds: number[],
-  teamId?: number
-): Promise<{ executed_count: number; task_ids: number[] }> {
-  const searchParams = teamId ? `?team_id=${teamId}` : ''
-  return fetchJson(getAuthorUrl(`/topics/${topicId}/grading-tasks/batch-execute${searchParams}`), {
-    method: 'POST',
-    body: JSON.stringify(taskIds),
-  })
-}
-
-export async function batchPublishAuthorGradingTasks(
-  topicId: number,
-  taskIds: number[]
-): Promise<{ published_count: number; task_ids: number[] }> {
-  return fetchJson(getAuthorUrl(`/topics/${topicId}/grading-tasks/batch-publish`), {
-    method: 'POST',
-    body: JSON.stringify(taskIds),
-  })
-}
-
-// ============================================================================
 // Grading Configuration API (Author)
 // ============================================================================
 
@@ -380,10 +295,10 @@ export interface ExamSession {
   user_email?: string
   current_phase: 'intro' | 'exam' | 'review' | 'completed'
   started_at: string | null
-  submit_count: number
   selected_question_id: number | null
   remaining_seconds: number
   is_overtime: boolean
+  exam_duration_seconds: number | null
 }
 
 export interface ExamTopicInfo {
@@ -475,4 +390,51 @@ export async function forceEndExamSession(
   }>(getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/force-end`), {
     method: 'POST',
   })
+}
+
+// ============================================================================
+// Exam Session Detail API (Author)
+// ============================================================================
+
+export interface ExamSessionDetailQuestion {
+  id: number
+  title: string
+  content_type: string
+  content_data: Record<string, unknown>
+  order_index: number
+  answer: {
+    id: number
+    content_type: string
+    content_data: Record<string, unknown>
+    submitted_at: string
+    question_version: string
+  } | null
+}
+
+export interface ExamSessionDetail {
+  session: ExamSession & {
+    completed_at: string | null
+    is_active: boolean
+    phase: 'intro' | 'exam' | 'review' | 'completed'
+    started_at: string
+    intro_end_at: string
+    exam_end_at: string
+    review_end_at: string
+  }
+  topic: {
+    id: number
+    name: string
+    description?: string
+  }
+  questions: ExamSessionDetailQuestion[]
+  session_all_answers: Record<string, unknown>
+}
+
+export async function getExamSessionDetail(
+  topicId: number,
+  userId: number
+): Promise<ExamSessionDetail> {
+  return fetchJson<ExamSessionDetail>(
+    getAuthorUrl(`/topics/${topicId}/exam-sessions/${userId}/detail`)
+  )
 }

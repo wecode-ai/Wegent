@@ -4,6 +4,10 @@
     "description": "浏览器中的完整 AI 团队。"
   },
   "loading": "加载中...",
+  "total": "总计",
+  "version": "版本",
+  "updated": "更新于",
+  "page": "页",
   "repos": {
     "repository": "选择仓库",
     "branch": "选择分支",
@@ -654,7 +658,10 @@
     "page_info": "第 {{current}} 页 / 共 {{total}} 页",
     "warning": "警告",
     "cannotUndo": "此操作无法撤销",
-    "coming_soon": "即将推出"
+    "coming_soon": "即将推出",
+    "version": "版本",
+    "updated": "更新于",
+    "total": "总计"
   },
   "dialog": {
     "confirm_close_title": "确认关闭",
