@@ -145,6 +145,9 @@ export interface ChatInputControlsProps {
   // Generate mode switch props (only used when taskType is 'video' or 'image')
   /** Callback when user switches between video and image mode */
   onGenerateModeChange?: (mode: GenerateMode) => void
+
+  /** When true, hide all selectors - only show send button + quota */
+  hideSelectors?: boolean
 }
 
 /**
@@ -235,6 +238,8 @@ export function ChatInputControls({
   onImageSizeChange,
   // Generate mode switch props
   onGenerateModeChange,
+  // Hide all selectors (for OpenClaw devices)
+  hideSelectors,
 }: ChatInputControlsProps) {
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
@@ -359,6 +364,7 @@ export function ChatInputControls({
         preloadedSkillNames={preloadedSkillNames}
         selectedSkillNames={selectedSkillNames}
         onToggleSkill={onToggleSkill}
+        hideSelectors={hideSelectors}
       />
     )
   }
@@ -456,7 +462,7 @@ export function ChatInputControls({
 
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
-          <>
+          <div className={hideSelectors ? 'hidden' : 'contents'}>
             {/* Context Selection - only show for chat shell */}
             {isChatShell(selectedTeam) && (
               <ChatContextInput
@@ -538,7 +544,7 @@ export function ChatInputControls({
                 taskModelId={taskModelId}
               />
             )}
-          </>
+          </div>
         )}
       </div>
 

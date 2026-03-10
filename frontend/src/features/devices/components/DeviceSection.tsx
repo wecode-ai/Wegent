@@ -53,7 +53,11 @@ export function DeviceSection({
 }: DeviceSectionProps) {
   // Filter devices by type if specified
   const filteredDevices = type
-    ? devices.filter(device => (device.device_type || 'local') === type)
+    ? devices.filter(device => {
+        const dt = device.device_type || 'local'
+        if (type === 'local') return dt === 'local' || dt === 'local_openclaw'
+        return dt === type
+      })
     : devices
 
   return (

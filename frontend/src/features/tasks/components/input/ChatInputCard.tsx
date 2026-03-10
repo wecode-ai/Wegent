@@ -72,6 +72,9 @@ export interface ChatInputCardProps extends Omit<
 
   // Reason why input is disabled (e.g., device offline). Shows as placeholder text.
   disabledReason?: string
+
+  // Hide all selectors (for OpenClaw devices) - only show text input + send button
+  hideSelectors?: boolean
 }
 
 /**
@@ -114,6 +117,7 @@ export function ChatInputCard({
   inputControlsRef,
   hasNoTeams = false,
   disabledReason,
+  hideSelectors,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -379,6 +383,8 @@ export function ChatInputCard({
             onImageSizeChange={onImageSizeChange}
             // Generate mode switch props
             onGenerateModeChange={onGenerateModeChange}
+            // Hide all selectors (for OpenClaw devices)
+            hideSelectors={hideSelectors}
           />
         </div>
       </div>

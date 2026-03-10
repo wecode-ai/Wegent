@@ -41,6 +41,7 @@ class DeviceType(str, Enum):
 
     LOCAL = "local"
     CLOUD = "cloud"
+    LOCAL_OPENCLAW = "local_openclaw"
 
 
 @dataclass

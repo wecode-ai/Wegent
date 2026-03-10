@@ -116,6 +116,9 @@ export default function DeviceChatPage() {
   // Get selected device info
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
 
+  // Check if selected device is OpenClaw type
+  const isOpenClaw = selectedDevice?.device_type === 'local_openclaw'
+
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* URL parameter sync for task selection */}
@@ -192,6 +195,7 @@ export default function DeviceChatPage() {
                 ? t('device_offline_cannot_send')
                 : undefined
             }
+            hideSelectors={isOpenClaw}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">

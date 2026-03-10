@@ -23,7 +23,7 @@ import { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from './SlotIndicator'
 import { RunningTasksList } from './RunningTasksList'
 import { VersionBadge } from './VersionBadge'
-import { getStatusColor } from '../utils/device-status'
+import { getStatusColor, isOpenClawDevice } from '../utils/device-status'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export interface DeviceCardProps {
@@ -89,6 +89,11 @@ export function DeviceCard({
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
                   <Star className="w-3 h-3 fill-current" />
                   {t('default_device')}
+                </span>
+              )}
+              {isOpenClawDevice(device) && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-red-50 text-red-600 rounded-full">
+                  {t('openclaw_badge')}
                 </span>
               )}
             </div>

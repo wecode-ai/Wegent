@@ -7,7 +7,7 @@
  * Provides pure functions for mapping device status to UI styles.
  */
 
-import { DeviceStatus } from '@/apis/devices'
+import { DeviceInfo, DeviceStatus } from '@/apis/devices'
 
 /**
  * Get Tailwind CSS color class for device status indicator.
@@ -24,4 +24,14 @@ export function getStatusColor(status: DeviceStatus | string): string {
     default:
       return 'bg-gray-400'
   }
+}
+
+/**
+ * Check if a device is an OpenClaw device.
+ *
+ * @param device - Device info object
+ * @returns true if the device type is 'local_openclaw'
+ */
+export function isOpenClawDevice(device: DeviceInfo): boolean {
+  return device.device_type === 'local_openclaw'
 }
