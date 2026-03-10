@@ -12,7 +12,7 @@
   color-scheme: light;
   /* Wegent Light Theme - Purple Primary */
   --color-bg-base: 255 255 255;
-  --color-bg-surface: 255 255 255;
+  --color-bg-surface: 249 249 249;
   --color-bg-muted: 243 244 246;
   --color-bg-hover: 93 94 201 / 0.06;
   --color-border: 228 228 228;
@@ -129,7 +129,8 @@ html {
 }
 
 body {
-  min-height: min(100vh, 100dvh); /* Use the smaller of 100vh or 100dvh for better compatibility */
+  min-height: min(100vh, 100dvh);
+  /* Use the smaller of 100vh or 100dvh for better compatibility */
   box-sizing: border-box;
 }
 
@@ -200,13 +201,17 @@ body {
 
   /* Hide scrollbar but keep functionality */
   .scrollbar-hide {
-    -ms-overflow-style: none; /* IE and Edge */
-    scrollbar-width: none; /* Firefox */
-    -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+    -webkit-overflow-scrolling: touch;
+    /* iOS momentum scrolling */
   }
 
   .scrollbar-hide::-webkit-scrollbar {
-    display: none; /* Chrome, Safari and Opera */
+    display: none;
+    /* Chrome, Safari and Opera */
   }
 
   /* Ensure horizontal scrolling works on mobile */
@@ -317,6 +322,7 @@ button:focus-visible {
   0% {
     transform: translateX(-100%);
   }
+
   100% {
     transform: translateX(100%);
   }
@@ -347,6 +353,7 @@ button:focus-visible {
   0% {
     transform: translateX(-100%);
   }
+
   100% {
     transform: translateX(200%);
   }
@@ -358,22 +365,27 @@ button:focus-visible {
     color: rgb(var(--color-primary));
     opacity: 0.7;
   }
+
   20% {
     color: rgb(var(--color-text-primary));
     opacity: 1;
   }
+
   40% {
     color: rgb(var(--color-text-secondary));
     opacity: 0.9;
   }
+
   60% {
     color: rgb(var(--color-text-muted));
     opacity: 0.8;
   }
+
   80% {
     color: rgb(var(--color-primary));
     opacity: 0.9;
   }
+
   100% {
     color: rgb(var(--color-primary));
     opacity: 0.7;
@@ -402,6 +414,7 @@ button:focus-visible {
   0% {
     background-position: 0% 50%;
   }
+
   100% {
     background-position: 200% 50%;
   }
@@ -429,6 +442,7 @@ button:focus-visible {
     opacity: 0;
     transform: translateY(-4px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -441,6 +455,7 @@ button:focus-visible {
     max-height: 0;
     transform: translateY(-8px);
   }
+
   to {
     opacity: 1;
     max-height: 500px;
@@ -463,6 +478,7 @@ button:focus-visible {
     transform: scale(0);
     opacity: 0.5;
   }
+
   100% {
     transform: scale(2);
     opacity: 0;
@@ -518,6 +534,7 @@ button:focus-visible {
 .animation-delay-800 {
   animation-delay: 0.8s;
 }
+
 .animation-delay-1000 {
   animation-delay: 1s;
 }
@@ -545,6 +562,7 @@ button:focus-visible {
     transform: scale(1);
     opacity: 1;
   }
+
   50% {
     transform: scale(1.2);
     opacity: 0.8;
@@ -688,6 +706,7 @@ button:focus-visible {
   100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-4px);
   }
@@ -698,6 +717,7 @@ button:focus-visible {
   100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-3px);
   }
@@ -708,18 +728,22 @@ button:focus-visible {
     transform: scale(1);
     filter: brightness(1);
   }
+
   25% {
     transform: scale(1.2);
     filter: brightness(1.5);
   }
+
   50% {
     transform: scale(0.8);
     filter: brightness(2);
   }
+
   75% {
     transform: scale(1.3);
     filter: brightness(1.5);
   }
+
   100% {
     transform: scale(1);
     filter: brightness(1);
@@ -731,6 +755,7 @@ button:focus-visible {
   100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.1);
   }
@@ -741,6 +766,7 @@ button:focus-visible {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
   }
+
   100% {
     opacity: 0;
     transform: translateX(-50%) translateY(-30px);
@@ -751,6 +777,7 @@ button:focus-visible {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -787,6 +814,7 @@ button:focus-visible {
     transform: translateY(0);
     opacity: 0.4;
   }
+
   50% {
     transform: translateY(-4px);
     opacity: 1;
@@ -804,10 +832,12 @@ button:focus-visible {
     opacity: 0;
     transform: scale(0.8);
   }
+
   50% {
     opacity: 0.7;
     transform: scale(1.1);
   }
+
   100% {
     opacity: 1;
     transform: scale(1);
@@ -819,10 +849,12 @@ button:focus-visible {
     opacity: 0;
     transform: scale(0);
   }
+
   60% {
     opacity: 0.8;
     transform: scale(1.2);
   }
+
   100% {
     opacity: 1;
     transform: scale(1);
@@ -835,6 +867,7 @@ button:focus-visible {
     opacity: 1;
     filter: brightness(1);
   }
+
   50% {
     opacity: 0.8;
     filter: brightness(1.3);
@@ -859,18 +892,22 @@ button:focus-visible {
     transform: scale(1);
     filter: brightness(1) drop-shadow(0 0 0 transparent);
   }
+
   25% {
     transform: scale(1.15);
     filter: brightness(1.4) drop-shadow(0 0 8px rgba(59, 130, 246, 0.6));
   }
+
   50% {
     transform: scale(1.05);
     filter: brightness(1.6) drop-shadow(0 0 12px rgba(59, 130, 246, 0.8));
   }
+
   75% {
     transform: scale(1.1);
     filter: brightness(1.3) drop-shadow(0 0 6px rgba(59, 130, 246, 0.4));
   }
+
   100% {
     transform: scale(1);
     filter: brightness(1) drop-shadow(0 0 0 transparent);
@@ -880,7 +917,6 @@ button:focus-visible {
 .animate-experience-milestone {
   animation: experience-milestone 1.2s ease-in-out;
 }
-
 /* Exam Page Animations */
 @keyframes fadeIn {
   from {

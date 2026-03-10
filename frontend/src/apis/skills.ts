@@ -302,7 +302,6 @@ export interface UnifiedSkill {
   namespace: string
   description: string
   displayName?: string
-  prompt?: string
   version?: string
   author?: string
   tags?: string[]
