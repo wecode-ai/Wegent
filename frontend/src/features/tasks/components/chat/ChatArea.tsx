@@ -539,6 +539,8 @@ function ChatAreaContent({
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
+    // OpenClaw devices handle model on device side, no model selection required
+    if (hideSelectors) return false
     // Video mode uses video model selection, not regular model selection
     if (taskType === 'video') {
       // In video mode, we need a video model selected
@@ -557,6 +559,7 @@ function ChatAreaContent({
     chatState.selectedTeam,
     chatState.selectedModel,
     taskType,
+    hideSelectors,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
   ])
@@ -922,8 +925,9 @@ function ChatAreaContent({
     },
     onPasteFile: handlePasteFile,
     // ChatInputControls props
-    selectedModel: chatState.selectedModel,
-    setSelectedModel: chatState.setSelectedModel,
+    // OpenClaw devices handle model selection on device side, so pass null to prevent auto-selection
+    selectedModel: hideSelectors ? null : chatState.selectedModel,
+    setSelectedModel: hideSelectors ? () => {} : chatState.setSelectedModel,
     forceOverride: chatState.forceOverride,
     setForceOverride: chatState.setForceOverride,
     teamId: chatState.selectedTeam?.id,
