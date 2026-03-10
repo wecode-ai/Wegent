@@ -162,18 +162,16 @@ export function QuickAccessCards({
     return (
       <div className="flex flex-col items-center mt-6">
         <div
-          className="flex items-center justify-start gap-3 overflow-hidden rounded-lg"
+          className="flex items-center justify-start gap-3 overflow-hidden rounded-lg bg-base p-3"
           style={{
             width: CONTAINER_WIDTH,
             height: CONTAINER_HEIGHT,
-            backgroundColor: '#FFFFFF',
-            padding: '16px 12px',
           }}
         >
           {[1, 2, 3, 4, 5].map(i => (
             <div
               key={i}
-              className="rounded-[20px] bg-white border border-[#EEEEEE] animate-pulse"
+              className="rounded-[20px] bg-base border border-border animate-pulse"
               style={{
                 width: CARD_WIDTH,
                 height: 78,
@@ -221,8 +219,8 @@ export function QuickAccessCards({
           cursor-pointer transition-all duration-200
           ${
             isSelected
-              ? 'border-l-[3px] border-l-primary border-y border-r border-[#EEEEEE]'
-              : 'border border-[#EEEEEE]'
+              ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
+              : 'border border-border bg-base'
           }
           ${isClicked ? 'clicking-card' : ''}
           ${isClicked ? 'pointer-events-none' : ''}
@@ -235,20 +233,19 @@ export function QuickAccessCards({
           borderRadius: 20,
           flexShrink: 0,
           flexGrow: 0,
-          backgroundColor: isSelected ? 'rgba(20, 184, 166, 0.05)' : '#FFFFFF',
         }}
       >
         <div className="mb-1">
           <span
             className={`text-[15px] font-semibold leading-5 truncate ${
-              isSelected ? 'text-primary' : 'text-[#333333]'
+              isSelected ? 'text-primary' : 'text-text-primary'
             }`}
           >
             {team.name}
           </span>
         </div>
 
-        <p className="text-xs text-[#939393] leading-[18px] line-clamp-1">{description}</p>
+        <p className="text-xs text-text-muted leading-[18px] line-clamp-1">{description}</p>
       </div>
     )
   }
@@ -298,26 +295,24 @@ export function QuickAccessCards({
 
       <div className="flex flex-col items-center mt-6" data-tour="quick-access-cards">
         <div
-          className="relative flex items-center justify-center rounded-lg"
+          className="relative flex items-center justify-center rounded-lg bg-base"
           style={{
             width: CONTAINER_WIDTH,
             height: CONTAINER_HEIGHT,
-            backgroundColor: '#FFFFFF',
           }}
         >
           {needsPagination && canScrollLeft && (
             <button
               onClick={scrollLeft}
-              className="absolute left-0 z-10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity"
+              className="absolute left-0 z-10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity bg-gradient-to-r from-transparent via-base/80 to-base"
               style={{
                 width: 36,
                 height: 86,
                 borderRadius: 10,
-                background: 'linear-gradient(90deg, rgba(245, 245, 245, 0) 0.25%, #FFFFFF 38.06%)',
               }}
               aria-label="Scroll left"
             >
-              <ChevronLeftIcon className="w-5 h-5 text-[#838383]" />
+              <ChevronLeftIcon className="w-5 h-5 text-text-muted" />
             </button>
           )}
 
@@ -336,16 +331,15 @@ export function QuickAccessCards({
           {needsPagination && canScrollRight && (
             <button
               onClick={scrollRight}
-              className="absolute right-0 z-10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity"
+              className="absolute right-0 z-10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity bg-gradient-to-l from-transparent via-base/80 to-base"
               style={{
                 width: 36,
                 height: 86,
                 borderRadius: 10,
-                background: 'linear-gradient(270deg, rgba(245, 245, 245, 0) 0.25%, #FFFFFF 38.06%)',
               }}
               aria-label="Scroll right"
             >
-              <ChevronRightIcon className="w-5 h-5 text-[#838383]" />
+              <ChevronRightIcon className="w-5 h-5 text-text-muted" />
             </button>
           )}
         </div>
