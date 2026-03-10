@@ -1494,9 +1494,10 @@ class TaskRequestBuilder:
     def _check_mcp_server_reachable(server: dict) -> bool:
         """Check if an MCP server URL is reachable with a short timeout.
 
-        Sends a HEAD request. Any HTTP response (including 4xx/5xx) means
-        the server is reachable. Only connection failures are treated as
-        unreachable.
+        Sends a GET request (not HEAD, as some servers like SSE endpoints
+        don't support HEAD method and will timeout). Any HTTP response
+        (including 4xx/5xx) means the server is reachable. Only connection
+        failures are treated as unreachable.
 
         Args:
             server: Server config dict with 'url' and optional 'headers'
@@ -1509,7 +1510,9 @@ class TaskRequestBuilder:
             return False
 
         try:
-            req = urllib.request.Request(url, method="HEAD")
+            # Use GET instead of HEAD because some servers (especially SSE endpoints)
+            # don't support HEAD method and will timeout
+            req = urllib.request.Request(url, method="GET")
             # Add headers, skipping unresolved placeholders
             headers = server.get("headers", server.get("auth", {}))
             if isinstance(headers, dict):
@@ -1519,7 +1522,7 @@ class TaskRequestBuilder:
             urllib.request.urlopen(req, timeout=5)
             return True
         except urllib.error.HTTPError:
-            # Any HTTP response means the server is reachable
+            # Any HTTP response (including 4xx/5xx) means the server is reachable
             return True
         except Exception as e:
             logger.warning(
