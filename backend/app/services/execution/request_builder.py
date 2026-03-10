@@ -820,6 +820,9 @@ class TaskRequestBuilder:
                 user_preload_skills,
             )
 
+            # Get team namespace for fallback skill lookup
+            team_namespace = team.namespace if team.namespace else "default"
+
             for add_skill in user_preload_skills:
                 # Handle both dict and Pydantic model (SkillRef)
                 if isinstance(add_skill, BaseModel):
@@ -847,9 +850,13 @@ class TaskRequestBuilder:
                     )
                     continue
 
-                # Find and add new skill
+                # Find and add new skill (with team_namespace fallback)
                 skill = self._find_skill_by_ref(
-                    skill_name, skill_namespace, is_public, user_id
+                    skill_name,
+                    skill_namespace,
+                    is_public,
+                    user_id,
+                    team_namespace=team_namespace,
                 )
                 if skill:
                     skill_data = self._build_skill_data(skill)
@@ -863,10 +870,11 @@ class TaskRequestBuilder:
                     )
                 else:
                     logger.warning(
-                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s",
+                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s, team_namespace=%s",
                         skill_name,
                         skill_namespace,
                         is_public,
+                        team_namespace,
                     )
 
         logger.info(
@@ -941,7 +949,12 @@ class TaskRequestBuilder:
         )
 
     def _find_skill_by_ref(
-        self, skill_name: str, namespace: str, is_public: bool, user_id: int
+        self,
+        skill_name: str,
+        namespace: str,
+        is_public: bool,
+        user_id: int,
+        team_namespace: str | None = None,
     ) -> Kind | None:
         """Find skill by name, namespace, and public flag.
 
@@ -951,13 +964,15 @@ class TaskRequestBuilder:
         Search order for non-public skills:
         1. Current user's skill in specified namespace (personal)
         2. ANY user's skill in specified namespace (group-level, for group namespaces)
-        3. Current user's skill in default namespace (fallback)
+        3. ANY user's skill in team namespace (if different from specified namespace)
+        4. Current user's skill in default namespace (fallback)
 
         Args:
             skill_name: Skill name
             namespace: Skill namespace
             is_public: Whether the skill is public (user_id=0)
             user_id: User ID for skill lookup
+            team_namespace: Optional team namespace to search (for group-level skills)
 
         Returns:
             Skill Kind object or None if not found
@@ -1006,7 +1021,33 @@ class TaskRequestBuilder:
                 if skill:
                     return skill
 
-            # 3. Fallback to current user's skill in default namespace
+            # 3. Team namespace skill (if different from specified namespace)
+            # This handles the case where preload_skills only contains name
+            # without namespace, but the skill exists in the team's namespace
+            if (
+                team_namespace
+                and team_namespace != "default"
+                and team_namespace != namespace
+            ):
+                skill = (
+                    self.db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.name == skill_name,
+                        Kind.namespace == team_namespace,
+                        Kind.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if skill:
+                    logger.info(
+                        "[_find_skill_by_ref] Found skill '%s' in team namespace '%s'",
+                        skill_name,
+                        team_namespace,
+                    )
+                    return skill
+
+            # 4. Fallback to current user's skill in default namespace
             if namespace != "default":
                 return (
                     self.db.query(Kind)
