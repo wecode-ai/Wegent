@@ -179,3 +179,34 @@ def get_task_services(
     status_data = task.json.get("status", {}) if task.json else {}
     app_data = status_data.get("app", {}) if status_data else {}
     return ServiceResponse(success=True, app=app_data)
+
+
+@router.post("/kb/{knowledge_base_id}/sync-doc-count")
+def sync_kb_document_count(
+    knowledge_base_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Sync the cached document_count for a specific knowledge base.
+
+    This is a temporary endpoint for data migration.
+    No authentication required.
+
+    Args:
+        knowledge_base_id: Knowledge base ID to update
+
+    Returns:
+        Dict with the updated count
+    """
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    KnowledgeService._update_document_count_cache(db, knowledge_base_id)
+    db.commit()
+
+    actual_count = KnowledgeService.get_document_count(db, knowledge_base_id)
+
+    return {
+        "success": True,
+        "knowledge_base_id": knowledge_base_id,
+        "document_count": actual_count,
+    }

@@ -411,7 +411,8 @@ class KnowledgeService:
             org_namespace_names = [n[0] for n in org_namespaces]
 
             # Get knowledge bases bound to group chats where user is a member
-            bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+            # bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+            bound_kb_ids = None
 
             # Single query to get personal, team, organization, shared, and bound knowledge bases
             # Personal: user_id matches and namespace is "default"
