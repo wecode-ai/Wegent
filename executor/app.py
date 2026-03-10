@@ -591,7 +591,7 @@ async def openai_responses(request: Request):
 
     logger.info(
         f"[v1/responses] Received OpenAI request: task_id={task_id}, "
-        f"subtask_id={subtask_id}, background={background}"
+        f"subtask_id={subtask_id}, background={background}, request={openai_request}"
     )
 
     # Set task and user context for tracing

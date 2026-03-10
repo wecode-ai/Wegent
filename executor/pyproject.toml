@@ -19,12 +19,15 @@ dependencies = [
     "gitpython==3.1.43",
     "google-genai==1.55.0",
     "httpx[socks]==0.28.1",
-    "litellm>=1.72.0",
     "mcp==1.12.4",
     "openai==1.107.1",
     "pydantic==2.11.2",
     "pymysql==1.1.0",
     "requests==2.31.0",
+    # Pin charset-normalizer < 3.4.5 and chardet < 7.0.0 to avoid mypyc dynamic module issues with PyInstaller
+    # See: https://github.com/pyinstaller/pyinstaller-hooks-contrib/pull/995
+    "charset-normalizer>=3.0.0,<3.4.5",
+    "chardet>=5.0.0,<7.0.0",
     "sqlalchemy==2.0.43",
     "uvicorn==0.25.0",
     "pyyaml>=6.0.0",

@@ -272,7 +272,12 @@ class Agent:
         if not os.path.exists(project_path):
             # Offload blocking git clone to a thread so the event loop is not blocked
             success, error_msg = await asyncio.to_thread(
-                git_util.clone_repo, git_url, branch_name, project_path, username, git_token
+                git_util.clone_repo,
+                git_url,
+                branch_name,
+                project_path,
+                username,
+                git_token,
             )
 
             if success:

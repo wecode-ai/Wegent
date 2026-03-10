@@ -15,7 +15,7 @@ Refactored version:
 
 import logging
 from datetime import datetime
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,7 @@ async def route_task_to_device(
     auth_token: str = "",
     user_subtask: Optional[Subtask] = None,
     message: Optional[Union[str, list]] = None,
+    attachments: Optional[List[dict]] = None,
 ) -> bool:
     """
     Route a task to a local device for execution.
@@ -62,6 +63,7 @@ async def route_task_to_device(
         user_subtask: Optional user subtask for context retrieval
         message: Optional explicit message/prompt (e.g. vision content).
                  When provided, overrides subtask.prompt in the execution request.
+        attachments: Optional list of attachment metadata dicts for the executor.
 
     Returns:
         True if task was successfully routed to device
@@ -129,9 +131,14 @@ async def route_task_to_device(
         task=task,
         user=user,
         team=team,
-        message=message if message is not None else (user_subtask.prompt if user_subtask else local_subtask.prompt or ""),
+        message=(
+            message
+            if message is not None
+            else (user_subtask.prompt if user_subtask else local_subtask.prompt or "")
+        ),
         override_model_name=override_model_name,
         force_override=force_override,
+        attachments=attachments,
     )
 
     # Dispatch task via ExecutionDispatcher

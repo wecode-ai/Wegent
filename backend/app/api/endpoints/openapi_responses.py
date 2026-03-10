@@ -365,6 +365,7 @@ async def _create_streaming_response_unified(
     assistant_subtask_id = setup.assistant_subtask.id
     task_kind_id = setup.task_id
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+    preload_skills = tool_settings.get("preload_skills", [])
 
     # Extract data needed for streaming before closing db
     user_id = user.id
@@ -381,6 +382,7 @@ async def _create_streaming_response_unified(
             enable_tools=enable_chat_bot,
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+            preload_skills=preload_skills,
         )
     finally:
         # Close the database session before streaming starts
@@ -577,6 +579,7 @@ async def _create_sync_response_unified(
     assistant_subtask_id = setup.assistant_subtask.id
     task_kind_id = setup.task_id
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+    preload_skills = tool_settings.get("preload_skills", [])
 
     # Extract data needed before closing db
     user_id = user.id
@@ -593,6 +596,7 @@ async def _create_sync_response_unified(
             enable_tools=enable_chat_bot,
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+            preload_skills=preload_skills,
         )
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")

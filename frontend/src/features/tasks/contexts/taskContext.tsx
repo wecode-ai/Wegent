@@ -174,7 +174,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       const lastPageItems = results[results.length - 1]?.items || []
       return {
         items: allItems,
-        hasMore: lastPageItems.length === limit,
+        hasMore: lastPageItems.length > 0,
         pages: pagesArr,
         error: false,
       }
