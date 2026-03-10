@@ -4,21 +4,39 @@
 
 'use client'
 
-import { InfoIcon } from 'lucide-react'
+import { CheckCircle } from 'lucide-react'
 
 interface CompletedStateProps {
-  submitCount: number
+  examDurationSeconds: number | null
 }
 
-export function CompletedState({ submitCount }: CompletedStateProps) {
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+
+  if (hours > 0) {
+    return `${hours}小时${minutes}分钟`
+  } else if (minutes > 0) {
+    return `${minutes}分钟${secs}秒`
+  } else {
+    return `${secs}秒`
+  }
+}
+
+export function CompletedState({ examDurationSeconds }: CompletedStateProps) {
   return (
     <section className="animate-[slideDown_0.35s_ease-out]">
       <div className="bg-gray-50 rounded-3xl border border-gray-200 p-7 sm:p-9 text-center">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-200 flex items-center justify-center">
-          <InfoIcon className="w-8 h-8 text-gray-400" />
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 flex items-center justify-center">
+          <CheckCircle className="w-8 h-8 text-green-500" />
         </div>
         <h3 className="text-lg font-bold text-gray-700 mb-2">考试已结束</h3>
-        <p className="text-sm text-gray-500">您的考试已结束，共提交了 {submitCount} 次答案</p>
+        {examDurationSeconds !== null && examDurationSeconds > 0 && (
+          <p className="text-sm text-gray-500">
+            您的考试已结束，整体用时 {formatDuration(examDurationSeconds)}
+          </p>
+        )}
       </div>
     </section>
   )

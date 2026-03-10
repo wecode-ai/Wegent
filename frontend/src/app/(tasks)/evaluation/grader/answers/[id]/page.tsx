@@ -234,7 +234,7 @@ function GraderAnswerContent() {
       const prefixedFilename = generatePrefixedFilename(attachment, slot, fileIndex)
       await downloadEvaluationFile(attachment.key, prefixedFilename)
       toast({
-        title: t('actions.download') + ' ' + t('common:success'),
+        title: t('common:actions.download') + ' ' + t('common:success'),
         description: attachment.filename,
       })
     } catch (_error) {
@@ -585,7 +585,7 @@ function GraderAnswerContent() {
 
       toast({
         title: t('grading.edit_report'),
-        description: t('actions.save') + ' ' + t('grading.report'),
+        description: t('common:actions.save') + ' ' + t('grading.report'),
       })
       setIsEditing(false)
       loadData()
@@ -1035,7 +1035,7 @@ function GraderAnswerContent() {
                   disabled={publishing}
                 >
                   <Edit className="mr-2 h-4 w-4" />
-                  {isEditing ? t('actions.cancel') : t('grading.edit_report')}
+                  {isEditing ? t('common:actions.cancel') : t('grading.edit_report')}
                 </Button>
 
                 {gradingTask.status !== GradingTaskStatus.PUBLISHED && (
@@ -1114,7 +1114,7 @@ function GraderAnswerContent() {
                       {showReportPreview ? (
                         <>
                           <EyeOff className="mr-1 h-4 w-4" />
-                          {t('actions.edit')}
+                          {t('common:actions.edit')}
                         </>
                       ) : (
                         <>
@@ -1162,11 +1162,11 @@ function GraderAnswerContent() {
 
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setIsEditing(false)}>
-                    {t('actions.cancel')}
+                    {t('common:actions.cancel')}
                   </Button>
                   <Button variant="primary" onClick={() => handleSaveReport()} disabled={saving}>
                     <Save className="mr-2 h-4 w-4" />
-                    {saving ? '...' : t('actions.save')}
+                    {saving ? '...' : t('common:actions.save')}
                   </Button>
                 </div>
               </div>
@@ -1227,7 +1227,7 @@ function GraderAnswerContent() {
 
           <DialogFooter className="flex flex-col gap-2 sm:flex-row">
             <Button variant="outline" onClick={handleConflictCancel} className="w-full sm:w-auto">
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button
               variant="outline"
@@ -1321,7 +1321,7 @@ function GraderAnswerContent() {
               onClick={() => setPublishDialogOpen(false)}
               className="w-full sm:w-auto"
             >
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button
               variant="primary"

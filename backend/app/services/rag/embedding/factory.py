@@ -176,6 +176,14 @@ def create_embedding_model_from_crd(
             f"[EmbeddingFactory] Model '{model_name}' has configured dimensions: {dimensions}"
         )
 
+    # DEBUG: Log embedding model configuration
+    logger.info(
+        f"[EmbeddingFactory] Creating embedding model '{model_name}': "
+        f"protocol={protocol}, model_id={model_id}, base_url={base_url}, "
+        f"has_api_key={bool(api_key)}, has_custom_headers={bool(custom_headers)}, "
+        f"dimensions={dimensions}"
+    )
+
     # Build embedding config based on protocol
     if protocol == "openai":
         # OpenAI protocol (supports custom headers for internal gateways)
@@ -190,6 +198,10 @@ def create_embedding_model_from_crd(
                 f"{base_url.rstrip('/')}/embeddings"
                 if base_url
                 else "https://api.openai.com/v1/embeddings"
+            )
+
+            logger.info(
+                f"[EmbeddingFactory] Using CustomEmbedding with OpenAI protocol: {api_url}"
             )
 
             return CustomEmbedding(

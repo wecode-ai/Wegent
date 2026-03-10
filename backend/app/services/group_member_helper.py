@@ -52,11 +52,18 @@ def get_group_member(
     Returns:
         ResourceMember if found, None otherwise
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     namespace_id = get_namespace_id_by_name(db, group_name)
+    logger.info(
+        f"[get_group_member] Looking up namespace_id for group='{group_name}': {namespace_id}"
+    )
     if not namespace_id:
         return None
 
-    return (
+    member = (
         db.query(ResourceMember)
         .filter(
             ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
@@ -66,6 +73,11 @@ def get_group_member(
         )
         .first()
     )
+    logger.info(
+        f"[get_group_member] Member lookup for user={user_id} in namespace_id={namespace_id}: "
+        f"found={member is not None}, role={member.role if member else None}"
+    )
+    return member
 
 
 def get_user_role_in_group(
@@ -229,6 +241,7 @@ def create_group_member(
         GroupRole.Maintainer.value: "manage",
         GroupRole.Developer.value: "edit",
         GroupRole.Reporter.value: "view",
+        GroupRole.RestrictedObserver.value: "use",
     }
     permission_level = role_to_permission.get(role, "view")
 

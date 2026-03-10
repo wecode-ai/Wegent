@@ -4,6 +4,7 @@
 
 """Service for managing exam sessions and timing."""
 
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -13,6 +14,9 @@ from sqlalchemy.orm import Session
 from wecode.exceptions import BusinessException
 from wecode.models.evaluation import EvalTopic
 from wecode.models.evaluation_exam_session import EvalExamSession
+from wecode.service.evaluation.text_conversion_service import TextConversionService
+
+logger = logging.getLogger(__name__)
 
 
 class ExamSessionService:
@@ -68,7 +72,6 @@ class ExamSessionService:
                     "exam_duration_minutes": exam_minutes,
                     "review_duration_minutes": review_minutes,
                     "selected_question_id": 0,
-                    "submit_count": 0,
                 },
                 current_phase="intro",
             )
@@ -173,32 +176,36 @@ class ExamSessionService:
             remaining_seconds = int((exam_end - now).total_seconds())
 
         elif phase == "review":
-            if review_started_at is None:
-                # If review_started_at not set, calculate from exam start
-                if exam_started_at:
-                    review_started_at = int(
-                        (
-                            datetime.fromtimestamp(
-                                int(exam_started_at), tz=timezone.utc
-                            )
-                            + timedelta(minutes=exam_minutes)
-                        ).timestamp()
-                    )
-                else:
-                    review_started_at = int(now.timestamp())
-                extra["review_started_at"] = review_started_at
-                session.extra_data = extra
-                from sqlalchemy.orm import attributes
-
-                attributes.flag_modified(session, "extra_data")
-
-            review_end = datetime.fromtimestamp(
-                int(review_started_at), tz=timezone.utc
-            ) + timedelta(minutes=review_minutes)
-            remaining_seconds = int((review_end - now).total_seconds())
+            # Review phase shares the same timer as exam phase
+            # Calculate remaining time based on exam end time, not a separate review timer
+            if exam_started_at:
+                exam_end = datetime.fromtimestamp(
+                    int(exam_started_at), tz=timezone.utc
+                ) + timedelta(minutes=exam_minutes)
+                remaining_seconds = int((exam_end - now).total_seconds())
+            else:
+                # Fallback if exam_started_at not set
+                remaining_seconds = 0
 
         elif phase == "completed":
             remaining_seconds = 0
+
+        # Calculate actual exam duration (exam + review phases only, excluding intro)
+        exam_duration_seconds = None
+        if exam_started_at and phase == "completed" and session.completed_at:
+            # Calculate time from exam start to completion
+            exam_start_dt = datetime.fromtimestamp(
+                int(exam_started_at), tz=timezone.utc
+            )
+            exam_duration_seconds = int(
+                (session.completed_at - exam_start_dt).total_seconds()
+            )
+        elif exam_started_at and phase in ["exam", "review"]:
+            # For ongoing exams, calculate from exam start to now
+            exam_start_dt = datetime.fromtimestamp(
+                int(exam_started_at), tz=timezone.utc
+            )
+            exam_duration_seconds = int((now - exam_start_dt).total_seconds())
 
         # Calculate end times for response (ISO format with UTC)
         # Append 'Z' to indicate UTC timezone for JavaScript compatibility
@@ -234,8 +241,8 @@ class ExamSessionService:
             "review_end_at": review_end_at,
             "remaining_seconds": remaining_seconds,
             "is_overtime": remaining_seconds < 0,
-            "submit_count": session.submit_count,
             "selected_question_id": session.selected_question_id or None,
+            "exam_duration_seconds": exam_duration_seconds,
         }
 
     @staticmethod
@@ -257,17 +264,6 @@ class ExamSessionService:
             session.user_id: ExamSessionService.get_session_status(session)
             for session in sessions
         }
-
-    @staticmethod
-    def record_submission(db: Session, session: EvalExamSession) -> None:
-        """Record a submission (multiple allowed)."""
-        session.last_submitted_at = datetime.now(timezone.utc)
-        session.submit_count += 1
-        # Mark extra_data as modified since submit_count is stored in it
-        from sqlalchemy.orm import attributes
-
-        attributes.flag_modified(session, "extra_data")
-        db.commit()
 
     @staticmethod
     def select_question(
@@ -401,4 +397,162 @@ class ExamSessionService:
         db.commit()
         db.refresh(session)
 
+        return session
+
+    @staticmethod
+    def _convert_supplementary_notes_if_needed(
+        db: Session,
+        session: EvalExamSession,
+        target_phase: str,
+    ) -> bool:
+        """Convert text inputs to S3 attachments when entering review phase.
+
+        Reads from content_data.inputs.supplementaryNotes,
+        converts to S3 file, and saves to content_data.attachments.supplementaryNotes.
+        """
+        from wecode.models.evaluation import EvalAnswer, EvalQuestion
+
+        logger.info(
+            f"[ExamSession] _convert_supplementary_notes_if_needed called: "
+            f"target_phase={target_phase}, session_id={session.id}"
+        )
+
+        # Only convert when entering review phase
+        if target_phase != "review":
+            logger.info(
+                f"[ExamSession] Skipping conversion - target_phase={target_phase} is not 'review'"
+            )
+            return False
+
+        # Query all questions for this topic
+        question_ids = (
+            db.query(EvalQuestion.id)
+            .filter(
+                EvalQuestion.topic_id == session.topic_id,
+                EvalQuestion.is_active,
+            )
+            .scalar_subquery()
+        )
+
+        # Query all latest answers for this user
+        user_answers = (
+            db.query(EvalAnswer)
+            .filter(
+                EvalAnswer.question_id.in_(question_ids),
+                EvalAnswer.respondent_id == session.user_id,
+                EvalAnswer.is_latest,
+            )
+            .all()
+        )
+
+        logger.info(f"[ExamSession] Found {len(user_answers)} answers to process")
+
+        converted_count = 0
+        for answer in user_answers:
+            if not answer.content_data:
+                continue
+
+            # Get text from inputs.supplementaryNotes
+            inputs = answer.content_data.get("inputs", {})
+            notes = inputs.get("supplementaryNotes", "")
+
+            # Check if already converted (attachments.supplementaryNotes exists)
+            attachments = answer.content_data.get("attachments", {})
+            existing_files = attachments.get("supplementaryNotes", [])
+
+            # Skip if no notes or already has files
+            if not notes or not notes.strip():
+                continue
+            if existing_files:
+                logger.info(
+                    f"[ExamSession] Answer {answer.id} already has {len(existing_files)} files, skipping"
+                )
+                continue
+
+            # Convert notes to S3
+            attachment = TextConversionService.convert_question_notes_to_s3(
+                db, session, answer.question_id, notes
+            )
+
+            if attachment:
+                # Create new dict to trigger SQLAlchemy change detection
+                new_content_data = dict(answer.content_data)
+
+                # Ensure attachments dict exists
+                if "attachments" not in new_content_data:
+                    new_content_data["attachments"] = {}
+                new_content_data["attachments"]["supplementaryNotes"] = [attachment]
+
+                # Clear inputs.supplementaryNotes
+                if "inputs" in new_content_data:
+                    new_content_data["inputs"] = dict(new_content_data["inputs"])
+                    new_content_data["inputs"]["supplementaryNotes"] = ""
+
+                answer.content_data = new_content_data
+                converted_count += 1
+                logger.info(
+                    f"[ExamSession] Converted notes to S3 for answer {answer.id}"
+                )
+
+        if converted_count > 0:
+            db.commit()
+            logger.info(f"[ExamSession] Committed {converted_count} conversions")
+            return True
+
+        logger.info("[ExamSession] No supplementary notes to convert")
+        return False
+
+    @staticmethod
+    def advance_phase_with_conversion(
+        db: Session,
+        session: EvalExamSession,
+        target_phase: str,
+    ) -> EvalExamSession:
+        """Advance exam phase with text conversion when entering review phase."""
+        from sqlalchemy.orm import attributes
+
+        # Convert supplementary notes to S3 when entering review phase
+        ExamSessionService._convert_supplementary_notes_if_needed(
+            db, session, target_phase
+        )
+
+        # Update phase
+        session.current_phase = target_phase
+
+        # Set phase start timestamps
+        now = int(time.time())
+        if target_phase == "exam" and not session.extra_data.get("exam_started_at"):
+            session.extra_data["exam_started_at"] = now
+            attributes.flag_modified(session, "extra_data")
+        elif target_phase == "review":
+            # Always update review_started_at when entering review phase
+            session.extra_data["review_started_at"] = now
+            attributes.flag_modified(session, "extra_data")
+        elif target_phase == "completed":
+            session.completed_at = datetime.now(timezone.utc)
+
+        db.commit()
+        db.refresh(session)
+        return session
+
+    @staticmethod
+    def complete_exam_session(
+        db: Session,
+        session: EvalExamSession,
+    ) -> EvalExamSession:
+        """Complete exam session.
+
+        If session has supplementaryNotes that haven't been converted yet
+        (e.g., when transitioning directly from exam to completed), convert them now.
+        """
+        # Check if there are any notes that need conversion
+        # This handles the case when author forces exam -> completed transition
+        # skipping the review phase
+        ExamSessionService._convert_supplementary_notes_if_needed(db, session, "review")
+
+        session.current_phase = "completed"
+        session.completed_at = datetime.now(timezone.utc)
+
+        db.commit()
+        db.refresh(session)
         return session

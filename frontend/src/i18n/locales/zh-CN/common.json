@@ -4,6 +4,10 @@
     "description": "浏览器中的完整 AI 团队。"
   },
   "loading": "加载中...",
+  "total": "总计",
+  "version": "版本",
+  "updated": "更新于",
+  "page": "页",
   "repos": {
     "repository": "选择仓库",
     "branch": "选择分支",
@@ -311,6 +315,10 @@
       "join_description_prefix": "确定加入后，「",
       "join_description_suffix": "」将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。"
     }
+  },
+  "teamSelector": {
+    "agent_label": "智能体",
+    "select_agent_tooltip": "选择智能体"
   },
   "team": {
     "name": "名称",
@@ -654,7 +662,10 @@
     "page_info": "第 {{current}} 页 / 共 {{total}} 页",
     "warning": "警告",
     "cannotUndo": "此操作无法撤销",
-    "coming_soon": "即将推出"
+    "coming_soon": "即将推出",
+    "version": "版本",
+    "updated": "更新于",
+    "total": "总计"
   },
   "dialog": {
     "confirm_close_title": "确认关闭",
@@ -1291,6 +1302,7 @@
     "no_matching_skills": "没有匹配的技能",
     "already_selected": "已选择",
     "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "skill_button_label": "技能",
     "manage_skills": "管理技能"
   },
   "grey": {

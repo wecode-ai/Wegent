@@ -83,7 +83,14 @@
     "exam_settings": "Exam Settings",
     "duration": "Duration",
     "qa_duration": "Q&A Duration",
-    "enable_exam_mode_first": "Enable exam mode first"
+    "enable_exam_mode_first": "Enable exam mode first",
+    "already_published": "Already Published",
+    "view_versions_description": "View version history for this topic",
+    "stats_summary": "Statistics Summary",
+    "publish_confirm_title": "Confirm Publish Topic",
+    "publish_confirm_description": "Publishing will create a new version and make this topic visible to respondents. Are you sure you want to continue?",
+    "publish_note_title": "Publish Note",
+    "publish_note_description": "After publishing, the topic will be visible to authorized respondents. You can update the topic and publish new versions at any time."
   },
   "versions": {
     "current": "Current",
@@ -102,6 +109,7 @@
     "delete": "Delete Question",
     "publish": "Publish",
     "add": "Add Question",
+    "add_description": "Add a new question to this topic",
     "create_first": "Create First Question",
     "question_title": "Question Title",
     "title_placeholder": "Enter question title",
@@ -139,13 +147,15 @@
       "url": "URL",
       "attachment": "Attachment",
       "mixed": "Standard"
-    }
+    },
+    "drag_to_reorder": "Drag to reorder"
   },
   "permissions": {
     "title": "Permissions",
     "management": "Permission Management",
     "description": "Manage who can view, answer, and grade your topics.",
     "manage": "Manage Permissions",
+    "manage_description": "Manage user access permissions and roles",
     "add": "Add Permission",
     "add_description": "Grant access to this topic",
     "remove": "Remove",
@@ -164,7 +174,12 @@
       "question_creator": "Question Creator"
     },
     "granted_success": "Permission granted successfully",
-    "revoked_success": "Permission revoked successfully"
+    "revoked_success": "Permission revoked successfully",
+    "no_permissions_description": "Add users to give them access to this topic. You can assign different roles like respondent, grader, or question creator.",
+    "users": "users"
+  },
+  "respondents": {
+    "title": "Respondents"
   },
   "answers": {
     "title": "Answers",
@@ -234,6 +249,8 @@
     "description": "View and manage AI grading tasks for this topic.",
     "tasks": "Grading Tasks",
     "view_tasks": "View Grading Tasks",
+    "view_tasks_description": "View and manage pending grading tasks",
+    "completed": "Completed",
     "execute": "Execute",
     "retry": "Retry",
     "retry_hint": "Click retry to re-execute the grading task",
@@ -325,27 +342,86 @@
     "timeout_config": "Timeout Configuration",
     "timeout_description": "Set the maximum time allowed for AI grading tasks.",
     "timeout_seconds": "Timeout (seconds)",
-    "timeout_hint": "Approximately {{minutes}} minutes"
+    "timeout_hint": "Approximately {{minutes}} minutes",
+    "tasks_summary": "Grading Tasks Summary",
+    "total_answers": "Total Answers",
+    "completed": "Completed",
+    "pending": "Pending",
+    "view_grading_tasks": "View Grading Tasks"
+  },
+  "exam_sessions": {
+    "title": "Exam Sessions",
+    "view_detail": "View Detail",
+    "view_details": "View Details",
+    "view_answers": "View Answers",
+    "answer_detail": "Answer Detail",
+    "no_sessions": "No Exam Sessions",
+    "no_sessions_description": "Exam sessions will appear here when respondents start the exam.",
+    "started_at": "Started",
+    "duration": "Duration",
+    "question": "Question",
+    "change_phase": "Change Phase",
+    "set_to": "Set to",
+    "current": "current",
+    "force_end": "Force End",
+    "reset_session": "Reset Session",
+    "load_failed": "Failed to load exam sessions",
+    "reset_success": "Session Reset",
+    "reset_success_description": "Reset session for {{user}}",
+    "reset_failed": "Reset Failed",
+    "reset_failed_description": "Failed to reset exam session",
+    "phase_updated": "Phase Updated",
+    "phase_update_failed": "Update Failed",
+    "phase_update_failed_description": "Failed to update session phase",
+    "force_end_success": "Session Ended",
+    "force_end_failed": "Failed to End Session",
+    "force_end_failed_description": "Failed to force end exam session",
+    "reset_dialog_title": "Confirm Reset Session?",
+    "reset_dialog_description": "This will reset the exam session for {{user}}. The respondent will need to start the exam again.",
+    "phase_dialog_title": "Confirm Change Phase?",
+    "phase_dialog_description": "Change session phase for {{user}} to {{phase}}.",
+    "completed_note": "Note: Setting to completed will automatically create a grading task.",
+    "force_end_dialog_title": "Confirm Force End?",
+    "force_end_dialog_description": "This will immediately end the exam for {{user}} and create a grading task.",
+    "force_end_warning": "This action cannot be undone. Only use when the respondent abandons the exam or encounters technical issues.",
+    "action_cannot_undo": "This action cannot be undone.",
+    "phase": {
+      "intro": "Intro",
+      "exam": "Exam",
+      "review": "Review",
+      "completed": "Completed"
+    },
+    "stats": {
+      "total": "Total Sessions",
+      "intro": "Intro",
+      "exam": "In Exam",
+      "review": "Reviewing",
+      "completed": "Completed"
+    }
+  },
+  "answer_records": {
+    "title": "Answer Records",
+    "description": "View all submitted answers",
+    "stats": {
+      "total": "Total Answers",
+      "pending": "Pending Grading",
+      "graded": "Graded",
+      "published": "Published"
+    },
+    "no_answers": "No answers submitted yet",
+    "use_exam_sessions": "Please use the Exam Sessions tab to view answer details for each respondent."
   },
   "actions": {
-    "save": "Save",
-    "cancel": "Cancel",
-    "confirm": "Confirm",
     "back": "Back",
-    "view": "View",
     "view_details": "View Details",
-    "edit": "Edit",
     "config": "Configuration",
-    "delete": "Delete",
-    "refresh": "Refresh",
-    "creating": "Creating...",
     "downloading": "Downloading...",
     "submitting": "Submitting...",
-    "download": "Download",
-    "previous": "Previous",
-    "next": "Next",
     "expand": "Expand",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "quick_actions": "Quick Actions",
+    "publish": "Publish",
+    "saving": "Saving..."
   },
   "ui": {
     "question_content": "Question Content",
@@ -375,7 +451,6 @@
     "end_exam": "End Answering",
     "leave_exam": "Leave Exam",
     "exam_ended": "Exam Ended",
-    "submit_count": "Submitted {{count}} times",
     "progress": {
       "select_topic": "Select Topic",
       "upload_materials": "Upload Materials",
@@ -427,9 +502,6 @@
     "supplementary": {
       "title": "Supplementary Notes",
       "placeholder": "Please enter your supplementary notes here...",
-      "hint_1": "Please supplement your overall approach to completing the answer with AI, and the models and tools used, for example:",
-      "hint_2": "Which models or platforms were used, whether different models or tools were switched at different stages, which steps they were used for, and whether there were other reference sources or auxiliary tools.",
-      "hint_3": "You can also add other information that you think can demonstrate your AI usage ideas and techniques.",
       "character_count": "{{count}} characters",
       "uploaded_files": "Uploaded supplementary files:"
     },
@@ -441,7 +513,6 @@
         "report_uploaded": "Report Uploaded",
         "notes_filled": "Notes Filled"
       },
-      "nth_submit": "(Submit {{count}})",
       "file_limit": "Total attachments per question cannot exceed 20, currently uploaded {{count}}",
       "submit_button": "Submit Assessment Materials",
       "resubmit_button": "Submit Again"
@@ -516,6 +587,8 @@
     "not_found": "Not found",
     "question_not_found": "Question not found",
     "login_required": "Login Required",
-    "please_login": "Please login before accessing this page"
+    "please_login": "Please login before accessing this page",
+    "load_versions_failed": "Failed to load version history",
+    "rollback_failed": "Failed to rollback topic version"
   }
 }

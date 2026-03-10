@@ -113,6 +113,7 @@ class ExecutionRequest:
     document_ids: Optional[list] = None
     table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
+    is_restricted_observer: Optional[bool] = None  # RestrictedObserver role flag; must be set explicitly by Backend
 
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)

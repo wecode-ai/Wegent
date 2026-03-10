@@ -282,12 +282,11 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
               <PopoverTrigger asChild>
                 <div ref={buttonRef} className="relative">
                   <ActionButton
-                    variant="outline"
                     onClick={() => setOpen(!open)}
                     disabled={!hasSkills || disabled}
                     icon={<Zap className="h-4 w-4 text-text-primary" />}
+                    label={t('common:skillSelector.skill_button_label')}
                     title={t('common:skillSelector.skill_button_tooltip')}
-                    className="border-border bg-base text-text-primary hover:bg-hover"
                   />
                   {selectedCount > 0 && (
                     <Badge

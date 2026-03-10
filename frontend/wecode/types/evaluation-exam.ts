@@ -66,20 +66,38 @@ export interface ExamAttachmentGroup {
 }
 
 /**
+ * Text input fields for exam answers
+ * Supports multiple text input fields with real-time saving
+ */
+export interface ExamAnswerInputs {
+  /** Supplementary notes text content */
+  supplementaryNotes?: string
+}
+
+/**
+ * Extended attachment group including supplementary notes as files
+ */
+export interface ExtendedExamAttachmentGroup extends ExamAttachmentGroup {
+  /** Supplementary notes converted to file attachments */
+  supplementaryNotes?: ExamAttachment[]
+}
+
+/**
  * Exam answer content stored in Answer.content_data
- * Contains participant submission with all attachments
+ *
+ * Architecture:
+ * - inputs: Text input fields (real-time saved, cleared after conversion)
+ * - attachments: File attachments including converted text inputs
  */
 export interface ExamAnswerContent {
   /** Participant's name */
   participantName: string
   /** Selected topic ID (for validation) */
   selectedTopicId: number
-  /** Additional notes from participant */
-  supplementaryNotes: string
-  /** Grouped file attachments */
-  attachments: ExamAttachmentGroup
-  /** Supplementary notes as file attachments (for multiple versions) */
-  supplementaryNotesFiles?: ExamAttachment[]
+  /** Text input fields (supplementaryNotes, etc.) */
+  inputs?: ExamAnswerInputs
+  /** Grouped file attachments (includes supplementaryNotes after conversion) */
+  attachments: ExtendedExamAttachmentGroup
 }
 
 /**
@@ -110,10 +128,10 @@ export interface ExamSessionStatus {
   remaining_seconds: number
   /** Whether current phase time has expired (remaining_seconds < 0) */
   is_overtime: boolean
-  /** Number of submissions made */
-  submit_count: number
   /** Selected question ID (null if not selected) */
   selected_question_id: number | null
+  /** Actual exam duration in seconds (exam + review phases only, null if not started) */
+  exam_duration_seconds: number | null
 }
 
 /**

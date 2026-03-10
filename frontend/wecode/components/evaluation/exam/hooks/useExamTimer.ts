@@ -15,7 +15,7 @@ interface UseExamTimerReturn {
   formattedTime: string
   isOvertime: boolean
   isCompleted: boolean
-  submitCount: number
+  examDurationSeconds: number | null
   selectedQuestionId: number | null
   showTimer: boolean
 }
@@ -49,8 +49,9 @@ export function useExamTimer({ session }: UseExamTimerOptions): UseExamTimerRetu
 
   // Local countdown - just decrement the server-provided value
   // This is only for display smoothness, actual value comes from server
+  // Run during both 'exam' and 'review' phases
   useEffect(() => {
-    if (phase !== 'exam') return
+    if (phase !== 'exam' && phase !== 'review') return
 
     const interval = setInterval(() => {
       setRemainingSeconds(prev => prev - 1)
@@ -67,8 +68,8 @@ export function useExamTimer({ session }: UseExamTimerOptions): UseExamTimerRetu
 
   const isOvertime = remainingSeconds < 0
 
-  // Only show timer during exam phase
-  const showTimer = phase === 'exam'
+  // Show timer during both exam and review phases
+  const showTimer = phase === 'exam' || phase === 'review'
 
   // Format time display: countdown if time remaining, elapsed if overtime
   const formattedTime = useMemo(() => {
@@ -86,7 +87,7 @@ export function useExamTimer({ session }: UseExamTimerOptions): UseExamTimerRetu
     formattedTime,
     isOvertime,
     isCompleted: phase === 'completed',
-    submitCount: session?.submit_count || 0,
+    examDurationSeconds: session?.exam_duration_seconds ?? null,
     selectedQuestionId: session?.selected_question_id || null,
     showTimer,
   }

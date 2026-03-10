@@ -128,7 +128,7 @@ class TopicService:
             visibility: Filter by visibility
             status: Filter by status
             search: Search by name
-            my_only: Only show user's own topics
+            my_only: Only show user's own topics (including those where user has question_creator permission)
 
         Returns:
             Tuple of (topics list, total count)
@@ -136,8 +136,24 @@ class TopicService:
         query = db.query(EvalTopic).filter(EvalTopic.is_active)
 
         if my_only:
-            # Only user's own topics (can see all including drafts)
-            query = query.filter(EvalTopic.creator_id == user_id)
+            # User's own topics OR topics where user has question_creator permission
+            from wecode.models.evaluation import EvalPermission, PermissionRole
+
+            question_creator_topic_ids = (
+                db.query(EvalPermission.topic_id)
+                .filter(
+                    EvalPermission.user_id == user_id,
+                    EvalPermission.role == PermissionRole.QUESTION_CREATOR,
+                )
+                .scalar_subquery()
+            )
+
+            query = query.filter(
+                or_(
+                    EvalTopic.creator_id == user_id,
+                    EvalTopic.id.in_(question_creator_topic_ids),
+                )
+            )
         else:
             # Topics user can access:
             # 1. User's own topics (all statuses)

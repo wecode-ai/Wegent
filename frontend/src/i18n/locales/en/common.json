@@ -4,6 +4,10 @@
     "description": "A whole dev team of AI agents in your editor."
   },
   "loading": "Loading...",
+  "total": "Total",
+  "version": "Version",
+  "updated": "Updated",
+  "page": "Page",
   "repos": {
     "repository": "Select Repository",
     "branch": "Select Branch",
@@ -311,6 +315,10 @@
       "join_description_prefix": "After confirmation, \"",
       "join_description_suffix": "\" will be added to your agent list, and you can use it to create and execute tasks."
     }
+  },
+  "teamSelector": {
+    "agent_label": "Agent",
+    "select_agent_tooltip": "Select agent"
   },
   "team": {
     "name": "Name",
@@ -654,7 +662,10 @@
     "page_info": "Page {{current}} of {{total}}",
     "warning": "Warning",
     "cannotUndo": "This action cannot be undone",
-    "coming_soon": "Coming Soon"
+    "coming_soon": "Coming Soon",
+    "version": "Version",
+    "updated": "Updated",
+    "total": "Total"
   },
   "dialog": {
     "confirm_close_title": "Confirm Close",
@@ -1297,6 +1308,7 @@
     "no_matching_skills": "No matching skills",
     "already_selected": "Already selected",
     "skill_button_tooltip": "Select skills to use with this message",
+    "skill_button_label": "Skills",
     "manage_skills": "Manage"
   },
   "grey": {

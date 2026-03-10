@@ -30,8 +30,6 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { ModelSelector, type Model } from '@/features/tasks/components/selector'
 import { useUser } from '@/features/common/UserContext'
-import { listGroupMembers } from '@/apis/groups'
-import { taskMemberApi } from '@/apis/task-member'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listKnowledgeBases } from '@/apis/knowledge'
 import type { Group } from '@/types/group'
@@ -104,52 +102,6 @@ export function CreateGroupChatFromKnowledgeDialog({
     return title.trim().length > 0 && selectedTeamId.length > 0 && selectedModel !== null
   }, [title, selectedTeamId, selectedModel])
 
-  // Add all group members to the newly created group chat
-  const addGroupMembersToChat = async (taskId: number) => {
-    try {
-      const membersResponse = await listGroupMembers(group.name)
-      const members = membersResponse.items || []
-
-      // Filter out the current user (already the owner of the group chat)
-      const otherMembers = members.filter(member => member.user_id !== user?.id && member.is_active)
-
-      if (otherMembers.length === 0) return
-
-      // Add members concurrently using Promise.allSettled
-      const results = await Promise.allSettled(
-        otherMembers.map(member => taskMemberApi.addMember(taskId, member.user_id))
-      )
-
-      const succeeded = results.filter(r => r.status === 'fulfilled').length
-      const failed = results.filter(r => r.status === 'rejected').length
-
-      if (failed === 0) {
-        toast({
-          title: t('document.groupChat.addMembersSuccess', { count: succeeded }),
-        })
-      } else if (succeeded > 0) {
-        toast({
-          title: t('document.groupChat.addMembersPartialFail', {
-            failed,
-            total: otherMembers.length,
-          }),
-          variant: 'destructive',
-        })
-      } else {
-        toast({
-          title: t('document.groupChat.addMembersFailed'),
-          variant: 'destructive',
-        })
-      }
-    } catch (error) {
-      console.error('[CreateGroupChatFromKnowledge] Failed to add group members:', error)
-      toast({
-        title: t('document.groupChat.addMembersFailed'),
-        variant: 'destructive',
-      })
-    }
-  }
-
   const resetForm = () => {
     setTitle(defaultTitle)
     setSelectedTeamId('')
@@ -171,6 +123,7 @@ export function CreateGroupChatFromKnowledgeDialog({
 
     try {
       // Await sendMessage to get the real task ID from the server
+      // Pass linked_group to link the group chat to the group (members derived from group)
       const realTaskId = await sendMessage(
         {
           message: t('common:groupChat.create.initialMessage'),
@@ -181,6 +134,7 @@ export function CreateGroupChatFromKnowledgeDialog({
             selectedModel?.name === '__default__' ? undefined : selectedModel?.name || undefined,
           force_override_bot_model: forceOverride,
           is_group_chat: true,
+          linked_group: groupName, // Link to group for dynamic member management
         },
         {
           pendingUserMessage: undefined,
@@ -281,8 +235,7 @@ export function CreateGroupChatFromKnowledgeDialog({
         description: t('common:groupChat.create.successDesc'),
       })
 
-      // Add group members in the background after navigation
-      void addGroupMembersToChat(realTaskId)
+      // Note: Members are now derived from the linked group, no need to add them manually
     } catch (error) {
       console.error('[CreateGroupChatFromKnowledge] Failed to create group chat:', error)
       toast({

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
+from wecode.models.evaluation import EvalQuestion
 from wecode.schemas.evaluation import (
     GradingConfigResponse,
     GradingConfigUpdate,
@@ -1073,6 +1074,11 @@ def rollback_topic(
 @router.get("/topics/{topic_id}/exam-sessions")
 def get_topic_exam_sessions(
     topic_id: int,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    phase: Optional[str] = Query(
+        None, description="Filter by phase (intro, exam, review, completed)"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -1082,9 +1088,11 @@ def get_topic_exam_sessions(
     Returns session information including:
     - User ID and name
     - Start time
-    - Current phase (active, qa, completed)
+    - Current phase (intro, exam, review, completed)
     - Submit count
     - Selected question ID
+
+    Supports filtering by phase and pagination.
     """
     topic = _get_topic_or_404(db, topic_id)
     _verify_topic_ownership(db, topic, current_user.id)
@@ -1094,15 +1102,25 @@ def get_topic_exam_sessions(
     from app.models.user import User
     from wecode.models.evaluation_exam_session import EvalExamSession
 
-    sessions = (
+    # Build base query
+    query = (
         db.query(EvalExamSession, User)
         .join(User, EvalExamSession.user_id == User.id)
         .filter(
             EvalExamSession.topic_id == topic_id,
             EvalExamSession.is_active == 1,
         )
-        .all()
     )
+
+    # Apply phase filter if provided
+    if phase:
+        query = query.filter(EvalExamSession.current_phase == phase)
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Apply pagination
+    sessions = query.offset((page - 1) * limit).limit(limit).all()
 
     # Build simplified session list without redundant topic data
     # Use batch processing for better performance with many sessions
@@ -1122,8 +1140,8 @@ def get_topic_exam_sessions(
                 "started_at": (
                     session.started_at.isoformat() if session.started_at else None
                 ),
-                "submit_count": session.submit_count,
                 "selected_question_id": session.selected_question_id or None,
+                "exam_duration_seconds": session_status.get("exam_duration_seconds"),
                 "remaining_seconds": session_status.get("remaining_seconds", 0),
                 "is_overtime": session_status.get("is_overtime", False),
             }
@@ -1141,7 +1159,9 @@ def get_topic_exam_sessions(
             "review_duration_minutes": extra_data.get("reviewDurationMinutes", 5),
         },
         "sessions": session_list,
-        "total": len(session_list),
+        "total": total,
+        "page": page,
+        "limit": limit,
     }
 
 
@@ -1234,15 +1254,12 @@ def update_user_exam_session_phase(
                 f"Use force=true to override.",
             )
 
-    # Update phase using service method
-    exam_session_service.update_session_phase(
-        db=db,
-        session=session,
-        target_phase=request.target_phase,
-    )
-
-    # If transitioning to completed, create grading tasks
+    # If transitioning to completed, use complete_exam_session (handles text conversion)
+    # Otherwise, use regular update_session_phase
     if request.target_phase == "completed":
+        exam_session_service.complete_exam_session(db=db, session=session)
+
+        # Create grading tasks
         from wecode.api.evaluation.respondent import (
             _create_grading_tasks_for_exam_completion,
         )
@@ -1252,6 +1269,12 @@ def update_user_exam_session_phase(
             topic_id=topic_id,
             user_id=user_id,
             topic=topic,
+        )
+    else:
+        exam_session_service.update_session_phase(
+            db=db,
+            session=session,
+            target_phase=request.target_phase,
         )
 
     return {
@@ -1299,12 +1322,8 @@ def force_end_exam_session(
 
     previous_phase = session.current_phase
 
-    # Update to completed phase
-    exam_session_service.update_session_phase(
-        db=db,
-        session=session,
-        target_phase="completed",
-    )
+    # Use complete_exam_session to end the exam (handles text conversion)
+    exam_session_service.complete_exam_session(db=db, session=session)
 
     # Create grading tasks
     from wecode.api.evaluation.respondent import (
@@ -1324,4 +1343,140 @@ def force_end_exam_session(
         "previous_phase": previous_phase,
         "current_phase": "completed",
         "user_id": user_id,
+    }
+
+
+@router.get("/topics/{topic_id}/exam-sessions/{user_id}/detail")
+def get_exam_session_detail(
+    topic_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get detailed exam session information including all answers and attachments (author only).
+
+    Returns comprehensive session data for reviewing a candidate's submission:
+    - Session status and timing information
+    - User information
+    - All answers with content and attachments
+    - Selected question details
+    """
+    from app.models.user import User
+    from wecode.models.evaluation import EvalAnswer, EvalQuestion
+    from wecode.models.evaluation_exam_session import EvalExamSession
+
+    topic = _get_topic_or_404(db, topic_id)
+    _verify_topic_ownership(db, topic, current_user.id)
+
+    exam_session_service = get_exam_session_service()
+
+    # Get user's session (including inactive/archived ones)
+    session = (
+        db.query(EvalExamSession)
+        .filter(
+            EvalExamSession.topic_id == topic_id,
+            EvalExamSession.user_id == user_id,
+        )
+        .order_by(EvalExamSession.id.desc())
+        .first()
+    )
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No exam session found for this user",
+        )
+
+    # Get user info
+    user = db.query(User).filter(User.id == user_id).first()
+
+    # Get session status
+    session_status = exam_session_service.get_session_status(session)
+
+    # Get all questions for this topic
+    questions = (
+        db.query(EvalQuestion)
+        .filter(
+            EvalQuestion.topic_id == topic_id,
+            EvalQuestion.is_active == True,
+        )
+        .order_by(EvalQuestion.order_index.asc())
+        .all()
+    )
+
+    # Get all answers for this user in this topic
+    question_ids = [q.id for q in questions]
+    answers = (
+        db.query(EvalAnswer)
+        .filter(
+            EvalAnswer.question_id.in_(question_ids),
+            EvalAnswer.respondent_id == user_id,
+            EvalAnswer.is_latest == True,
+        )
+        .all()
+    )
+
+    # Build answers map by question_id
+    answers_map = {a.question_id: a for a in answers}
+
+    # Build question list with answers
+    questions_with_answers = []
+    for question in questions:
+        answer = answers_map.get(question.id)
+        questions_with_answers.append(
+            {
+                "id": question.id,
+                "title": question.title,
+                "content_type": question.content_type,
+                "content_data": question.content_data,
+                "order_index": question.order_index,
+                "answer": (
+                    {
+                        "id": answer.id,
+                        "content_type": answer.content_type,
+                        "content_data": answer.content_data,
+                        "submitted_at": (
+                            answer.submitted_at.isoformat()
+                            if answer.submitted_at
+                            else None
+                        ),
+                        "question_version": answer.question_version,
+                    }
+                    if answer
+                    else None
+                ),
+            }
+        )
+
+    # Get all answers from session extra_data (for exam mode with allAnswers)
+    session_all_answers = {}
+    if session.extra_data and "allAnswers" in session.extra_data:
+        session_all_answers = session.extra_data.get("allAnswers", {})
+
+    return {
+        "session": {
+            "user_id": session.user_id,
+            "user_name": user.user_name if user else f"User {session.user_id}",
+            "user_email": user.email if user else None,
+            "current_phase": session.current_phase,
+            "started_at": (
+                session.started_at.isoformat() if session.started_at else None
+            ),
+            "completed_at": (
+                session.completed_at.isoformat() if session.completed_at else None
+            ),
+            "selected_question_id": session.selected_question_id or None,
+            "is_active": session.is_active == 1,
+            **session_status,
+        },
+        "topic": {
+            "id": topic.id,
+            "name": topic.name,
+            "description": (
+                topic.extra_data.get("description") if topic.extra_data else None
+            ),
+        },
+        "questions": questions_with_answers,
+        "session_all_answers": session_all_answers,
     }

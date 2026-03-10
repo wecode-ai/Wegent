@@ -33,7 +33,8 @@ class EvalExamSession(Base):
 
     # Extended data stored as JSON (no index needed)
     # Contains: selected_question_id, intro_duration_minutes, exam_duration_minutes,
-    #           review_duration_minutes, started_at, last_submitted_at, submit_count
+    #           review_duration_minutes, started_at, last_submitted_at, exam_started_at,
+    #           review_started_at, intro_started_at, completed_at
     extra_data = Column(JSON, nullable=False)
 
     created_at = Column(DateTime, nullable=False, default=func.now())
@@ -151,11 +152,22 @@ class EvalExamSession(Base):
             self.extra_data["last_submitted_at"] = None
 
     @property
-    def submit_count(self) -> int:
-        return self.extra_data.get("submit_count", 0) if self.extra_data else 0
+    def completed_at(self) -> Optional[datetime]:
+        if not self.extra_data:
+            return None
+        ts = self.extra_data.get("completed_at")
+        return datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
 
-    @submit_count.setter
-    def submit_count(self, value: int):
+    @completed_at.setter
+    def completed_at(self, value: Optional[datetime]):
         if self.extra_data is None:
             self.extra_data = {}
-        self.extra_data["submit_count"] = value
+        if value:
+            if value.tzinfo is None:
+                self.extra_data["completed_at"] = int(value.timestamp())
+            else:
+                self.extra_data["completed_at"] = int(
+                    value.astimezone(timezone.utc).timestamp()
+                )
+        else:
+            self.extra_data["completed_at"] = None

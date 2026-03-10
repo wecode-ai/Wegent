@@ -14,7 +14,6 @@ interface CheckItem {
 
 interface SubmitSectionProps {
   checkItems: CheckItem[]
-  submitCount: number
   totalFileCount: number
   isSubmitReady: boolean
   submitButtonText: string
@@ -23,7 +22,6 @@ interface SubmitSectionProps {
 
 export function SubmitSection({
   checkItems,
-  submitCount,
   totalFileCount,
   isSubmitReady,
   submitButtonText,
@@ -32,14 +30,7 @@ export function SubmitSection({
   return (
     <section className="animate-[slideDown_0.35s_ease-out]">
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-7 sm:p-9">
-        <h3 className="text-[1rem] font-bold text-gray-700 mb-5">
-          提交检查
-          {submitCount > 0 && (
-            <span className="ml-2 text-sm font-normal text-gray-400">
-              （第 {submitCount + 1} 次提交）
-            </span>
-          )}
-        </h3>
+        <h3 className="text-[1rem] font-bold text-gray-700 mb-5">提交检查</h3>
         <div className="grid grid-cols-3 gap-3 mb-7">
           {checkItems.map((item, i) => (
             <div
