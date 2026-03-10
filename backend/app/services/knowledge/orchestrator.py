@@ -571,11 +571,12 @@ class KnowledgeOrchestrator:
             group_name=group_name,
         )
 
+        # Use cached document_count from spec to avoid N+1 query problem
         return KnowledgeBaseListResponse(
             total=len(knowledge_bases),
             items=[
                 KnowledgeBaseResponse.from_kind(
-                    kb, KnowledgeService.get_document_count(db, kb.id)
+                    kb, kb.json.get("spec", {}).get("document_count", 0)
                 )
                 for kb in knowledge_bases
             ],
