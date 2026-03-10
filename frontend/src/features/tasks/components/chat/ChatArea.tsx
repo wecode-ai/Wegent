@@ -599,6 +599,8 @@ function ChatAreaContent({
   const setSelectedContexts = chatState.setSelectedContexts
   const resetAttachment = chatState.resetAttachment
   const addExistingAttachment = chatState.addExistingAttachment
+  const selectedContextsRef = useRef(chatState.selectedContexts)
+  selectedContextsRef.current = chatState.selectedContexts
 
   // Load prompt from sessionStorage - single remaining useEffect
   useEffect(() => {
@@ -692,13 +694,13 @@ function ChatAreaContent({
 
       if (!contextItem) return
 
-      setSelectedContexts(prev => {
-        const isAlreadySelected = prev.some(
-          c => c.type === contextItem.type && c.id === contextItem.id
-        )
-        if (isAlreadySelected) return prev
-        return [...prev, contextItem]
-      })
+      const currentContexts = selectedContextsRef.current
+      const isAlreadySelected = currentContexts.some(
+        c => c.type === contextItem.type && c.id === contextItem.id
+      )
+      if (isAlreadySelected) return
+
+      setSelectedContexts([...currentContexts, contextItem])
     },
     [setSelectedContexts]
   )
