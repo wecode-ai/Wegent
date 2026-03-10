@@ -24,7 +24,8 @@
       "Owner": "Owner",
       "Maintainer": "Maintainer",
       "Developer": "Developer",
-      "Reporter": "Reporter"
+      "Reporter": "Reporter",
+      "RestrictedObserver": "RestrictedObserver"
     },
     "actions": {
       "addMember": "Add Member",
@@ -135,6 +136,7 @@
         "updateRoles": "Modify member roles (except Owner)",
         "canLeave": "Can leave group"
       },
+      "RestrictedObserver": "Can only use group knowledge bases via chat (RAG search), cannot view document content or list, can leave group",
       "Owner": "Has full control of the group",
       "OwnerDetails": {
         "title": "Including:",

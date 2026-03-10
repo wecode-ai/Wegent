@@ -115,6 +115,14 @@ export interface KnowledgeBaseCreate {
 }
 
 export interface RetrievalConfigUpdate {
+  // These fields are only accepted when initializing retrieval config for the first time
+  retriever_name?: string
+  retriever_namespace?: string
+  embedding_config?: {
+    model_name?: string
+    model_namespace?: string
+  }
+  // Tunable fields (can always be updated)
   retrieval_mode?: 'vector' | 'keyword' | 'hybrid'
   top_k?: number
   score_threshold?: number
@@ -321,12 +329,12 @@ export interface ChunkListResponse {
 
 // ============== Permission Types ==============
 
-export type PermissionLevel = 'view' | 'edit' | 'manage'
+export type PermissionLevel = 'use' | 'view' | 'edit' | 'manage'
 export type PermissionStatus = 'pending' | 'approved' | 'rejected'
 export type ReviewAction = 'approve' | 'reject'
 
 // New role-based permission types
-export type MemberRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
+export type MemberRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedObserver'
 
 // Role to permission level mapping
 export const ROLE_TO_PERMISSION: Record<MemberRole, PermissionLevel> = {
@@ -334,10 +342,12 @@ export const ROLE_TO_PERMISSION: Record<MemberRole, PermissionLevel> = {
   Maintainer: 'manage',
   Developer: 'edit',
   Reporter: 'view',
+  RestrictedObserver: 'use',
 }
 
 // Permission level to role mapping (for backward compatibility)
 export const PERMISSION_TO_ROLE: Record<PermissionLevel, MemberRole> = {
+  use: 'RestrictedObserver',
   view: 'Reporter',
   edit: 'Developer',
   manage: 'Maintainer',
@@ -349,6 +359,7 @@ export const ROLE_DISPLAY_NAMES: Record<MemberRole, string> = {
   Maintainer: '管理员',
   Developer: '开发者',
   Reporter: '使用者',
+  RestrictedObserver: '受限观察者',
 }
 
 // Role display names (English)
@@ -357,14 +368,16 @@ export const ROLE_DISPLAY_NAMES_EN: Record<MemberRole, string> = {
   Maintainer: 'Maintainer',
   Developer: 'Developer',
   Reporter: 'Reporter',
+  RestrictedObserver: 'RestrictedObserver',
 }
 
 // Role hierarchy for comparison (higher = more permissions)
 export const ROLE_HIERARCHY: Record<MemberRole, number> = {
-  Owner: 4,
-  Maintainer: 3,
-  Developer: 2,
-  Reporter: 1,
+  Owner: 5,
+  Maintainer: 4,
+  Developer: 3,
+  Reporter: 2,
+  RestrictedObserver: 1,
 }
 
 // Permission Apply types
@@ -449,6 +462,7 @@ export interface ApprovedPermissionsByRole {
   Maintainer: PermissionUserInfo[]
   Developer: PermissionUserInfo[]
   Reporter: PermissionUserInfo[]
+  RestrictedObserver: PermissionUserInfo[]
 }
 
 /** @deprecated Use ApprovedPermissionsByRole instead */

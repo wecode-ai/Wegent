@@ -210,6 +210,10 @@ class TaskQueryMixin:
         Get user's group chat task list with pagination (lightweight version).
 
         Returns only group chat tasks sorted by updated_at descending.
+        Includes:
+        1. Tasks with ResourceMember records (regular group chats)
+        2. Tasks with is_group_chat=true explicitly set
+        3. Tasks with linked_group where user is a member of the linked group (namespace)
         """
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
@@ -253,8 +257,35 @@ class TaskQueryMixin:
         ).fetchall()
         explicit_group_ids = {row[0] for row in explicit_group_result}
 
-        # Combine both sets
-        all_group_task_ids = member_task_ids | explicit_group_ids
+        # Get tasks with linked_group where user is a member of the linked namespace (group)
+        # This handles group chats created from group knowledge bases
+        linked_group_sql = text(
+            """
+            SELECT DISTINCT k.id
+            FROM tasks k
+            INNER JOIN namespace ns ON ns.name = JSON_UNQUOTE(JSON_EXTRACT(k.json, '$.spec.linked_group'))
+            INNER JOIN resource_members rm ON rm.resource_id = ns.id AND rm.resource_type = 'Namespace'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND k.namespace != 'system'
+            AND JSON_EXTRACT(k.json, '$.spec.linked_group') IS NOT NULL
+            AND rm.user_id = :user_id
+            AND rm.status = 'approved'
+            AND ns.is_active = true
+        """
+        )
+        linked_group_result = db.execute(
+            linked_group_sql, {"user_id": user_id}
+        ).fetchall()
+        linked_group_ids = {row[0] for row in linked_group_result}
+
+        logger.info(
+            f"[get_user_group_tasks_lite] user_id={user_id}, member_task_ids={len(member_task_ids)}, "
+            f"explicit_group_ids={len(explicit_group_ids)}, linked_group_ids={len(linked_group_ids)}"
+        )
+
+        # Combine all sets
+        all_group_task_ids = member_task_ids | explicit_group_ids | linked_group_ids
 
         if not all_group_task_ids:
             return [], 0
