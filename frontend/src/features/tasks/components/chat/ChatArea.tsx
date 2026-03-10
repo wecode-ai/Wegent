@@ -171,15 +171,15 @@ function ChatAreaContent({
   // Derive available options and defaults from selected video model's config
   const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
     | {
-        resolution?: string
-        ratio?: string
-        duration?: number
-        capabilities?: {
-          aspect_ratios?: { value: string }[]
-          resolutions?: { label: string }[]
-          durations_sec?: number[]
-        }
+      resolution?: string
+      ratio?: string
+      duration?: number
+      capabilities?: {
+        aspect_ratios?: { value: string }[]
+        resolutions?: { label: string }[]
+        durations_sec?: number[]
       }
+    }
     | undefined
   const videoCapabilities = videoConfig?.capabilities
 
@@ -892,6 +892,7 @@ function ChatAreaContent({
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
     selectedTeam: chatState.selectedTeam,
+    teams: teams,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
@@ -1079,10 +1080,10 @@ function ChatAreaContent({
           <div
             className={
               taskType === 'knowledge'
-                ? 'flex-1 flex items-end justify-center w-full pb-6'
+                ? 'flex-1 flex items-end justify-center w-full pb-10'
                 : 'flex-1 flex items-center justify-center w-full'
             }
-            style={taskType === 'knowledge' ? undefined : { marginBottom: '20vh' }}
+            style={taskType === 'knowledge' ? undefined : { marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
@@ -1121,9 +1122,10 @@ function ChatAreaContent({
           >
             {/* Bottom gradient fade effect - text fades as it approaches the input, limited width to avoid overlapping scrollbar */}
             <div
-              className="absolute top-0 left-0 h-8 -translate-y-full pointer-events-none"
+              className="absolute top-0 h-8 -translate-y-full pointer-events-none"
               style={{
-                width: 'calc(100% - 12px)',
+                left: '18px',
+                width: 'calc(100% - 36px)',
                 background:
                   'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
               }}
@@ -1135,8 +1137,10 @@ function ChatAreaContent({
                 onClick={() => scrollToBottom(true)}
               />
             </div>
-            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4 bg-base">
-              <ChatInputCard {...inputCardProps} />
+            <div className="relative w-full max-w-[820px] mx-auto px-4 sm:px-6">
+              <div className="py-4 bg-base">
+                <ChatInputCard {...inputCardProps} />
+              </div>
             </div>
           </div>
         )}

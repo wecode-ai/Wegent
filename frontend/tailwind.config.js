@@ -46,13 +46,14 @@ export default {
         ],
       },
       colors: {
-        // Custom project colors
+        // Custom project colors - Wegent Purple Theme
         base: withOpacity('--color-bg-base'),
         surface: withOpacity('--color-bg-surface'),
         muted: withOpacity('--color-bg-muted'),
         hover: withOpacity('--color-bg-hover'),
         border: withOpacity('--color-border'),
         'border-strong': withOpacity('--color-border-strong'),
+        'border-light': withOpacity('--color-border-light'),
         'text-primary': withOpacity('--color-text-primary'),
         'text-secondary': withOpacity('--color-text-secondary'),
         'text-muted': withOpacity('--color-text-muted'),
@@ -99,6 +100,14 @@ export default {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+        '2xl': '1rem',
+        '3xl': '1.5rem',
+      },
+      boxShadow: {
+        sidebar: 'var(--shadow-sidebar)',
+        popover: 'var(--shadow-popover)',
+        'card-hover': '0 4px 24px rgba(93, 94, 201, 0.06)',
+        'input-focus': '0 0 0 2px rgba(93, 94, 201, 0.2)',
       },
       keyframes: {
         'accordion-down': {
