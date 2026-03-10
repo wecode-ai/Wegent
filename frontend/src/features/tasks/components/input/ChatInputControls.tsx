@@ -462,7 +462,7 @@ export function ChatInputControls({
 
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
-          <div className={hideSelectors ? 'hidden' : 'contents'}>
+          <div className={hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'}>
             {/* Context Selection - only show for chat shell */}
             {isChatShell(selectedTeam) && (
               <ChatContextInput
