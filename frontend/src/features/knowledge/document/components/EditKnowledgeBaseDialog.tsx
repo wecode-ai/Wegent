@@ -21,7 +21,7 @@ import type {
   RetrievalConfigUpdate,
   SummaryModelRef,
 } from '@/types/knowledge'
-import type { RetrievalConfig as FullRetrievalConfig } from './RetrievalSettingsSection'
+import type { RetrievalConfig } from './RetrievalSettingsSection'
 
 interface EditKnowledgeBaseDialogProps {
   open: boolean
@@ -49,7 +49,7 @@ export function EditKnowledgeBaseDialog({
   const [summaryModelError, setSummaryModelError] = useState('')
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [retrievalConfig, setRetrievalConfig] = useState<Partial<FullRetrievalConfig>>({})
+  const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
 
   // Call limit configuration state
   const [maxCalls, setMaxCalls] = useState(10)
@@ -62,20 +62,9 @@ export function EditKnowledgeBaseDialog({
       setSummaryModelRef(knowledgeBase.summary_model_ref || null)
       setSummaryModelError('')
       setShowAdvanced(false) // Reset expanded state
-      // Initialize retrieval config from knowledge base, or set defaults if missing
+      // Initialize retrieval config from knowledge base
       if (knowledgeBase.retrieval_config) {
         setRetrievalConfig(knowledgeBase.retrieval_config)
-      } else {
-        // Set defaults so RetrievalSettingsSection can auto-select retriever/embedding
-        setRetrievalConfig({
-          retrieval_mode: 'vector',
-          top_k: 5,
-          score_threshold: 0.5,
-          hybrid_weights: {
-            vector_weight: 0.7,
-            keyword_weight: 0.3,
-          },
-        })
       }
       // Initialize call limits from knowledge base
       setMaxCalls(knowledgeBase.max_calls_per_conversation)
@@ -83,7 +72,7 @@ export function EditKnowledgeBaseDialog({
     }
   }, [knowledgeBase])
 
-  const handleRetrievalConfigChange = useCallback((config: Partial<FullRetrievalConfig>) => {
+  const handleRetrievalConfigChange = useCallback((config: Partial<RetrievalConfig>) => {
     setRetrievalConfig(config)
   }, [])
 
@@ -124,20 +113,11 @@ export function EditKnowledgeBaseDialog({
         exempt_calls_before_check: exemptCalls,
       }
 
-      // Add retrieval config update
-      // Always send full config including retriever and embedding (user can now edit them)
-      if (retrievalConfig) {
+      // Add retrieval config update if advanced settings were modified
+      if (knowledgeBase?.retrieval_config && retrievalConfig) {
         const retrievalConfigUpdate: RetrievalConfigUpdate = {}
 
-        // Always include retriever and embedding config if available
-        if (retrievalConfig.retriever_name) {
-          retrievalConfigUpdate.retriever_name = retrievalConfig.retriever_name
-          retrievalConfigUpdate.retriever_namespace =
-            retrievalConfig.retriever_namespace || 'default'
-        }
-        if (retrievalConfig.embedding_config?.model_name) {
-          retrievalConfigUpdate.embedding_config = retrievalConfig.embedding_config
-        }
+        // Only include fields that can be updated (exclude retriever and embedding_config)
         if (retrievalConfig.retrieval_mode !== undefined) {
           retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode
         }
@@ -208,12 +188,11 @@ export function EditKnowledgeBaseDialog({
             advancedVariant="collapsible"
             advancedOpen={showAdvanced}
             onAdvancedOpenChange={setShowAdvanced}
-            showRetrievalSection={true}
+            showRetrievalSection={!!knowledgeBase?.retrieval_config}
             retrievalConfig={retrievalConfig}
             onRetrievalConfigChange={handleRetrievalConfigChange}
             retrievalReadOnly={false}
-            retrievalPartialReadOnly={false}
-            retrievalShowChangeWarning={!!knowledgeBase?.retrieval_config}
+            retrievalPartialReadOnly={true}
           />
 
           {error && <p className="text-sm text-error">{error}</p>}

@@ -17,7 +17,6 @@ import {
   BookOpen,
   FolderOpen,
   Building2,
-  Share2,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
@@ -374,7 +373,6 @@ export function KnowledgeDocumentPage() {
           <PersonalKnowledgeContent
             knowledgeBases={personalKb.knowledgeBases}
             loading={personalKb.loading}
-            currentUserId={user?.id}
             onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
@@ -494,7 +492,6 @@ export function KnowledgeDocumentPage() {
 interface PersonalKnowledgeContentProps {
   knowledgeBases: KnowledgeBase[]
   loading: boolean
-  currentUserId?: number
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
@@ -505,7 +502,6 @@ interface PersonalKnowledgeContentProps {
 function PersonalKnowledgeContent({
   knowledgeBases,
   loading,
-  currentUserId,
   onSelectKb,
   onEditKb,
   onDeleteKb,
@@ -522,20 +518,6 @@ function PersonalKnowledgeContent({
       kb => kb.name.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
     )
   }, [knowledgeBases, searchQuery])
-
-  // Split into my KBs and shared KBs
-  const { myKnowledgeBases, sharedKnowledgeBases } = useMemo(() => {
-    const my: KnowledgeBase[] = []
-    const shared: KnowledgeBase[] = []
-    for (const kb of filteredKnowledgeBases) {
-      if (currentUserId && kb.user_id !== currentUserId) {
-        shared.push(kb)
-      } else {
-        my.push(kb)
-      }
-    }
-    return { myKnowledgeBases: my, sharedKnowledgeBases: shared }
-  }, [filteredKnowledgeBases, currentUserId])
 
   if (loading) {
     return (
@@ -616,7 +598,6 @@ function PersonalKnowledgeContent({
         </div>
       </div>
 
-      {/* My Knowledge Bases section */}
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* Add knowledge base card with dropdown */}
         {!searchQuery && (
@@ -667,8 +648,8 @@ function PersonalKnowledgeContent({
           </DropdownMenu>
         )}
 
-        {/* My knowledge base cards */}
-        {myKnowledgeBases.map(kb => (
+        {/* Knowledge base cards */}
+        {filteredKnowledgeBases.map(kb => (
           <KnowledgeBaseCard
             key={kb.id}
             knowledgeBase={kb}
@@ -680,30 +661,6 @@ function PersonalKnowledgeContent({
           />
         ))}
       </div>
-
-      {/* Shared with Me section */}
-      {sharedKnowledgeBases.length > 0 && (
-        <div className="w-full max-w-4xl mt-8">
-          <div className="flex items-center gap-2 mb-3">
-            <Share2 className="w-4 h-4 text-text-muted" />
-            <h3 className="text-sm font-medium text-text-secondary">
-              {t('knowledge:document.knowledgeBase.sharedWithMe')}
-            </h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {sharedKnowledgeBases.map(kb => (
-              <KnowledgeBaseCard
-                key={kb.id}
-                knowledgeBase={kb}
-                onClick={() => onSelectKb(kb)}
-                canEdit={false}
-                canDelete={false}
-                canShare={false}
-              />
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* No results message */}
       {searchQuery && filteredKnowledgeBases.length === 0 && (

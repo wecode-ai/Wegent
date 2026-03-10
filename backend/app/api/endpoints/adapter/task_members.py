@@ -135,29 +135,13 @@ def get_task_members(
     Get all active members of a task (group chat).
     User must be a member of the task to view members.
     """
-    logger.info(
-        f"[get_task_members] Getting members: task_id={task_id}, user_id={current_user.id}"
-    )
-
     # Check if user is a member of the task
-    is_member = task_member_service.is_member(db, task_id, current_user.id)
-    logger.info(
-        f"[get_task_members] Membership check: task_id={task_id}, user_id={current_user.id}, is_member={is_member}"
-    )
-
-    if not is_member:
-        logger.warning(
-            f"[get_task_members] User {current_user.id} is not a member of task {task_id}"
-        )
+    if not task_member_service.is_member(db, task_id, current_user.id):
         raise HTTPException(
             status_code=403, detail="You are not a member of this group chat"
         )
 
-    result = task_member_service.get_members(db, task_id)
-    logger.info(
-        f"[get_task_members] Returning {result.total} members for task_id={task_id}"
-    )
-    return result
+    return task_member_service.get_members(db, task_id)
 
 
 @router.post("/{task_id}/members", response_model=TaskMemberResponse)

@@ -39,7 +39,6 @@ class TaskMemberResponse(BaseModel):
     status: MemberStatus
     joined_at: datetime
     is_owner: bool  # Whether this member is the task creator
-    role: Optional[str] = None  # Group role (for linked group chats)
 
     class Config:
         from_attributes = True
@@ -51,9 +50,6 @@ class TaskMemberListResponse(BaseModel):
     members: List[TaskMemberResponse]
     total: int
     task_owner_id: int
-    linked_group: Optional[str] = (
-        None  # Linked group name (if this is a linked group chat)
-    )
 
 
 class RemoveMemberResponse(BaseModel):

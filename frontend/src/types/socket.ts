@@ -106,8 +106,6 @@ export interface ChatSendPayload {
   force_override_bot_model?: string
   force_override_bot_model_type?: string
   is_group_chat?: boolean
-  /** Linked group name for group chat (members derived from group) */
-  linked_group?: string
   contexts?: Array<{
     type: string
     data: Record<string, unknown>

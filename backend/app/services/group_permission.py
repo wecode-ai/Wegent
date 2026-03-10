@@ -66,7 +66,6 @@ def check_group_permission(
         GroupRole.Maintainer: 1,
         GroupRole.Developer: 2,
         GroupRole.Reporter: 3,
-        GroupRole.RestrictedObserver: 4,
     }
 
     user_role = get_user_role_in_group(db, user_id, group_name)
@@ -143,18 +142,8 @@ def get_effective_role_in_group(
     Returns:
         GroupRole if user has access (direct or inherited), None otherwise
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     # First check direct membership
-    logger.info(
-        f"[get_effective_role_in_group] Checking direct membership for user={user_id} in group='{group_name}'"
-    )
     direct_role = get_user_role_in_group(db, user_id, group_name)
-    logger.info(
-        f"[get_effective_role_in_group] Direct role for user={user_id} in group='{group_name}': {direct_role}"
-    )
     if direct_role is not None:
         return direct_role
 

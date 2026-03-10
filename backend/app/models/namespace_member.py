@@ -22,7 +22,7 @@ class NamespaceMember(Base):
     Use ResourceMember model with resource_type='Namespace' for new code.
     This class is kept for backward compatibility during the transition period.
 
-    Roles: Owner, Maintainer, Developer, Reporter, RestrictedObserver
+    Roles: Owner, Maintainer, Developer, Reporter
     """
 
     __tablename__ = "namespace_members"
@@ -32,7 +32,7 @@ class NamespaceMember(Base):
     group_name = Column(String(100), nullable=False, index=True)
     # Member user ID
     user_id = Column(Integer, nullable=False, index=True)
-    # Member role: Owner, Maintainer, Developer, Reporter, RestrictedObserver
+    # Member role: Owner, Maintainer, Developer, Reporter
     role = Column(String(20), nullable=False)
     # User ID who invited this member (0 for self-created/owner)
     invited_by_user_id = Column(Integer, nullable=False, default=0)

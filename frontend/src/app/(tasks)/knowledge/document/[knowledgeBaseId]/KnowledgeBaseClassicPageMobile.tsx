@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Shield } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -17,7 +17,6 @@ import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
-import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
 import { listGroups } from '@/apis/groups'
 import type { GroupRole } from '@/types/group'
@@ -55,18 +54,6 @@ export function KnowledgeBaseClassicPageMobile({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
-
-  // Fetch user permission for this knowledge base
-  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
-    kbId: knowledgeBaseId || 0,
-  })
-
-  // Fetch my permission when knowledge base is loaded
-  useEffect(() => {
-    if (knowledgeBase && knowledgeBaseId) {
-      fetchMyPermission()
-    }
-  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
 
   // User state
   const { user } = useUser()
@@ -134,30 +121,6 @@ export function KnowledgeBaseClassicPageMobile({
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
-  // Check if user can view documents (not RestrictedObserver role)
-  // RestrictedObserver role can only use KB via chat, cannot view document list
-  const canViewDocuments = useMemo(() => {
-    if (!knowledgeBase || !user) return false
-    // Personal knowledge base - owner can always view
-    if (knowledgeBase.namespace === 'default') {
-      // Owner can view
-      if (knowledgeBase.user_id === user.id) return true
-      // Check explicit permission from myPermission
-      // RestrictedObserver permission level is 'use', which cannot view documents
-      if (myPermission?.permission_level === 'use') return false
-      // Other permission levels (view, edit, manage) can view
-      return myPermission?.has_access === true
-    }
-    // Organization knowledge base - all authenticated users can view
-    if (knowledgeBase.namespace === 'organization') {
-      return true
-    }
-    // Group knowledge base - check group role
-    // RestrictedObserver role cannot view documents
-    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole !== 'RestrictedObserver' && groupRole !== undefined
-  }, [knowledgeBase, user, groupRoleMap, myPermission])
-
   // Loading state
   if (kbLoading) {
     return (
@@ -218,33 +181,16 @@ export function KnowledgeBaseClassicPageMobile({
           <ThemeToggle />
         </TopNavigation>
 
-        {/* Document List or Access Denied */}
+        {/* Document List */}
         <div className="flex-1 overflow-auto p-4">
-          {!canViewDocuments ? (
-            // RestrictedObserver role cannot view documents - show access denied message
-            <div className="flex flex-col items-center justify-center h-full text-center px-4">
-              <Shield className="w-12 h-12 text-text-muted mb-4" />
-              <h2 className="text-lg font-semibold text-text-primary mb-2">
-                {t('document.accessDenied.title')}
-              </h2>
-              <p className="text-text-secondary max-w-md">
-                {t('document.accessDenied.consumerMessage')}
-              </p>
-              <Button variant="outline" onClick={handleBack} className="mt-6 h-11 min-w-[44px]">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                {t('chatPage.backToList')}
-              </Button>
-            </div>
-          ) : (
-            <DocumentList
-              knowledgeBase={knowledgeBase}
-              canManage={canManageKb}
-              onTypeConverted={() => {
-                // Notify parent page.tsx to refresh and re-route based on new kb_type
-                onKbTypeChanged?.()
-              }}
-            />
-          )}
+          <DocumentList
+            knowledgeBase={knowledgeBase}
+            canManage={canManageKb}
+            onTypeConverted={() => {
+              // Notify parent page.tsx to refresh and re-route based on new kb_type
+              onKbTypeChanged?.()
+            }}
+          />
         </div>
       </div>
 

@@ -79,26 +79,8 @@ class KnowledgeBaseCreate(BaseModel):
 
 
 class RetrievalConfigUpdate(BaseModel):
-    """Schema for updating retrieval configuration.
+    """Schema for updating retrieval configuration (excluding retriever and embedding model)."""
 
-    When the KB already has a retrieval config, only tunable fields
-    (retrieval_mode, top_k, score_threshold, hybrid_weights) are applied.
-    When the KB has no existing retrieval config, retriever and embedding
-    fields are also accepted to initialize the full configuration.
-    """
-
-    # These fields are only used when initializing retrieval config for the first time
-    retriever_name: Optional[str] = Field(
-        None, description="Retriever name (only for initial setup)"
-    )
-    retriever_namespace: Optional[str] = Field(
-        None, description="Retriever namespace (only for initial setup)"
-    )
-    embedding_config: Optional[EmbeddingModelRef] = Field(
-        None, description="Embedding model config (only for initial setup)"
-    )
-
-    # Tunable fields (can always be updated)
     retrieval_mode: Optional[str] = Field(
         None, description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )

@@ -486,12 +486,6 @@ class TaskSpec(BaseModel):
     teamRef: TeamTaskRef
     workspaceRef: WorkspaceTaskRef
     is_group_chat: bool = False  # Whether this task is a group chat
-    linked_group: Optional[str] = Field(
-        None,
-        description="Linked group name for group chat. When set, the group chat members "
-        "are dynamically derived from the group members instead of being stored separately. "
-        "Member management is disabled in the UI for linked group chats.",
-    )
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
     )

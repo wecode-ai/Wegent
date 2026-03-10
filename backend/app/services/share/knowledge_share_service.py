@@ -197,7 +197,6 @@ class KnowledgeShareService(UnifiedShareService):
     def get_permission_priority(level: str) -> int:
         """Get priority value for permission level (higher = more permissions)."""
         priority_map = {
-            PermissionLevel.USE.value: 0,
             PermissionLevel.VIEW.value: 1,
             PermissionLevel.EDIT.value: 2,
             PermissionLevel.MANAGE.value: 3,
@@ -261,7 +260,7 @@ class KnowledgeShareService(UnifiedShareService):
             group_role = get_effective_role_in_group(db, user_id, kb.namespace)
             if group_role is not None:
                 # Map group role to permission level
-                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view, RestrictedObserver -> use
+                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view
                 role_mapping = {
                     "Owner": (
                         ResourceRole.MAINTAINER.value,
@@ -278,10 +277,6 @@ class KnowledgeShareService(UnifiedShareService):
                     "Reporter": (
                         ResourceRole.REPORTER.value,
                         PermissionLevel.VIEW.value,
-                    ),
-                    "RestrictedObserver": (
-                        ResourceRole.RESTRICTED_OBSERVER.value,
-                        PermissionLevel.USE.value,
                     ),
                 }
                 role, perm_level = role_mapping.get(
@@ -486,10 +481,6 @@ class KnowledgeShareService(UnifiedShareService):
                         SchemaPermissionLevel.EDIT,
                     ),
                     "Reporter": (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
-                    "RestrictedObserver": (
-                        SchemaMemberRole.RESTRICTED_OBSERVER,
-                        SchemaPermissionLevel.USE,
-                    ),
                 }
                 group_role, group_level = role_mapping.get(
                     team_role, (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW)
@@ -685,7 +676,6 @@ class KnowledgeShareService(UnifiedShareService):
         default_role = getattr(share_link, "default_role", None)
         if not default_role:
             role_mapping = {
-                PermissionLevel.USE.value: ResourceRole.RESTRICTED_OBSERVER.value,
                 PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
                 PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
                 PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,

@@ -533,18 +533,14 @@ class WebPageSocketEmitter:
             # Auto-generate completed_at for terminal states if not provided
             payload["completed_at"] = datetime.now().isoformat()
 
-        room = f"user:{user_id}"
-        logger.info(
-            f"[WS] emit_task_status: Emitting to room={room}, event={ServerEvents.TASK_STATUS}, payload={payload}"
-        )
         await self.sio.emit(
             ServerEvents.TASK_STATUS,
             payload,
-            room=room,
+            room=f"user:{user_id}",
             namespace=self.namespace,
         )
-        logger.info(
-            f"[WS] emit_task_status: Emitted task:status to user={user_id} task={task_id} status={status}"
+        logger.debug(
+            f"[WS] emit task:status user={user_id} task={task_id} status={status}"
         )
 
     async def emit_task_shared(
