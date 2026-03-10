@@ -289,7 +289,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         const teamCard = quickAccessCards.locator(`div:has-text("${TEST_TEAM_NAME}")`).first()
         if (await teamCard.isVisible({ timeout: 2000 }).catch(() => false)) {
           console.log('Found team card directly, clicking...')
-          await teamCard.click()
+          // Dismiss tour before clicking
+          await dismissOnboardingTour(page)
+          await teamCard.click({ force: true })
           await page.waitForTimeout(1000)
           return true
         }
@@ -314,7 +316,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
           // Check if team card is now visible
           if (await teamCard.isVisible({ timeout: 1000 }).catch(() => false)) {
             console.log('Found team card after scrolling, clicking...')
-            await teamCard.click()
+            // Dismiss tour before clicking
+            await dismissOnboardingTour(page)
+            await teamCard.click({ force: true })
             await page.waitForTimeout(1000)
             return true
           }
@@ -400,7 +404,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         // Check if model selection is required
         if (buttonText?.includes('Please select') || buttonText?.includes('请选择模型')) {
           console.log('Model selection required, clicking selector...')
-          await modelSelectorButton.click()
+          // Dismiss tour before clicking
+          await dismissOnboardingTour(page)
+          await modelSelectorButton.click({ force: true })
           await page.waitForTimeout(500)
 
           // Look for our test model in the dropdown
