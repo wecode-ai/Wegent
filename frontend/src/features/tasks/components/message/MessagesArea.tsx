@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTaskContext } from '../../contexts/taskContext'
 import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import {
@@ -78,7 +78,7 @@ interface StreamingMessageBubbleProps {
   onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
 }
 
-function StreamingMessageBubble({
+const StreamingMessageBubble = React.memo(function StreamingMessageBubble({
   message,
   selectedTaskDetail,
   selectedTeam,
@@ -154,7 +154,21 @@ function StreamingMessageBubble({
       taskType={selectedTaskDetail?.task_type}
     />
   )
-}
+},
+// Custom comparison function to prevent unnecessary re-renders
+(prevProps, nextProps) => {
+  // Only re-render if message content or status changes
+  return (
+    prevProps.message.content === nextProps.message.content &&
+    prevProps.message.status === nextProps.message.status &&
+    prevProps.message.subtaskId === nextProps.message.subtaskId &&
+    prevProps.message.thinking === nextProps.message.thinking &&
+    prevProps.selectedTaskDetail?.id === nextProps.selectedTaskDetail?.id &&
+    prevProps.theme === nextProps.theme &&
+    prevProps.isGroupChat === nextProps.isGroupChat &&
+    prevProps.isPendingConfirmation === nextProps.isPendingConfirmation
+  )
+})
 
 interface MessagesAreaProps {
   selectedTeam?: Team | null
@@ -358,6 +372,25 @@ export default function MessagesArea({
       })
     }
   }, [messages])
+
+  // Use refs to track correction state to avoid unnecessary effect triggers
+  const correctionAttemptedRef = useRef(correctionAttempted)
+  const correctionLoadingRef = useRef(correctionLoading)
+  const correctionResultsRef = useRef(correctionResults)
+
+  // Keep refs updated with latest state
+  useEffect(() => {
+    correctionAttemptedRef.current = correctionAttempted
+  }, [correctionAttempted])
+
+  useEffect(() => {
+    correctionLoadingRef.current = correctionLoading
+  }, [correctionLoading])
+
+  useEffect(() => {
+    correctionResultsRef.current = correctionResults
+  }, [correctionResults])
+
   // Trigger correction when AI message completes
   useEffect(() => {
     if (!enableCorrectionMode || !correctionModelId || !selectedTaskDetail?.id) return
@@ -372,10 +405,11 @@ export default function MessagesArea({
       // Skip empty AI messages - nothing to correct
       if (!msg.content || !msg.content.trim()) return
       // Skip if already has result, is loading, or has been attempted (to avoid infinite retry loops)
+      // Use refs for checking to avoid effect re-runs
       if (
-        correctionResults.has(msg.subtaskId) ||
-        correctionLoading.has(msg.subtaskId) ||
-        correctionAttempted.has(msg.subtaskId)
+        correctionResultsRef.current.has(msg.subtaskId) ||
+        correctionLoadingRef.current.has(msg.subtaskId) ||
+        correctionAttemptedRef.current.has(msg.subtaskId)
       )
         return
 
@@ -416,6 +450,7 @@ export default function MessagesArea({
           })
         })
     })
+    // Only depend on essential values, use refs for mutable state
   }, [
     enableCorrectionMode,
     correctionModelId,
@@ -423,9 +458,6 @@ export default function MessagesArea({
     messages,
     selectedTaskDetail?.id,
     toast,
-    correctionAttempted, // Add this dependency so useEffect re-runs when retry button is clicked
-    correctionLoading,
-    correctionResults,
   ])
 
   // Register correction WebSocket event handlers for real-time progress updates

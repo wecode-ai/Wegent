@@ -842,32 +842,43 @@ export class TaskStateMachine {
 
     // Start with existing messages, optionally clean invalid ones
     let messages: Map<string, UnifiedMessage>
+    let existingSubtaskIds: Set<number>
+    let existingUserMessageCount = 0
+
     if (forceClean && this.state.messages.size > 0) {
       messages = new Map()
+      existingSubtaskIds = new Set<number>()
       for (const [msgId, msg] of this.state.messages) {
         if (!msg.subtaskId || validSubtaskIds.has(msg.subtaskId)) {
           messages.set(msgId, msg)
+          if (msg.subtaskId) {
+            existingSubtaskIds.add(msg.subtaskId)
+          }
+          if (msg.type === 'user') {
+            existingUserMessageCount++
+          }
         }
       }
     } else {
       messages = new Map(this.state.messages)
-    }
-
-    // Build existing subtaskIds and count user messages
-    const existingSubtaskIds = new Set<number>()
-    let existingUserMessageCount = 0
-    for (const msg of messages.values()) {
-      if (msg.subtaskId) {
-        existingSubtaskIds.add(msg.subtaskId)
-      }
-      if (msg.type === 'user') {
-        existingUserMessageCount++
+      // Build existing subtaskIds and count user messages in a single pass
+      existingSubtaskIds = new Set<number>()
+      for (const msg of messages.values()) {
+        if (msg.subtaskId) {
+          existingSubtaskIds.add(msg.subtaskId)
+        }
+        if (msg.type === 'user') {
+          existingUserMessageCount++
+        }
       }
     }
 
     const incomingUserSubtasks = subtasks.filter(
       s => s.role === 'USER' || s.role?.toUpperCase() === 'USER'
     )
+
+    // Track if any changes were made to avoid unnecessary state updates
+    let hasChanges = false
 
     for (const subtask of subtasks) {
       const isUserMessage = subtask.role === 'USER' || subtask.role?.toUpperCase() === 'USER'
@@ -920,6 +931,7 @@ export class TaskStateMachine {
           // Preserve existing reasoning content if present
           reasoningContent: existingAiMessage?.reasoningContent,
         })
+        hasChanges = true
         continue
       }
 
@@ -982,9 +994,13 @@ export class TaskStateMachine {
         result: subtask.result as UnifiedMessage['result'],
         error: errorField,
       })
+      hasChanges = true
     }
 
-    this.state = { ...this.state, messages }
+    // Only update state if there were actual changes
+    if (hasChanges) {
+      this.state = { ...this.state, messages }
+    }
   }
 
   /**

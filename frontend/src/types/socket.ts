@@ -167,6 +167,21 @@ export interface TaskJoinPayload {
   task_id: number
   /** If provided, only return messages after this message_id (for incremental sync on reconnect) */
   after_message_id?: number
+  /** Maximum number of messages to return (default: 100, max: 500) */
+  limit?: number
+}
+
+export interface TaskJoinAck {
+  streaming?: {
+    subtask_id: number
+    offset: number
+    cached_content: string
+  }
+  /** Subtasks data for immediate message sync (same format as task detail API) */
+  subtasks?: Array<Record<string, unknown>>
+  /** Whether there are more messages available (for pagination) */
+  has_more?: boolean
+  error?: string
 }
 
 export interface TaskLeavePayload {
@@ -559,6 +574,8 @@ export interface TaskJoinAck {
   }
   /** Subtasks data for immediate message sync (same format as task detail API) */
   subtasks?: Array<Record<string, unknown>>
+  /** Whether there are more messages available (for pagination) */
+  has_more?: boolean
   error?: string
 }
 

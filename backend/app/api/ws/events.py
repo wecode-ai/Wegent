@@ -241,6 +241,10 @@ class TaskJoinPayload(BaseModel):
         None,
         description="If provided, only return messages after this message_id (for incremental sync on reconnect)",
     )
+    limit: Optional[int] = Field(
+        default=100,
+        description="Maximum number of subtasks to return (default: 100, max: 500)",
+    )
 
 
 class TaskLeavePayload(BaseModel):

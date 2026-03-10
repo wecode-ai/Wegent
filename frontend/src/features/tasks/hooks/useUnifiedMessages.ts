@@ -22,7 +22,7 @@
  * 5. chat:done -> Update AI message status to 'completed'
  */
 
-import { useMemo, useEffect } from 'react'
+import { useMemo, useEffect, useRef } from 'react'
 import { useTaskStateMachine } from './useTaskStateMachine'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '../contexts/taskContext'
@@ -231,6 +231,10 @@ export function useUnifiedMessages({
     }
   }, [effectiveTaskId, isInitialized, recover, isStreaming])
 
+  // Ref to cache sorted messages for stable reference
+  const sortedMessagesRef = useRef<DisplayMessage[]>([])
+  const lastStateMessagesSize = useRef(0)
+
   // Build unified message list from state machine messages
   const result = useMemo<UseUnifiedMessagesResult>(() => {
     if (!effectiveTaskId || stateMessages.size === 0) {
@@ -282,22 +286,42 @@ export function useUnifiedMessages({
       }
     }
 
-    // Sort messages by messageId (primary) and timestamp (secondary)
-    const sortedMessages = messages.sort((a, b) => {
-      // If both have messageId, use it as primary sort key
-      if (a.messageId !== undefined && b.messageId !== undefined) {
-        if (a.messageId !== b.messageId) {
-          return a.messageId - b.messageId
+    // Optimization: If message count hasn't changed and we have cached messages,
+    // only re-sort if we have streaming messages (content changes)
+    const hasStreamingMessages = streamingSubtaskIds.length > 0
+    const stateSizeChanged = stateMessages.size !== lastStateMessagesSize.current
+    lastStateMessagesSize.current = stateMessages.size
+
+    // Use cached sorted messages if available and no new messages added
+    let sortedMessages: DisplayMessage[]
+    if (
+      !stateSizeChanged &&
+      !hasStreamingMessages &&
+      sortedMessagesRef.current.length === messages.length &&
+      sortedMessagesRef.current.length > 0
+    ) {
+      // Reuse cached sorted messages for better performance
+      sortedMessages = sortedMessagesRef.current
+    } else {
+      // Sort messages by messageId (primary) and timestamp (secondary)
+      sortedMessages = messages.sort((a, b) => {
+        // If both have messageId, use it as primary sort key
+        if (a.messageId !== undefined && b.messageId !== undefined) {
+          if (a.messageId !== b.messageId) {
+            return a.messageId - b.messageId
+          }
+          // Same messageId, use timestamp as secondary sort key
+          return a.timestamp - b.timestamp
         }
-        // Same messageId, use timestamp as secondary sort key
+        // If only one has messageId, the one with messageId comes first (it's from backend)
+        if (a.messageId !== undefined) return -1
+        if (b.messageId !== undefined) return 1
+        // Neither has messageId (both pending), sort by timestamp
         return a.timestamp - b.timestamp
-      }
-      // If only one has messageId, the one with messageId comes first (it's from backend)
-      if (a.messageId !== undefined) return -1
-      if (b.messageId !== undefined) return 1
-      // Neither has messageId (both pending), sort by timestamp
-      return a.timestamp - b.timestamp
-    })
+      })
+      // Cache the sorted result
+      sortedMessagesRef.current = sortedMessages
+    }
 
     return {
       messages: sortedMessages,

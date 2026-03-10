@@ -80,12 +80,14 @@ interface SocketContextType {
    * @param options - Join options
    * @param options.forceRefresh - If true, always emit task:join to get streaming status
    * @param options.afterMessageId - If provided, only return messages after this ID (for incremental sync)
+   * @param options.limit - Maximum number of messages to return (default: 100, max: 500)
    */
   joinTask: (
     taskId: number,
     options?: {
       forceRefresh?: boolean
       afterMessageId?: number
+      limit?: number
     }
   ) => Promise<{
     streaming?: {
@@ -95,6 +97,8 @@ interface SocketContextType {
     }
     /** Subtasks data for immediate message sync (same format as task detail API) */
     subtasks?: Array<Record<string, unknown>>
+    /** Whether there are more messages available (for pagination) */
+    has_more?: boolean
     error?: string
   }>
   /** Leave a task room */
@@ -369,104 +373,110 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     },
     [createSocketConnection]
   )
+/**
+ * Disconnect from server
+ */
+const disconnect = useCallback(() => {
+  if (socket) {
+    socket.disconnect()
+    setSocket(null)
+    setIsConnected(false)
+    joinedTasksRef.current.clear()
+  }
+}, [socket])
 
-  /**
-   * Disconnect from server
-   */
-  const disconnect = useCallback(() => {
-    if (socket) {
-      socket.disconnect()
-      setSocket(null)
-      setIsConnected(false)
-      joinedTasksRef.current.clear()
+/**
+ * Join a task room
+ * Prevents duplicate joins by checking if already joined
+ * If reconnected, always rejoin to ensure backend state is synced
+ * @param taskId - The task ID to join
+ * @param options - Join options
+ * @param options.forceRefresh - If true, always emit task:join to get streaming status
+ * @param options.afterMessageId - If provided, only return messages after this ID (for incremental sync)
+ * @param options.limit - Maximum number of messages to return (default: 100, max: 500)
+ */
+const joinTask = useCallback(
+  async (
+    taskId: number,
+    options?: {
+      forceRefresh?: boolean
+      afterMessageId?: number
+      limit?: number
     }
-  }, [socket])
+  ): Promise<{
+    streaming?: {
+      subtask_id: number
+      offset: number
+      cached_content: string
+    }
+    subtasks?: Array<Record<string, unknown>>
+    has_more?: boolean
+    error?: string
+  }> => {
+    const { forceRefresh = false, afterMessageId, limit = 100 } = options || {}
 
-  /**
-   * Join a task room
-   * Prevents duplicate joins by checking if already joined
-   * If reconnected, always rejoin to ensure backend state is synced
-   * @param taskId - The task ID to join
-   * @param options - Join options
-   * @param options.forceRefresh - If true, always emit task:join to get streaming status
-   * @param options.afterMessageId - If provided, only return messages after this ID (for incremental sync)
-   */
-  const joinTask = useCallback(
-    async (
-      taskId: number,
-      options?: {
-        forceRefresh?: boolean
-        afterMessageId?: number
-      }
-    ): Promise<{
-      streaming?: {
-        subtask_id: number
-        offset: number
-        cached_content: string
-      }
-      subtasks?: Array<Record<string, unknown>>
-      error?: string
-    }> => {
-      const { forceRefresh = false, afterMessageId } = options || {}
+    // Use socketRef for reliable access (socket state may be stale)
+    const currentSocket = socketRef.current
+    if (!currentSocket?.connected) {
+      return { error: 'Not connected' }
+    }
 
-      // Use socketRef for reliable access (socket state may be stale)
-      const currentSocket = socketRef.current
-      if (!currentSocket?.connected) {
-        return { error: 'Not connected' }
-      }
+    // Check if already joined this task room to prevent duplicate joins
+    // Exception 1: If we just reconnected, always rejoin to sync backend state
+    // Exception 2: If forceRefresh is true, always request to get streaming status
+    // Exception 3: If afterMessageId is provided, this is an incremental sync request
+    const alreadyJoined = joinedTasksRef.current.has(taskId)
+    const shouldSkip =
+      alreadyJoined && !hasReconnectedRef.current && !forceRefresh && afterMessageId === undefined
 
-      // Check if already joined this task room to prevent duplicate joins
-      // Exception 1: If we just reconnected, always rejoin to sync backend state
-      // Exception 2: If forceRefresh is true, always request to get streaming status
-      // Exception 3: If afterMessageId is provided, this is an incremental sync request
-      const alreadyJoined = joinedTasksRef.current.has(taskId)
-      const shouldSkip =
-        alreadyJoined && !hasReconnectedRef.current && !forceRefresh && afterMessageId === undefined
+    if (shouldSkip) {
+      return {}
+    }
 
-      if (shouldSkip) {
-        return {}
-      }
+    // Clear reconnected flag after first join
+    if (hasReconnectedRef.current) {
+      hasReconnectedRef.current = false
+    }
 
-      // Clear reconnected flag after first join
-      if (hasReconnectedRef.current) {
-        hasReconnectedRef.current = false
-      }
+    // Add to set IMMEDIATELY to prevent concurrent duplicate joins
+    // This is crucial because the socket.emit is async and multiple calls
+    // could pass the above check before any callback completes
+    joinedTasksRef.current.add(taskId)
 
-      // Add to set IMMEDIATELY to prevent concurrent duplicate joins
-      // This is crucial because the socket.emit is async and multiple calls
-      // could pass the above check before any callback completes
-      joinedTasksRef.current.add(taskId)
+    // Build payload with optional after_message_id for incremental sync and limit for pagination
+    const payload: { task_id: number; after_message_id?: number; limit?: number } = {
+      task_id: taskId,
+      limit,
+    }
+    if (afterMessageId !== undefined) {
+      payload.after_message_id = afterMessageId
+    }
 
-      // Build payload with optional after_message_id for incremental sync
-      const payload: { task_id: number; after_message_id?: number } = { task_id: taskId }
-      if (afterMessageId !== undefined) {
-        payload.after_message_id = afterMessageId
-      }
-
-      return new Promise(resolve => {
-        currentSocket.emit(
-          'task:join',
-          payload,
-          (response: {
-            streaming?: {
-              subtask_id: number
-              offset: number
-              cached_content: string
-            }
-            subtasks?: Array<Record<string, unknown>>
-            error?: string
-          }) => {
-            // If there was an error, remove from the set so it can be retried
-            if (response.error) {
-              joinedTasksRef.current.delete(taskId)
-            }
-            resolve(response)
+    return new Promise(resolve => {
+      currentSocket.emit(
+        'task:join',
+        payload,
+        (response: {
+          streaming?: {
+            subtask_id: number
+            offset: number
+            cached_content: string
           }
-        )
-      })
-    },
-    [] // No dependencies - use socketRef for stable reference
-  )
+          subtasks?: Array<Record<string, unknown>>
+          has_more?: boolean
+          error?: string
+        }) => {
+          // If there was an error, remove from the set so it can be retried
+          if (response.error) {
+            joinedTasksRef.current.delete(taskId)
+          }
+          resolve(response)
+        }
+      )
+    })
+  },
+  [] // No dependencies - use socketRef for stable reference
+)
 
   /**
    * Leave a task room

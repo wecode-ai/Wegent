@@ -711,7 +711,7 @@ class TaskQueryMixin:
     def _get_bots_for_subtasks(
         self, db: Session, all_bot_ids: set
     ) -> Dict[int, Dict[str, Any]]:
-        """Get bot information for subtasks."""
+        """Get bot information for subtasks with optimized batch queries."""
         from app.services.readers.kinds import KindType, kindReader
 
         bots = {}
@@ -720,40 +720,124 @@ class TaskQueryMixin:
 
         bot_objects = kindReader.get_by_ids(db, KindType.BOT, list(all_bot_ids))
 
+        if not bot_objects:
+            return bots
+
+        # Collect all unique model and shell references for batch queries
+        model_refs = []
+        shell_refs = []
+        bot_id_to_refs = {}
+
         for bot in bot_objects:
             bot_crd = Bot.model_validate(bot.json)
+            bot_id_to_refs[bot.id] = {
+                "model_ref": bot_crd.spec.modelRef,
+                "shell_ref": bot_crd.spec.shellRef,
+                "bot": bot,
+                "bot_crd": bot_crd,
+            }
+            if bot_crd.spec.modelRef:
+                model_refs.append(
+                    (
+                        bot.user_id,
+                        bot_crd.spec.modelRef.namespace,
+                        bot_crd.spec.modelRef.name,
+                    )
+                )
+            if bot_crd.spec.shellRef:
+                shell_refs.append(
+                    (
+                        bot.user_id,
+                        bot_crd.spec.shellRef.namespace,
+                        bot_crd.spec.shellRef.name,
+                    )
+                )
+
+        # Batch query all models and shells
+        model_map = {}
+        shell_map = {}
+
+        # Query models in batch
+        if model_refs:
+            # Use a more efficient query approach
+            from sqlalchemy import or_
+
+            from app.models.kind import Kind
+
+            conditions = [
+                (
+                    (Kind.user_id == user_id)
+                    & (Kind.kind == KindType.MODEL.value)
+                    & (Kind.namespace == namespace)
+                    & (Kind.name == name)
+                    & (Kind.is_active.is_(True))
+                )
+                for user_id, namespace, name in model_refs
+            ]
+
+            if conditions:
+                models = db.query(Kind).filter(or_(*conditions)).all()
+                for model in models:
+                    key = (model.user_id, model.namespace, model.name)
+                    model_map[key] = model
+
+        # Query shells in batch
+        if shell_refs:
+            from sqlalchemy import or_
+
+            from app.models.kind import Kind
+
+            conditions = [
+                (
+                    (Kind.user_id == user_id)
+                    & (Kind.kind == KindType.SHELL.value)
+                    & (Kind.namespace == namespace)
+                    & (Kind.name == name)
+                    & (Kind.is_active.is_(True))
+                )
+                for user_id, namespace, name in shell_refs
+            ]
+
+            if conditions:
+                shells = db.query(Kind).filter(or_(*conditions)).all()
+                for shell in shells:
+                    key = (shell.user_id, shell.namespace, shell.name)
+                    shell_map[key] = shell
+
+        # Build bot dicts using cached model/shell data
+        for bot_id, refs in bot_id_to_refs.items():
+            bot = refs["bot"]
+            bot_crd = refs["bot_crd"]
 
             # Initialize default values
             shell_type = ""
             agent_config = {}
 
-            # Get Model data for agent_config
-            # Only return model binding info, not sensitive env (api_key etc.)
-            if bot_crd.spec.modelRef:
-                model = kindReader.get_by_name_and_namespace(
-                    db,
+            # Get Model data from cache
+            if refs["model_ref"]:
+                model_key = (
                     bot.user_id,
-                    KindType.MODEL,
-                    bot_crd.spec.modelRef.namespace,
-                    bot_crd.spec.modelRef.name,
+                    refs["model_ref"].namespace,
+                    refs["model_ref"].name,
                 )
+                model = model_map.get(model_key)
                 model_type = "public" if model and model.user_id == 0 else "user"
                 agent_config = {
-                    "bind_model": bot_crd.spec.modelRef.name,
+                    "bind_model": refs["model_ref"].name,
                     "bind_model_type": model_type,
                 }
 
-            # Get Shell data for shell_type
-            shell = kindReader.get_by_name_and_namespace(
-                db,
-                bot.user_id,
-                KindType.SHELL,
-                bot_crd.spec.shellRef.namespace,
-                bot_crd.spec.shellRef.name,
-            )
-            if shell and shell.json:
-                shell_crd = Shell.model_validate(shell.json)
-                shell_type = shell_crd.spec.shellType
+            # Get Shell data from cache
+            if refs["shell_ref"]:
+                shell_key = (
+                    bot.user_id,
+                    refs["shell_ref"].namespace,
+                    refs["shell_ref"].name,
+                )
+                shell = shell_map.get(shell_key)
+                if shell and shell.json:
+                    shell_crd = Shell.model_validate(shell.json)
+                    shell_type = shell_crd.spec.shellType
 
             # Note: system_prompt and mcp_servers from Ghost are intentionally excluded
             # from the response to avoid sending sensitive data to the frontend
@@ -768,7 +852,7 @@ class TaskQueryMixin:
                 "created_at": (bot.created_at.isoformat() if bot.created_at else None),
                 "updated_at": (bot.updated_at.isoformat() if bot.updated_at else None),
             }
-            bots[bot.id] = bot_dict
+            bots[bot_id] = bot_dict
 
         return bots
 
