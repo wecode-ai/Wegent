@@ -64,8 +64,6 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
-      "myKnowledgeBases": "My Knowledge Bases",
-      "sharedWithMe": "Shared with Me",
       "convertType": "Convert Type",
       "convertToNotebook": "Convert to Notebook",
       "convertToClassic": "Convert to Knowledge Base",
@@ -181,10 +179,6 @@
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype"
       }
-    },
-    "accessDenied": {
-      "title": "No Permission to View Documents",
-      "consumerMessage": "Your role in this group is \"RestrictedObserver\", which only allows using the knowledge base via chat. You cannot view document content. Please contact the group administrator to upgrade your permissions if needed."
     },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
@@ -304,12 +298,10 @@
         "Maintainer": "Maintainer",
         "Developer": "Developer",
         "Reporter": "Reporter",
-        "RestrictedObserver": "RestrictedObserver",
         "OwnerDescription": "Creator with full permissions (only the creator can have this role)",
         "MaintainerDescription": "Maintainer who can manage members and edit content",
         "DeveloperDescription": "Developer who can edit content",
-        "ReporterDescription": "User who can only view content",
-        "RestrictedObserverDescription": "RestrictedObserver who can only use the knowledge base via chat, cannot view document content"
+        "ReporterDescription": "User who can only view content"
       },
       "viewDescription": "Can browse knowledge base content only",
       "editDescription": "Can add, modify, and delete documents",
@@ -363,9 +355,7 @@
         "public": "Public",
         "group": "Group"
       },
-      "searchPlaceholder": "Search...",
-      "changeWarning": "After changing the retriever or embedding model, existing documents need to be reindexed for proper retrieval.",
-      "changeWarningHint": "It is recommended to perform \"Reindex\" on all documents after making changes."
+      "searchPlaceholder": "Search..."
     },
     "splitter": {
       "title": "Chunking Settings",

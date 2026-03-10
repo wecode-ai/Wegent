@@ -4,7 +4,7 @@
 
 'use client'
 
-import { ArrowLeft, Settings, GraduationCap, Globe, Lock, FileText } from 'lucide-react'
+import { ArrowLeft, Settings, GraduationCap, Globe, Lock, FileText, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -24,7 +24,14 @@ import type { TopicHeaderProps } from './types'
  * Design inspired by ExamHeader from ai-assessment-2026
  * Uses red accent color (#DF2029) for primary actions
  */
-export function TopicHeader({ topic, onBack, onEditConfig, isLoading = false }: TopicHeaderProps) {
+export function TopicHeader({
+  topic,
+  onBack,
+  onEditConfig,
+  onPublish,
+  isLoading = false,
+  isPublishing = false,
+}: TopicHeaderProps) {
   const { t } = useTranslation('evaluation')
 
   // Helper to get visibility badge config
@@ -113,6 +120,28 @@ export function TopicHeader({ topic, onBack, onEditConfig, isLoading = false }: 
               </Badge>
             )}
           </div>
+
+          {/* Publish button - only show for draft topics */}
+          {topic.status === TopicStatus.DRAFT && onPublish && (
+            <Button
+              size="sm"
+              onClick={onPublish}
+              disabled={isPublishing || isLoading}
+              className="shrink-0 bg-[#DF2029] hover:bg-[#c81d25] text-white"
+            >
+              {isPublishing ? (
+                <>
+                  <span className="animate-spin mr-1.5 h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                  {t('topics.publishing', 'Publishing...')}
+                </>
+              ) : (
+                <>
+                  <Send className="mr-1.5 h-4 w-4" />
+                  {t('topics.publish', 'Publish')}
+                </>
+              )}
+            </Button>
+          )}
 
           {/* Edit configuration button */}
           <Button

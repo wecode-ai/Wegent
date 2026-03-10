@@ -49,9 +49,6 @@ class TaskCreationParams:
         None  # Model type: 'public', 'user', 'group'
     )
     is_group_chat: bool = False
-    linked_group: Optional[str] = (
-        None  # Linked group name for group chat (members derived from group)
-    )
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
     git_repo_id: Optional[int] = None
@@ -115,7 +112,7 @@ def get_task_with_access_check(
     db: Session, task_id: int, user_id: int
 ) -> tuple[Optional[TaskResource], int]:
     """
-    Get task with access check, supporting ownership, group membership, and linked group membership.
+    Get task with access check, supporting both ownership and group membership.
 
     Args:
         db: Database session
@@ -157,41 +154,20 @@ def get_task_with_access_check(
         .first()
     )
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active,
-        )
-        .first()
-    )
-
-    # Check if user is a member via linked group
-    # First get the task to check if it has a linked_group
     if member:
         # User is a group member, get task without user_id check
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active,
+            )
+            .first()
+        )
         if task:
             # For group members, use task owner's user_id for subtasks
             return task, task.user_id
-
-    # Additional logic for non-group members can be added here if needed
-    if task:
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
-        linked_group = spec.get("linked_group")
-
-        if linked_group:
-            # Check if user is a member of the linked group
-            from app.services.group_permission import get_effective_role_in_group
-
-            role = get_effective_role_in_group(db, user_id, linked_group)
-            if role is not None:
-                # User is a member of the linked group
-                logger.info(
-                    f"[get_task_with_access_check] User {user_id} has access via linked group '{linked_group}' with role '{role}'"
-                )
-                return task, task.user_id
 
     # Task not found or access denied - log error and return None
     logger.error(
@@ -288,7 +264,7 @@ def create_new_task(
         task_type = "code" if params.git_url else "chat"
 
     logger.info(
-        f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}, linked_group={params.linked_group}"
+        f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
     )
 
     # Build knowledgeBaseRefs if knowledge_base_id is provided
@@ -330,7 +306,6 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
-            **({"linked_group": params.linked_group} if params.linked_group else {}),
             **({"device_id": params.device_id} if params.device_id else {}),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}
@@ -421,8 +396,7 @@ def create_new_task(
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
-        f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}, "
-        f"linked_group={task_json.get('spec', {}).get('linked_group', 'NOT_SET')}"
+        f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}"
     )
 
     return task

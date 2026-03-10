@@ -67,15 +67,11 @@ async def notify_group_members_task_updated(
     This sends a task:status event to each member's user room so their
     task list can show the unread indicator for new messages.
 
-    Supports both regular group chats (members in ResourceMember with TASK type)
-    and linked group chats (members derived from a linked Namespace/group).
-
     Args:
         db: Database session
         task: Task Kind object
         sender_user_id: User ID of the message sender (to exclude from notification)
     """
-    from app.models.namespace import Namespace
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
     from app.services.chat.webpage_ws_extended_emitter import (
@@ -85,98 +81,40 @@ async def notify_group_members_task_updated(
     emitter = get_extended_emitter()
 
     try:
-        member_user_ids = set()
-
-        # Check if this is a linked group chat
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
-        linked_group = spec.get("linked_group")
-
-        logger.info(
-            f"[notify_group_members_task_updated] task_id={task.id}, linked_group={linked_group}, spec_keys={list(spec.keys())}"
+        # Get all active members of this group chat using ResourceMember
+        members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_id == task.id,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .all()
         )
-
-        if linked_group:
-            # For linked group chats, get members from the linked Namespace (group)
-            namespace = (
-                db.query(Namespace)
-                .filter(Namespace.name == linked_group, Namespace.is_active == True)
-                .first()
-            )
-
-            if namespace:
-                # Get all approved members from the group
-                group_members = (
-                    db.query(ResourceMember)
-                    .filter(
-                        ResourceMember.resource_type == "Namespace",
-                        ResourceMember.resource_id == namespace.id,
-                        ResourceMember.status == MemberStatus.APPROVED,
-                    )
-                    .all()
-                )
-                member_user_ids = {m.user_id for m in group_members}
-                logger.info(
-                    f"[notify_group_members_task_updated] Linked group '{linked_group}' (namespace_id={namespace.id}) has {len(member_user_ids)} members: {member_user_ids}"
-                )
-            else:
-                logger.warning(
-                    f"[notify_group_members_task_updated] Linked group '{linked_group}' not found"
-                )
-        else:
-            # For regular group chats, get members from ResourceMember with TASK type
-            members = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TASK,
-                    ResourceMember.resource_id == task.id,
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .all()
-            )
-            member_user_ids = {m.user_id for m in members}
-            logger.info(
-                f"[notify_group_members_task_updated] Regular group chat, ResourceMember count={len(member_user_ids)}"
-            )
 
         # Also include the task owner
+        member_user_ids = {m.user_id for m in members}
         member_user_ids.add(task.user_id)
-
-        logger.info(
-            f"[notify_group_members_task_updated] Total members to notify (including owner): {len(member_user_ids)}, user_ids={member_user_ids}"
-        )
 
         # Get current task status
         task_crd = Task.model_validate(task.json)
         current_status = task_crd.status.status if task_crd.status else "PENDING"
 
         # Notify each member (except the sender) about the task update
-        notified_count = 0
         for member_user_id in member_user_ids:
             if member_user_id == sender_user_id:
                 # Skip the sender - they already know about their own message
-                logger.info(
-                    f"[notify_group_members_task_updated] Skipping sender user_id={member_user_id}"
-                )
                 continue
 
-            logger.info(
-                f"[notify_group_members_task_updated] Calling emit_group_chat_new_message for user_id={member_user_id}, task_id={task.id}, status={current_status}"
-            )
             await emitter.emit_group_chat_new_message(
                 user_id=member_user_id,
                 task_id=task.id,
                 status=current_status,
                 progress=task_crd.status.progress if task_crd.status else 0,
             )
-            notified_count += 1
-            logger.info(
+            logger.debug(
                 f"[notify_group_members_task_updated] Notified user {member_user_id} about task {task.id} update"
             )
-
-        logger.info(
-            f"[notify_group_members_task_updated] Notification complete: notified {notified_count} members"
-        )
 
     except Exception as e:
         logger.warning(

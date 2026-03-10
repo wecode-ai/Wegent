@@ -312,19 +312,15 @@ class KnowledgeService:
             bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
 
             # Single query to get personal, shared, and bound knowledge bases
-            # Only return KBs in "default" namespace (personal KBs).
-            # Group KBs (namespace != "default") are excluded — they are
-            # shown on the "Group" tab instead.
             # Personal: user_id matches and namespace is "default"
-            # Shared: id is in shared_kb_ids (only personal KBs)
-            # Bound: id is in bound_kb_ids (only personal KBs bound to group chats)
+            # Shared: id is in shared_kb_ids
+            # Bound: id is in bound_kb_ids (personal KBs bound to group chats)
             all_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
-                    Kind.namespace == "default",
-                    (Kind.user_id == user_id)
+                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
                     | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False)
                     | (Kind.id.in_(bound_kb_ids) if bound_kb_ids else False),
                 )
@@ -536,44 +532,25 @@ class KnowledgeService:
         if data.description is not None:
             spec["description"] = data.description
 
-        # Update retrieval config if provided
-        # Allow updating all fields including retriever_name and embedding_config
-        # Note: Changing retriever/embedding requires reindexing documents
+        # Update retrieval config if provided (only allowed fields)
         if data.retrieval_config is not None:
-            current_retrieval_config = spec.get("retrievalConfig", {}) or {}
-
-            # Update retriever_name and retriever_namespace if provided
-            if data.retrieval_config.retriever_name:
-                current_retrieval_config["retriever_name"] = (
-                    data.retrieval_config.retriever_name
-                )
-                current_retrieval_config["retriever_namespace"] = (
-                    data.retrieval_config.retriever_namespace or "default"
-                )
-
-            # Update embedding_config if provided
-            if data.retrieval_config.embedding_config is not None:
-                current_retrieval_config["embedding_config"] = (
-                    data.retrieval_config.embedding_config.model_dump()
-                )
-
-            # Update tunable fields
-            if data.retrieval_config.retrieval_mode is not None:
-                current_retrieval_config["retrieval_mode"] = (
-                    data.retrieval_config.retrieval_mode
-                )
-            if data.retrieval_config.top_k is not None:
-                current_retrieval_config["top_k"] = data.retrieval_config.top_k
-            if data.retrieval_config.score_threshold is not None:
-                current_retrieval_config["score_threshold"] = (
-                    data.retrieval_config.score_threshold
-                )
-            if data.retrieval_config.hybrid_weights is not None:
-                current_retrieval_config["hybrid_weights"] = (
-                    data.retrieval_config.hybrid_weights.model_dump()
-                )
-
+            current_retrieval_config = spec.get("retrievalConfig", {})
             if current_retrieval_config:
+                # Only update allowed fields, keep retriever and embedding_config unchanged
+                if data.retrieval_config.retrieval_mode is not None:
+                    current_retrieval_config["retrieval_mode"] = (
+                        data.retrieval_config.retrieval_mode
+                    )
+                if data.retrieval_config.top_k is not None:
+                    current_retrieval_config["top_k"] = data.retrieval_config.top_k
+                if data.retrieval_config.score_threshold is not None:
+                    current_retrieval_config["score_threshold"] = (
+                        data.retrieval_config.score_threshold
+                    )
+                if data.retrieval_config.hybrid_weights is not None:
+                    current_retrieval_config["hybrid_weights"] = (
+                        data.retrieval_config.hybrid_weights.model_dump()
+                    )
                 spec["retrievalConfig"] = current_retrieval_config
 
         # Update summary_enabled if provided
@@ -774,6 +751,42 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def _update_document_count_cache(
+        db: Session,
+        knowledge_base_id: int,
+    ) -> None:
+        """
+        Update the cached document_count in knowledge base spec.
+
+        This method queries the actual document count from the database
+        and updates the spec.document_count field to keep it in sync.
+        Called after document creation/deletion.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .first()
+        )
+
+        if kb:
+            # Query actual document count from database
+            actual_count = KnowledgeService.get_document_count(db, knowledge_base_id)
+
+            kb_json = kb.json
+            spec = kb_json.get("spec", {})
+            spec["document_count"] = actual_count
+            kb_json["spec"] = spec
+            kb.json = kb_json
+            flag_modified(kb, "json")
+
+    @staticmethod
     def get_active_document_count(
         db: Session,
         knowledge_base_id: int,
@@ -929,6 +942,10 @@ class KnowledgeService:
             source_config=data.source_config if data.source_config else {},
         )
         db.add(document)
+        db.flush()  # Flush to persist document before counting
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, knowledge_base_id)
 
         db.commit()
         db.refresh(document)
@@ -1157,6 +1174,10 @@ class KnowledgeService:
 
         # Physically delete document from database
         db.delete(doc)
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, kind_id)
+
         db.commit()
 
         # Delete RAG index if knowledge base has retrieval_config

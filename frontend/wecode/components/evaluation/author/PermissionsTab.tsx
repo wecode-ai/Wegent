@@ -122,6 +122,10 @@ function getAvatarColor(userId: number): string {
 function EmptyState({ onAddUser }: { onAddUser: () => void }) {
   const { t } = useTranslation('evaluation')
 
+  const handleClick = () => {
+    onAddUser()
+  }
+
   return (
     <div className="bg-white rounded-2xl border border-gray-100 border-dashed p-12 text-center">
       <div className="w-16 h-16 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-4">
@@ -133,7 +137,7 @@ function EmptyState({ onAddUser }: { onAddUser: () => void }) {
       <p className="text-sm text-gray-500 mb-6 max-w-sm mx-auto">
         {t('permissions.no_permissions_description')}
       </p>
-      <Button onClick={onAddUser} className="bg-[#DF2029] hover:bg-[#c81d25] text-white">
+      <Button onClick={handleClick} className="bg-[#DF2029] hover:bg-[#c81d25] text-white">
         <Plus className="w-4 h-4 mr-2" />
         {t('permissions.add')}
       </Button>
@@ -403,132 +407,138 @@ export function PermissionsTab({ topicId }: PermissionsTabProps) {
   // Calculate total pages
   const totalPages = Math.ceil(total / PERMISSIONS_PER_PAGE)
 
-  if (loading && permissions.length === 0) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-6 w-32" />
-          <Skeleton className="h-10 w-32" />
-        </div>
-        <PermissionsListSkeleton />
-      </div>
-    )
-  }
-
-  if (permissions.length === 0 && !loading) {
-    return (
-      <div className="space-y-6">
-        {/* Header with add button */}
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-gray-500">{t('permissions.no_permissions')}</div>
-          <Button onClick={handleAddUser} className="bg-[#DF2029] hover:bg-[#c81d25] text-white">
-            <Plus className="w-4 h-4 mr-2" />
-            {t('permissions.add')}
-          </Button>
-        </div>
-
-        <EmptyState onAddUser={handleAddUser} />
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-6">
-      {/* Header with add button */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-500">
-          {total} {total === 1 ? t('permissions.user') : t('permissions.users')}
+    <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+      {loading && permissions.length === 0 ? (
+        // Loading skeleton
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-10 w-32" />
+          </div>
+          <PermissionsListSkeleton />
         </div>
-        <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={handleAddUser} className="bg-[#DF2029] hover:bg-[#c81d25] text-white">
-              <Plus className="w-4 h-4 mr-2" />
-              {t('permissions.add')}
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>{t('permissions.add')}</DialogTitle>
-              <DialogDescription>{t('permissions.add_description')}</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>{t('permissions.user')} *</Label>
-                <UserSearchSelect
-                  selectedUsers={selectedUsers}
-                  onSelectedUsersChange={setSelectedUsers}
-                  placeholder={t('permissions.search_user_placeholder')}
-                  multiple={true}
-                  autoFocus={true}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="role">{t('permissions.role')}</Label>
-                <Select value={newRole} onValueChange={setNewRole}>
-                  <SelectTrigger id="role">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={PermissionRole.RESPONDENT}>
-                      {t('permissions.roles.respondent')}
-                    </SelectItem>
-                    <SelectItem value={PermissionRole.GRADER}>
-                      {t('permissions.roles.grader')}
-                    </SelectItem>
-                    <SelectItem value={PermissionRole.QUESTION_CREATOR}>
-                      {t('permissions.roles.question_creator')}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
-                {t('common:actions.cancel')}
-              </Button>
+      ) : permissions.length === 0 ? (
+        // Empty state
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-500">{t('permissions.no_permissions')}</div>
+            <DialogTrigger asChild>
               <Button
-                variant="primary"
-                onClick={handleGrantPermission}
-                disabled={adding || selectedUsers.length === 0}
+                onClick={handleAddUser}
+                className="bg-[#DF2029] hover:bg-[#c81d25] text-white"
               >
-                {adding ? t('common:actions.saving') : t('common:actions.save')}
+                <Plus className="w-4 h-4 mr-2" />
+                {t('permissions.add')}
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+            </DialogTrigger>
+          </div>
+          <EmptyState onAddUser={handleAddUser} />
+        </div>
+      ) : (
+        // Normal list with permissions
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-500">
+              {total} {total === 1 ? t('permissions.user') : t('permissions.users')}
+            </div>
+            <DialogTrigger asChild>
+              <Button
+                onClick={handleAddUser}
+                className="bg-[#DF2029] hover:bg-[#c81d25] text-white"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                {t('permissions.add')}
+              </Button>
+            </DialogTrigger>
+          </div>
 
-      {/* Permissions list */}
-      <div className="space-y-4">
-        {permissions.map(permission => (
-          <PermissionCard key={permission.id} permission={permission} onDelete={openRevokeDialog} />
-        ))}
-      </div>
+          <div className="space-y-4">
+            {permissions.map(permission => (
+              <PermissionCard
+                key={permission.id}
+                permission={permission}
+                onDelete={openRevokeDialog}
+              />
+            ))}
+          </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-4 pt-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page === 1 || loading}
-          >
-            {t('common:previous', 'Previous')}
-          </Button>
-          <span className="text-sm text-gray-500">
-            {t('common:page', 'Page')} {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages || loading}
-          >
-            {t('common:next', 'Next')}
-          </Button>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-4 pt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1 || loading}
+              >
+                {t('common:previous', 'Previous')}
+              </Button>
+              <span className="text-sm text-gray-500">
+                {t('common:page', 'Page')} {page} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages || loading}
+              >
+                {t('common:next', 'Next')}
+              </Button>
+            </div>
+          )}
         </div>
       )}
+
+      {/* Add Permission Dialog Content */}
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('permissions.add')}</DialogTitle>
+          <DialogDescription>{t('permissions.add_description')}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label>{t('permissions.user')} *</Label>
+            <UserSearchSelect
+              selectedUsers={selectedUsers}
+              onSelectedUsersChange={setSelectedUsers}
+              placeholder={t('permissions.search_user_placeholder')}
+              multiple={true}
+              autoFocus={true}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="role">{t('permissions.role')}</Label>
+            <Select value={newRole} onValueChange={setNewRole}>
+              <SelectTrigger id="role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={PermissionRole.RESPONDENT}>
+                  {t('permissions.roles.respondent')}
+                </SelectItem>
+                <SelectItem value={PermissionRole.GRADER}>
+                  {t('permissions.roles.grader')}
+                </SelectItem>
+                <SelectItem value={PermissionRole.QUESTION_CREATOR}>
+                  {t('permissions.roles.question_creator')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
+            {t('common:actions.cancel')}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleGrantPermission}
+            disabled={adding || selectedUsers.length === 0}
+          >
+            {adding ? t('common:actions.saving') : t('common:actions.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
 
       {/* Revoke Confirmation Dialog */}
       <AlertDialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
@@ -555,6 +565,6 @@ export function PermissionsTab({ topicId }: PermissionsTabProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </Dialog>
   )
 }

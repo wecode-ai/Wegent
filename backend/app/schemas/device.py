@@ -31,6 +31,16 @@ class DeviceType(str, Enum):
     CLOUD = "cloud"
 
 
+class BindShell(str, Enum):
+    """Bind shell type enumeration.
+
+    Defines which shell runtime the device is bound to.
+    """
+
+    CLAUDECODE = "claudecode"
+    OPENCLAW = "openclaw"
+
+
 class DeviceConnectionMode(str, Enum):
     """Device connection mode enumeration.
 
@@ -108,6 +118,11 @@ class DeviceInfo(BaseModel):
     cloud_config: Optional[CloudConfig] = Field(
         None, description="Cloud device configuration (only for cloud devices)"
     )
+    # Shell binding type
+    bind_shell: BindShell = Field(
+        BindShell.CLAUDECODE,
+        description="Shell runtime binding (claudecode or openclaw)",
+    )
 
     class Config:
         from_attributes = True
@@ -152,6 +167,10 @@ class DeviceRegisterPayload(BaseModel):
         None,
         max_length=50,
         description="Device's client IP address",
+    )
+    bind_shell: BindShell = Field(
+        BindShell.CLAUDECODE,
+        description="Shell runtime binding (claudecode or openclaw)",
     )
 
 

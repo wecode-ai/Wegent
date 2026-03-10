@@ -16,7 +16,6 @@ class GroupRole(str, Enum):
     Maintainer = "Maintainer"
     Developer = "Developer"
     Reporter = "Reporter"
-    RestrictedObserver = "RestrictedObserver"
 
 
 class GroupVisibility(str, Enum):

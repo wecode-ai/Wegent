@@ -64,8 +64,6 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
-      "myKnowledgeBases": "我的知识库",
-      "sharedWithMe": "共享给我的",
       "convertType": "转换类型",
       "convertToNotebook": "转为笔记本",
       "convertToClassic": "转为知识库",
@@ -181,10 +179,6 @@
         "splitterType": "分段类型",
         "splitterSubtype": "分段子类型"
       }
-    },
-    "accessDenied": {
-      "title": "无权限查看文档",
-      "consumerMessage": "您在该组的角色为「受限观察者」，仅可通过对话使用知识库，无法查看文档内容。如需查看文档，请联系组管理员提升您的权限。"
     },
     "upload": {
       "dropzoneHint": "一次最多选择 {{max}} 个文件",
@@ -304,12 +298,10 @@
         "Maintainer": "管理员",
         "Developer": "开发者",
         "Reporter": "使用者",
-        "RestrictedObserver": "受限观察者",
         "OwnerDescription": "创建者，拥有所有权限（仅创建者可拥有此角色）",
         "MaintainerDescription": "管理员，可以管理成员和编辑内容",
         "DeveloperDescription": "开发者，可以编辑内容",
-        "ReporterDescription": "使用者，仅可查看内容",
-        "RestrictedObserverDescription": "受限观察者，仅可通过对话使用知识库，不可查看文档内容"
+        "ReporterDescription": "使用者，仅可查看内容"
       },
       "viewDescription": "仅可浏览知识库内容",
       "editDescription": "可添加、修改和删除文档",
@@ -363,9 +355,7 @@
         "public": "公共",
         "group": "组"
       },
-      "searchPlaceholder": "搜索...",
-      "changeWarning": "修改检索引擎或 Embedding 模型后，已有文档需要重新索引才能正常检索。",
-      "changeWarningHint": "建议在修改后对所有文档执行「重新索引」操作。"
+      "searchPlaceholder": "搜索..."
     },
     "splitter": {
       "title": "分段设置",

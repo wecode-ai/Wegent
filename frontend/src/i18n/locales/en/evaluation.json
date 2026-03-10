@@ -85,12 +85,15 @@
     "qa_duration": "Q&A Duration",
     "enable_exam_mode_first": "Enable exam mode first",
     "already_published": "Already Published",
+    "publish": "Publish",
+    "publishing": "Publishing...",
     "view_versions_description": "View version history for this topic",
     "stats_summary": "Statistics Summary",
     "publish_confirm_title": "Confirm Publish Topic",
     "publish_confirm_description": "Publishing will create a new version and make this topic visible to respondents. Are you sure you want to continue?",
     "publish_note_title": "Publish Note",
-    "publish_note_description": "After publishing, the topic will be visible to authorized respondents. You can update the topic and publish new versions at any time."
+    "publish_note_description": "After publishing, the topic will be visible to authorized respondents. You can update the topic and publish new versions at any time.",
+    "published_success_description": "The topic is now available to respondents"
   },
   "versions": {
     "current": "Current",
@@ -148,6 +151,10 @@
       "attachment": "Attachment",
       "mixed": "Standard"
     },
+    "type_text": "Text",
+    "type_url": "URL",
+    "type_attachment": "Attachment",
+    "type_mixed": "Standard",
     "drag_to_reorder": "Drag to reorder"
   },
   "permissions": {
@@ -421,7 +428,9 @@
     "collapse": "Collapse",
     "quick_actions": "Quick Actions",
     "publish": "Publish",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "save_draft": "Save as Draft",
+    "publishing": "Publishing..."
   },
   "ui": {
     "question_content": "Question Content",
@@ -589,6 +598,8 @@
     "login_required": "Login Required",
     "please_login": "Please login before accessing this page",
     "load_versions_failed": "Failed to load version history",
-    "rollback_failed": "Failed to rollback topic version"
+    "rollback_failed": "Failed to rollback topic version",
+    "publish_failed": "Failed to publish topic",
+    "publish_failed_description": "Please try again later"
   }
 }

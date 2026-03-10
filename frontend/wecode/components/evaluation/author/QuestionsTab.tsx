@@ -55,6 +55,10 @@ interface QuestionsTabProps {
 function EmptyState({ onAddQuestion }: { onAddQuestion: () => void }) {
   const { t } = useTranslation('evaluation')
 
+  const handleClick = () => {
+    onAddQuestion()
+  }
+
   return (
     <div className="bg-white rounded-2xl border border-gray-100 border-dashed p-12 text-center">
       <div className="w-16 h-16 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-4">
@@ -64,7 +68,7 @@ function EmptyState({ onAddQuestion }: { onAddQuestion: () => void }) {
       <p className="text-sm text-gray-500 mb-6 max-w-sm mx-auto">
         Get started by creating your first question for this topic.
       </p>
-      <Button onClick={onAddQuestion} className="bg-[#DF2029] hover:bg-[#c81d25] text-white">
+      <Button onClick={handleClick} className="bg-[#DF2029] hover:bg-[#c81d25] text-white">
         <Plus className="w-4 h-4 mr-2" />
         {t('questions.create_first')}
       </Button>
@@ -292,58 +296,71 @@ export function QuestionsTab({
     [questions, onQuestionsChange, toast]
   )
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-6 w-32" />
-          <Skeleton className="h-10 w-32" />
-        </div>
-        <QuestionsListSkeleton />
-      </div>
-    )
-  }
-
-  if (questions.length === 0) {
-    return <EmptyState onAddQuestion={handleAddQuestion} />
-  }
-
   return (
-    <div className="space-y-6">
-      {/* Header with add button */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-500">
-          {questions.length} {questions.length === 1 ? 'question' : 'questions'}
-        </div>
-        <Button onClick={handleAddQuestion} className="bg-[#DF2029] hover:bg-[#c81d25] text-white">
-          <Plus className="w-4 h-4 mr-2" />
-          {t('questions.add')}
-        </Button>
-      </div>
-
-      {/* Draggable questions list */}
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={questions.map(q => q.id)} strategy={verticalListSortingStrategy}>
-          <div className="space-y-4">
-            {questions.map((question, index) => (
-              <QuestionCard
-                key={question.id}
-                question={question}
-                displayIndex={index + 1}
-                onEdit={handleEdit}
-                onPublishToggle={handlePublishToggle}
-                onDelete={handleDelete}
-                disabled={isReordering || processingIds.has(question.id)}
-              />
-            ))}
+    <>
+      {isLoading ? (
+        // Loading skeleton
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-10 w-32" />
           </div>
-        </SortableContext>
-      </DndContext>
+          <QuestionsListSkeleton />
+        </div>
+      ) : questions.length === 0 ? (
+        // Empty state
+        <EmptyState onAddQuestion={handleAddQuestion} />
+      ) : (
+        // Normal list with questions
+        <div className="space-y-6">
+          {/* Header with add button */}
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-gray-500">
+              {questions.length} {questions.length === 1 ? 'question' : 'questions'}
+            </div>
+            <Button
+              onClick={handleAddQuestion}
+              className="bg-[#DF2029] hover:bg-[#c81d25] text-white"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              {t('questions.add')}
+            </Button>
+          </div>
 
-      {/* Drag hint */}
-      <p className="text-xs text-gray-400 text-center">Drag and drop questions to reorder them</p>
+          {/* Draggable questions list */}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={questions.map(q => q.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-4">
+                {questions.map((question, index) => (
+                  <QuestionCard
+                    key={question.id}
+                    question={question}
+                    displayIndex={index + 1}
+                    onEdit={handleEdit}
+                    onPublishToggle={handlePublishToggle}
+                    onDelete={handleDelete}
+                    disabled={isReordering || processingIds.has(question.id)}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
 
-      {/* Question Editor Drawer */}
+          {/* Drag hint */}
+          <p className="text-xs text-gray-400 text-center">
+            Drag and drop questions to reorder them
+          </p>
+        </div>
+      )}
+
+      {/* Question Editor Drawer - always rendered outside conditional content */}
       <QuestionEditorDrawer
         isOpen={isDrawerOpen}
         topicId={topicId}
@@ -351,6 +368,6 @@ export function QuestionsTab({
         onClose={handleDrawerClose}
         onQuestionChange={handleQuestionChange}
       />
-    </div>
+    </>
   )
 }

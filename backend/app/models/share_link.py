@@ -29,7 +29,6 @@ class ResourceType(str, PyEnum):
 class PermissionLevel(str, PyEnum):
     """Permission levels for resource access."""
 
-    USE = "use"  # Can use resource via RAG, but cannot view content
     VIEW = "view"  # Can view resource content
     EDIT = "edit"  # Can modify resource content
     MANAGE = "manage"  # Can manage other users' permissions
@@ -86,14 +85,7 @@ class ShareLink(Base):
         nullable=False,
         default=PermissionLevel.VIEW.value,
         server_default="view",
-        comment="Default permission level: view, edit, manage (deprecated, use default_role)",
-    )
-    default_role = Column(
-        String(20),
-        nullable=False,
-        default="Reporter",
-        server_default="Reporter",
-        comment="Default role for joiners: Owner, Maintainer, Developer, Reporter, RestrictedObserver",
+        comment="Default permission level: view, edit, manage",
     )
 
     # Expiration - default to year 9999 for "never expires"
