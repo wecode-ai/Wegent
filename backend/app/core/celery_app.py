@@ -65,6 +65,8 @@ celery_app.conf.update(
     result_expires=3600,  # Results expire after 1 hour
     # Retry settings
     task_default_retry_delay=60,  # 1 minute default retry delay
+    # Default queue configuration
+    task_default_queue=settings.CELERY_TASK_DEFAULT_QUEUE,
     # Beat schedule for periodic tasks
     beat_schedule={
         "check-due-subscriptions": {

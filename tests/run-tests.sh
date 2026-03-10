@@ -111,7 +111,8 @@ setup_auth() {
     print_info "Starting authentication setup..."
     print_info "Target: $url"
     print_info "Auth file: $auth_file"
-    print_info "A browser will open. Please scan the QR code to login."
+    print_info "A browser will open. Please login manually."
+    print_info "(Username/password for local, OIDC/QR code for online)"
     echo ""
 
     cd "$SCRIPT_DIR"
