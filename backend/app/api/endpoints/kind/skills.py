@@ -86,7 +86,6 @@ class UnifiedSkillResponse(BaseModel):
     namespace: str
     description: str
     displayName: Optional[str] = None
-    prompt: Optional[str] = None
     version: Optional[str] = None
     author: Optional[str] = None
     tags: Optional[List[str]] = None
@@ -954,7 +953,6 @@ def list_unified_skills(
                         "namespace": skill.metadata.namespace,
                         "description": skill.spec.description,
                         "displayName": getattr(skill.spec, "displayName", None),
-                        "prompt": skill.spec.prompt,
                         "version": skill.spec.version,
                         "author": skill.spec.author,
                         "tags": skill.spec.tags,
@@ -974,6 +972,8 @@ def list_unified_skills(
     # Merge: public skills that don't exist in user's skills
     for skill in public_skills:
         if skill["name"] not in user_skill_names:
+            if "prompt" in skill:
+                del skill["prompt"]
             user_skills.append(skill)
 
     # Apply pagination
