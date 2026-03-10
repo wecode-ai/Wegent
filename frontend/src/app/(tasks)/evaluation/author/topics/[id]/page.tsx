@@ -14,6 +14,7 @@ import {
   getAuthorTopic,
   getAuthorTopicStatistics,
   listAuthorQuestions,
+  publishAuthorTopic,
 } from '@wecode/api/evaluation-author'
 import type { Topic, Question, TopicStatistics } from '@wecode/types/evaluation'
 
@@ -66,6 +67,9 @@ function TopicDetailContent() {
 
   // Drawer state
   const [isConfigDrawerOpen, setIsConfigDrawerOpen] = useState(false)
+
+  // Publishing state
+  const [isPublishing, setIsPublishing] = useState(false)
 
   // Active tab state - read from URL or default to 'questions'
   const activeTab: TabValue = useMemo(() => {
@@ -146,6 +150,34 @@ function TopicDetailContent() {
     setQuestions(newQuestions)
   }, [])
 
+  // Handle publish topic
+  const handlePublish = useCallback(async () => {
+    if (!topic) return
+
+    setIsPublishing(true)
+    try {
+      await publishAuthorTopic(topicId)
+      // Refresh topic data to get updated status
+      const topicData = await getAuthorTopic(topicId)
+      setTopic(topicData)
+      toast({
+        title: t('topics.published_success', 'Topic published successfully'),
+        description: t(
+          'topics.published_success_description',
+          'The topic is now available to respondents'
+        ),
+      })
+    } catch (_error) {
+      toast({
+        title: t('errors.publish_failed', 'Failed to publish topic'),
+        description: t('errors.publish_failed_description', 'Please try again later'),
+        variant: 'destructive',
+      })
+    } finally {
+      setIsPublishing(false)
+    }
+  }, [topic, topicId, toast, t])
+
   // Loading state
   if (loading) {
     return (
@@ -184,7 +216,9 @@ function TopicDetailContent() {
         topic={topic}
         onBack={handleBack}
         onEditConfig={handleEditConfig}
+        onPublish={handlePublish}
         isLoading={loading}
+        isPublishing={isPublishing}
       />
 
       {/* Main Content */}
