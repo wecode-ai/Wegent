@@ -55,7 +55,6 @@ export function DeviceSection({
   const filteredDevices = type
     ? devices.filter(device => {
         const dt = device.device_type || 'local'
-        if (type === 'local') return dt === 'local' || dt === 'local_openclaw'
         return dt === type
       })
     : devices

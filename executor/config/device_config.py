@@ -41,7 +41,13 @@ class DeviceType(str, Enum):
 
     LOCAL = "local"
     CLOUD = "cloud"
-    LOCAL_OPENCLAW = "local_openclaw"
+
+
+class BindShell(str, Enum):
+    """Bind shell type enumeration."""
+
+    CLAUDECODE = "claudecode"
+    OPENCLAW = "openclaw"
 
 
 @dataclass
@@ -107,6 +113,9 @@ class DeviceConfig:
     # Device type: 'local' or 'cloud'
     device_type: str = "local"
 
+    # Shell binding: 'claudecode' or 'openclaw'
+    bind_shell: str = "claudecode"
+
     # Unique device identifier (auto-generated UUID if not specified)
     device_id: str = ""
 
@@ -130,6 +139,7 @@ class DeviceConfig:
         return {
             "mode": self.mode,
             "device_type": self.device_type,
+            "bind_shell": self.bind_shell,
             "device_id": self.device_id,
             "device_name": self.device_name,
             "capabilities": self.capabilities,
@@ -147,6 +157,7 @@ class DeviceConfig:
         return cls(
             mode=data.get("mode", "local"),
             device_type=data.get("device_type", "local"),
+            bind_shell=data.get("bind_shell", "claudecode"),
             device_id=data.get("device_id", ""),
             device_name=data.get("device_name", ""),
             capabilities=data.get("capabilities", []),
@@ -266,6 +277,17 @@ def _apply_env_overrides(config: DeviceConfig) -> tuple[DeviceConfig, bool]:
         else:
             logger.warning(
                 f"Invalid DEVICE_TYPE '{env_value}', must be one of {valid_types}. "
+                "Keeping current value."
+            )
+
+    if os.environ.get("BIND_SHELL"):
+        env_value = os.environ["BIND_SHELL"].lower()
+        valid_shells = {s.value for s in BindShell}
+        if env_value in valid_shells:
+            config.bind_shell = env_value
+        else:
+            logger.warning(
+                f"Invalid BIND_SHELL '{env_value}', must be one of {valid_shells}. "
                 "Keeping current value."
             )
 

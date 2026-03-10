@@ -269,6 +269,7 @@ class DeviceService:
         name: str,
         client_ip: Optional[str] = None,
         device_type: Optional[str] = None,
+        bind_shell: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -283,6 +284,9 @@ class DeviceService:
             client_ip: Device's client IP address (stored in spec.clientIp)
             device_type: Device type ('local' or 'cloud'). If None, defaults
                          to 'local' for new devices or preserves existing value.
+            bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
+                        If None, defaults to 'claudecode' for new devices or
+                        preserves existing value.
 
         Returns:
             Kind model instance for the device
@@ -316,6 +320,11 @@ class DeviceService:
             # Update client IP if provided
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
+            # Update bind_shell if provided, otherwise preserve existing value
+            if bind_shell is not None:
+                device_json["spec"]["bindShell"] = bind_shell
+            elif "bindShell" not in device_json["spec"]:
+                device_json["spec"]["bindShell"] = "claudecode"
             device_kind.json = device_json
             flag_modified(device_kind, "json")
             device_kind.updated_at = datetime.now()
@@ -346,6 +355,8 @@ class DeviceService:
 
             # Resolve device type: use provided value, or default to 'local'
             resolved_device_type = device_type or DeviceType.LOCAL.value
+            # Resolve bind_shell: use provided value, or default to 'claudecode'
+            resolved_bind_shell = bind_shell or "claudecode"
 
             # Create new device CRD
             device_json = {
@@ -361,6 +372,7 @@ class DeviceService:
                     "displayName": name,
                     "deviceType": resolved_device_type,
                     "connectionMode": "websocket",
+                    "bindShell": resolved_bind_shell,
                     "isDefault": is_first_device,
                     "capabilities": None,
                     "clientIp": client_ip,

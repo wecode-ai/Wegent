@@ -163,6 +163,7 @@ def _register_device(
     name: str,
     client_ip: Optional[str] = None,
     device_type: Optional[str] = None,
+    bind_shell: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """
     Register or update device CRD in database.
@@ -173,6 +174,7 @@ def _register_device(
         name: Device display name
         client_ip: Device's client IP address
         device_type: Device type ('local' or 'cloud')
+        bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
 
     Returns (success, error_message).
     """
@@ -185,6 +187,7 @@ def _register_device(
                 name=name,
                 client_ip=client_ip,
                 device_type=device_type,
+                bind_shell=bind_shell,
             )
         return True, None
     except Exception as e:
@@ -662,6 +665,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 payload.name,
                 payload.client_ip,
                 device_type=payload.device_type.value,
+                bind_shell=payload.bind_shell.value,
             )
             if not success:
                 return {"error": f"Registration failed: {error}"}

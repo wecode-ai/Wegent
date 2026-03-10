@@ -30,8 +30,8 @@ export function getStatusColor(status: DeviceStatus | string): string {
  * Check if a device is an OpenClaw device.
  *
  * @param device - Device info object
- * @returns true if the device type is 'local_openclaw'
+ * @returns true if the device's bind_shell is 'openclaw'
  */
 export function isOpenClawDevice(device: DeviceInfo): boolean {
-  return device.device_type === 'local_openclaw'
+  return device.bind_shell === 'openclaw'
 }

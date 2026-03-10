@@ -19,7 +19,7 @@ export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 // Event trigger sub-type enumeration
 export type SubscriptionEventType = 'webhook' | 'git_push'
 
-export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud' | 'local_openclaw'
+export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud'
 
 export interface SubscriptionExecutionTarget {
   type: SubscriptionExecutionTargetType
