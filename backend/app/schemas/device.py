@@ -120,7 +120,8 @@ class DeviceInfo(BaseModel):
     )
     # Shell binding type
     bind_shell: BindShell = Field(
-        BindShell.CLAUDECODE, description="Shell runtime binding (claudecode or openclaw)"
+        BindShell.CLAUDECODE,
+        description="Shell runtime binding (claudecode or openclaw)",
     )
 
     class Config:
