@@ -750,6 +750,45 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def get_document_counts_batch(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> dict[int, int]:
+        """
+        Get document counts for multiple knowledge bases in a single query.
+
+        This method optimizes the N+1 query problem by fetching all counts
+        in one database query instead of one query per knowledge base.
+
+        Args:
+            db: Database session
+            knowledge_base_ids: List of knowledge base IDs
+
+        Returns:
+            Dictionary mapping knowledge_base_id to document count
+        """
+        if not knowledge_base_ids:
+            return {}
+
+        # Single query to get counts for all knowledge bases
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("count"),
+            )
+            .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        # Build result dictionary with default 0 for KBs without documents
+        counts = {kb_id: 0 for kb_id in knowledge_base_ids}
+        for kind_id, count in results:
+            counts[kind_id] = count
+
+        return counts
+
+    @staticmethod
     def get_active_document_count(
         db: Session,
         knowledge_base_id: int,
