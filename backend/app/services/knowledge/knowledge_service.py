@@ -1564,51 +1564,7 @@ class KnowledgeService:
         Returns:
             List of knowledge base IDs that are bound to user's group chats
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-        from app.models.task import TaskResource
-
-        # Query all tasks where user is a member (including owner)
-        # Task owner is always considered a member
-        owned_tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                TaskResource.user_id == user_id,
-            )
-            .all()
-        )
-
-        # Query tasks where user is an approved member via ResourceMember
-        member_tasks = (
-            db.query(TaskResource)
-            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
-            )
-            .all()
-        )
-
-        # Combine owned and member tasks
-        user_tasks = list(owned_tasks) + list(member_tasks)
-
-        bound_kb_ids = set()
-        for task in user_tasks:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
-
-            for ref in kb_refs:
-                ref_id = ref.get("id")
-                if ref_id:
-                    bound_kb_ids.add(ref_id)
-
-        return list(bound_kb_ids)
+        return []
 
     # ============== Batch Document Operations ==============
 
