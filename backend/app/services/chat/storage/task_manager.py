@@ -157,23 +157,6 @@ def get_task_with_access_check(
         .first()
     )
 
-    if member:
-        # User is a group member, get task without user_id check
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active,
-            )
-            .first()
-        )
-        if task:
-            # For group members, use task owner's user_id for subtasks
-            return task, task.user_id
-
-    # Check if user is a member via linked group
-    # First get the task to check if it has a linked_group
     task = (
         db.query(TaskResource)
         .filter(
@@ -184,6 +167,15 @@ def get_task_with_access_check(
         .first()
     )
 
+    # Check if user is a member via linked group
+    # First get the task to check if it has a linked_group
+    if member:
+        # User is a group member, get task without user_id check
+        if task:
+            # For group members, use task owner's user_id for subtasks
+            return task, task.user_id
+
+    # Additional logic for non-group members can be added here if needed
     if task:
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
