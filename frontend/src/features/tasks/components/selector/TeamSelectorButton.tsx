@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
-import type { Team, TaskDetail } from '@/types/api'
+import type { Team, TaskDetail, TaskType } from '@/types/api'
 
 interface TeamSelectorButtonProps {
   selectedTeam: Team | null
@@ -34,6 +34,8 @@ interface TeamSelectorButtonProps {
   disabled: boolean
   taskDetail?: TaskDetail | null
   hideSettingsLink?: boolean
+  /** Current mode for filtering teams by bind_mode */
+  currentMode?: TaskType
 }
 
 export default function TeamSelectorButton({
@@ -42,6 +44,7 @@ export default function TeamSelectorButton({
   teams,
   disabled,
   hideSettingsLink = false,
+  currentMode = 'chat',
 }: TeamSelectorButtonProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -49,8 +52,24 @@ export default function TeamSelectorButton({
   const [searchQuery, setSearchQuery] = useState('')
   const sharedBadgeStyle = getSharedBadgeStyle()
 
+  // Filter teams by bind_mode based on current mode
+  const filteredTeamsByMode = React.useMemo(() => {
+    // First filter out teams with empty bind_mode array
+    const teamsWithValidBindMode = teams.filter(team => {
+      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
+      return true
+    })
+
+    return teamsWithValidBindMode.filter(team => {
+      // If bind_mode is not set (undefined/null), show in all modes
+      if (!team.bind_mode) return true
+      // Otherwise, only show if current mode is in bind_mode
+      return team.bind_mode.includes(currentMode)
+    })
+  }, [teams, currentMode])
+
   // Filter teams by search query
-  const filteredTeams = teams.filter(team =>
+  const filteredTeams = filteredTeamsByMode.filter(team =>
     team.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
@@ -87,9 +106,7 @@ export default function TeamSelectorButton({
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p className="text-xs">
-              {t('common:teamSelector.select_agent_tooltip', '选择智能体')}
-            </p>
+            <p className="text-xs">{t('common:teamSelector.select_agent_tooltip', '选择智能体')}</p>
           </TooltipContent>
         </Tooltip>
 

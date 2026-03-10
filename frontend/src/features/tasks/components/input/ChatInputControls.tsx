@@ -370,7 +370,7 @@ export function ChatInputControls({
   // Desktop layout: original full layout
   return (
     <div
-      className={`flex items-center justify-between px-2 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 -mt-2.5'}`}
+      className={`flex items-center justify-between px-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 -mt-2.5'}`}
     >
       <div
         className="flex-1 min-w-0 overflow-visible flex items-center gap-0 flex-wrap"
@@ -471,8 +471,8 @@ export function ChatInputControls({
               <div className="w-px h-4 bg-border mx-1 flex-shrink-0" />
             )}
 
-            {/* Team Selector - show when teams are available and onTeamChange is provided */}
-            {teams.length > 0 && _onTeamChange && (
+            {/* Team Selector - show when teams are available, onTeamChange is provided, and no messages yet */}
+            {teams.length > 0 && _onTeamChange && !hasMessages && (
               <TeamSelectorButton
                 selectedTeam={selectedTeam}
                 setSelectedTeam={(team: Team | null) => {
@@ -481,9 +481,10 @@ export function ChatInputControls({
                   }
                 }}
                 teams={teams}
-                disabled={isLoading || isStreaming || hasMessages}
+                disabled={isLoading || isStreaming}
                 taskDetail={selectedTaskDetail}
                 hideSettingsLink={true}
+                currentMode={taskType}
               />
             )}
 

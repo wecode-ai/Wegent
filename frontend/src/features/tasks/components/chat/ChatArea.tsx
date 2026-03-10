@@ -1051,10 +1051,10 @@ function ChatAreaContent({
           <div
             className={
               taskType === 'knowledge'
-                ? 'flex-1 flex items-end justify-center w-full pb-6'
+                ? 'flex-1 flex items-end justify-center w-full pb-10'
                 : 'flex-1 flex items-center justify-center w-full'
             }
-            style={taskType === 'knowledge' ? undefined : { marginBottom: '20vh' }}
+            style={taskType === 'knowledge' ? undefined : { marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
@@ -1107,8 +1107,10 @@ function ChatAreaContent({
                 onClick={() => scrollToBottom(true)}
               />
             </div>
-            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4 bg-base">
-              <ChatInputCard {...inputCardProps} />
+            <div className="relative w-full max-w-[820px] mx-auto px-4 sm:px-6">
+              <div className="py-4 bg-base">
+                <ChatInputCard {...inputCardProps} />
+              </div>
             </div>
           </div>
         )}

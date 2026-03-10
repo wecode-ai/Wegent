@@ -403,12 +403,12 @@ export default function UnifiedRepositorySelector({
               <PopoverTrigger asChild>
                 <div
                   className={cn(
-                    'group flex items-center gap-1.5 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
+                    'group flex items-center gap-1 min-w-0 rounded-full pl-2 pr-2 py-2 h-9',
                     'transition-all duration-200 cursor-pointer',
                     // When workspace is required but not selected - show error state like ModelSelector
                     requiresWorkspace && isNotSelected
-                      ? 'border border-error text-error bg-error/5 hover:bg-error/10'
-                      : 'border border-border bg-base text-text-primary hover:bg-hover',
+                      ? 'text-error bg-error/5 hover:bg-error/10'
+                      : 'bg-transparent text-text-primary hover:bg-hover',
                     isLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     (disabled || isLoading) && 'cursor-not-allowed opacity-50'
