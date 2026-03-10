@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useMemo, useRef, useEffect, useCallback, startTransition } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
@@ -14,6 +14,22 @@ import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
 import SkillAutocomplete, { SkillFlyAnimationTrigger } from '../chat/SkillAutocomplete'
 import SkillFlyAnimation from '../chat/SkillFlyAnimation'
+
+/**
+ * Simple debounce implementation
+ */
+function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  return (...args: Parameters<T>) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      fn(...args)
+    }, delay)
+  }
+}
 
 interface ChatInputProps {
   message: string
@@ -50,6 +66,8 @@ interface ChatInputProps {
   skillSelectorReadOnly?: boolean
   /** Ref to the skill button element for fly animation target */
   skillButtonRef?: React.RefObject<HTMLElement | null>
+  /** Ref to expose the current local input value for immediate access (bypassing debounce) */
+  inputValueRef?: React.MutableRefObject<string>
 }
 
 export default function ChatInput({
@@ -76,6 +94,7 @@ export default function ChatInput({
   isChatShell = false,
   skillSelectorReadOnly = false,
   skillButtonRef,
+  inputValueRef: externalInputValueRef,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -114,6 +133,19 @@ export default function ChatInput({
   const badgeRef = useRef<HTMLSpanElement>(null)
   const [badgeWidth, setBadgeWidth] = useState(0)
 
+  // PERFORMANCE OPTIMIZATION: Local state for immediate UI feedback
+  // This prevents parent component re-rendering on every keystroke
+  const [localValue, setLocalValue] = useState(message)
+  const localValueRef = useRef(message)
+  const isInternalChangeRef = useRef(false)
+
+  // Sync local value to external ref for parent access (bypassing debounce)
+  useEffect(() => {
+    if (externalInputValueRef) {
+      externalInputValueRef.current = localValue
+    }
+  }, [localValue, externalInputValueRef])
+
   // Track if we should show placeholder
   const [showPlaceholder, setShowPlaceholder] = useState(!message)
 
@@ -147,10 +179,42 @@ export default function ChatInput({
     })
   }, [])
 
-  // Update placeholder visibility when message changes externally
+  // PERFORMANCE OPTIMIZATION: Debounced sync to parent component
+  // This prevents blocking the input thread while parent re-renders
+  const debouncedSetMessage = useMemo(
+    () =>
+      debounce((value: string) => {
+        // Use startTransition to mark this as non-urgent update
+        startTransition(() => {
+          setMessage(value)
+        })
+      }, 100), // 100ms debounce for responsive feel
+    [setMessage]
+  )
+
+  // Sync external message prop to local state (for initial load and external updates)
   useEffect(() => {
-    setShowPlaceholder(!message)
+    // Skip if this is an internal change to avoid cursor jumping
+    if (isInternalChangeRef.current) {
+      isInternalChangeRef.current = false
+      return
+    }
+    if (message !== localValueRef.current) {
+      setLocalValue(message)
+      localValueRef.current = message
+      setShowPlaceholder(!message)
+    }
   }, [message])
+
+  // Cleanup: flush any pending debounced calls on unmount
+  useEffect(() => {
+    return () => {
+      // Force sync any pending value before unmount
+      if (localValueRef.current !== message) {
+        setMessage(localValueRef.current)
+      }
+    }
+  }, [setMessage, message])
 
   // Measure badge width for text-indent
   useEffect(() => {
@@ -210,20 +274,21 @@ export default function ChatInput({
     element.innerHTML = htmlContent
   }, [])
 
-  // Sync contenteditable content with message prop
+  // Sync contenteditable content with local state
+  // PERFORMANCE: Only sync when localValue changes from external sources
   useEffect(() => {
     if (editableRef.current) {
       // Get current content with newlines preserved
       const currentContent = getTextWithNewlines(editableRef.current)
-      if (currentContent !== message) {
+      if (currentContent !== localValue) {
         // Only update if different to avoid cursor jumping
         const selection = window.getSelection()
         const hadFocus = document.activeElement === editableRef.current
 
-        setContentWithNewlines(editableRef.current, message)
+        setContentWithNewlines(editableRef.current, localValue)
 
         // Restore cursor to end if had focus
-        if (hadFocus && selection && message) {
+        if (hadFocus && selection && localValue) {
           const range = document.createRange()
           range.selectNodeContents(editableRef.current)
           range.collapse(false)
@@ -232,7 +297,7 @@ export default function ChatInput({
         }
       }
     }
-  }, [message, getTextWithNewlines, setContentWithNewlines])
+  }, [localValue, getTextWithNewlines, setContentWithNewlines])
 
   // Auto focus the input when autoFocus is true and not disabled
   useEffect(() => {
@@ -317,8 +382,15 @@ export default function ChatInput({
     (e: React.FormEvent<HTMLDivElement>) => {
       if (isInputDisabled) return
       const text = getTextWithNewlines(e.currentTarget)
-      setMessage(text)
+
+      // PERFORMANCE: Update local state immediately for responsive UI
+      isInternalChangeRef.current = true
+      setLocalValue(text)
+      localValueRef.current = text
       setShowPlaceholder(!text)
+
+      // PERFORMANCE: Debounced sync to parent to avoid blocking input thread
+      debouncedSetMessage(text)
 
       // Helper function to get cursor position for autocomplete menus
       const getCursorPosition = () => {
@@ -393,7 +465,7 @@ export default function ChatInput({
     },
     [
       isInputDisabled,
-      setMessage,
+      debouncedSetMessage,
       getTextWithNewlines,
       isGroupChat,
       team,
@@ -423,7 +495,12 @@ export default function ChatInput({
           const textAfterWord = textAfterAt.substring(currentWord.length)
           // Build new text: text before @ + mention + space + remaining text
           const newText = textBefore + mention + ' ' + textAfterWord.trimStart()
-          setMessage(newText)
+
+          // PERFORMANCE: Update local state immediately, debounced sync to parent
+          isInternalChangeRef.current = true
+          setLocalValue(newText)
+          localValueRef.current = newText
+          debouncedSetMessage(newText)
           setContentWithNewlines(editableRef.current, newText)
         }
 
@@ -443,7 +520,7 @@ export default function ChatInput({
         setMentionQuery('')
       }
     },
-    [getTextWithNewlines, setMessage, setContentWithNewlines]
+    [getTextWithNewlines, debouncedSetMessage, setContentWithNewlines]
   )
 
   // Handle skill selection from autocomplete
@@ -465,7 +542,12 @@ export default function ChatInput({
           const textAfterWord = textAfterSlash.substring(currentWord.length)
           // Build new text: text before / + remaining text (remove the /query)
           const newText = textBefore + textAfterWord.trimStart()
-          setMessage(newText)
+
+          // PERFORMANCE: Update local state immediately, debounced sync to parent
+          isInternalChangeRef.current = true
+          setLocalValue(newText)
+          localValueRef.current = newText
+          debouncedSetMessage(newText)
           setContentWithNewlines(editableRef.current, newText)
         }
 
@@ -488,7 +570,7 @@ export default function ChatInput({
         setSkillQuery('')
       }
     },
-    [getTextWithNewlines, setMessage, setContentWithNewlines, onSkillSelect]
+    [getTextWithNewlines, debouncedSetMessage, setContentWithNewlines, onSkillSelect]
   )
 
   const handlePaste = useCallback(
@@ -599,13 +681,16 @@ export default function ChatInput({
           selection.addRange(range)
         }
 
-        // Update message state - use getTextWithNewlines to preserve newlines
+        // PERFORMANCE: Update local state immediately, debounced sync to parent
         const newText = getTextWithNewlines(editableRef.current)
-        setMessage(newText)
+        isInternalChangeRef.current = true
+        setLocalValue(newText)
+        localValueRef.current = newText
+        debouncedSetMessage(newText)
         setShowPlaceholder(!newText)
       }
     },
-    [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile]
+    [isInputDisabled, debouncedSetMessage, getTextWithNewlines, onPasteFile]
   )
 
   const handleFocus = useCallback(() => {
@@ -631,9 +716,9 @@ export default function ChatInput({
   // Get tooltip text based on send key preference and platform
   const tooltipText = useMemo(() => {
     if (sendKey === 'cmd_enter') {
-      // Detect if Mac or Windows
+      // Detect if Mac or Windows using userAgent
       const isMac =
-        typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+        typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent)
       return isMac ? t('chat:send_shortcut_cmd_enter_mac') : t('chat:send_shortcut_cmd_enter_win')
     }
     return t('chat:send_shortcut')

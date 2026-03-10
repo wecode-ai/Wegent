@@ -261,6 +261,10 @@ function ChatAreaContent({
   const hasInitializedTeamRef = useRef(false)
   const lastSyncedTaskIdRef = useRef<number | null>(null)
 
+  // PERFORMANCE OPTIMIZATION: Ref to hold latest input value for immediate access
+  // This bypasses the debounced state sync and prevents stale message on send
+  const latestInputValueRef = useRef('')
+
   // Filter teams by bind_mode based on current mode
   const filteredTeams = useMemo(() => {
     const teamsWithValidBindMode = teams.filter(team => {
@@ -880,8 +884,12 @@ function ChatAreaContent({
     onDrop: handleDrop,
     canSubmit,
     handleSendMessage: async (overrideMessage?: string) => {
-      // Format message with quote if present, then clear quote
-      const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()
+      // PERFORMANCE: Use latestInputValueRef.current for immediate access to latest input
+      // This bypasses the debounced state sync and prevents sending stale message
+      const baseMessage =
+        overrideMessage?.trim() ||
+        latestInputValueRef.current.trim() ||
+        chatState.taskInputMessage.trim()
       const message = formatQuoteForMessage(baseMessage)
       if (quote) {
         clearQuote()
@@ -889,6 +897,8 @@ function ChatAreaContent({
       await streamHandlers.handleSendMessage(message)
     },
     onPasteFile: handlePasteFile,
+    // PERFORMANCE: Ref for immediate access to latest input value
+    inputValueRef: latestInputValueRef,
     // ChatInputControls props
     selectedModel: chatState.selectedModel,
     setSelectedModel: chatState.setSelectedModel,

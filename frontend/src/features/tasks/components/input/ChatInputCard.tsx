@@ -72,6 +72,9 @@ export interface ChatInputCardProps extends Omit<
 
   // Reason why input is disabled (e.g., device offline). Shows as placeholder text.
   disabledReason?: string
+
+  // PERFORMANCE: Ref for immediate access to input value (bypassing debounced state)
+  inputValueRef?: React.MutableRefObject<string>
 }
 
 /**
@@ -114,6 +117,7 @@ export function ChatInputCard({
   inputControlsRef,
   hasNoTeams = false,
   disabledReason,
+  inputValueRef,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -288,6 +292,8 @@ export function ChatInputCard({
               skillButtonRef={
                 { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>
               }
+              // PERFORMANCE: Pass ref for immediate access to latest input value
+              inputValueRef={inputValueRef}
             />
           </div>
         )}

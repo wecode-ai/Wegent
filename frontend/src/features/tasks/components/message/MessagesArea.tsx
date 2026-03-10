@@ -4,7 +4,8 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { useTaskContext } from '../../contexts/taskContext'
 import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import {
@@ -274,6 +275,10 @@ export default function MessagesArea({
   const [correctionStreamingContent, setCorrectionStreamingContent] = useState<
     Map<number, CorrectionStreamingContent>
   >(new Map())
+
+  // PERFORMANCE OPTIMIZATION: Ref for Virtuoso virtual list
+  // Allows programmatic scrolling and maintains scroll position
+  const virtuosoRef = useRef<VirtuosoHandle>(null)
 
   // Handle retry correction for a specific message
   const handleRetryCorrection = useCallback(
@@ -1094,168 +1099,206 @@ export default function MessagesArea({
     return null
   }, [messages])
 
+  // PERFORMANCE OPTIMIZATION: Message item renderer for Virtuoso virtual list
+  // Extracted as a stable callback to prevent unnecessary re-renders
+  const MessageItem = useCallback(
+    (index: number) => {
+      const msg = messages[index]
+      if (!msg) return null
+
+      const messageKey = msg.subtaskId
+        ? `${msg.type}-${msg.subtaskId}`
+        : `msg-${index}-${msg.timestamp}`
+
+      // Determine if this is the current user's message (for group chat alignment)
+      const isCurrentUserMessage =
+        msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false
+
+      // Calculate if this is the last AI message (for regenerate button)
+      const isLastAiMessage = msg.type === 'ai' && msg.subtaskId === lastAiMessageSubtaskId
+
+      // Check if this AI message has a correction result
+      const hasCorrectionResult =
+        msg.type === 'ai' && msg.subtaskId !== undefined && correctionResults.has(msg.subtaskId)
+      const isCorrecting =
+        msg.type === 'ai' && msg.subtaskId !== undefined && correctionLoading.has(msg.subtaskId)
+      const correctionResult = msg.subtaskId ? correctionResults.get(msg.subtaskId) : undefined
+
+      // Use StreamingMessageBubble for streaming AI messages
+      if (msg.type === 'ai' && msg.status === 'streaming') {
+        return (
+          <div key={messageKey} className="py-4">
+            <StreamingMessageBubble
+              message={msg}
+              selectedTaskDetail={selectedTaskDetail}
+              selectedTeam={selectedTeam}
+              selectedRepo={selectedRepo}
+              selectedBranch={selectedBranch}
+              theme={theme as 'light' | 'dark'}
+              t={t}
+              onSendMessage={onSendMessage}
+              index={index}
+              isGroupChat={isGroupChat}
+              isPendingConfirmation={isPendingConfirmation}
+              onContextReselect={onContextReselect}
+              onUseAsReference={onUseAsReference}
+            />
+          </div>
+        )
+      }
+
+      // For AI messages with correction mode enabled, render side by side
+      if (msg.type === 'ai' && enableCorrectionMode && (hasCorrectionResult || isCorrecting)) {
+        // Find the corresponding user message (previous message)
+        const userMsg = index > 0 ? messages[index - 1] : null
+        const originalQuestion = userMsg?.content || ''
+
+        return (
+          <div key={messageKey} className="py-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <MessageBubble
+              msg={convertToMessage(msg)}
+              index={index}
+              selectedTaskDetail={selectedTaskDetail}
+              selectedTeam={selectedTeam}
+              selectedRepo={selectedRepo}
+              selectedBranch={selectedBranch}
+              theme={theme as 'light' | 'dark'}
+              t={t}
+              onSendMessage={onSendMessage}
+              isCurrentUserMessage={isCurrentUserMessage}
+              isGroupChat={isGroupChat}
+              isPendingConfirmation={isPendingConfirmation}
+              onContextReselect={onContextReselect}
+              onUseAsReference={onUseAsReference}
+              onReEdit={onReEdit}
+              taskType={selectedTaskDetail?.task_type}
+            />
+            <div className="flex flex-col gap-2">
+              {/* Show progress indicator when correction is in progress */}
+              {isCorrecting && msg.subtaskId && correctionProgress.has(msg.subtaskId) && (
+                <CorrectionProgressIndicator
+                  stage={correctionProgress.get(msg.subtaskId)!.stage}
+                  toolName={correctionProgress.get(msg.subtaskId)!.toolName}
+                  streamingContent={correctionStreamingContent.get(msg.subtaskId)}
+                />
+              )}
+              <CorrectionResultPanel
+                result={
+                  correctionResult || {
+                    message_id: 0,
+                    scores: { accuracy: 0, logic: 0, completeness: 0 },
+                    corrections: [],
+                    summary: '',
+                    improved_answer: '',
+                    is_correct: false,
+                  }
+                }
+                isLoading={isCorrecting}
+                onRetry={
+                  msg.subtaskId && originalQuestion && msg.content
+                    ? () => handleRetryCorrection(msg.subtaskId!, originalQuestion, msg.content)
+                    : undefined
+                }
+                subtaskId={msg.subtaskId}
+                onApply={(improvedAnswer: string) => {
+                  // Update the local state to immediately show the improved answer
+                  if (msg.subtaskId) {
+                    setAppliedCorrections(prev => new Map(prev).set(msg.subtaskId!, improvedAnswer))
+                  }
+                }}
+              />
+            </div>
+          </div>
+        )
+      }
+
+      // Use regular MessageBubble for other messages
+      return (
+        <div key={messageKey} className="py-4">
+          <MessageBubble
+            msg={convertToMessage(msg)}
+            index={index}
+            selectedTaskDetail={selectedTaskDetail}
+            selectedTeam={selectedTeam}
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+            theme={theme as 'light' | 'dark'}
+            t={t}
+            onSendMessage={onSendMessage}
+            isCurrentUserMessage={isCurrentUserMessage}
+            onRetry={onRetry}
+            isGroupChat={isGroupChat}
+            isPendingConfirmation={isPendingConfirmation}
+            onContextReselect={onContextReselect}
+            isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
+            onEdit={handleEditMessage}
+            onEditSave={handleEditSave}
+            onEditCancel={handleEditCancel}
+            isLastAiMessage={isLastAiMessage}
+            onRegenerate={!isGroupChat ? handleRegenerate : undefined}
+            isRegenerating={isRegenerating}
+            onUseAsReference={onUseAsReference}
+            onReEdit={onReEdit}
+            taskType={selectedTaskDetail?.task_type}
+          />
+        </div>
+      )
+    },
+    [
+      messages,
+      isGroupChat,
+      user?.id,
+      lastAiMessageSubtaskId,
+      correctionResults,
+      correctionLoading,
+      enableCorrectionMode,
+      selectedTaskDetail,
+      selectedTeam,
+      selectedRepo,
+      selectedBranch,
+      theme,
+      t,
+      onSendMessage,
+      onContextReselect,
+      onUseAsReference,
+      onReEdit,
+      correctionProgress,
+      correctionStreamingContent,
+      convertToMessage,
+      isPendingConfirmation,
+      handleRetryCorrection,
+      editingMessageId,
+      handleEditMessage,
+      handleEditSave,
+      handleEditCancel,
+      handleRegenerate,
+      isRegenerating,
+      onRetry,
+    ]
+  )
+
   return (
     <div
       className="flex-1 w-full max-w-3xl mx-auto flex flex-col"
       data-chat-container="true"
       translate="no"
     >
-      {/* Messages Area */}
+      {/* Messages Area - PERFORMANCE OPTIMIZATION: Virtualized using react-virtuoso */}
       {(messages.length > 0 ||
         streamingSubtaskIds.length > 0 ||
         selectedTaskDetail?.id ||
         hasMessagesFromParent) && (
-        <div className="flex-1 space-y-8 messages-container">
-          {messages.map((msg, index) => {
-            const messageKey = msg.subtaskId
-              ? `${msg.type}-${msg.subtaskId}`
-              : `msg-${index}-${msg.timestamp}`
-
-            // Determine if this is the current user's message (for group chat alignment)
-            const isCurrentUserMessage =
-              msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false
-
-            // Calculate if this is the last AI message (for regenerate button)
-            const isLastAiMessage = msg.type === 'ai' && msg.subtaskId === lastAiMessageSubtaskId
-
-            // Check if this AI message has a correction result
-            const hasCorrectionResult =
-              msg.type === 'ai' &&
-              msg.subtaskId !== undefined &&
-              correctionResults.has(msg.subtaskId)
-            const isCorrecting =
-              msg.type === 'ai' &&
-              msg.subtaskId !== undefined &&
-              correctionLoading.has(msg.subtaskId)
-            const correctionResult = msg.subtaskId
-              ? correctionResults.get(msg.subtaskId)
-              : undefined
-
-            // Use StreamingMessageBubble for streaming AI messages
-            if (msg.type === 'ai' && msg.status === 'streaming') {
-              return (
-                <StreamingMessageBubble
-                  key={messageKey}
-                  message={msg}
-                  selectedTaskDetail={selectedTaskDetail}
-                  selectedTeam={selectedTeam}
-                  selectedRepo={selectedRepo}
-                  selectedBranch={selectedBranch}
-                  theme={theme as 'light' | 'dark'}
-                  t={t}
-                  onSendMessage={onSendMessage}
-                  index={index}
-                  isGroupChat={isGroupChat}
-                  isPendingConfirmation={isPendingConfirmation}
-                  onContextReselect={onContextReselect}
-                  onUseAsReference={onUseAsReference}
-                />
-              )
-            }
-
-            // For AI messages with correction mode enabled, render side by side
-            if (
-              msg.type === 'ai' &&
-              enableCorrectionMode &&
-              (hasCorrectionResult || isCorrecting)
-            ) {
-              // Find the corresponding user message (previous message)
-              const userMsg = index > 0 ? messages[index - 1] : null
-              const originalQuestion = userMsg?.content || ''
-
-              return (
-                <div key={messageKey} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <MessageBubble
-                    msg={convertToMessage(msg)}
-                    index={index}
-                    selectedTaskDetail={selectedTaskDetail}
-                    selectedTeam={selectedTeam}
-                    selectedRepo={selectedRepo}
-                    selectedBranch={selectedBranch}
-                    theme={theme as 'light' | 'dark'}
-                    t={t}
-                    onSendMessage={onSendMessage}
-                    isCurrentUserMessage={isCurrentUserMessage}
-                    isGroupChat={isGroupChat}
-                    isPendingConfirmation={isPendingConfirmation}
-                    onContextReselect={onContextReselect}
-                    onUseAsReference={onUseAsReference}
-                    onReEdit={onReEdit}
-                    taskType={selectedTaskDetail?.task_type}
-                  />
-                  <div className="flex flex-col gap-2">
-                    {/* Show progress indicator when correction is in progress */}
-                    {isCorrecting && msg.subtaskId && correctionProgress.has(msg.subtaskId) && (
-                      <CorrectionProgressIndicator
-                        stage={correctionProgress.get(msg.subtaskId)!.stage}
-                        toolName={correctionProgress.get(msg.subtaskId)!.toolName}
-                        streamingContent={correctionStreamingContent.get(msg.subtaskId)}
-                      />
-                    )}
-                    <CorrectionResultPanel
-                      result={
-                        correctionResult || {
-                          message_id: 0,
-                          scores: { accuracy: 0, logic: 0, completeness: 0 },
-                          corrections: [],
-                          summary: '',
-                          improved_answer: '',
-                          is_correct: false,
-                        }
-                      }
-                      isLoading={isCorrecting}
-                      onRetry={
-                        msg.subtaskId && originalQuestion && msg.content
-                          ? () =>
-                              handleRetryCorrection(msg.subtaskId!, originalQuestion, msg.content)
-                          : undefined
-                      }
-                      subtaskId={msg.subtaskId}
-                      onApply={(improvedAnswer: string) => {
-                        // Update the local state to immediately show the improved answer
-                        if (msg.subtaskId) {
-                          setAppliedCorrections(prev =>
-                            new Map(prev).set(msg.subtaskId!, improvedAnswer)
-                          )
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              )
-            }
-
-            // Use regular MessageBubble for other messages
-            return (
-              <MessageBubble
-                key={messageKey}
-                msg={convertToMessage(msg)}
-                index={index}
-                selectedTaskDetail={selectedTaskDetail}
-                selectedTeam={selectedTeam}
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                theme={theme as 'light' | 'dark'}
-                t={t}
-                onSendMessage={onSendMessage}
-                isCurrentUserMessage={isCurrentUserMessage}
-                onRetry={onRetry}
-                isGroupChat={isGroupChat}
-                isPendingConfirmation={isPendingConfirmation}
-                onContextReselect={onContextReselect}
-                isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
-                onEdit={handleEditMessage}
-                onEditSave={handleEditSave}
-                onEditCancel={handleEditCancel}
-                isLastAiMessage={isLastAiMessage}
-                onRegenerate={!isGroupChat ? handleRegenerate : undefined}
-                isRegenerating={isRegenerating}
-                onUseAsReference={onUseAsReference}
-                onReEdit={onReEdit}
-                taskType={selectedTaskDetail?.task_type}
-              />
-            )
-          })}
+        <div className="flex-1 messages-container">
+          <Virtuoso
+            ref={virtuosoRef}
+            data={messages}
+            totalCount={messages.length}
+            itemContent={MessageItem}
+            overscan={5}
+            className="h-full"
+            style={{ height: '100%' }}
+            initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : 0}
+          />
         </div>
       )}
 
