@@ -159,8 +159,8 @@ export function KnowledgeBaseClassicPageDesktop({
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
-  // Check if user can view documents (not Consumer role)
-  // Consumer role can only use KB via chat, cannot view document list
+  // Check if user can view documents (not RestrictedObserver role)
+  // RestrictedObserver role can only use KB via chat, cannot view document list
   const canViewDocuments = useMemo(() => {
     if (!knowledgeBase || !user) return false
     // Personal knowledge base - owner can always view
@@ -168,7 +168,7 @@ export function KnowledgeBaseClassicPageDesktop({
       // Owner can view
       if (knowledgeBase.user_id === user.id) return true
       // Check explicit permission from myPermission
-      // Consumer permission level is 'use', which cannot view documents
+      // RestrictedObserver permission level is 'use', which cannot view documents
       if (myPermission?.permission_level === 'use') return false
       // Other permission levels (view, edit, manage) can view
       return myPermission?.has_access === true
@@ -178,9 +178,9 @@ export function KnowledgeBaseClassicPageDesktop({
       return true
     }
     // Group knowledge base - check group role
-    // Consumer role cannot view documents
+    // RestrictedObserver role cannot view documents
     const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole !== 'Consumer' && groupRole !== undefined
+    return groupRole !== 'RestrictedObserver' && groupRole !== undefined
   }, [knowledgeBase, user, groupRoleMap, myPermission])
 
   // Check if user can manage permissions (is creator or has manage permission)
@@ -254,7 +254,7 @@ export function KnowledgeBaseClassicPageDesktop({
         {/* Content area - Document List with optional Permission Management Tab */}
         <div className="flex-1 overflow-auto p-4 sm:p-6">
           {!canViewDocuments ? (
-            // Consumer role cannot view documents - show access denied message
+            // RestrictedObserver role cannot view documents - show access denied message
             <div className="flex flex-col items-center justify-center h-full text-center">
               <Shield className="w-12 h-12 text-text-muted mb-4" />
               <h2 className="text-lg font-semibold text-text-primary mb-2">

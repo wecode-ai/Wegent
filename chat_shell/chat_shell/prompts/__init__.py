@@ -26,9 +26,9 @@ from .builder import (
     get_deep_thinking_prompt,
 )
 from .knowledge_base import (
-    KB_PROMPT_CONSUMER,
     KB_PROMPT_NO_RAG,
     KB_PROMPT_RELAXED,
+    KB_PROMPT_RESTRICTED_OBSERVER,
     KB_PROMPT_STRICT,
 )
 
@@ -39,7 +39,7 @@ __all__ = [
     "KB_PROMPT_STRICT",
     "KB_PROMPT_RELAXED",
     "KB_PROMPT_NO_RAG",
-    "KB_PROMPT_CONSUMER",
+    "KB_PROMPT_RESTRICTED_OBSERVER",
     # Functions
     "get_clarification_prompt",
     "append_clarification_prompt",

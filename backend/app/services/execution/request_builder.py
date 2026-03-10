@@ -210,10 +210,11 @@ class TaskRequestBuilder:
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
 
-        # Determine if user has Consumer role for all requested knowledge bases.
-        # Consumer users can only use KB via RAG search, not browse documents.
-        is_consumer = self._is_consumer_for_all_kbs(knowledge_base_ids, user.id)
-
+        # Determine if user has RestrictedObserver role for all requested knowledge bases.
+        # RestrictedObserver users can only use KB via RAG search, not browse documents.
+        is_restricted_observer = self._is_restricted_observer_for_all_kbs(
+            knowledge_base_ids, user.id
+        )
         return ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
@@ -240,7 +241,7 @@ class TaskRequestBuilder:
             document_ids=document_ids,
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
-            is_consumer=is_consumer,
+            is_restricted_observer=is_restricted_observer,
             workspace=workspace,
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
@@ -264,16 +265,16 @@ class TaskRequestBuilder:
         )
 
     # =========================================================================
-    # Consumer Role Detection
+    # RestrictedObserver Role Detection
     # =========================================================================
 
-    def _is_consumer_for_all_kbs(
+    def _is_restricted_observer_for_all_kbs(
         self, knowledge_base_ids: Optional[List[int]], user_id: int
     ) -> bool:
-        """Check if user holds Consumer role for ALL requested knowledge bases.
+        """Check if user holds RestrictedObserver role for ALL requested knowledge bases.
 
         Returns False when there are no knowledge bases, so callers can safely
-        pass the result into ``is_consumer`` without extra guards.
+        pass the result into ``is_restricted_observer`` without extra guards.
         """
         if not knowledge_base_ids:
             return False
@@ -281,15 +282,18 @@ class TaskRequestBuilder:
         from app.models.resource_member import ResourceRole
         from app.services.share import knowledge_share_service
 
-        consumer_count = 0
+        restricted_observer_count = 0
         for kb_id in knowledge_base_ids:
             has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
                 self.db, kb_id, user_id
             )
-            if has_access and role == ResourceRole.CONSUMER.value:
-                consumer_count += 1
+            if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
+                restricted_observer_count += 1
 
-        return consumer_count == len(knowledge_base_ids) and consumer_count > 0
+        return (
+            restricted_observer_count == len(knowledge_base_ids)
+            and restricted_observer_count > 0
+        )
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)

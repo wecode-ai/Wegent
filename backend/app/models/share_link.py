@@ -93,7 +93,7 @@ class ShareLink(Base):
         nullable=False,
         default="Reporter",
         server_default="Reporter",
-        comment="Default role for joiners: Owner, Maintainer, Developer, Reporter, Consumer",
+        comment="Default role for joiners: Owner, Maintainer, Developer, Reporter, RestrictedObserver",
     )
 
     # Expiration - default to year 9999 for "never expires"

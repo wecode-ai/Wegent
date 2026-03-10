@@ -25,7 +25,11 @@ from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
-from shared.prompts import KB_PROMPT_CONSUMER, KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+from shared.prompts import (
+    KB_PROMPT_RELAXED,
+    KB_PROMPT_RESTRICTED_OBSERVER,
+    KB_PROMPT_STRICT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1127,22 +1131,25 @@ def _prepare_kb_tools_from_contexts(
         f"{len(knowledge_base_ids)} knowledge bases: {knowledge_base_ids}"
     )
 
-    # Check if user has Consumer role for any of the knowledge bases.
-    # If the user is Consumer for ALL KBs, use Consumer mode (restricted).
+    # Check if user has RestrictedObserver role for any of the knowledge bases.
+    # If the user is RestrictedObserver for ALL KBs, use RestrictedObserver mode (restricted).
     from app.models.resource_member import ResourceRole
     from app.services.share import knowledge_share_service
 
-    is_consumer_only = False
+    is_restricted_observer_only = False
     if knowledge_base_ids:
-        consumer_count = 0
+        restricted_observer_count = 0
         for kb_id in knowledge_base_ids:
             has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
                 db, kb_id, user_id
             )
-            if has_access and role == ResourceRole.CONSUMER.value:
-                consumer_count += 1
-        # If all KBs are Consumer-only access, restrict tools
-        is_consumer_only = consumer_count == len(knowledge_base_ids) and consumer_count > 0
+            if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
+                restricted_observer_count += 1
+        # If all KBs are RestrictedObserver-only access, restrict tools
+        is_restricted_observer_only = (
+            restricted_observer_count == len(knowledge_base_ids)
+            and restricted_observer_count > 0
+        )
 
     # Import KnowledgeBaseTool
     from chat_shell.tools.builtin import KnowledgeBaseTool
@@ -1160,15 +1167,14 @@ def _prepare_kb_tools_from_contexts(
     # Build KB meta prompt for dynamic_context injection.
     # This is based on the resolved KB IDs of the CURRENT request (no DB scanning by task).
     kb_meta_prompt = _build_kb_meta_prompt(db, knowledge_base_ids)
-
     # Choose prompt template based on user role and whether KB is user-selected or inherited.
-    # Consumer users get a restricted prompt that prevents raw content leaking.
-    if is_consumer_only:
-        # Consumer mode: User can only use KB via RAG, no exploration tools
-        kb_instruction = KB_PROMPT_CONSUMER
+    # RestrictedObserver users get a restricted prompt that prevents raw content leaking.
+    if is_restricted_observer_only:
+        # RestrictedObserver mode: User can only use KB via RAG, no exploration tools
+        kb_instruction = KB_PROMPT_RESTRICTED_OBSERVER
         logger.info(
-            "[_prepare_kb_tools_from_contexts] Using CONSUMER mode prompt "
-            "(user has Consumer role, kb_ls/kb_head disabled)"
+            "[_prepare_kb_tools_from_contexts] Using RESTRICTED_OBSERVER mode prompt "
+            "(user has RestrictedObserver role, kb_ls/kb_head disabled)"
         )
     elif is_user_selected_kb:
         # Strict mode: User explicitly selected KB for this message

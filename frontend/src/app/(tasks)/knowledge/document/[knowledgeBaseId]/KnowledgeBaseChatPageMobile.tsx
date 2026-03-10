@@ -201,8 +201,8 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
-  // Check if user can view documents (not Consumer role)
-  // Consumer role can only use KB via chat, cannot view document list
+  // Check if user can view documents (not RestrictedObserver role)
+  // RestrictedObserver role can only use KB via chat, cannot view document list
   const canViewDocuments = useMemo(() => {
     if (!knowledgeBase || !user) return false
     // Personal knowledge base - owner can always view
@@ -210,7 +210,7 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
       // Owner can view
       if (knowledgeBase.user_id === user.id) return true
       // Check explicit permission from myPermission
-      // Consumer permission level is 'use', which cannot view documents
+      // RestrictedObserver permission level is 'use', which cannot view documents
       if (myPermission?.permission_level === 'use') return false
       // Other permission levels (view, edit, manage) can view
       return myPermission?.has_access === true
@@ -220,9 +220,9 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
       return true
     }
     // Group knowledge base - check group role
-    // Consumer role cannot view documents
+    // RestrictedObserver role cannot view documents
     const groupRole = groupRoleMap.get(knowledgeBase.namespace)
-    return groupRole !== 'Consumer' && groupRole !== undefined
+    return groupRole !== 'RestrictedObserver' && groupRole !== undefined
   }, [knowledgeBase, user, groupRoleMap, myPermission])
 
   // Loading state
@@ -289,7 +289,7 @@ export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseCh
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          {/* Document drawer button (hidden for Consumer role) */}
+          {/* Document drawer button (hidden for RestrictedObserver role) */}
           {canViewDocuments && (
             <Button
               variant="outline"

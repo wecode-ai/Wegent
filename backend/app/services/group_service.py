@@ -116,7 +116,7 @@ def create_group(
             GroupRole.Maintainer: 1,
             GroupRole.Developer: 2,
             GroupRole.Reporter: 3,
-            GroupRole.Consumer: 4,
+            GroupRole.RestrictedObserver: 4,
         }
 
         if (
@@ -543,7 +543,7 @@ def remove_member(
         GroupRole.Maintainer: 1,
         GroupRole.Developer: 2,
         GroupRole.Reporter: 3,
-        GroupRole.Consumer: 4,
+        GroupRole.RestrictedObserver: 4,
     }
 
     # Allow self-removal
@@ -648,7 +648,7 @@ def update_member_role(
         GroupRole.Maintainer.value: "manage",
         GroupRole.Developer.value: "edit",
         GroupRole.Reporter.value: "view",
-        GroupRole.Consumer.value: "use",
+        GroupRole.RestrictedObserver.value: "use",
     }
     member.permission_level = role_to_permission.get(new_role.value, "view")
 

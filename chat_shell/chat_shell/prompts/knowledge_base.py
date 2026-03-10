@@ -9,9 +9,9 @@ This module re-exports shared KB prompts for backward compatibility.
 
 # Import from shared module (single source of truth)
 from shared.prompts import (
-    KB_PROMPT_CONSUMER,
     KB_PROMPT_NO_RAG,
     KB_PROMPT_RELAXED,
+    KB_PROMPT_RESTRICTED_OBSERVER,
     KB_PROMPT_STRICT,
 )
 
@@ -19,5 +19,5 @@ __all__ = [
     "KB_PROMPT_STRICT",
     "KB_PROMPT_RELAXED",
     "KB_PROMPT_NO_RAG",
-    "KB_PROMPT_CONSUMER",
+    "KB_PROMPT_RESTRICTED_OBSERVER",
 ]

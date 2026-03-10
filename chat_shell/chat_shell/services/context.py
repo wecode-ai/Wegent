@@ -324,18 +324,18 @@ class ChatContext:
                 "skipping KB prompt enhancement"
             )
 
-        # Resolve is_consumer from the execution request.
+        # Resolve is_restricted_observer from the execution request.
         # Backend sets this field; if it's missing (None) and KBs are present,
         # prepare_knowledge_base_tools will raise ValueError.
-        is_consumer = getattr(self._request, "is_consumer", None)
-        if is_consumer is None and self._request.knowledge_base_ids:
-            # Fallback for older Backend versions that don't set is_consumer:
-            # default to False (non-consumer) to preserve backward compatibility.
+        is_restricted_observer = getattr(self._request, "is_restricted_observer", None)
+        if is_restricted_observer is None and self._request.knowledge_base_ids:
+            # Fallback for older Backend versions that don't set is_restricted_observer:
+            # default to False (non-restricted-observer) to preserve backward compatibility.
             logger.warning(
-                "[CHAT_CONTEXT] is_consumer not set in ExecutionRequest but "
+                "[CHAT_CONTEXT] is_restricted_observer not set in ExecutionRequest but "
                 "knowledge_base_ids is non-empty; defaulting to False"
             )
-            is_consumer = False
+            is_restricted_observer = False
 
         # KB configs (max_calls, exempt_calls, name) are now fetched by KnowledgeBaseTool from Backend API
         result = await prepare_knowledge_base_tools(
@@ -351,7 +351,9 @@ class ChatContext:
             context_window=context_window,
             skip_prompt_enhancement=skip_prompt_enhancement,
             user_name=self._request.user_name,
-            is_consumer=is_consumer if is_consumer is not None else False,
+            is_restricted_observer=(
+                is_restricted_observer if is_restricted_observer is not None else False
+            ),
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result.extra_tools)})
         return result

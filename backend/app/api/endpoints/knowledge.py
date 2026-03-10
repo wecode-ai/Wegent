@@ -45,7 +45,7 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
-from app.services.knowledge.exceptions import ConsumerAccessDeniedError
+from app.services.knowledge.exceptions import RestrictedObserverAccessDeniedError
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 from shared.telemetry.decorators import (
     add_span_event,
@@ -60,13 +60,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ============== Consumer Guard Helper ==============
+# ============== RestrictedObserver Guard Helper ==============
 
 
-def _ensure_not_consumer(db: Session, kb_id: int, user_id: int) -> None:
-    """Raise 403 if the user holds only the Consumer role for the given knowledge base.
+def _ensure_not_restricted_observer(db: Session, kb_id: int, user_id: int) -> None:
+    """Raise 403 if the user holds only the RestrictedObserver role for the given knowledge base.
 
-    This centralises the Consumer-role check so that every document/chunk
+    This centralises the RestrictedObserver-role check so that every document/chunk
     content-retrieval endpoint calls the same guard instead of duplicating
     the logic inline.
     """
@@ -76,10 +76,10 @@ def _ensure_not_consumer(db: Session, kb_id: int, user_id: int) -> None:
     has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
         db, kb_id, user_id
     )
-    if has_access and role == ResourceRole.CONSUMER.value:
+    if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Consumer role cannot view document content. "
+            detail="RestrictedObserver role cannot view document content. "
             "You can use this knowledge base via chat only.",
         )
 
@@ -407,7 +407,7 @@ def list_documents(
             user=current_user,
             knowledge_base_id=knowledge_base_id,
         )
-    except ConsumerAccessDeniedError as e:
+    except RestrictedObserverAccessDeniedError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e),
@@ -704,8 +704,8 @@ def get_document_detail_standalone(
             detail="Access denied to this document",
         )
 
-    # Block Consumer role from viewing document content
-    _ensure_not_consumer(db, document.kind_id, current_user.id)
+    # Block RestrictedObserver role from viewing document content
+    _ensure_not_restricted_observer(db, document.kind_id, current_user.id)
 
     # Get content if requested
     content = None
@@ -1073,8 +1073,8 @@ async def get_document_detail(
             detail="Knowledge base not found or access denied",
         )
 
-    # Block Consumer role from viewing document content
-    _ensure_not_consumer(db, kb_id, current_user.id)
+    # Block RestrictedObserver role from viewing document content
+    _ensure_not_restricted_observer(db, kb_id, current_user.id)
 
     # Validate document belongs to the specified knowledge base
     document = (
@@ -1430,8 +1430,8 @@ def list_document_chunks(
             detail="Access denied to this document",
         )
 
-    # Block Consumer role from viewing chunk content
-    _ensure_not_consumer(db, document.kind_id, current_user.id)
+    # Block RestrictedObserver role from viewing chunk content
+    _ensure_not_restricted_observer(db, document.kind_id, current_user.id)
 
     # Get chunks from document
     chunks_data = document.chunks or {}
@@ -1501,8 +1501,8 @@ def get_document_chunk(
             detail="Access denied to this document",
         )
 
-    # Block Consumer role from viewing chunk content
-    _ensure_not_consumer(db, document.kind_id, current_user.id)
+    # Block RestrictedObserver role from viewing chunk content
+    _ensure_not_restricted_observer(db, document.kind_id, current_user.id)
 
     # Get chunk by index
     chunks_data = document.chunks or {}

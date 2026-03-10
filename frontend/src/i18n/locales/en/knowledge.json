@@ -184,7 +184,7 @@
     },
     "accessDenied": {
       "title": "No Permission to View Documents",
-      "consumerMessage": "Your role in this group is \"Consumer\", which only allows using the knowledge base via chat. You cannot view document content. Please contact the group administrator to upgrade your permissions if needed."
+      "consumerMessage": "Your role in this group is \"RestrictedObserver\", which only allows using the knowledge base via chat. You cannot view document content. Please contact the group administrator to upgrade your permissions if needed."
     },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
@@ -304,12 +304,12 @@
         "Maintainer": "Maintainer",
         "Developer": "Developer",
         "Reporter": "Reporter",
-        "Consumer": "Consumer",
+        "RestrictedObserver": "RestrictedObserver",
         "OwnerDescription": "Creator with full permissions (only the creator can have this role)",
         "MaintainerDescription": "Maintainer who can manage members and edit content",
         "DeveloperDescription": "Developer who can edit content",
         "ReporterDescription": "User who can only view content",
-        "ConsumerDescription": "Consumer who can only use the knowledge base via chat, cannot view document content"
+        "RestrictedObserverDescription": "RestrictedObserver who can only use the knowledge base via chat, cannot view document content"
       },
       "viewDescription": "Can browse knowledge base content only",
       "editDescription": "Can add, modify, and delete documents",

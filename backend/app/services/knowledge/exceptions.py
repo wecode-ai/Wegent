@@ -5,6 +5,6 @@
 """Knowledge service domain exceptions."""
 
 
-class ConsumerAccessDeniedError(Exception):
-    """Raised when a Consumer-role user attempts an operation
+class RestrictedObserverAccessDeniedError(Exception):
+    """Raised when a RestrictedObserver-role user attempts an operation
     that requires a higher permission level (e.g. viewing documents)."""

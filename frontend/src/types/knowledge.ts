@@ -334,7 +334,7 @@ export type PermissionStatus = 'pending' | 'approved' | 'rejected'
 export type ReviewAction = 'approve' | 'reject'
 
 // New role-based permission types
-export type MemberRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'Consumer'
+export type MemberRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedObserver'
 
 // Role to permission level mapping
 export const ROLE_TO_PERMISSION: Record<MemberRole, PermissionLevel> = {
@@ -342,12 +342,12 @@ export const ROLE_TO_PERMISSION: Record<MemberRole, PermissionLevel> = {
   Maintainer: 'manage',
   Developer: 'edit',
   Reporter: 'view',
-  Consumer: 'use',
+  RestrictedObserver: 'use',
 }
 
 // Permission level to role mapping (for backward compatibility)
 export const PERMISSION_TO_ROLE: Record<PermissionLevel, MemberRole> = {
-  use: 'Consumer',
+  use: 'RestrictedObserver',
   view: 'Reporter',
   edit: 'Developer',
   manage: 'Maintainer',
@@ -359,7 +359,7 @@ export const ROLE_DISPLAY_NAMES: Record<MemberRole, string> = {
   Maintainer: '管理员',
   Developer: '开发者',
   Reporter: '使用者',
-  Consumer: '消费者',
+  RestrictedObserver: '受限观察者',
 }
 
 // Role display names (English)
@@ -368,7 +368,7 @@ export const ROLE_DISPLAY_NAMES_EN: Record<MemberRole, string> = {
   Maintainer: 'Maintainer',
   Developer: 'Developer',
   Reporter: 'Reporter',
-  Consumer: 'Consumer',
+  RestrictedObserver: 'RestrictedObserver',
 }
 
 // Role hierarchy for comparison (higher = more permissions)
@@ -377,7 +377,7 @@ export const ROLE_HIERARCHY: Record<MemberRole, number> = {
   Maintainer: 4,
   Developer: 3,
   Reporter: 2,
-  Consumer: 1,
+  RestrictedObserver: 1,
 }
 
 // Permission Apply types
@@ -462,7 +462,7 @@ export interface ApprovedPermissionsByRole {
   Maintainer: PermissionUserInfo[]
   Developer: PermissionUserInfo[]
   Reporter: PermissionUserInfo[]
-  Consumer: PermissionUserInfo[]
+  RestrictedObserver: PermissionUserInfo[]
 }
 
 /** @deprecated Use ApprovedPermissionsByRole instead */

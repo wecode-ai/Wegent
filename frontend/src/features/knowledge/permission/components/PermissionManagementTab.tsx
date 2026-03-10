@@ -127,7 +127,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     (permissions?.approved.Maintainer?.length || 0) +
     (permissions?.approved.Developer?.length || 0) +
     (permissions?.approved.Reporter?.length || 0) +
-    (permissions?.approved.Consumer?.length || 0)
+    (permissions?.approved.RestrictedObserver?.length || 0)
 
   return (
     <div className="space-y-6 p-4">
@@ -208,8 +208,8 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                       <SelectItem value="Reporter">
                         {t('document.permission.role.Reporter')}
                       </SelectItem>
-                      <SelectItem value="Consumer">
-                        {t('document.permission.role.Consumer')}
+                      <SelectItem value="RestrictedObserver">
+                        {t('document.permission.role.RestrictedObserver')}
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -320,11 +320,11 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                 t={t}
               />
             )}
-            {/* Consumer permissions */}
-            {(permissions?.approved.Consumer?.length || 0) > 0 && (
+            {/* RestrictedObserver permissions */}
+            {(permissions?.approved.RestrictedObserver?.length || 0) > 0 && (
               <PermissionGroup
-                title={t('document.permission.role.Consumer')}
-                users={permissions!.approved.Consumer}
+                title={t('document.permission.role.RestrictedObserver')}
+                users={permissions!.approved.RestrictedObserver}
                 editingId={editingId}
                 editingRole={editingRole}
                 setEditingRole={setEditingRole}
@@ -410,8 +410,8 @@ function PermissionGroup({
                     <SelectItem value="Reporter">
                       {t('document.permission.role.Reporter')}
                     </SelectItem>
-                    <SelectItem value="Consumer">
-                      {t('document.permission.role.Consumer')}
+                    <SelectItem value="RestrictedObserver">
+                      {t('document.permission.role.RestrictedObserver')}
                     </SelectItem>
                   </SelectContent>
                 </Select>

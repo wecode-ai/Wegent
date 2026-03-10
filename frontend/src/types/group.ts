@@ -6,7 +6,7 @@
  * Group (Namespace) related types
  */
 
-export type GroupRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'Consumer'
+export type GroupRole = 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedObserver'
 
 export type GroupVisibility = 'private' | 'internal' | 'public'
 

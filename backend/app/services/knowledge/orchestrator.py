@@ -37,7 +37,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     ResourceScope,
 )
-from app.services.knowledge.exceptions import ConsumerAccessDeniedError
+from app.services.knowledge.exceptions import RestrictedObserverAccessDeniedError
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
@@ -614,13 +614,13 @@ class KnowledgeOrchestrator:
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
-        # Consumer role cannot view document list
+        # RestrictedObserver role cannot view document list
         has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
             db, knowledge_base_id, user.id
         )
-        if has_access and role == ResourceRole.CONSUMER.value:
-            raise ConsumerAccessDeniedError(
-                "Consumer role cannot view document list. "
+        if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
+            raise RestrictedObserverAccessDeniedError(
+                "RestrictedObserver role cannot view document list. "
                 "You can use this knowledge base via chat only."
             )
 

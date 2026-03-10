@@ -261,7 +261,7 @@ class KnowledgeShareService(UnifiedShareService):
             group_role = get_effective_role_in_group(db, user_id, kb.namespace)
             if group_role is not None:
                 # Map group role to permission level
-                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view, Consumer -> use
+                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view, RestrictedObserver -> use
                 role_mapping = {
                     "Owner": (
                         ResourceRole.MAINTAINER.value,
@@ -279,8 +279,8 @@ class KnowledgeShareService(UnifiedShareService):
                         ResourceRole.REPORTER.value,
                         PermissionLevel.VIEW.value,
                     ),
-                    "Consumer": (
-                        ResourceRole.CONSUMER.value,
+                    "RestrictedObserver": (
+                        ResourceRole.RESTRICTED_OBSERVER.value,
                         PermissionLevel.USE.value,
                     ),
                 }
@@ -486,7 +486,10 @@ class KnowledgeShareService(UnifiedShareService):
                         SchemaPermissionLevel.EDIT,
                     ),
                     "Reporter": (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
-                    "Consumer": (SchemaMemberRole.CONSUMER, SchemaPermissionLevel.USE),
+                    "RestrictedObserver": (
+                        SchemaMemberRole.RESTRICTED_OBSERVER,
+                        SchemaPermissionLevel.USE,
+                    ),
                 }
                 group_role, group_level = role_mapping.get(
                     team_role, (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW)
@@ -682,7 +685,7 @@ class KnowledgeShareService(UnifiedShareService):
         default_role = getattr(share_link, "default_role", None)
         if not default_role:
             role_mapping = {
-                PermissionLevel.USE.value: ResourceRole.CONSUMER.value,
+                PermissionLevel.USE.value: ResourceRole.RESTRICTED_OBSERVER.value,
                 PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
                 PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
                 PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
