@@ -101,29 +101,19 @@ class TestTaskMemberServiceGroupChatDetection:
         mock_member.status = MemberStatus.APPROVED
         mock_member.copied_resource_id = 0  # Real group chat member
 
-        # Mock task with json attribute for get_linked_group check
-        mock_task = Mock(spec=TaskResource)
-        mock_task.id = 100
-        mock_task.user_id = 1
-        mock_task.json = {"spec": {}}  # No linked_group, not a linked group chat
-
         with patch.object(
             task_member_service, "is_task_owner", return_value=False
         ) as mock_owner:
-            with patch.object(
-                task_member_service, "get_task", return_value=mock_task
-            ) as mock_get_task:
-                mock_query = MagicMock()
-                mock_db.query.return_value = mock_query
-                mock_query.filter.return_value = mock_query
-                mock_query.first.return_value = mock_member
+            mock_query = MagicMock()
+            mock_db.query.return_value = mock_query
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = mock_member
 
-                result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
+            result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
 
-                # User 2 should be considered a member
-                assert result is True
-                mock_owner.assert_called_once_with(mock_db, 100, 2)
-                mock_get_task.assert_called_once_with(mock_db, 100)
+            # User 2 should be considered a member
+            assert result is True
+            mock_owner.assert_called_once_with(mock_db, 100, 2)
 
     def test_get_member_count_excludes_share_records(
         self, task_member_service, mock_db

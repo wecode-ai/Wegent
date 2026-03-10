@@ -21,8 +21,6 @@
   "view_permission_desc": "Can view documents in this knowledge base",
   "edit_permission": "Edit",
   "edit_permission_desc": "Can view and edit documents in this knowledge base",
-  "use_permission": "Use",
-  "use_permission_desc": "Can use the knowledge base via chat only, cannot view document content",
   "submit_request": "Submit Request",
   "request_submitted": "Request Submitted",
   "request_submitted_desc": "Your access request has been submitted. Please wait for the owner's approval.",

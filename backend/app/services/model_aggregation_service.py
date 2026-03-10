@@ -313,8 +313,7 @@ class ModelAggregationService:
 
         Scope behavior:
         - scope='personal' (default): personal models + public models
-        - scope='group': group models + personal models + public models (requires group_name)
-          Personal models are included as fallback when no group/public models exist.
+        - scope='group': group models + public models (requires group_name)
         - scope='all': personal + public + all user's groups
 
         Each returned model includes a 'type' field to identify its source.
@@ -351,18 +350,12 @@ class ModelAggregationService:
 
         # Determine which namespaces to query based on scope
         namespaces_to_query = []
-        include_personal_fallback = (
-            False  # Whether to include personal models as fallback
-        )
 
         if scope == "personal":
             # Personal models only
             namespaces_to_query = ["default"]
         elif scope == "group":
-            # Group models + personal models (as fallback) + public models
-            # Personal models are included so users can use their own models
-            # when creating group knowledge bases, even if no group/public models exist
-            include_personal_fallback = True  # Include personal models as fallback
+            # Group models - if group_name not provided, query all user's groups
             if group_name:
                 namespaces_to_query = [group_name]
             else:
@@ -439,52 +432,6 @@ class ModelAggregationService:
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
-
-        # 1.5. Include personal models as fallback for group scope
-        # This allows users to use their personal models when creating group knowledge bases
-        if include_personal_fallback:
-            personal_model_resources = kind_service.list_resources(
-                user_id=current_user.id, kind="Model", namespace="default"
-            )
-            for resource in personal_model_resources:
-                # Format the resource to get the full CRD data
-                model_data = kind_service._format_resource("Model", resource)
-
-                # Skip custom config models
-                if self._is_custom_model(model_data):
-                    continue
-                info = self._extract_model_info_from_crd(model_data)
-
-                if shell_type and not self._is_model_compatible_with_shell(
-                    info["provider"], actual_shell_type, support_model
-                ):
-                    continue
-
-                # Filter by model category type if specified
-                if (
-                    model_category_type
-                    and info.get("model_category_type", "llm") != model_category_type
-                ):
-                    continue
-
-                # Deduplicate by name - skip if already added from group
-                if resource.name in seen_names:
-                    continue
-
-                unified = UnifiedModel(
-                    name=resource.name,
-                    model_type=ModelType.USER,  # Personal models
-                    display_name=info["display_name"],
-                    provider=info["provider"],
-                    model_id=info["model_id"],
-                    config=info["config"],
-                    is_active=resource.is_active,
-                    namespace=resource.namespace,
-                    model_category_type=info.get("model_category_type", "llm"),
-                    is_advanced=info.get("is_advanced", False),
-                )
-                result.append(unified)
-                seen_names[resource.name] = ModelType.USER
 
         # 2. Get public models via public_model_service (type='public')
         public_models = public_model_service.get_models(

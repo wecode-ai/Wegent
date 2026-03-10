@@ -377,12 +377,6 @@ def _resolve_model_for_bot(
         Tuple of (model_kind, model_spec, model_name, raw_agent_config).
         model_kind/model_spec/model_name may be None if no model is found.
     """
-    # [DEBUG] Log input parameters
-    logger.info(
-        f"[_resolve_model_for_bot] Input: bot_name='{bot.name}', bot_user_id={bot.user_id}, "
-        f"query_user_id={user_id}, override_model_name='{override_model_name}', force_override={force_override}"
-    )
-
     bot_crd = Bot.model_validate(bot.json)
     bot_json = bot.json or {}
     bot_spec = bot_json.get("spec", {})
@@ -393,51 +387,29 @@ def _resolve_model_for_bot(
     # Priority 1: Force override from task
     if force_override and override_model_name:
         model_name = override_model_name
-        logger.info(
-            f"[_resolve_model_for_bot] Using task model (force override): {model_name}"
-        )
+        logger.info(f"Using task model (force override): {model_name}")
     else:
         # Priority 2: Bot's agent_config.bind_model
         bind_model = raw_agent_config.get("bind_model")
         if bind_model and isinstance(bind_model, str) and bind_model.strip():
             model_name = bind_model.strip()
-            logger.info(f"[_resolve_model_for_bot] Using bot bound model: {model_name}")
+            logger.info(f"Using bot bound model: {model_name}")
 
         # Priority 3: Bot's modelRef (legacy)
         if not model_name and bot_crd.spec.modelRef:
             model_name = bot_crd.spec.modelRef.name
-            logger.info(f"[_resolve_model_for_bot] Using bot modelRef: {model_name}")
+            logger.info(f"Using bot modelRef: {model_name}")
 
         # Priority 4: Task-level override (fallback)
         if not model_name and override_model_name:
             model_name = override_model_name
-            logger.info(
-                f"[_resolve_model_for_bot] Using task model (fallback): {model_name}"
-            )
+            logger.info(f"Using task model (fallback): {model_name}")
 
     if not model_name:
-        logger.warning(
-            f"[_resolve_model_for_bot] No model name resolved for bot '{bot.name}'"
-        )
         return None, None, None, raw_agent_config
 
     # Find the model Kind object
-    logger.info(
-        f"[_resolve_model_for_bot] Looking for model '{model_name}' with user_id={user_id}"
-    )
     model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
-
-    if not model_spec:
-        logger.error(
-            f"[_resolve_model_for_bot] Model '{model_name}' not found for bot '{bot.name}' "
-            f"(query_user_id={user_id})"
-        )
-    else:
-        logger.info(
-            f"[_resolve_model_for_bot] Successfully resolved model '{model_name}' "
-            f"(namespace={model_kind.namespace if model_kind else 'unknown'})"
-        )
-
     return model_kind, model_spec, model_name, raw_agent_config
 
 
@@ -514,32 +486,15 @@ def get_model_config_for_bot(
     Raises:
         ValueError: If no model is configured or model not found
     """
-    # [DEBUG] Log function entry
-    logger.info(
-        f"[get_model_config_for_bot] Called with: bot_name='{bot.name}', bot_user_id={bot.user_id}, "
-        f"query_user_id={user_id}, override_model_name='{override_model_name}'"
-    )
-
     model_kind, model_spec, model_name, _ = _resolve_model_for_bot(
         db, bot, user_id, override_model_name, force_override
     )
 
     if not model_name:
-        logger.error(
-            f"[get_model_config_for_bot] Bot '{bot.name}' has no model configured"
-        )
         raise ValueError(f"Bot {bot.name} has no model configured")
 
     if not model_spec:
-        logger.error(
-            f"[get_model_config_for_bot] Model '{model_name}' not found "
-            f"(bot='{bot.name}', query_user_id={user_id})"
-        )
         raise ValueError(f"Model {model_name} not found")
-
-    logger.info(
-        f"[get_model_config_for_bot] Successfully got config for model '{model_name}'"
-    )
 
     # Use the actual namespace from the found model
     model_namespace = (
@@ -593,11 +548,6 @@ def _find_model_with_namespace(
     Returns:
         Tuple of (Kind object, Model spec dictionary) or (None, None) if not found
     """
-    # [DEBUG] Log search parameters
-    logger.info(
-        f"[_find_model_with_namespace] Searching for model: name='{model_name}', user_id={user_id}"
-    )
-
     # Search user's private models first
     user_model = (
         db.query(Kind)
@@ -615,17 +565,11 @@ def _find_model_with_namespace(
             f"Found model '{model_name}' in user's private models (namespace: {user_model.namespace})"
         )
         return user_model, user_model.json.get("spec", {})
-    else:
-        logger.info(
-            f"[_find_model_with_namespace] Model '{model_name}' not found in user {user_id}'s private models"
-        )
 
     # Search group models
     from app.services.group_permission import get_user_groups
 
     user_groups = get_user_groups(db, user_id)
-    logger.info(f"[_find_model_with_namespace] User {user_id}'s groups: {user_groups}")
-
     if user_groups:
         group_model = (
             db.query(Kind)
@@ -643,10 +587,6 @@ def _find_model_with_namespace(
                 f"Found model '{model_name}' in group models (namespace: {group_model.namespace})"
             )
             return group_model, group_model.json.get("spec", {})
-        else:
-            logger.info(
-                f"[_find_model_with_namespace] Model '{model_name}' not found in group models"
-            )
 
     # Search public models
     public_model = (
@@ -666,36 +606,6 @@ def _find_model_with_namespace(
             f"Found model '{model_name}' in public models (namespace: {public_model.namespace})"
         )
         return public_model, public_model.json.get("spec", {})
-    else:
-        logger.info(
-            f"[_find_model_with_namespace] Model '{model_name}' not found in public models"
-        )
-
-    # [DEBUG] Log all models with similar names to help diagnose
-    similar_models = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Model",
-            Kind.name.ilike(f"%{model_name}%"),
-        )
-        .all()
-    )
-    if similar_models:
-        model_list = [
-            f"(name='{m.name}', user_id={m.user_id}, namespace='{m.namespace}', is_active={m.is_active})"
-            for m in similar_models
-        ]
-        logger.warning(
-            f"[_find_model_with_namespace] Model '{model_name}' not found. "
-            f"Found {len(similar_models)} similar models: {model_list}"
-        )
-    else:
-        # Check if there are any models at all in the system
-        all_models_count = db.query(Kind).filter(Kind.kind == "Model").count()
-        logger.warning(
-            f"[_find_model_with_namespace] Model '{model_name}' not found in any source. "
-            f"Total Model kinds in system: {all_models_count}"
-        )
 
     logger.warning(f"Model '{model_name}' not found in any source")
     return None, None

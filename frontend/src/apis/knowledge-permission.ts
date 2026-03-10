@@ -143,12 +143,11 @@ export const knowledgePermissionApi = {
         acc[role].push(member)
         return acc
       },
-      { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedObserver: [] } as {
+      { Owner: [], Maintainer: [], Developer: [], Reporter: [] } as {
         Owner: typeof pending
         Maintainer: typeof pending
         Developer: typeof pending
         Reporter: typeof pending
-        RestrictedObserver: typeof pending
       }
     )
     return { pending, approved }
