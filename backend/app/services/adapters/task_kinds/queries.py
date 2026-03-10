@@ -210,9 +210,6 @@ class TaskQueryMixin:
         Get user's group chat task list with pagination (lightweight version).
 
         Returns only group chat tasks sorted by updated_at descending.
-        Includes:
-        1. Tasks with ResourceMember records (regular group chats)
-        2. Tasks with is_group_chat=true explicitly set
         """
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
@@ -257,12 +254,7 @@ class TaskQueryMixin:
 
         explicit_group_ids = {row[0] for row in explicit_group_result}
 
-        logger.info(
-            f"[get_user_group_tasks_lite] user_id={user_id}, member_task_ids={len(member_task_ids)}, "
-            f"explicit_group_ids={len(explicit_group_ids)}"
-        )
-
-        # Combine all sets
+        # Combine both sets
         all_group_task_ids = member_task_ids | explicit_group_ids
 
         if not all_group_task_ids:

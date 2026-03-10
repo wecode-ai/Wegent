@@ -67,24 +67,18 @@ class UnifiedShareService(ABC):
     """
 
     # Permission hierarchy for comparison (legacy, use ROLE_HIERARCHY)
-    # Values start from 1 (not 0) to avoid confusion with default/empty values
-    # Gaps of 1 between levels allow future insertion of intermediate levels
     PERMISSION_HIERARCHY: Dict[str, int] = {
-        PermissionLevel.USE.value: 1,
-        PermissionLevel.VIEW.value: 3,
-        PermissionLevel.EDIT.value: 5,
-        PermissionLevel.MANAGE.value: 7,
+        PermissionLevel.VIEW.value: 1,
+        PermissionLevel.EDIT.value: 2,
+        PermissionLevel.MANAGE.value: 3,
     }
 
     # Role hierarchy for comparison
-    # Values start from 1 (not 0) to avoid confusion with default/empty values
-    # Gaps of 1 between roles allow future insertion of intermediate roles
     ROLE_HIERARCHY: Dict[str, int] = {
-        ResourceRole.RESTRICTED_OBSERVER.value: 1,
-        ResourceRole.REPORTER.value: 3,
-        ResourceRole.DEVELOPER.value: 5,
-        ResourceRole.MAINTAINER.value: 7,
-        ResourceRole.OWNER.value: 9,
+        ResourceRole.REPORTER.value: 1,
+        ResourceRole.DEVELOPER.value: 2,
+        ResourceRole.MAINTAINER.value: 3,
+        ResourceRole.OWNER.value: 4,
     }
 
     # Role to permission level mapping for backward compatibility
@@ -93,12 +87,10 @@ class UnifiedShareService(ABC):
         ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
         ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
         ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
-        ResourceRole.RESTRICTED_OBSERVER.value: PermissionLevel.USE.value,
     }
 
     # Permission level to role mapping for backward compatibility
     PERMISSION_TO_ROLE: Dict[str, str] = {
-        PermissionLevel.USE.value: ResourceRole.RESTRICTED_OBSERVER.value,
         PermissionLevel.VIEW.value: ResourceRole.REPORTER.value,
         PermissionLevel.EDIT.value: ResourceRole.DEVELOPER.value,
         PermissionLevel.MANAGE.value: ResourceRole.MAINTAINER.value,
@@ -343,9 +335,8 @@ class UnifiedShareService(ABC):
                 f"[create_share_link] UPDATING existing link: id={existing_link.id}"
             )
             existing_link.require_approval = config.require_approval
-            existing_link.default_role = config.default_role.value
-            existing_link.default_permission_level = self.ROLE_TO_PERMISSION.get(
-                config.default_role.value, PermissionLevel.VIEW.value
+            existing_link.default_permission_level = (
+                config.default_permission_level.value
             )
             if config.expires_in_hours:
                 existing_link.expires_at = datetime.utcnow() + timedelta(
@@ -399,10 +390,7 @@ class UnifiedShareService(ABC):
             resource_id=resource_id,
             share_token=share_token,
             require_approval=config.require_approval,
-            default_role=config.default_role.value,
-            default_permission_level=self.ROLE_TO_PERMISSION.get(
-                config.default_role.value, PermissionLevel.VIEW.value
-            ),
+            default_permission_level=config.default_permission_level.value,
             expires_at=expires_at,
             created_by_user_id=user_id,
             is_active=True,
@@ -518,6 +506,7 @@ class UnifiedShareService(ABC):
             share_token=share_link.share_token,
             require_approval=share_link.require_approval,
             default_role=default_role,
+            default_permission_level=share_link.default_permission_level,
             expires_at=share_link.expires_at,
             is_active=share_link.is_active,
             created_by_user_id=share_link.created_by_user_id,
@@ -1375,13 +1364,11 @@ class UnifiedShareService(ABC):
 
         # Use effective role for permission check
         effective_role = member.get_effective_role()
-        # Use 0 as default (below minimum hierarchy value of 1) for unknown roles
         actual_level = self.ROLE_HIERARCHY.get(effective_role, 0)
         # Map required permission level to role hierarchy
         required_role = self.PERMISSION_TO_ROLE.get(
             required_level.value, ResourceRole.REPORTER.value
         )
-        # Use 0 as default (below minimum hierarchy value of 1) for unknown roles
         required = self.ROLE_HIERARCHY.get(required_role, 0)
 
         return actual_level >= required

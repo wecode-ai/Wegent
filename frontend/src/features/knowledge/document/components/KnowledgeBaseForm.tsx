@@ -50,7 +50,6 @@ interface KnowledgeBaseFormProps {
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
   retrievalPartialReadOnly?: boolean
-  retrievalShowChangeWarning?: boolean
 }
 
 export function KnowledgeBaseForm({
@@ -78,7 +77,6 @@ export function KnowledgeBaseForm({
   retrievalGroupName,
   retrievalReadOnly,
   retrievalPartialReadOnly,
-  retrievalShowChangeWarning,
 }: KnowledgeBaseFormProps) {
   const { t } = useTranslation()
 
@@ -152,7 +150,6 @@ export function KnowledgeBaseForm({
           groupName={retrievalGroupName}
           readOnly={retrievalReadOnly}
           partialReadOnly={retrievalPartialReadOnly}
-          showChangeWarning={retrievalShowChangeWarning}
         />
       )}
     </div>
