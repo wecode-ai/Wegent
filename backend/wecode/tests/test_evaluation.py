@@ -115,6 +115,35 @@ class TestTopicService:
         assert result is True
         mock_db.flush.assert_called_once()
 
+    def test_list_topics_my_only_calls_query_with_filters(self, topic_service, mock_db):
+        """Test that list_topics with my_only applies correct filters.
+
+        This test verifies that the method constructs queries for listing topics.
+        The actual OR condition logic (creator_id == user_id OR id in permission subquery)
+        is tested via integration tests.
+        """
+        # Setup mock query
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.count.return_value = 0
+        mock_query.order_by.return_value.offset.return_value.limit.return_value.all.return_value = (
+            []
+        )
+        mock_db.query.return_value = mock_query
+
+        # Call list_topics with my_only=True
+        topics, total = topic_service.list_topics(
+            db=mock_db,
+            user_id=1,
+            my_only=True,
+        )
+
+        # Verify that query was called and filters were applied
+        assert mock_db.query.called
+        assert mock_query.filter.called
+        assert total == 0
+        assert topics == []
+
 
 class TestQuestionService:
     """Tests for QuestionService class."""

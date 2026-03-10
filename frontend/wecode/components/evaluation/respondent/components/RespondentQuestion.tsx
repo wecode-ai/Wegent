@@ -167,8 +167,8 @@ export function RespondentQuestion({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleSubmit}>{t('actions.confirm')}</AlertDialogAction>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSubmit}>{t('common:actions.confirm')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

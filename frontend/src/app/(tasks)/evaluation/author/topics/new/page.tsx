@@ -131,7 +131,7 @@ function NewTopicContent() {
 
             <div className="flex justify-end gap-4">
               <Button type="button" variant="outline" onClick={() => router.back()}>
-                {t('actions.cancel', 'Cancel')}
+                {t('common:actions.cancel', 'Cancel')}
               </Button>
               <Button type="submit" variant="primary" disabled={loading}>
                 {loading ? '...' : t('topics.create', 'Create Topic')}

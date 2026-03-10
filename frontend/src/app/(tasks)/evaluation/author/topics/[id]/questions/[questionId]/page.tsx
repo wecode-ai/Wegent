@@ -343,7 +343,7 @@ function QuestionDetailContent() {
             <>
               <Button variant="outline" onClick={() => setIsEditing(true)}>
                 <Edit className="mr-2 h-4 w-4" />
-                {t('actions.edit')}
+                {t('common:actions.edit')}
               </Button>
               {question.status === QuestionStatus.DRAFT && (
                 <Button variant="primary" onClick={handlePublish} disabled={publishing}>
@@ -355,7 +355,7 @@ function QuestionDetailContent() {
                 <AlertDialogTrigger asChild>
                   <Button variant="outline" className="text-destructive">
                     <Trash2 className="mr-2 h-4 w-4" />
-                    {t('actions.delete')}
+                    {t('common:actions.delete')}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
@@ -366,13 +366,13 @@ function QuestionDetailContent() {
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>{t('actions.cancel')}</AlertDialogCancel>
+                    <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
                     <AlertDialogAction
                       onClick={handleDelete}
                       disabled={deleting}
                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                     >
-                      {deleting ? '...' : t('actions.confirm')}
+                      {deleting ? '...' : t('common:actions.confirm')}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
@@ -383,11 +383,11 @@ function QuestionDetailContent() {
             <>
               <Button variant="outline" onClick={handleCancelEdit}>
                 <X className="mr-2 h-4 w-4" />
-                {t('actions.cancel')}
+                {t('common:actions.cancel')}
               </Button>
               <Button variant="primary" onClick={handleSave} disabled={saving}>
                 <Check className="mr-2 h-4 w-4" />
-                {saving ? '...' : t('actions.save')}
+                {saving ? '...' : t('common:actions.save')}
               </Button>
             </>
           )}
@@ -443,7 +443,7 @@ function QuestionDetailContent() {
                         {showContentPreview ? (
                           <>
                             <EyeOff className="mr-1 h-4 w-4" />
-                            {t('actions.edit')}
+                            {t('common:actions.edit')}
                           </>
                         ) : (
                           <>
@@ -497,7 +497,7 @@ function QuestionDetailContent() {
                         {showCriteriaPreview ? (
                           <>
                             <EyeOff className="mr-1 h-4 w-4" />
-                            {t('actions.edit')}
+                            {t('common:actions.edit')}
                           </>
                         ) : (
                           <>
@@ -546,7 +546,7 @@ function QuestionDetailContent() {
                         {showInstructionsPreview ? (
                           <>
                             <EyeOff className="mr-1 h-4 w-4" />
-                            {t('actions.edit')}
+                            {t('common:actions.edit')}
                           </>
                         ) : (
                           <>

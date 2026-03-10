@@ -83,7 +83,14 @@
     "exam_settings": "考试设置",
     "duration": "时长",
     "qa_duration": "答疑时长",
-    "enable_exam_mode_first": "先开启考试模式"
+    "enable_exam_mode_first": "先开启考试模式",
+    "already_published": "已发布",
+    "view_versions_description": "查看此专题的历史版本记录",
+    "stats_summary": "统计概览",
+    "publish_confirm_title": "确认发布专题",
+    "publish_confirm_description": "发布后将创建一个新的版本，答题人将可以看到此专题。确定要继续吗？",
+    "publish_note_title": "发布说明",
+    "publish_note_description": "发布后，专题将对有权限的答题人可见。您可以随时更新专题并发布新版本。"
   },
   "versions": {
     "current": "当前版本",
@@ -102,6 +109,7 @@
     "delete": "删除题目",
     "publish": "发布",
     "add": "添加题目",
+    "add_description": "添加新的题目到当前专题",
     "create_first": "创建第一个题目",
     "question_title": "题目标题",
     "title_placeholder": "请输入题目标题",
@@ -139,13 +147,15 @@
       "url": "链接",
       "attachment": "附件",
       "mixed": "标准"
-    }
+    },
+    "drag_to_reorder": "拖拽以重新排序"
   },
   "permissions": {
     "title": "权限管理",
     "management": "权限管理",
     "description": "管理谁可以查看、答题和评分你的专题。",
     "manage": "管理权限",
+    "manage_description": "管理用户的访问权限和角色",
     "add": "添加权限",
     "add_description": "授予用户访问此专题的权限",
     "remove": "移除",
@@ -164,7 +174,9 @@
       "question_creator": "出题人"
     },
     "granted_success": "权限授予成功",
-    "revoked_success": "权限撤销成功"
+    "revoked_success": "权限撤销成功",
+    "no_permissions_description": "添加用户以授予他们访问此专题的权限。您可以分配不同的角色，如答题人、评分人或出题人。",
+    "users": "用户"
   },
   "answers": {
     "title": "作答",
@@ -229,11 +241,15 @@
     "text_supplement": "文本补充",
     "auto_saved": "自动保存于"
   },
+  "respondents": {
+    "title": "答题人"
+  },
   "grading": {
     "title": "评分",
     "description": "查看和管理此专题的 AI 评分任务。",
     "tasks": "评分任务",
     "view_tasks": "查看评分任务",
+    "view_tasks_description": "查看和管理待处理的评分任务",
     "execute": "执行评分",
     "retry": "重试",
     "retry_hint": "点击重试重新执行评分任务",
@@ -255,6 +271,7 @@
       "failed": "失败",
       "published": "已发布"
     },
+    "completed": "已完成",
     "no_tasks": "暂无评分任务",
     "no_report_data": "暂无报告数据",
     "final_report": "已发布报告",
@@ -325,27 +342,24 @@
     "timeout_config": "超时配置",
     "timeout_description": "设置 AI 评分任务的最大允许时间。",
     "timeout_seconds": "超时时间（秒）",
-    "timeout_hint": "约 {{minutes}} 分钟"
+    "timeout_hint": "约 {{minutes}} 分钟",
+    "tasks_summary": "评分任务汇总",
+    "total_answers": "总答案数",
+    "completed": "已完成",
+    "pending": "待评分",
+    "view_grading_tasks": "查看评分任务"
   },
   "actions": {
-    "save": "保存",
-    "cancel": "取消",
-    "confirm": "确认",
     "back": "返回",
-    "view": "查看",
     "view_details": "查看详情",
-    "edit": "编辑",
     "config": "配置",
-    "delete": "删除",
-    "refresh": "刷新",
-    "creating": "创建中...",
     "downloading": "下载中...",
     "submitting": "提交中...",
-    "download": "下载",
-    "previous": "上一页",
-    "next": "下一页",
     "expand": "展开",
-    "collapse": "收起"
+    "collapse": "收起",
+    "quick_actions": "快捷操作",
+    "publish": "发布",
+    "saving": "保存中..."
   },
   "ui": {
     "question_content": "题目内容",
@@ -375,7 +389,6 @@
     "end_exam": "结束答题",
     "leave_exam": "离开考试",
     "exam_ended": "考试已结束",
-    "submit_count": "共提交了 {{count}} 次答案",
     "progress": {
       "select_topic": "选择题目",
       "upload_materials": "上传材料",
@@ -427,9 +440,6 @@
     "supplementary": {
       "title": "作答说明",
       "placeholder": "请在此输入你的作答说明...",
-      "hint_1": "请补充说明你本次借助 AI 完成作答的整体思路，以及使用的模型与工具，例如：",
-      "hint_2": "使用过哪些模型或平台、是否在不同阶段切换过不同模型或工具、各自用于哪些环节，是否有其他引用来源或辅助工具。",
-      "hint_3": "也可以补充其他你认为可以体现自己AI使用思路、技巧的信息。",
       "character_count": "{{count}} 字",
       "uploaded_files": "已上传的作答说明文件："
     },
@@ -441,7 +451,6 @@
         "report_uploaded": "已上传报告",
         "notes_filled": "已填写说明"
       },
-      "nth_submit": "（第 {{count}} 次提交）",
       "file_limit": "每道题目总附件数不能超过 20 个，当前已上传 {{count}} 个",
       "submit_button": "提交考核材料",
       "resubmit_button": "再次提交"
@@ -496,6 +505,68 @@
       "qa_description": "请仔细阅读考试说明，准备好后点击开始答题，50分钟计时即开始"
     }
   },
+  "exam_sessions": {
+    "title": "考试会话",
+    "view_detail": "查看详情",
+    "view_details": "查看详情",
+    "view_answers": "查看答案",
+    "answer_detail": "作答详情",
+    "no_sessions": "暂无考试会话",
+    "no_sessions_description": "当答题人开始考试后，会话将显示在这里。",
+    "started_at": "开始时间",
+    "duration": "考试时长",
+    "question": "当前题目",
+    "change_phase": "切换阶段",
+    "set_to": "设置为",
+    "current": "当前",
+    "force_end": "强制结束",
+    "reset_session": "重置会话",
+    "load_failed": "加载考试会话失败",
+    "reset_success": "会话已重置",
+    "reset_success_description": "{{user}} 的考试会话已重置",
+    "reset_failed": "重置失败",
+    "reset_failed_description": "重置考试会话失败",
+    "phase_updated": "阶段已更新",
+    "phase_update_failed": "更新阶段失败",
+    "phase_update_failed_description": "更新会话阶段失败",
+    "force_end_success": "会话已结束",
+    "force_end_failed": "结束会话失败",
+    "force_end_failed_description": "强制结束考试会话失败",
+    "reset_dialog_title": "确认重置会话？",
+    "reset_dialog_description": "这将重置 {{user}} 的考试会话。答题人将需要重新开始考试。",
+    "phase_dialog_title": "确认切换阶段？",
+    "phase_dialog_description": "将 {{user}} 的会话阶段切换为 {{phase}}。",
+    "completed_note": "注意：设置为已完成将自动创建评分任务。",
+    "force_end_dialog_title": "确认强制结束？",
+    "force_end_dialog_description": "这将立即结束 {{user}} 的考试并创建评分任务。",
+    "force_end_warning": "此操作无法撤销。仅在答题人放弃考试或遇到技术问题时使用。",
+    "action_cannot_undo": "此操作无法撤销。",
+    "phase": {
+      "intro": "介绍",
+      "exam": "考试中",
+      "review": "检查",
+      "completed": "已完成"
+    },
+    "stats": {
+      "total": "总会话",
+      "intro": "介绍中",
+      "exam": "考试中",
+      "review": "检查中",
+      "completed": "已完成"
+    }
+  },
+  "answer_records": {
+    "title": "答题记录",
+    "description": "查看所有提交的答案",
+    "stats": {
+      "total": "总答题",
+      "pending": "待评分",
+      "graded": "已评分",
+      "published": "已发布"
+    },
+    "no_answers": "暂无答题记录",
+    "use_exam_sessions": "请使用考试会话标签页查看每个考生的答案详情。"
+  },
   "common": {
     "all": "全部",
     "all_status": "全部状态",
@@ -516,6 +587,8 @@
     "not_found": "未找到",
     "question_not_found": "题目未找到",
     "login_required": "需要登录",
-    "please_login": "请先登录后再访问此页面"
+    "please_login": "请先登录后再访问此页面",
+    "load_versions_failed": "加载版本历史失败",
+    "rollback_failed": "回滚专题版本失败"
   }
 }

@@ -360,7 +360,7 @@ function GraderDashboardContent() {
       },
       {
         key: 'actions',
-        title: t('actions.view'),
+        title: t('common:actions.view'),
         className: 'text-right',
         render: (task: GradingTask) => {
           const reportData = task.report_data || {}
@@ -482,7 +482,7 @@ function GraderDashboardContent() {
           </Button>
           <Button variant="outline" onClick={handleRefresh}>
             <RefreshCw className="mr-2 h-4 w-4" />
-            {t('actions.refresh')}
+            {t('common:actions.refresh')}
           </Button>
         </div>
       </div>

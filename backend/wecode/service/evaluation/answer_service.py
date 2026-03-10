@@ -130,7 +130,9 @@ class AnswerService:
                         f"with team {team_id} for answer {answer.id}"
                     )
                     try:
-                        from wecode.service.evaluation.grading_service import GradingService
+                        from wecode.service.evaluation.grading_service import (
+                            GradingService,
+                        )
 
                         grading_service = GradingService()
                         # For auto-triggered tasks, the task belongs to the topic creator
@@ -409,3 +411,52 @@ class AnswerService:
                 answered_questions / total_questions * 100 if total_questions > 0 else 0
             ),
         }
+
+    @staticmethod
+    def merge_content_data(existing_content: Dict, new_content: Dict) -> Dict:
+        """Merge new content data into existing content data.
+
+        Handles deep merging of attachments and special fields like
+        supplementaryNotes and supplementaryNotesFiles.
+
+        Args:
+            existing_content: Existing content data from database
+            new_content: New content data from request
+
+        Returns:
+            Merged content data
+        """
+        # Start with existing content as base
+        merged = {**existing_content}
+
+        # Deep merge attachments if both exist
+        if "attachments" in existing_content and "attachments" in new_content:
+            merged_attachments = {
+                **existing_content["attachments"],
+                **new_content["attachments"],
+            }
+            merged["attachments"] = merged_attachments
+
+        # Handle supplementaryNotesFiles - use new value if provided, otherwise keep existing
+        if "supplementaryNotesFiles" in new_content:
+            # Use the new value (for delete operations)
+            merged["supplementaryNotesFiles"] = new_content["supplementaryNotesFiles"]
+        elif "supplementaryNotesFiles" in existing_content:
+            # Keep existing value if not in new content
+            merged["supplementaryNotesFiles"] = existing_content[
+                "supplementaryNotesFiles"
+            ]
+
+        # Deep merge inputs (for text fields like supplementaryNotes)
+        if "inputs" in new_content:
+            merged["inputs"] = {
+                **existing_content.get("inputs", {}),
+                **new_content["inputs"],
+            }
+
+        # Merge other simple fields
+        for key in ["participantName", "selectedTopicId"]:
+            if key in new_content:
+                merged[key] = new_content[key]
+
+        return merged

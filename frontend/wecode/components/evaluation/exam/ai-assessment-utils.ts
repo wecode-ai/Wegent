@@ -54,8 +54,7 @@ export function extractAttachmentsFromContent(content: {
   return {
     main: (attachments.main as ExamAttachment[]) || [],
     interaction: (attachments.interaction as ExamAttachment[]) || [],
-    bonusAgent:
-      (attachments.bonusAgent as { files?: ExamAttachment[] })?.files || [],
+    bonusAgent: (attachments.bonusAgent as { files?: ExamAttachment[] })?.files || [],
     bonusMultimodal: (attachments.bonusMultimodal as ExamAttachment[]) || [],
   }
 }
@@ -79,7 +78,7 @@ export function extractLinkValuesFromContent(content: {
 export function parseAnswerData(answerData: {
   content_data?: {
     selectedTopicId?: number
-    supplementaryNotes?: string
+    inputs?: { supplementaryNotes?: string }
     attachments?: Record<string, unknown>
     supplementaryNotesFiles?: ExamAttachment[]
   }
@@ -89,8 +88,8 @@ export function parseAnswerData(answerData: {
 
   return {
     attachments: extractAttachmentsFromContent(content),
-    supplementaryNotesFiles: content.supplementaryNotesFiles || [],
-    supplementaryNotes: content.supplementaryNotes || '',
+    supplementaryNotesFiles: (content.attachments?.supplementaryNotes as ExamAttachment[]) || [],
+    supplementaryNotes: content.inputs?.supplementaryNotes || '',
     linkValues: extractLinkValuesFromContent(content),
   }
 }
@@ -99,7 +98,16 @@ export function parseAnswerData(answerData: {
  * Build question data map from all answers
  */
 export function buildQuestionDataMapFromAnswers(
-  allAnswers: Record<string, { content_data?: { selectedTopicId?: number; supplementaryNotes?: string; attachments?: Record<string, unknown>; supplementaryNotesFiles?: ExamAttachment[] } }>
+  allAnswers: Record<
+    string,
+    {
+      content_data?: {
+        selectedTopicId?: number
+        inputs?: { supplementaryNotes?: string }
+        attachments?: Record<string, unknown>
+      }
+    }
+  >
 ): QuestionDataMap {
   const result: QuestionDataMap = {}
 
@@ -128,17 +136,11 @@ export function buildQuestionDataMapFromAnswers(
 /**
  * Calculate total file count for a question
  */
-export function getTotalFileCount(
-  questionData: QuestionDataMap,
-  questionId: number
-): number {
+export function getTotalFileCount(questionData: QuestionDataMap, questionId: number): number {
   const data = questionData[questionId]
   if (!data) return 0
 
-  const slotFiles = Object.values(data.attachments).reduce(
-    (sum, arr) => sum + arr.length,
-    0
-  )
+  const slotFiles = Object.values(data.attachments).reduce((sum, arr) => sum + arr.length, 0)
   const supplementaryFiles = data.supplementaryNotesFiles?.length || 0
   return slotFiles + supplementaryFiles
 }
@@ -148,10 +150,7 @@ export function getTotalFileCount(
  */
 export function hasRequiredFiles(data: QuestionData | undefined | null): boolean {
   if (!data) return false
-  return (
-    data.attachments.interaction.length > 0 &&
-    data.attachments.main.length > 0
-  )
+  return data.attachments.interaction.length > 0 && data.attachments.main.length > 0
 }
 
 /**
@@ -160,18 +159,14 @@ export function hasRequiredFiles(data: QuestionData | undefined | null): boolean
 export function hasSupplementaryNotes(data: QuestionData | undefined | null): boolean {
   if (!data) return false
   return (
-    data.supplementaryNotes.trim().length > 0 ||
-    (data.supplementaryNotesFiles?.length ?? 0) > 0
+    data.supplementaryNotes.trim().length > 0 || (data.supplementaryNotesFiles?.length ?? 0) > 0
   )
 }
 
 /**
  * Get timer color class based on remaining time
  */
-export function getTimerColorClass(
-  timeLeft: number,
-  isOvertime: boolean
-): string {
+export function getTimerColorClass(timeLeft: number, isOvertime: boolean): string {
   if (isOvertime) return 'text-red-600 bg-red-50 border-red-200'
   if (timeLeft > 15 * 60) return 'text-emerald-600 bg-emerald-50 border-emerald-200'
   if (timeLeft > 5 * 60) return 'text-yellow-600 bg-yellow-50 border-yellow-200'

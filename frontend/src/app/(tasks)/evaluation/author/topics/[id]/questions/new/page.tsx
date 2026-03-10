@@ -213,7 +213,7 @@ function NewQuestionContent() {
                       {showContentPreview ? (
                         <>
                           <EyeOff className="mr-1 h-4 w-4" />
-                          {t('actions.edit')}
+                          {t('common:actions.edit')}
                         </>
                       ) : (
                         <>
@@ -267,7 +267,7 @@ function NewQuestionContent() {
                       {showCriteriaPreview ? (
                         <>
                           <EyeOff className="mr-1 h-4 w-4" />
-                          {t('actions.edit')}
+                          {t('common:actions.edit')}
                         </>
                       ) : (
                         <>
@@ -318,7 +318,7 @@ function NewQuestionContent() {
                       {showInstructionsPreview ? (
                         <>
                           <EyeOff className="mr-1 h-4 w-4" />
-                          {t('actions.edit')}
+                          {t('common:actions.edit')}
                         </>
                       ) : (
                         <>
@@ -373,10 +373,10 @@ function NewQuestionContent() {
                 variant="outline"
                 onClick={() => router.push(`/evaluation/author/topics/${topicId}`)}
               >
-                {t('actions.cancel')}
+                {t('common:actions.cancel')}
               </Button>
               <Button type="submit" variant="primary" disabled={loading}>
-                {loading ? '...' : t('actions.save')}
+                {loading ? '...' : t('common:actions.save')}
               </Button>
             </div>
           </form>

@@ -2,7 +2,9 @@ import { useState, useCallback } from 'react'
 import type { ExamAttachment } from '@wecode/types/evaluation-exam'
 
 export interface QuestionState {
-  supplementaryNotes: string
+  inputs: {
+    supplementaryNotes: string
+  }
   mainFiles: ExamAttachment[]
   interactionFiles: ExamAttachment[]
   bonusAgentLink: string
@@ -17,7 +19,9 @@ export interface ExamState {
 }
 
 const createInitialQuestionState = (): QuestionState => ({
-  supplementaryNotes: '',
+  inputs: {
+    supplementaryNotes: '',
+  },
   mainFiles: [],
   interactionFiles: [],
   bonusAgentLink: '',
@@ -93,9 +97,15 @@ export function useExamState() {
     (notes: string) => {
       const questionId = state.selectedQuestionId
       if (questionId === null) return
-      updateQuestionState(questionId, { supplementaryNotes: notes })
+      const current = state.questionStates[questionId] ?? createInitialQuestionState()
+      updateQuestionState(questionId, {
+        inputs: {
+          ...current.inputs,
+          supplementaryNotes: notes,
+        },
+      })
     },
-    [state.selectedQuestionId, updateQuestionState]
+    [state.selectedQuestionId, state.questionStates, updateQuestionState]
   )
 
   /**
@@ -246,6 +256,8 @@ export function useExamState() {
     state: {
       ...state,
       ...currentQuestionState,
+      // Flatten inputs for backward compatibility
+      supplementaryNotes: currentQuestionState.inputs.supplementaryNotes,
     },
     setParticipantName,
     setSelectedQuestionId,

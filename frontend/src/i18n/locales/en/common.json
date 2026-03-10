@@ -4,6 +4,10 @@
     "description": "A whole dev team of AI agents in your editor."
   },
   "loading": "Loading...",
+  "total": "Total",
+  "version": "Version",
+  "updated": "Updated",
+  "page": "Page",
   "repos": {
     "repository": "Select Repository",
     "branch": "Select Branch",
@@ -654,7 +658,10 @@
     "page_info": "Page {{current}} of {{total}}",
     "warning": "Warning",
     "cannotUndo": "This action cannot be undone",
-    "coming_soon": "Coming Soon"
+    "coming_soon": "Coming Soon",
+    "version": "Version",
+    "updated": "Updated",
+    "total": "Total"
   },
   "dialog": {
     "confirm_close_title": "Confirm Close",

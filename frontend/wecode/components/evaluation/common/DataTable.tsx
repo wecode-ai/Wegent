@@ -4,10 +4,11 @@
 
 'use client'
 
-import React from 'react'
-import { Loader2 } from 'lucide-react'
+import React, { useState } from 'react'
+import { Loader2, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import {
   Table,
   TableBody,
@@ -44,6 +45,12 @@ export interface DataTableProps<T, K extends string | number = string | number> 
   selectedIds?: Set<K>
   onSelectionChange?: (selectedIds: Set<K>) => void
   selectAllText?: string
+  // Search props
+  searchable?: boolean
+  searchPlaceholder?: string
+  onSearch?: (query: string) => void
+  // Card styling
+  cardClassName?: string
 }
 
 export function DataTable<T, K extends string | number = string | number>({
@@ -65,9 +72,14 @@ export function DataTable<T, K extends string | number = string | number>({
   selectedIds = new Set<K>(),
   onSelectionChange,
   selectAllText = 'Select all',
+  searchable = false,
+  searchPlaceholder = 'Search...',
+  onSearch,
+  cardClassName = '',
 }: DataTableProps<T, K>) {
   const totalPages = Math.ceil(total / pageSize)
   const hasPagination = total > pageSize
+  const [searchQuery, setSearchQuery] = useState('')
 
   const handleSelectItem = (item: T, checked: boolean) => {
     if (!onSelectionChange) return
@@ -89,6 +101,12 @@ export function DataTable<T, K extends string | number = string | number>({
     } else {
       onSelectionChange(new Set<K>())
     }
+  }
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setSearchQuery(value)
+    onSearch?.(value)
   }
 
   const isAllSelected = data.length > 0 && data.every(item => selectedIds.has(rowKey(item)))
@@ -113,7 +131,25 @@ export function DataTable<T, K extends string | number = string | number>({
   }
 
   return (
-    <div className="space-y-4">
+    <div
+      className={`bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden p-6 ${cardClassName}`}
+    >
+      {/* Search input */}
+      {searchable && (
+        <div className="mb-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              type="text"
+              placeholder={searchPlaceholder}
+              value={searchQuery}
+              onChange={handleSearchChange}
+              className="pl-10 w-full max-w-sm"
+            />
+          </div>
+        </div>
+      )}
+
       <Table>
         <TableHeader>
           <TableRow>
@@ -139,7 +175,7 @@ export function DataTable<T, K extends string | number = string | number>({
             const key = rowKey(item)
             const isSelected = selectedIds.has(key)
             return (
-              <TableRow key={key} data-selected={isSelected}>
+              <TableRow key={key} data-selected={isSelected} className="hover:bg-gray-50">
                 {selectable && (
                   <TableCell className="w-12">
                     <Checkbox
@@ -161,17 +197,25 @@ export function DataTable<T, K extends string | number = string | number>({
       </Table>
 
       {hasPagination && (
-        <div className="flex justify-center gap-2">
-          <Button variant="outline" disabled={page === 1} onClick={() => onPageChange(page - 1)}>
+        <div className="flex items-center justify-center gap-3 pt-4 mt-4 border-t border-gray-100">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page === 1}
+            onClick={() => onPageChange(page - 1)}
+            className="px-4"
+          >
             {previousText}
           </Button>
-          <span className="flex items-center px-4 text-sm text-text-secondary">
+          <span className="flex items-center px-3 text-sm text-gray-500 font-medium">
             {pageText} {page} / {totalPages}
           </span>
           <Button
             variant="outline"
+            size="sm"
             disabled={page >= totalPages}
             onClick={() => onPageChange(page + 1)}
+            className="px-4"
           >
             {nextText}
           </Button>
