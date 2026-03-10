@@ -40,7 +40,7 @@ export function QuickAccessCards({
   currentMode,
   isLoading,
   isTeamsLoading: _isTeamsLoading,
-  hideSelected = false,
+  hideSelected: _hideSelected = false,
   onRefreshTeams: _onRefreshTeams,
   showWizardButton: _showWizardButton = false,
   defaultTeam,
@@ -160,9 +160,9 @@ export function QuickAccessCards({
 
   if (isLoading || isQuickAccessLoading) {
     return (
-      <div className="flex flex-col items-center mt-6">
+      <div className="flex flex-col items-center mt-6 w-full">
         <div
-          className="flex items-center justify-start gap-3 overflow-hidden rounded-lg bg-base p-3"
+          className="flex items-center justify-start gap-3 overflow-hidden rounded-lg bg-base p-3 mx-auto"
           style={{
             width: CONTAINER_WIDTH,
             height: CONTAINER_HEIGHT,
