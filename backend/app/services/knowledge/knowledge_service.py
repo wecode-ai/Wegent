@@ -750,6 +750,42 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def _update_document_count_cache(
+        db: Session,
+        knowledge_base_id: int,
+    ) -> None:
+        """
+        Update the cached document_count in knowledge base spec.
+
+        This method queries the actual document count from the database
+        and updates the spec.document_count field to keep it in sync.
+        Called after document creation/deletion.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .first()
+        )
+
+        if kb:
+            # Query actual document count from database
+            actual_count = KnowledgeService.get_document_count(db, knowledge_base_id)
+
+            kb_json = kb.json
+            spec = kb_json.get("spec", {})
+            spec["document_count"] = actual_count
+            kb_json["spec"] = spec
+            kb.json = kb_json
+            flag_modified(kb, "json")
+
+    @staticmethod
     def get_active_document_count(
         db: Session,
         knowledge_base_id: int,
@@ -905,6 +941,10 @@ class KnowledgeService:
             source_config=data.source_config if data.source_config else {},
         )
         db.add(document)
+        db.flush()  # Flush to persist document before counting
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, knowledge_base_id)
 
         db.commit()
         db.refresh(document)
@@ -1133,6 +1173,10 @@ class KnowledgeService:
 
         # Physically delete document from database
         db.delete(doc)
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, kind_id)
+
         db.commit()
 
         # Delete RAG index if knowledge base has retrieval_config
