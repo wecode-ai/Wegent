@@ -839,6 +839,77 @@ class KnowledgeService:
             active_document_count=int(active_document_count or 0),
         )
 
+    @staticmethod
+    def get_document_counts_batch(
+        db: Session,
+        kb_ids: list[int],
+    ) -> dict[int, int]:
+        """Batch get document counts for multiple knowledge bases.
+
+        This method performs a single database query to get document counts
+        for multiple knowledge bases, avoiding the N+1 query problem.
+
+        Args:
+            db: Database session
+            kb_ids: List of knowledge base IDs
+
+        Returns:
+            Dictionary mapping kb_id to document count
+        """
+        if not kb_ids:
+            return {}
+
+        from sqlalchemy import func
+
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("count"),
+            )
+            .filter(KnowledgeDocument.kind_id.in_(kb_ids))
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        return {kind_id: count for kind_id, count in results}
+
+    @staticmethod
+    def get_active_document_counts_batch(
+        db: Session,
+        kb_ids: list[int],
+    ) -> dict[int, int]:
+        """Batch get active document counts for multiple knowledge bases.
+
+        This method performs a single database query to get active document counts
+        for multiple knowledge bases, avoiding the N+1 query problem.
+
+        Args:
+            db: Database session
+            kb_ids: List of knowledge base IDs
+
+        Returns:
+            Dictionary mapping kb_id to active document count
+        """
+        if not kb_ids:
+            return {}
+
+        from sqlalchemy import func
+
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("count"),
+            )
+            .filter(
+                KnowledgeDocument.kind_id.in_(kb_ids),
+                KnowledgeDocument.is_active == True,
+            )
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        return {kind_id: count for kind_id, count in results}
+
     # ============== Knowledge Document Operations ==============
 
     # Maximum number of documents allowed in notebook mode knowledge base
@@ -1338,7 +1409,6 @@ class KnowledgeService:
         Returns:
             AccessibleKnowledgeResponse with personal, team, and organization knowledge bases
         """
-
         # Get personal knowledge bases (created by user)
         personal_kbs = (
             db.query(Kind)
@@ -1352,13 +1422,19 @@ class KnowledgeService:
             .all()
         )
 
+        # Batch get document counts for personal KBs to avoid N+1 query problem
+        personal_kb_ids = [kb.id for kb in personal_kbs]
+        personal_doc_counts = KnowledgeService.get_active_document_counts_batch(
+            db, personal_kb_ids
+        )
+
         personal = [
             AccessibleKnowledgeBase(
                 id=kb.id,
                 name=kb.json.get("spec", {}).get("name", ""),
                 description=kb.json.get("spec", {}).get("description")
                 or None,  # Convert empty string to None
-                document_count=KnowledgeService.get_active_document_count(db, kb.id),
+                document_count=personal_doc_counts.get(kb.id, 0),
                 updated_at=kb.updated_at,
             )
             for kb in personal_kbs
@@ -1382,15 +1458,19 @@ class KnowledgeService:
                 .all()
             )
 
+            # Batch get document counts for bound KBs
+            bound_kb_ids_list = [kb.id for kb in bound_kbs]
+            bound_doc_counts = KnowledgeService.get_active_document_counts_batch(
+                db, bound_kb_ids_list
+            )
+
             for kb in bound_kbs:
                 personal.append(
                     AccessibleKnowledgeBase(
                         id=kb.id,
                         name=kb.json.get("spec", {}).get("name", ""),
                         description=kb.json.get("spec", {}).get("description") or None,
-                        document_count=KnowledgeService.get_active_document_count(
-                            db, kb.id
-                        ),
+                        document_count=bound_doc_counts.get(kb.id, 0),
                         updated_at=kb.updated_at,
                     )
                 )
@@ -1424,6 +1504,12 @@ class KnowledgeService:
             )
 
             if group_kbs:
+                # Batch get document counts for group KBs
+                group_kb_ids = [kb.id for kb in group_kbs]
+                group_doc_counts = KnowledgeService.get_active_document_counts_batch(
+                    db, group_kb_ids
+                )
+
                 team_groups.append(
                     TeamKnowledgeGroup(
                         group_name=group_name,
@@ -1434,9 +1520,7 @@ class KnowledgeService:
                                 name=kb.json.get("spec", {}).get("name", ""),
                                 description=kb.json.get("spec", {}).get("description")
                                 or None,  # Convert empty string to None
-                                document_count=KnowledgeService.get_active_document_count(
-                                    db, kb.id
-                                ),
+                                document_count=group_doc_counts.get(kb.id, 0),
                                 updated_at=kb.updated_at,
                             )
                             for kb in group_kbs
@@ -1461,11 +1545,19 @@ class KnowledgeService:
 
         if org_kbs:
             # Group KBs by namespace
-            org_groups: dict[str, list] = {}
+            org_groups: dict[str, dict] = {}
             for kb, ns in org_kbs:
                 if ns.name not in org_groups:
                     org_groups[ns.name] = {"namespace": ns, "kbs": []}
                 org_groups[ns.name]["kbs"].append(kb)
+
+            # Collect all org KB IDs for batch document count query
+            all_org_kb_ids = [
+                kb.id for group_data in org_groups.values() for kb in group_data["kbs"]
+            ]
+            org_doc_counts = KnowledgeService.get_active_document_counts_batch(
+                db, all_org_kb_ids
+            )
 
             for ns_name, group_data in org_groups.items():
                 ns = group_data["namespace"]
@@ -1480,9 +1572,7 @@ class KnowledgeService:
                                 name=kb.json.get("spec", {}).get("name", ""),
                                 description=kb.json.get("spec", {}).get("description")
                                 or None,  # Convert empty string to None
-                                document_count=KnowledgeService.get_active_document_count(
-                                    db, kb.id
-                                ),
+                                document_count=org_doc_counts.get(kb.id, 0),
                                 updated_at=kb.updated_at,
                             )
                             for kb in kbs

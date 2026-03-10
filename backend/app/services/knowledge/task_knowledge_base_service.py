@@ -599,6 +599,10 @@ class TaskKnowledgeBaseService:
         result = []
         refs_to_migrate = []
 
+        # Collect all KB IDs for batch document count query
+        kb_ids = [kb.id for _, kb, _ in found_kbs]
+        doc_counts = KnowledgeService.get_active_document_counts_batch(db, kb_ids)
+
         for idx, kb, needs_migration in found_kbs:
             ref = kb_refs[idx]
             kb_name = ref.get("name")
@@ -610,7 +614,7 @@ class TaskKnowledgeBaseService:
             kb_spec = kb.json.get("spec", {})
             display_name = kb_spec.get("name", kb_name)
             description = kb_spec.get("description")
-            document_count = KnowledgeService.get_active_document_count(db, kb.id)
+            document_count = doc_counts.get(kb.id, 0)
 
             result.append(
                 BoundKnowledgeBaseDetail(
@@ -780,13 +784,15 @@ class TaskKnowledgeBaseService:
 
         # Return bound KB details
         kb_spec = kb.json.get("spec", {})
+        # Use batch method for single KB (consistent API, no N+1 issue here)
+        doc_counts = KnowledgeService.get_active_document_counts_batch(db, [kb.id])
         return BoundKnowledgeBaseDetail(
             id=kb.id,
             name=kb_name,
             namespace=kb_namespace,
             display_name=kb_spec.get("name", kb_name),
             description=kb_spec.get("description"),
-            document_count=KnowledgeService.get_active_document_count(db, kb.id),
+            document_count=doc_counts.get(kb.id, 0),
             bound_by=user_name,
             bound_at=new_ref.boundAt,
         )
