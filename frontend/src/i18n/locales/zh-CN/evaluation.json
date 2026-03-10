@@ -63,6 +63,7 @@
     "updated_success": "专题更新成功",
     "deleted_success": "专题删除成功",
     "published_success": "专题发布成功",
+    "published_success_description": "此专题现在对答题人可见",
     "versions": "版本记录",
     "version_history": "版本历史",
     "version_description": "查看此专题的已发布版本及其题目快照。",
@@ -85,6 +86,8 @@
     "qa_duration": "答疑时长",
     "enable_exam_mode_first": "先开启考试模式",
     "already_published": "已发布",
+    "publish": "发布",
+    "publishing": "发布中...",
     "view_versions_description": "查看此专题的历史版本记录",
     "stats_summary": "统计概览",
     "publish_confirm_title": "确认发布专题",
@@ -148,6 +151,10 @@
       "attachment": "附件",
       "mixed": "标准"
     },
+    "type_text": "文本",
+    "type_url": "链接",
+    "type_attachment": "附件",
+    "type_mixed": "标准",
     "drag_to_reorder": "拖拽以重新排序"
   },
   "permissions": {
@@ -359,7 +366,9 @@
     "collapse": "收起",
     "quick_actions": "快捷操作",
     "publish": "发布",
-    "saving": "保存中..."
+    "saving": "保存中...",
+    "save_draft": "保存为草稿",
+    "publishing": "发布中..."
   },
   "ui": {
     "question_content": "题目内容",
@@ -589,6 +598,8 @@
     "login_required": "需要登录",
     "please_login": "请先登录后再访问此页面",
     "load_versions_failed": "加载版本历史失败",
-    "rollback_failed": "回滚专题版本失败"
+    "rollback_failed": "回滚专题版本失败",
+    "publish_failed": "发布专题失败",
+    "publish_failed_description": "请稍后重试"
   }
 }
