@@ -17,6 +17,7 @@ Key features:
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -123,7 +124,11 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 f"Cloud device limit reached: {current_count}/{max_devices}"
             )
 
-        # Generate startup script
+        # Generate server-side device_id (UUID) and device_name
+        server_device_id = str(uuid.uuid4())
+        server_device_name = f"{user_name}-cloud-{server_device_id[:8]}"
+
+        # Generate startup script with server-generated device info
         user_data = generate_simple_startup_script(
             user_name=user_name,
             backend_url=backend_url,
@@ -132,6 +137,8 @@ class CloudDeviceProvider(BaseDeviceProvider):
             install_script_token=nevis_settings.NEVIS_EXECUTOR_DOWNLOAD_TOKEN,
             mail_email=mail_email,
             mail_password=mail_password,
+            device_id=server_device_id,
+            device_name=server_device_name,
         )
 
         # Create sandbox via Nevis API
@@ -145,27 +152,25 @@ class CloudDeviceProvider(BaseDeviceProvider):
         if not sandbox_id:
             raise NevisClientError("Nevis API did not return sandbox ID")
 
-        # Create Device CRD with sandbox_id as temporary identifier.
-        # The real device_id will be set when executor registers via WebSocket.
-        device_name = f"{user_name}-cloud-{sandbox_id[-8:]}"
+        # Create Device CRD with server-generated device_id
         device_kind = await self._create_device_crd(
             db=db,
             user_id=user_id,
-            device_id=sandbox_id,
-            name=device_name,
+            device_id=server_device_id,
+            name=server_device_name,
             sandbox_id=sandbox_id,
             image_id=nevis_settings.NEVIS_IMAGE_ID,
         )
 
         logger.info(
             f"[CloudDeviceProvider] Cloud device created: user_id={user_id}, "
-            f"sandbox_id={sandbox_id}"
+            f"device_id={server_device_id}, sandbox_id={sandbox_id}"
         )
 
         return {
             "id": device_kind.id,
-            "device_id": sandbox_id,
-            "name": device_name,
+            "device_id": server_device_id,
+            "name": server_device_name,
             "status": "offline",
             "device_type": DeviceType.CLOUD.value,
             "message": "Cloud device created, waiting for executor to connect",
@@ -226,6 +231,8 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 "cloudConfig": {
                     "sandboxId": sandbox_id,
                     "imageId": image_id,
+                    "deviceId": device_id,
+                    "deviceName": name,
                     "createdAt": datetime.now().isoformat(),
                 },
             },
