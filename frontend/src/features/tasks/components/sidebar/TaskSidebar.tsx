@@ -92,7 +92,7 @@ export default function TaskSidebar({
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Use external state for search dialog (controlled by parent page)
-  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {})
+  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => { })
 
   // Group chats collapse/expand state
   const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false)
@@ -303,17 +303,19 @@ export default function TaskSidebar({
       <div data-tour="mode-toggle" className="px-2.5">
         {/* New Conversation Button - only show in expanded mode, collapsed mode has it in the top combined button */}
         {!isCollapsed && (
-          <div className="mb-1 flex justify-center">
+          <div className="mb-1">
             <Button
               variant="ghost"
               onClick={handleNewAgentClick}
-              className="justify-center px-3 text-sm font-medium text-primary bg-primary/[0.06] hover:bg-primary/10 rounded-md"
-              style={{ width: '234px', height: '44px' }}
+              className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
               size="sm"
             >
               <span className="flex items-center">
-                <Plus className="h-4 w-4 flex-shrink-0 text-primary" />
+                <Plus className="h-4 w-4 flex-shrink-0" />
                 <span className="ml-1.5">{t('common:tasks.new_conversation')}</span>
+              </span>
+              <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                ›
               </span>
             </Button>
           </div>
@@ -327,11 +329,10 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigationClick(btn.path, btn.isActive)}
-                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-colors ${
-                    btn.isActive
-                      ? 'bg-primary/10 text-primary font-medium'
-                      : 'text-text-primary hover:bg-hover'
-                  }`}
+                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-all duration-200 ${btn.isActive
+                    ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
+                    : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
+                    }`}
                   size="sm"
                 >
                   <span className="flex items-center">
@@ -375,7 +376,7 @@ export default function TaskSidebar({
       <ProjectProvider>
         <TaskDndProvider>
           <div
-            className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-primary/10 mt-3`}
+            className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border-light mt-3`}
             ref={scrollRef}
           >
             {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
@@ -467,13 +468,13 @@ export default function TaskSidebar({
                         <>
                           {!isCollapsed && (
                             <div
-                              className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
+                              className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}`}
                             >
                               <span>{t('common:tasks.history_title')}</span>
                             </div>
                           )}
                           {isCollapsed && allGroupChats.length > 0 && (
-                            <div className="border-t border-border my-2" />
+                            <div className="border-t border-border-light my-2" />
                           )}
                           <TaskListSection
                             tasks={regularTasks}
@@ -529,7 +530,7 @@ export default function TaskSidebar({
       </ProjectProvider>
 
       {/* User Menu - matches Figma: left-[20px] top-[852px] with border */}
-      <div className="px-2.5 py-3 border-t border-primary/10" data-tour="settings-link">
+      <div className="px-2.5 py-3 border-t border-border-light" data-tour="settings-link">
         <UserFloatingMenu />
       </div>
     </>
@@ -539,7 +540,8 @@ export default function TaskSidebar({
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
       <div
-        className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full"
+        className="hidden lg:flex lg:flex-col w-full h-full bg-base rounded-3xl shadow-sidebar my-3"
+        style={{ height: 'calc(100% - 24px)' }}
         data-tour="task-sidebar"
       >
         {sidebarContent}
@@ -680,9 +682,9 @@ function TaskHistorySection({
     <>
       {/* Group Chats Section */}
       {filteredGroupTasks.length > 0 && (
-        <>
+        <div className="mb-4">
           {!isCollapsed && (
-            <div className="px-1 pb-1 text-xs font-medium text-text-muted">
+            <div className="px-1 pb-1 text-xs font-medium text-text-muted mb-2">
               {t('common:tasks.group_chats')}
             </div>
           )}
@@ -749,9 +751,9 @@ function TaskHistorySection({
                     {isGroupChatsExpanded
                       ? t('common:tasks.group_chats_collapse')
                       : t('common:tasks.group_chats_expand', {
-                          count: collapsedReadCount,
-                          suffix: '',
-                        })}
+                        count: collapsedReadCount,
+                        suffix: '',
+                      })}
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -762,12 +764,12 @@ function TaskHistorySection({
               {t('common:tasks.loading')}
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* Projects Section - displayed between group chats and history */}
       {!isCollapsed && !isSearchResult && (
-        <div className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}>
+        <div className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}>
           <ProjectSection onTaskSelect={onTaskSelect} />
         </div>
       )}
@@ -776,7 +778,7 @@ function TaskHistorySection({
       {filteredPersonalTasks.length > 0 && (
         <DroppableHistory>
           {!isCollapsed && (
-            <div className="px-1 pb-1 pt-3 mt-2 border-t border-border text-xs font-medium text-text-muted flex items-center justify-between">
+            <div className="px-1 pb-2 pt-4 mt-3 border-t border-border-light text-xs font-medium text-text-muted flex items-center justify-between">
               <div className="flex items-center gap-1">
                 {setIsHistoryManageDialogOpen ? (
                   <TooltipProvider>
@@ -800,41 +802,33 @@ function TaskHistorySection({
                 ) : (
                   <span>{t('common:tasks.history_title')}</span>
                 )}
-                <TooltipProvider>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={handleOpenSearchDialog}
-                        className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
-                        aria-label={t('common:tasks.search_placeholder_chat')}
-                      >
-                        <Search className="h-3.5 w-3.5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      <p>
-                        {shortcutDisplayText
-                          ? t('common:tasks.search_hint_with_shortcut', {
-                              shortcut: shortcutDisplayText,
-                            })
-                          : t('common:tasks.search_placeholder_chat')}
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
               </div>
-              {totalUnreadCount > 0 && (
-                <button
-                  onClick={handleMarkAllAsViewed}
-                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
-                >
-                  {t('common:tasks.mark_all_read')} ({totalUnreadCount})
-                </button>
-              )}
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleOpenSearchDialog}
+                      className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
+                      aria-label={t('common:tasks.search_placeholder_chat')}
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>
+                      {shortcutDisplayText
+                        ? t('common:tasks.search_hint_with_shortcut', {
+                          shortcut: shortcutDisplayText,
+                        })
+                        : t('common:tasks.search_placeholder_chat')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
           )}
           {isCollapsed && filteredGroupTasks.length > 0 && (
-            <div className="border-t border-border my-2" />
+            <div className="border-t border-border-light my-2" />
           )}
           <TaskListSection
             tasks={filteredPersonalTasks}

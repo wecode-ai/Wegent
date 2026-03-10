@@ -171,15 +171,15 @@ function ChatAreaContent({
   // Derive available options and defaults from selected video model's config
   const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
     | {
-        resolution?: string
-        ratio?: string
-        duration?: number
-        capabilities?: {
-          aspect_ratios?: { value: string }[]
-          resolutions?: { label: string }[]
-          durations_sec?: number[]
-        }
+      resolution?: string
+      ratio?: string
+      duration?: number
+      capabilities?: {
+        aspect_ratios?: { value: string }[]
+        resolutions?: { label: string }[]
+        durations_sec?: number[]
       }
+    }
     | undefined
   const videoCapabilities = videoConfig?.capabilities
 
@@ -1093,9 +1093,10 @@ function ChatAreaContent({
           >
             {/* Bottom gradient fade effect - text fades as it approaches the input, limited width to avoid overlapping scrollbar */}
             <div
-              className="absolute top-0 left-0 h-8 -translate-y-full pointer-events-none"
+              className="absolute top-0 h-8 -translate-y-full pointer-events-none"
               style={{
-                width: 'calc(100% - 12px)',
+                left: '18px',
+                width: 'calc(100% - 36px)',
                 background:
                   'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
               }}
