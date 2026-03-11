@@ -327,7 +327,9 @@ class TaskQueryMixin:
             AND tm.copied_resource_id = 0
         """
         )
-        member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
+        member_task_ids_result = db.execute(
+            member_task_ids_sql, {"is_active": TaskResource.STATE_ACTIVE}
+        ).fetchall()
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get task IDs where is_group_chat is explicitly set to true
@@ -489,7 +491,13 @@ class TaskQueryMixin:
         """
         )
         task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
+            ids_sql,
+            {
+                "user_id": user_id,
+                "is_active": TaskResource.STATE_ACTIVE,
+                "limit": limit + 100,
+                "skip": skip,
+            },
         ).fetchall()
         task_ids = [row[0] for row in task_id_rows]
 
