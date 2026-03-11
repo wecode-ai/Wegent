@@ -15,7 +15,12 @@ from app.models.task import TaskResource
 from app.schemas.kind import Task
 
 from .converters import convert_to_task_dict, convert_to_task_dict_optimized
-from .filters import filter_tasks_for_display, filter_tasks_with_title_match
+from .filters import (
+    filter_tasks_for_display,
+    filter_tasks_with_title_match,
+    is_background_task,
+    is_non_interacted_subscription_task,
+)
 from .helpers import build_lite_task_list, get_tasks_related_data_batch
 from .query_utils import (
     count_non_deleted_tasks_by_ids,
@@ -272,7 +277,7 @@ class TaskQueryMixin:
             member_counts = {row[0]: row[1] for row in member_count_results}
 
         # Build lightweight result
-        result = self._build_lite_result(db, filtered_tasks, user_id, member_counts)
+        result = build_lite_task_list(db, filtered_tasks, user_id)
 
         return result, total
 
