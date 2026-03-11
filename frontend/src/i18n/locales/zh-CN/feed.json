@@ -134,7 +134,7 @@
   "execution_target_type": "执行位置",
   "execution_target_type_managed": "托管执行",
   "execution_target_type_device": "我的设备",
-  "execution_target_type_managed_hint": "使用现有的托管执行链路运行任务",
+  "execution_target_type_managed_hint": "在云端运行任务",
   "execution_target_type_device_hint": "在你已连接的设备上运行任务",
   "execution_target_device": "设备",
   "execution_target_select_device": "选择设备",
