@@ -124,6 +124,8 @@ class ResponsesAPIEventParser:
                     "silent_exit_reason": response_data.get("silent_exit_reason"),
                     "loaded_skills": response_data.get("loaded_skills"),
                     "stop_reason": response_data.get("stop_reason"),
+                    "workbench": response_data.get("workbench"),
+                    "thinking": response_data.get("thinking"),
                 },
                 message_id=message_id,
             )

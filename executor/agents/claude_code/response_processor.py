@@ -938,6 +938,14 @@ async def _process_result_message(
                     )
                 )
 
+                # Get workbench and thinking data from state manager
+                workbench_data = None
+                thinking_data = None
+                if state_manager:
+                    current_state = state_manager.get_current_state()
+                    workbench_data = current_state.get("workbench")
+                    thinking_data = current_state.get("thinking")
+
                 # Send done event (response.completed) via emitter
                 await emitter.done(
                     content=content,
@@ -946,6 +954,8 @@ async def _process_result_message(
                     silent_exit_reason=(
                         silent_exit_reason if silent_exit_reason else None
                     ),
+                    workbench=workbench_data,
+                    thinking=thinking_data,
                 )
                 logger.info(f"Sent done event for task {task_id}")
             except Exception as e:
@@ -966,10 +976,20 @@ async def _process_result_message(
             # Update task status to completed
             state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
+            # Get workbench and thinking data from state manager
+            workbench_data = None
+            thinking_data = None
+            if state_manager:
+                current_state = state_manager.get_current_state()
+                workbench_data = current_state.get("workbench")
+                thinking_data = current_state.get("thinking")
+
             # Send done event (response.completed) via emitter
             await emitter.done(
                 content=result_str,
                 usage=msg.usage,
+                workbench=workbench_data,
+                thinking=thinking_data,
             )
             logger.info(f"Sent done event for task {task_id}")
         return TaskStatus.COMPLETED

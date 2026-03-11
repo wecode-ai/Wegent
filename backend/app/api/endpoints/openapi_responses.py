@@ -399,6 +399,7 @@ async def _create_streaming_response_unified(
         from app.services.execution.emitters import SSEResultEmitter
 
         accumulated_content = ""
+        final_result = None  # Store complete result from DONE event
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
@@ -435,8 +436,12 @@ async def _create_streaming_response_unified(
                         logger.error(f"[OPENAPI] Error from execution: {error_msg}")
                         raise Exception(error_msg)
                     elif event.type == EventType.DONE.value:
+                        # Store complete result including workbench/thinking
+                        final_result = event.result
                         logger.info(
-                            f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
+                            f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}, "
+                            f"has_result={final_result is not None}, "
+                            f"has_workbench={final_result.get('workbench') is not None if final_result else False}"
                         )
             finally:
                 # Wait for dispatch task to complete
@@ -449,7 +454,15 @@ async def _create_streaming_response_unified(
             if not cancel_event.is_set() and not await session_manager.is_cancelled(
                 assistant_subtask_id
             ):
-                result = {"value": accumulated_content}
+                # Use final_result from DONE event (includes workbench/thinking)
+                # Fall back to accumulated_content if result is missing
+                if final_result:
+                    result = final_result
+                    # Ensure value field contains accumulated content if not present
+                    if "value" not in result or not result["value"]:
+                        result["value"] = accumulated_content
+                else:
+                    result = {"value": accumulated_content}
                 await session_manager.save_streaming_content(
                     assistant_subtask_id, accumulated_content
                 )
@@ -680,7 +693,7 @@ async def _create_sync_response_unified(
         )
 
         # Collect all content from emitter
-        accumulated_content, _ = await emitter.collect()
+        accumulated_content, final_event = await emitter.collect()
 
         # Wait for dispatch task to complete
         try:
@@ -691,7 +704,14 @@ async def _create_sync_response_unified(
         logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
 
         # Update subtask to completed
-        result = {"value": accumulated_content}
+        # Use final_event.result (includes workbench/thinking) if available
+        if final_event and final_event.result:
+            result = final_event.result
+            # Ensure value field contains accumulated content if not present
+            if "value" not in result or not result["value"]:
+                result["value"] = accumulated_content
+        else:
+            result = {"value": accumulated_content}
         await db_handler.update_subtask_status(
             assistant_subtask_id, "COMPLETED", result=result
         )

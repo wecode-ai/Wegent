@@ -139,24 +139,24 @@ export function CodePageDesktop() {
       // Priority for workbench: streaming message > completed message with result
       const allBlocks: MessageBlock[] = []
       let latestWorkbench: WorkbenchData | null = null
+      let streamingWorkbench: WorkbenchData | null = null
+      let completedWorkbench: WorkbenchData | null = null
 
       for (const msg of taskState.messages.values()) {
-        if (msg.type === 'ai') {
-          // Collect blocks from all AI messages
-          if (msg.result) {
-            const result = msg.result as { blocks?: MessageBlock[]; workbench?: WorkbenchData }
-            if (result.blocks && Array.isArray(result.blocks)) {
-              allBlocks.push(...result.blocks)
-            }
-            // For streaming messages, always use their workbench (real-time updates)
-            if (msg.status === 'streaming' && result.workbench) {
-              latestWorkbench = result.workbench
-            } else if (!latestWorkbench && result.workbench) {
-              latestWorkbench = result.workbench
-            }
+        if (msg.type === 'ai' && msg.result) {
+          const result = msg.result as { blocks?: MessageBlock[]; workbench?: WorkbenchData }
+          if (result.blocks && Array.isArray(result.blocks)) {
+            allBlocks.push(...result.blocks)
+          }
+          if (msg.status === 'streaming' && result.workbench) {
+            streamingWorkbench = result.workbench
+          } else if (result.workbench) {
+            completedWorkbench = result.workbench
           }
         }
       }
+
+      latestWorkbench = streamingWorkbench || completedWorkbench
 
       // Return aggregated blocks and latest workbench
       if (allBlocks.length > 0 || latestWorkbench) {
