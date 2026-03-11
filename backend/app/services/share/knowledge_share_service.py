@@ -292,14 +292,23 @@ class KnowledgeShareService(UnifiedShareService):
 
         # For personal knowledge bases (namespace == "default"), check if bound to group chat
         if kb.namespace == "default":
-            if self._is_kb_bound_to_user_group_chat(db, knowledge_base_id, user_id):
+            binding_role = self._get_kb_binding_member_role(
+                db, knowledge_base_id, user_id
+            )
+            if binding_role:
                 # User is member of a group chat that has this KB bound
-                return (
-                    True,
-                    ResourceRole.REPORTER.value,
-                    PermissionLevel.VIEW.value,
-                    False,
+                # Use the actual role from ResourceMember (preserves RestrictedObserver)
+                role_to_permission = {
+                    ResourceRole.OWNER.value: PermissionLevel.MANAGE.value,
+                    ResourceRole.MAINTAINER.value: PermissionLevel.MANAGE.value,
+                    ResourceRole.DEVELOPER.value: PermissionLevel.EDIT.value,
+                    ResourceRole.REPORTER.value: PermissionLevel.VIEW.value,
+                    ResourceRole.RESTRICTED_OBSERVER.value: PermissionLevel.USE.value,
+                }
+                permission_level = role_to_permission.get(
+                    binding_role, PermissionLevel.VIEW.value
                 )
+                return True, binding_role, permission_level, False
 
         return False, None, None, False
 
@@ -333,6 +342,78 @@ class KnowledgeShareService(UnifiedShareService):
 
         return False
 
+    def _get_kb_binding_member_role(
+        self, db: Session, kb_id: int, user_id: int
+    ) -> Optional[str]:
+        """Get the member role when a knowledge base is bound to a task the user is a member of.
+
+        When a knowledge base is bound to a group chat, all members of that group chat
+        should have access to the knowledge base with their actual ResourceMember role
+        (e.g., RestrictedObserver should remain RestrictedObserver, not be upgraded).
+
+        This method uses the task_knowledge_base_bindings table for efficient indexed
+        queries instead of scanning JSON data.
+
+        Args:
+            db: Database session
+            kb_id: Knowledge base Kind.id
+            user_id: User ID to check
+
+        Returns:
+            The ResourceMember.role if KB is bound to a task where user is a member,
+            None otherwise
+        """
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+        from app.models.task import TaskResource
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+        # Main query: get bindings and join with member roles
+        # First check for explicit member role via ResourceMember
+        member_role_result = (
+            db.query(ResourceMember.role)
+            .join(
+                TaskKnowledgeBaseBinding,
+                ResourceMember.resource_id == TaskKnowledgeBaseBinding.task_id,
+            )
+            .filter(
+                TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.status == MemberStatus.APPROVED,
+            )
+            .first()
+        )
+
+        if member_role_result:
+            return (
+                member_role_result[0]
+                if member_role_result[0]
+                else ResourceRole.REPORTER.value
+            )
+
+        # Check if user owns any task with this KB bound
+        owner_result = (
+            db.query(TaskKnowledgeBaseBinding)
+            .join(
+                TaskResource,
+                TaskKnowledgeBaseBinding.task_id == TaskResource.id,
+            )
+            .filter(
+                TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                TaskResource.user_id == user_id,
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
+            )
+            .first()
+        )
+
+        if owner_result:
+            # Task owner gets REPORTER role by default for bound KBs
+            return ResourceRole.REPORTER.value
+
+        return None
+
     def _is_kb_bound_to_user_group_chat(
         self, db: Session, kb_id: int, user_id: int
     ) -> bool:
@@ -352,54 +433,7 @@ class KnowledgeShareService(UnifiedShareService):
         Returns:
             True if KB is bound to at least one group chat where user is a member
         """
-        from sqlalchemy import and_, exists, literal, or_, select
-
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-        from app.models.task import TaskResource
-        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
-
-        # Use EXISTS with the bindings table for efficient indexed query
-        # Check if there's any binding where:
-        # 1. The KB matches the given kb_id
-        # 2. The task is either owned by the user OR the user is an approved member
-        # Subquery: tasks owned by user
-        owned_task_subquery = (
-            select(TaskResource.id)
-            .where(
-                TaskResource.user_id == user_id,
-                TaskResource.is_active == True,
-                TaskResource.kind == "Task",
-            )
-            .correlate(TaskKnowledgeBaseBinding)
-        )
-
-        # Subquery: tasks where user is approved member
-        member_task_subquery = (
-            select(ResourceMember.resource_id)
-            .where(
-                ResourceMember.user_id == user_id,
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.status == MemberStatus.APPROVED,
-            )
-            .correlate(TaskKnowledgeBaseBinding)
-        )
-
-        # Main query: check if any binding exists
-        exists_query = (
-            db.query(TaskKnowledgeBaseBinding)
-            .filter(
-                TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
-                or_(
-                    TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
-                    TaskKnowledgeBaseBinding.task_id.in_(member_task_subquery),
-                ),
-            )
-            .exists()
-        )
-
-        result = db.query(exists_query).scalar()
-        return bool(result)
+        return self._get_kb_binding_member_role(db, kb_id, user_id) is not None
 
     def can_manage_permissions(
         self,
@@ -530,37 +564,69 @@ class KnowledgeShareService(UnifiedShareService):
                     team_role, (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW)
                 )
 
-        # Determine final access level (higher of explicit vs group)
-        if has_explicit_access and group_level:
-            # Take the higher permission
-            explicit_priority = self.get_permission_priority(explicit_level.value)
-            group_priority = self.get_permission_priority(group_level.value)
-            final_role = (
-                explicit_role if explicit_priority >= group_priority else group_role
+        # Check task binding permission for personal KBs (namespace == "default")
+        binding_role = None
+        binding_level = None
+        if kb.namespace == "default":
+            binding_role_str = self._get_kb_binding_member_role(
+                db, knowledge_base_id, user_id
             )
-            final_level = (
-                explicit_level if explicit_priority >= group_priority else group_level
+            if binding_role_str:
+                role_mapping = {
+                    ResourceRole.OWNER.value: (
+                        SchemaMemberRole.MAINTAINER,
+                        SchemaPermissionLevel.MANAGE,
+                    ),
+                    ResourceRole.MAINTAINER.value: (
+                        SchemaMemberRole.MAINTAINER,
+                        SchemaPermissionLevel.MANAGE,
+                    ),
+                    ResourceRole.DEVELOPER.value: (
+                        SchemaMemberRole.DEVELOPER,
+                        SchemaPermissionLevel.EDIT,
+                    ),
+                    ResourceRole.REPORTER.value: (
+                        SchemaMemberRole.REPORTER,
+                        SchemaPermissionLevel.VIEW,
+                    ),
+                    ResourceRole.RESTRICTED_OBSERVER.value: (
+                        SchemaMemberRole.RESTRICTED_OBSERVER,
+                        SchemaPermissionLevel.USE,
+                    ),
+                }
+                binding_role, binding_level = role_mapping.get(
+                    binding_role_str,
+                    (SchemaMemberRole.REPORTER, SchemaPermissionLevel.VIEW),
+                )
+
+        # Determine final access level (higher of explicit vs group vs binding)
+        def get_role_priority(role_enum):
+            priority_map = {
+                SchemaPermissionLevel.USE: 0,
+                SchemaPermissionLevel.VIEW: 1,
+                SchemaPermissionLevel.EDIT: 2,
+                SchemaPermissionLevel.MANAGE: 3,
+            }
+            return priority_map.get(role_enum, 0)
+
+        access_sources = []
+        if has_explicit_access:
+            access_sources.append((explicit_role, explicit_level))
+        if group_level:
+            access_sources.append((group_role, group_level))
+        if binding_level:
+            access_sources.append((binding_role, binding_level))
+
+        if access_sources:
+            # Take the highest permission
+            final_role, final_level = max(
+                access_sources,
+                key=lambda x: get_role_priority(x[1]),
             )
             return MyKBPermissionResponse(
                 has_access=True,
                 role=final_role,
                 permission_level=final_level,
-                is_creator=False,
-                pending_request=None,
-            )
-        elif has_explicit_access:
-            return MyKBPermissionResponse(
-                has_access=True,
-                role=explicit_role,
-                permission_level=explicit_level,
-                is_creator=False,
-                pending_request=None,
-            )
-        elif group_level:
-            return MyKBPermissionResponse(
-                has_access=True,
-                role=group_role,
-                permission_level=group_level,
                 is_creator=False,
                 pending_request=pending_request,
             )
