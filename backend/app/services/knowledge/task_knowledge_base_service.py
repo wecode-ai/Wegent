@@ -769,6 +769,8 @@ class TaskKnowledgeBaseService:
         flag_modified(task, "json")
 
         # Also write to bindings table for efficient queries
+        from sqlalchemy.exc import IntegrityError
+
         from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
         binding = TaskKnowledgeBaseBinding(
@@ -777,7 +779,15 @@ class TaskKnowledgeBaseService:
             bound_by=user_name,
             bound_at=datetime.utcnow(),
         )
-        db.add(binding)
+        try:
+            db.add(binding)
+            db.flush()
+        except IntegrityError:
+            # Binding already exists, rollback and continue
+            db.rollback()
+            logger.info(
+                f"[bind_knowledge_base] Binding already exists for task {task_id} and KB {kb.id}"
+            )
 
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -1007,6 +1017,8 @@ class TaskKnowledgeBaseService:
             flag_modified(task, "json")
 
             # Also write to bindings table for efficient queries
+            from sqlalchemy.exc import IntegrityError
+
             from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
             binding = TaskKnowledgeBaseBinding(
@@ -1015,7 +1027,15 @@ class TaskKnowledgeBaseService:
                 bound_by=user_name,
                 bound_at=bound_at,
             )
-            db.add(binding)
+            try:
+                db.add(binding)
+                db.flush()
+            except IntegrityError:
+                # Binding already exists, rollback and continue
+                db.rollback()
+                logger.info(
+                    f"[sync_subtask_kb_to_task] Binding already exists for task {task.id} and KB {kb.id}"
+                )
 
             task.updated_at = datetime.utcnow()
             db.commit()

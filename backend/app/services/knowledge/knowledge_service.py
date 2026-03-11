@@ -1665,7 +1665,43 @@ class KnowledgeService:
         Returns:
             List of knowledge base IDs that are bound to user's group chats
         """
-        return []
+        from sqlalchemy.exc import ProgrammingError
+
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+        from app.models.task import TaskResource
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+        try:
+            # Query to find KBs bound to group chats where user is a member
+            # User can be a member either as task owner or as approved resource_member
+            bound_kb_ids = (
+                db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
+                .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
+                .outerjoin(
+                    ResourceMember,
+                    (ResourceMember.resource_id == TaskResource.id)
+                    & (ResourceMember.resource_type == ResourceType.TASK)
+                    & (ResourceMember.user_id == user_id)
+                    & (ResourceMember.status == MemberStatus.APPROVED),
+                )
+                .filter(
+                    TaskResource.is_active == True,
+                    TaskResource.kind == "Task",
+                    # User is either the task owner or an approved member
+                    (
+                        (TaskResource.user_id == user_id)
+                        | (ResourceMember.id.isnot(None))
+                    ),
+                )
+                .distinct()
+                .all()
+            )
+
+            return [kb_id[0] for kb_id in bound_kb_ids]
+        except ProgrammingError:
+            # Table may not exist yet (migration not run), return empty list
+            return []
 
     # ============== Batch Document Operations ==============
 

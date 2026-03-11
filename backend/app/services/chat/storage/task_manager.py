@@ -332,10 +332,12 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
-            # Only store linked_group for actual group chats
+            # Only store linked_group for actual group chats after validation
             **(
                 {"linked_group": params.linked_group}
-                if params.is_group_chat and params.linked_group
+                if params.is_group_chat
+                and params.linked_group
+                and _validate_linked_group(db, user.id, params.linked_group)
                 else {}
             ),
             **({"device_id": params.device_id} if params.device_id else {}),
@@ -394,6 +396,7 @@ def create_new_task(
 
     # Lookup linked_group_id if linked_group is provided for group chats
     # This avoids slow JSON_EXTRACT queries by using indexed column
+    # Only set linked_group_id if the namespace exists and user is authorized
     linked_group_id = 0
     if params.is_group_chat and params.linked_group:
         from app.models.namespace import Namespace
@@ -404,14 +407,59 @@ def create_new_task(
             .first()
         )
         if namespace:
-            linked_group_id = namespace.id
-            logger.info(
-                f"[create_new_task] Found linked_group_id={linked_group_id} for linked_group='{params.linked_group}'"
-            )
+            # Check if user is authorized to link to this group
+            from app.services.group_permission import get_effective_role_in_group
+
+            role = get_effective_role_in_group(db, user.id, params.linked_group)
+            if role is not None:
+                linked_group_id = namespace.id
+                logger.info(
+                    f"[create_new_task] Found linked_group_id={linked_group_id} for linked_group='{params.linked_group}'"
+                )
+            else:
+                logger.warning(
+                    f"[create_new_task] User {user.id} is not authorized to link to group '{params.linked_group}', omitting linked_group"
+                )
         else:
             logger.warning(
                 f"[create_new_task] Could not find namespace for linked_group='{params.linked_group}'"
             )
+
+
+def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool:
+    """Validate that the linked group exists and user is authorized to link to it.
+
+    Args:
+        db: Database session
+        user_id: User ID attempting to link
+        linked_group: Group/namespace name to link to
+
+    Returns:
+        True if group exists and user is authorized, False otherwise
+    """
+    from app.models.namespace import Namespace
+    from app.services.group_permission import get_effective_role_in_group
+
+    # Check if namespace exists
+    namespace = (
+        db.query(Namespace)
+        .filter(Namespace.name == linked_group, Namespace.is_active == True)
+        .first()
+    )
+
+    if not namespace:
+        logger.warning(f"[_validate_linked_group] Namespace '{linked_group}' not found")
+        return False
+
+    # Check if user is a member of the group
+    role = get_effective_role_in_group(db, user_id, linked_group)
+    if role is None:
+        logger.warning(
+            f"[_validate_linked_group] User {user_id} is not a member of group '{linked_group}'"
+        )
+        return False
+
+    return True
 
     # Check if a Placeholder record exists for this task_id
     # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues

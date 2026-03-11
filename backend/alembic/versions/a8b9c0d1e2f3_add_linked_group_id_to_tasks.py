@@ -86,15 +86,16 @@ def _upgrade_linked_group_id() -> None:
     # Migrate existing data: extract linked_group from JSON and populate linked_group_id
     conn = op.get_bind()
 
-    # Get all tasks that have linked_group in their JSON
+    # Get all tasks that have linked_group in their JSON AND is_group_chat is true
     if conn.dialect.name == "mysql":
-        # MySQL: use JSON_EXTRACT to find tasks with linked_group
+        # MySQL: use JSON_EXTRACT to find tasks with linked_group and is_group_chat=true
         result = conn.execute(
             sa.text(
                 """
                 SELECT id, JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.linked_group')) as linked_group
                 FROM tasks
                 WHERE JSON_EXTRACT(json, '$.spec.linked_group') IS NOT NULL
+                AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.is_group_chat')) = 'true'
                 AND kind = 'Task'
             """
             )
@@ -111,14 +112,16 @@ def _upgrade_linked_group_id() -> None:
             )
         ).fetchall()
 
-        # Filter tasks with linked_group in Python for SQLite
+        # Filter tasks with linked_group and is_group_chat=true in Python for SQLite
         filtered_result = []
         for row in result:
             task_id = row[0]
             try:
                 task_json = json.loads(row[1]) if isinstance(row[1], str) else row[1]
                 linked_group = task_json.get("spec", {}).get("linked_group")
-                if linked_group:
+                is_group_chat = task_json.get("spec", {}).get("is_group_chat")
+                # Only include tasks with both linked_group and is_group_chat=true
+                if linked_group and is_group_chat:
                     filtered_result.append((task_id, linked_group))
             except Exception as e:
                 # Log warning with task ID for malformed JSON
@@ -235,6 +238,7 @@ def _migrate_kb_bindings() -> None:
                     WHERE kind = 'Task'
                       AND is_active = 1
                       AND JSON_LENGTH(json, '$.spec.knowledgeBaseRefs') > 0
+                    ORDER BY id
                     LIMIT :limit OFFSET :offset
                 """
                 ),
@@ -249,6 +253,7 @@ def _migrate_kb_bindings() -> None:
                     FROM tasks
                     WHERE kind = 'Task'
                       AND is_active = 1
+                    ORDER BY id
                     LIMIT :limit OFFSET :offset
                 """
                 ),
@@ -310,43 +315,36 @@ def _migrate_kb_bindings() -> None:
                 )
 
         # Batch insert with INSERT IGNORE to handle duplicates
+        # Note: We let unexpected errors propagate instead of swallowing them
         if bindings:
             if conn.dialect.name == "mysql":
-                # MySQL: use INSERT IGNORE
+                # MySQL: use INSERT IGNORE (duplicates are silently skipped)
                 for binding in bindings:
-                    try:
-                        conn.execute(
-                            sa.text(
-                                """
-                                INSERT IGNORE INTO task_knowledge_base_bindings
-                                (task_id, knowledge_base_id, bound_by, bound_at)
-                                VALUES (:task_id, :knowledge_base_id, :bound_by, :bound_at)
+                    conn.execute(
+                        sa.text(
                             """
-                            ),
-                            binding,
-                        )
-                        total_migrated += 1
-                    except Exception as e:
-                        # Log warning but continue to skip the record
-                        logger.warning(f"Failed to insert KB binding {binding}: {e}")
+                            INSERT IGNORE INTO task_knowledge_base_bindings
+                            (task_id, knowledge_base_id, bound_by, bound_at)
+                            VALUES (:task_id, :knowledge_base_id, :bound_by, :bound_at)
+                        """
+                        ),
+                        binding,
+                    )
+                    total_migrated += 1
             else:
-                # SQLite: use INSERT OR IGNORE
+                # SQLite: use INSERT OR IGNORE (duplicates are silently skipped)
                 for binding in bindings:
-                    try:
-                        conn.execute(
-                            sa.text(
-                                """
-                                INSERT OR IGNORE INTO task_knowledge_base_bindings
-                                (task_id, knowledge_base_id, bound_by, bound_at)
-                                VALUES (:task_id, :knowledge_base_id, :bound_by, :bound_at)
+                    conn.execute(
+                        sa.text(
                             """
-                            ),
-                            binding,
-                        )
-                        total_migrated += 1
-                    except Exception as e:
-                        # Log warning but continue to skip the record
-                        logger.warning(f"Failed to insert KB binding {binding}: {e}")
+                            INSERT OR IGNORE INTO task_knowledge_base_bindings
+                            (task_id, knowledge_base_id, bound_by, bound_at)
+                            VALUES (:task_id, :knowledge_base_id, :bound_by, :bound_at)
+                        """
+                        ),
+                        binding,
+                    )
+                    total_migrated += 1
 
         offset += batch_size
 
@@ -362,7 +360,8 @@ def _migrate_kb_bindings() -> None:
 def downgrade() -> None:
     """Remove linked_group_id column, indexes, and task_knowledge_base_bindings table."""
     # Part 1: Drop task_knowledge_base_bindings table
-    op.drop_constraint("uk_task_kb", "task_knowledge_base_bindings", type_="unique")
+    # Note: op.drop_constraint is not needed as constraints are dropped with the table
+    # and it's not supported on SQLite
     op.drop_index("idx_tkb_kb_id", table_name="task_knowledge_base_bindings")
     op.drop_index("idx_tkb_task_id", table_name="task_knowledge_base_bindings")
     op.drop_table("task_knowledge_base_bindings")

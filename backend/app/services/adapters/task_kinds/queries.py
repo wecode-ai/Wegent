@@ -33,6 +33,30 @@ from .helpers import build_lite_task_list, get_tasks_related_data_batch
 logger = logging.getLogger(__name__)
 
 
+def parse_is_group_chat(task_id: int, task_json: Any) -> Optional[bool]:
+    """
+    Parse is_group_chat field from task JSON.
+
+    Args:
+        task_id: Task ID for logging purposes
+        task_json: Task JSON data (expected to be a dict)
+
+    Returns:
+        True if is_group_chat is explicitly True
+        False if is_group_chat is explicitly False or not present
+        None if parsing failed (malformed data)
+    """
+    try:
+        if isinstance(task_json, dict):
+            return task_json.get("spec", {}).get("is_group_chat") is True
+        return False
+    except (KeyError, TypeError, ValueError) as e:
+        logger.warning(
+            f"[parse_is_group_chat] Failed to parse is_group_chat for task_id={task_id}: {e}"
+        )
+        return None
+
+
 class TaskQueryMixin:
     """Mixin class providing task query methods."""
 
@@ -264,12 +288,8 @@ class TaskQueryMixin:
             task_id, task_json = row
             if task_id in member_task_ids:
                 continue  # Already counted
-            try:
-                if isinstance(task_json, dict):
-                    if task_json.get("spec", {}).get("is_group_chat") is True:
-                        explicit_group_ids.add(task_id)
-            except Exception:
-                pass
+            if parse_is_group_chat(task_id, task_json) is True:
+                explicit_group_ids.add(task_id)
 
         # Get tasks with linked_group where user is a member of the linked namespace (group)
         # Optimized: Use linked_group_id column with index instead of JSON_EXTRACT
@@ -292,6 +312,7 @@ class TaskQueryMixin:
         if user_namespace_ids:
             # Query tasks using linked_group_id column (indexed) instead of JSON_EXTRACT
             # Use bindparam with expanding=True for IN clause parameters
+            # Note: We don't filter by user_id/member_task_ids here to include namespace-only shared tasks
             linked_group_sql = text(
                 """
                 SELECT DISTINCT k.id
@@ -300,30 +321,22 @@ class TaskQueryMixin:
                 AND k.is_active = true
                 AND k.namespace != 'system'
                 AND k.linked_group_id IN :namespace_ids
-                AND (k.user_id = :user_id OR k.id IN :member_task_ids)
             """
             ).bindparams(
                 bindparam("namespace_ids", expanding=True),
-                bindparam("member_task_ids", expanding=True),
             )
             # Use a list for the IN clause
             namespace_ids_list = list(user_namespace_ids)
-            member_task_ids_list = (
-                list(member_task_ids) if member_task_ids else [0]
-            )  # Dummy value if empty
 
             linked_group_result = db.execute(
                 linked_group_sql,
                 {
-                    "user_id": user_id,
                     "namespace_ids": namespace_ids_list,
-                    "member_task_ids": member_task_ids_list,
                 },
             ).fetchall()
             linked_group_ids = {row[0] for row in linked_group_result}
 
-            # Remove already counted tasks
-            linked_group_ids -= member_task_ids
+            # Note: We don't subtract member_task_ids here to preserve namespace-only linked groups
 
         logger.info(
             f"[get_user_group_tasks_lite] user_id={user_id}, member_task_ids={len(member_task_ids)}, "
@@ -424,12 +437,8 @@ class TaskQueryMixin:
             task_id, task_json = row
             if task_id in member_task_ids:
                 continue  # Already counted
-            try:
-                if isinstance(task_json, dict):
-                    if task_json.get("spec", {}).get("is_group_chat") is True:
-                        explicit_group_ids.add(task_id)
-            except Exception:
-                pass
+            if parse_is_group_chat(task_id, task_json) is True:
+                explicit_group_ids.add(task_id)
 
         # Combine all group task IDs to exclude
         all_group_task_ids = member_task_ids | explicit_group_ids
@@ -768,16 +777,19 @@ class TaskQueryMixin:
 
             from app.models.kind import Kind
 
-            conditions = [
-                (
-                    (Kind.user_id == user_id)
-                    & (Kind.kind == KindType.MODEL.value)
-                    & (Kind.namespace == namespace)
-                    & (Kind.name == name)
-                    & (Kind.is_active.is_(True))
+            # Build conditions to match either owner or public (user_id=0) models
+            conditions = []
+            for user_id, namespace, name in model_refs:
+                # Match either the owner or public models
+                conditions.append(
+                    (
+                        (Kind.user_id.in_([user_id, 0]))
+                        & (Kind.kind == KindType.MODEL.value)
+                        & (Kind.namespace == namespace)
+                        & (Kind.name == name)
+                        & (Kind.is_active.is_(True))
+                    )
                 )
-                for user_id, namespace, name in model_refs
-            ]
 
             if conditions:
                 models = db.query(Kind).filter(or_(*conditions)).all()
@@ -791,16 +803,19 @@ class TaskQueryMixin:
 
             from app.models.kind import Kind
 
-            conditions = [
-                (
-                    (Kind.user_id == user_id)
-                    & (Kind.kind == KindType.SHELL.value)
-                    & (Kind.namespace == namespace)
-                    & (Kind.name == name)
-                    & (Kind.is_active.is_(True))
+            # Build conditions to match either owner or public (user_id=0) shells
+            conditions = []
+            for user_id, namespace, name in shell_refs:
+                # Match either the owner or public shells
+                conditions.append(
+                    (
+                        (Kind.user_id.in_([user_id, 0]))
+                        & (Kind.kind == KindType.SHELL.value)
+                        & (Kind.namespace == namespace)
+                        & (Kind.name == name)
+                        & (Kind.is_active.is_(True))
+                    )
                 )
-                for user_id, namespace, name in shell_refs
-            ]
 
             if conditions:
                 shells = db.query(Kind).filter(or_(*conditions)).all()
@@ -825,6 +840,14 @@ class TaskQueryMixin:
                     refs["model_ref"].name,
                 )
                 model = model_map.get(model_key)
+                # Try public fallback if owner lookup misses
+                if model is None:
+                    public_key = (
+                        0,
+                        refs["model_ref"].namespace,
+                        refs["model_ref"].name,
+                    )
+                    model = model_map.get(public_key)
                 model_type = "public" if model and model.user_id == 0 else "user"
                 agent_config = {
                     "bind_model": refs["model_ref"].name,
@@ -839,6 +862,14 @@ class TaskQueryMixin:
                     refs["shell_ref"].name,
                 )
                 shell = shell_map.get(shell_key)
+                # Try public fallback if owner lookup misses
+                if shell is None:
+                    public_key = (
+                        0,
+                        refs["shell_ref"].namespace,
+                        refs["shell_ref"].name,
+                    )
+                    shell = shell_map.get(public_key)
                 if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
                     shell_type = shell_crd.spec.shellType
