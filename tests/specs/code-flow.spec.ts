@@ -101,7 +101,36 @@ async function setupCodePage(page: any) {
   }
   await page.waitForTimeout(500)
 
-  // Step 4: Wait for input to be enabled
+  // Step 4: Select model test-GLM4.7-Claude
+  console.log('Selecting model...')
+  const modelSelector = page.locator('[data-testid="model-selector"]').first()
+  await expect(modelSelector).toBeVisible({ timeout: 10000 })
+
+  // Click to open model selector
+  await modelSelector.click()
+  await page.waitForTimeout(500)
+
+  // Search for model
+  const modelSearchInput = page.locator('input[placeholder*="搜索"], input[placeholder*="Search"]').first()
+  if (await modelSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await modelSearchInput.fill('test-GLM4.7-Claude')
+    await page.waitForTimeout(500)
+  }
+
+  // Select test-GLM4.7-Claude model
+  const modelOption = page.locator('[data-testid="model-option-test-GLM4_7-Claude"]').first()
+  if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await modelOption.click()
+  } else {
+    // Try to find by text content
+    const modelOptions = page.locator('[data-testid^="model-option-"]').filter({ hasText: /test-GLM4.7-Claude/i })
+    if (await modelOptions.count() > 0) {
+      await modelOptions.first().click()
+    }
+  }
+  await page.waitForTimeout(500)
+
+  // Step 5: Wait for input to be enabled
   const chatInput = page.locator('[data-testid="message-input"]').first()
   await expect(chatInput).toHaveAttribute('contenteditable', 'true', { timeout: 10000 })
 
@@ -117,7 +146,12 @@ test.describe('Code Flow', () => {
 
     // Type a code-related message
     const testMessage = '请分析一下这个代码仓库的结构，并告诉我主要的功能模块。'
+    await chatInput.click()
     await chatInput.fill(testMessage)
+
+    // Debug: check input content
+    const inputContent = await chatInput.textContent()
+    console.log('Input content:', inputContent)
 
     // Find and click send button
     const sendButton = page.locator('[data-testid="send-button"]').first()
