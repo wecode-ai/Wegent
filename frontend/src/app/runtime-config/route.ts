@@ -97,6 +97,20 @@ export async function GET() {
       process.env.NEXT_PUBLIC_DOCS_URL ||
       'https://wecode-ai.github.io/wegent-docs',
 
+    // Weibo AI Toolbox macOS download URL
+    // Priority: RUNTIME_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL > NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL > empty
+    weiboAiToolboxMacDownloadUrl:
+      process.env.RUNTIME_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL ||
+      process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL ||
+      '',
+
+    // Weibo AI Toolbox Windows download URL
+    // Priority: RUNTIME_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL > NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL > empty
+    weiboAiToolboxWindowsDownloadUrl:
+      process.env.RUNTIME_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL ||
+      process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL ||
+      '',
+
     // OpenTelemetry configuration
     // Priority: RUNTIME_OTEL_* > NEXT_PUBLIC_OTEL_* > defaults
     otelEnabled:

@@ -11,6 +11,7 @@ import MessagesArea from '../message/MessagesArea'
 import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
 import WeCodeGettingStarted from '../WeCodeGettingStarted'
+import NewConversationNotification from '../NewConversationNotification'
 import PoweredByFooter from '@/components/common/PoweredByFooter'
 import { ChatInputCard } from '../input/ChatInputCard'
 import PipelineStageIndicator from './PipelineStageIndicator'
@@ -903,6 +904,11 @@ function ChatAreaContent({
     teams: teams,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
+    onTeamsRefresh: async () => {
+      if (onRefreshTeams) {
+        await onRefreshTeams()
+      }
+    },
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
     // Only enable restore when default team exists
@@ -1119,6 +1125,11 @@ function ChatAreaContent({
                   showWizardButton={taskType === 'chat'}
                   defaultTeam={chatState.defaultTeam}
                 />
+              )}
+              {!hideSelectors && taskType === 'chat' && (
+                <div className="mt-6">
+                  <NewConversationNotification />
+                </div>
               )}
             </div>
           </div>
