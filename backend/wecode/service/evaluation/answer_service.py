@@ -429,12 +429,22 @@ class AnswerService:
         # Start with existing content as base
         merged = {**existing_content}
 
-        # Deep merge attachments if both exist
-        if "attachments" in existing_content and "attachments" in new_content:
-            merged_attachments = {
-                **existing_content["attachments"],
-                **new_content["attachments"],
-            }
+        # Deep merge attachments if new content has attachments
+        if "attachments" in new_content:
+            # Start with existing attachments or empty dict
+            existing_attachments = existing_content.get("attachments", {})
+            new_attachments = new_content["attachments"]
+
+            # Deep merge each attachment slot
+            merged_attachments = {}
+            for key in set(existing_attachments.keys()) | set(new_attachments.keys()):
+                if key in new_attachments:
+                    # Use new value for completely replaced arrays
+                    merged_attachments[key] = new_attachments[key]
+                else:
+                    # Keep existing value
+                    merged_attachments[key] = existing_attachments[key]
+
             merged["attachments"] = merged_attachments
 
         # Handle supplementaryNotesFiles - use new value if provided, otherwise keep existing
