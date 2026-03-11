@@ -79,6 +79,121 @@ sequenceDiagram
 ```
 
 
+## Markdown 解析机制
+
+Agent 返回的 Markdown 内容会被自动解析为交互式表单。解析基于 AST 分词（marked.lexer）实现。
+
+### 解析流程
+
+```mermaid
+flowchart TD
+    A[接收 Agent 返回的消息内容] --> B[使用 marked.lexer 进行结构化分词]
+    B --> C{顶层 token 中是否存在<br/>澄清标题?}
+    C -->|是| D[直接解析模式]
+    C -->|否| E{是否存在 code block<br/>包含澄清标题?}
+    E -->|是| F[代码块解析模式]
+    E -->|否| G[返回 null<br/>按普通 Markdown 渲染]
+
+    D --> H[定位澄清标题位置]
+    F --> F1[提取代码块内容]
+    F1 --> F2[对内容重新分词]
+    F2 --> H
+
+    H --> I[提取标题前的 prefixText]
+    I --> J[按问题标题分组后续 token]
+    J --> K{逐组解析}
+
+    K --> L[解析问题编号与文本<br/>支持 heading 和 paragraph 格式]
+    L --> M[识别问题类型<br/>single_choice / multiple_choice / text_input]
+    M --> N[解析选项列表]
+    N --> N1[提取 checkbox 标记 ✓ / x / *]
+    N1 --> N2[提取 value 和 label]
+    N2 --> N3[识别推荐选项]
+    N3 --> O{还有更多问题?}
+    O -->|是| K
+    O -->|否| P[提取标题后的 suffixText]
+    P --> Q[返回 ParsedClarification<br/>包含 data / prefixText / suffixText]
+    Q --> R[渲染交互式 ClarificationForm]
+```
+
+### 标准 Markdown 格式
+
+澄清问题的格式由 `spec-ghost` 的系统提示词定义（参见 `backend/init_data/02-public-resources.yaml` 中 `kind: Ghost, name: spec-ghost`）：
+
+```markdown
+## 🤔 Clarification Questions
+
+### Q1: 是否需要支持移动端？
+**Type**: single_choice
+- [✓] `yes` - 是 (recommended)
+- [ ] `no` - 否
+
+### Q2: 需要支持哪些认证方式？
+**Type**: multiple_choice
+- [✓] `email` - 邮箱/密码 (recommended)
+- [ ] `oauth` - OAuth (Google, GitHub 等)
+- [ ] `phone` - 手机号 + 短信验证
+
+### Q3: 还有其他补充需求吗？
+**Type**: text_input
+```
+
+### 格式容错
+
+#### 标题识别
+
+| 格式变体 | 示例 | 是否支持 |
+|----------|------|---------|
+| 标准格式 | `## 🤔 Clarification Questions` | ✅ |
+| 中文标题 | `## 🤔 需求澄清问题` | ✅ |
+| 旧版标题 | `## 💬 智能追问` | ✅ |
+| 省略 emoji | `## Clarification Questions` | ✅ |
+| 不同标题层级 | `# 澄清问题` / `### 澄清问题` | ✅ |
+| 简写形式 | `## 澄清` / `## Clarification` | ✅ |
+
+#### 问题格式
+
+| 格式变体 | 示例 | 是否支持 |
+|----------|------|---------|
+| heading 格式 | `### Q1: 问题文本` | ✅ |
+| 加粗 paragraph | `**Q1:** 问题文本` | ✅ |
+| 省略 Q 前缀 | `### 1: 问题文本` | ✅ |
+| 句号分隔 | `### Q1. 问题文本` | ✅ |
+
+#### 选项格式
+
+| 格式变体 | 示例 | 是否支持 |
+|----------|------|---------|
+| 推荐选项 | ``- [✓] `value` - Label (recommended)`` | ✅ |
+| 普通选项 | ``- [ ] `value` - Label`` | ✅ |
+| x 标记推荐 | ``- [x] `value` - Label`` | ✅ |
+| * 标记推荐 | ``- [*] `value` - Label`` | ✅ |
+| 尾部推荐标记 | ``- [ ] `value` - Label (推荐)`` | ✅ |
+
+#### 代码块包裹
+
+Agent 的输出有时会被包裹在 ` ```markdown ` 代码块中，解析器会自动提取内容并重新解析，同时保留代码块前后的文本作为 `prefixText` 和 `suffixText`。
+
+### 解析结果
+
+解析成功后返回三部分：
+
+| 字段 | 说明 |
+|------|------|
+| `data` | 结构化澄清问题数据，包含 `type: "clarification"` 和 `questions` 数组 |
+| `prefixText` | 澄清标题之前的内容（如 Agent 的分析说明） |
+| `suffixText` | 最后一个问题之后的内容（如 Agent 的补充说明） |
+
+`prefixText` 和 `suffixText` 作为普通 Markdown 渲染在表单上下方，确保 Agent 的完整输出不丢失。
+
+### 降级策略
+
+解析失败时（返回 `null`），整段内容按普通 Markdown 渲染，用户仍可阅读问题内容，但无法使用交互式表单。常见原因：
+
+- Agent 未使用可识别的澄清标题关键词
+- 标题下方没有 `Q{n}:` 格式的问题
+- 问题中没有可解析的选项列表
+
 ## 参考资料
 
 - [架构设计](../../developer-guide/architecture.md)

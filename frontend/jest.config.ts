@@ -14,6 +14,8 @@ const config: Config = {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    // marked is ESM-only by default; map to UMD build for Jest compatibility
+    '^marked$': '<rootDir>/node_modules/marked/lib/marked.umd.js',
   },
   collectCoverageFrom: [
     'src/**/*.{js,jsx,ts,tsx}',

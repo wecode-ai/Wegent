@@ -248,6 +248,121 @@ To adjust the style or logic of clarification questions, modify the `systemPromp
 - Confirm Agent system_prompt has correct final output format
 - Check if emoji icons are correct (🤔 and ✅)
 
+## Markdown Parsing Mechanism
+
+Markdown content returned by the Agent is automatically parsed into an interactive form. Parsing is implemented via AST tokenization (marked.lexer).
+
+### Parsing Flow
+
+```mermaid
+flowchart TD
+    A[Receive message content from Agent] --> B[Tokenize with marked.lexer]
+    B --> C{Does top-level token contain<br/>a clarification heading?}
+    C -->|Yes| D[Direct parsing mode]
+    C -->|No| E{Does a code block contain<br/>a clarification heading?}
+    E -->|Yes| F[Code block parsing mode]
+    E -->|No| G[Return null<br/>Render as plain Markdown]
+
+    D --> H[Locate clarification heading position]
+    F --> F1[Extract code block content]
+    F1 --> F2[Re-tokenize inner content]
+    F2 --> H
+
+    H --> I[Extract prefixText before heading]
+    I --> J[Group subsequent tokens by question heading]
+    J --> K{Parse each group}
+
+    K --> L[Parse question number and text<br/>Supports heading and paragraph formats]
+    L --> M[Identify question type<br/>single_choice / multiple_choice / text_input]
+    M --> N[Parse option list]
+    N --> N1[Extract checkbox markers ✓ / x / *]
+    N1 --> N2[Extract value and label]
+    N2 --> N3[Identify recommended options]
+    N3 --> O{More questions?}
+    O -->|Yes| K
+    O -->|No| P[Extract suffixText after last question]
+    P --> Q[Return ParsedClarification<br/>containing data / prefixText / suffixText]
+    Q --> R[Render interactive ClarificationForm]
+```
+
+### Standard Markdown Format
+
+The Markdown format for clarification questions is defined in the `spec-ghost` system prompt (see `backend/init_data/02-public-resources.yaml`, `kind: Ghost, name: spec-ghost`):
+
+```markdown
+## 🤔 Clarification Questions
+
+### Q1: Does this feature need to support mobile devices?
+**Type**: single_choice
+- [✓] `yes` - Yes (recommended)
+- [ ] `no` - No
+
+### Q2: What authentication methods should be supported?
+**Type**: multiple_choice
+- [✓] `email` - Email/Password (recommended)
+- [ ] `oauth` - OAuth (Google, GitHub, etc.)
+- [ ] `phone` - Phone Number + SMS
+
+### Q3: Any additional requirements?
+**Type**: text_input
+```
+
+### Format Tolerance
+
+#### Heading Recognition
+
+| Format Variant | Example | Supported |
+|---------------|---------|-----------|
+| Standard | `## 🤔 Clarification Questions` | ✅ |
+| Chinese heading | `## 🤔 需求澄清问题` | ✅ |
+| Legacy heading | `## 💬 智能追问` | ✅ |
+| Without emoji | `## Clarification Questions` | ✅ |
+| Different heading level | `# 澄清问题` / `### 澄清问题` | ✅ |
+| Short form | `## 澄清` / `## Clarification` | ✅ |
+
+#### Question Format
+
+| Format Variant | Example | Supported |
+|---------------|---------|-----------|
+| Heading format | `### Q1: Question text` | ✅ |
+| Bold paragraph | `**Q1:** Question text` | ✅ |
+| Without Q prefix | `### 1: Question text` | ✅ |
+| Dot separator | `### Q1. Question text` | ✅ |
+
+#### Option Format
+
+| Format Variant | Example | Supported |
+|---------------|---------|-----------|
+| Recommended option | ``- [✓] `value` - Label (recommended)`` | ✅ |
+| Regular option | ``- [ ] `value` - Label`` | ✅ |
+| x-mark recommended | ``- [x] `value` - Label`` | ✅ |
+| Asterisk recommended | ``- [*] `value` - Label`` | ✅ |
+| Trailing recommended label | ``- [ ] `value` - Label (推荐)`` | ✅ |
+
+#### Code Block Wrapping
+
+Agent output is sometimes wrapped in a ` ```markdown ` code block. The parser automatically extracts the inner content and re-parses it, while preserving text before and after the code block as `prefixText` and `suffixText`.
+
+### Parse Result
+
+A successful parse returns three parts:
+
+| Field | Description |
+|-------|-------------|
+| `data` | Structured clarification data containing `type: "clarification"` and a `questions` array |
+| `prefixText` | Content before the clarification heading (e.g., Agent's analysis notes) |
+| `suffixText` | Content after the last question (e.g., Agent's supplementary notes) |
+
+`prefixText` and `suffixText` are rendered as plain Markdown above and below the form, ensuring the Agent's complete output is preserved.
+
+### Fallback Strategy
+
+When parsing fails (returns `null`), the entire content is rendered as plain Markdown. Users can still read the Agent's question output, but cannot use the interactive form. Common causes:
+
+- Agent did not use any recognizable clarification heading keywords
+- No questions matching the `Q{n}:` format found below the heading
+- No parseable option list found in the questions
+
 ## Future Enhancements
 
 - [ ] Support dependencies between questions (e.g., show q2 based on q1 answer)
