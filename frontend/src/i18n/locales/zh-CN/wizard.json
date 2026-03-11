@@ -68,6 +68,7 @@
   "name_required": "请给助手起个名字",
   "wizard_button": "快速创建",
   "wizard_button_tooltip": "通过简单几步创建你的AI助手",
+  "quick_create_agent": "快速创建智能体",
   "shell_type_chat": "对话助手",
   "shell_type_chat_desc": "适合日常问答、写作、整理信息",
   "shell_type_claudecode": "编程助手",

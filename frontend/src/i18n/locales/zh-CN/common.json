@@ -227,6 +227,7 @@
     "select_team": "选择一个智能体",
     "search_team": "搜索智能体...",
     "no_bots": "没有机器人",
+    "no_description": "暂无描述",
     "edit": "编辑智能体",
     "chat": "发送任务",
     "delete": "删除智能体",

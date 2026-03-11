@@ -307,10 +307,12 @@ button:focus-visible {
   content: '';
   position: absolute;
   inset: 0;
-  background-image: linear-gradient(120deg,
-      rgba(255, 255, 255, 0),
-      rgba(255, 255, 255, 0.35),
-      rgba(255, 255, 255, 0));
+  background-image: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, 0.35),
+    rgba(255, 255, 255, 0)
+  );
   transform: translateX(-100%);
   animation: progress-bar-sheen 1.2s ease-in-out infinite;
   pointer-events: none;
@@ -336,10 +338,12 @@ button:focus-visible {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0.4) 50%,
-      transparent 100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.4) 50%,
+    transparent 100%
+  );
   transform: translateX(-100%);
   animation: shimmer 1.5s ease-in-out infinite;
   pointer-events: none;
@@ -390,10 +394,12 @@ button:focus-visible {
 
 .thinking-text-flow {
   animation: thinkingTextFlow 2s ease-in-out infinite;
-  background: linear-gradient(90deg,
-      rgb(var(--color-primary)),
-      rgb(var(--color-text-primary)),
-      rgb(var(--color-primary)));
+  background: linear-gradient(
+    90deg,
+    rgb(var(--color-primary)),
+    rgb(var(--color-text-primary)),
+    rgb(var(--color-primary))
+  );
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -416,10 +422,12 @@ button:focus-visible {
 
 /* Dark mode specific colors for the animation */
 [data-theme='dark'] .thinking-text-flow {
-  background: linear-gradient(90deg,
-      rgb(var(--color-primary)),
-      rgb(var(--color-text-primary)),
-      rgb(var(--color-primary)));
+  background: linear-gradient(
+    90deg,
+    rgb(var(--color-primary)),
+    rgb(var(--color-text-primary)),
+    rgb(var(--color-primary))
+  );
   background-size: 200% 100%;
 }
 
@@ -549,7 +557,6 @@ button:focus-visible {
 
 /* Pulse animation for unread task notification dots */
 @keyframes pulse-dot {
-
   0%,
   100% {
     transform: scale(1);
@@ -695,7 +702,6 @@ button:focus-visible {
 
 /* Pet Widget Animations */
 @keyframes pet-idle {
-
   0%,
   100% {
     transform: translateY(0);
@@ -707,7 +713,6 @@ button:focus-visible {
 }
 
 @keyframes pet-busy {
-
   0%,
   100% {
     transform: translateY(0);
@@ -746,7 +751,6 @@ button:focus-visible {
 }
 
 @keyframes pet-gain-exp {
-
   0%,
   100% {
     transform: scale(1);
@@ -805,7 +809,6 @@ button:focus-visible {
 
 /* Pet thinking bubble animation */
 @keyframes thinking-dot {
-
   0%,
   100% {
     transform: translateY(0);
@@ -859,7 +862,6 @@ button:focus-visible {
 }
 
 @keyframes feature-sparkle {
-
   0%,
   100% {
     opacity: 1;
