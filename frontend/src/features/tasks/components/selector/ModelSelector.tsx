@@ -362,7 +362,7 @@ export default function ModelSelector({
                         value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
                         onSelect={() => handleModelSelect(getModelKey(model))}
                         data-model-key={getModelKey(model)}
-                        data-testid={`model-option-${model.name.replace(/\./g, '-')}`}
+                        data-testid={`model-option-${model.name.replace(/[.:]/g, '-')}`}
                         className={cn(
                           'group cursor-pointer select-none',
                           'px-3 py-2 text-sm text-text-primary',

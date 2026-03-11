@@ -113,7 +113,7 @@ async function setupCodePage(page: any) {
   const repoBranchText = await repoSelector.textContent()
   console.log('Repository/Branch selected:', repoBranchText)
 
-  // Step 4: Select model test-GLM4.7-Claude
+  // Step 4: Select model 公网:GLM-5
   console.log('Selecting model...')
   const modelSelector = page.locator('[data-testid="model-selector"]').first()
   await expect(modelSelector).toBeVisible({ timeout: 10000 })
@@ -125,17 +125,17 @@ async function setupCodePage(page: any) {
   // Search for model
   const modelSearchInput = page.locator('input[placeholder*="搜索"], input[placeholder*="Search"]').first()
   if (await modelSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await modelSearchInput.fill('test-GLM4.7-Claude')
+    await modelSearchInput.fill('GLM-5')
     await page.waitForTimeout(500)
   }
 
-  // Select test-GLM4.7-Claude model
-  const modelOption = page.locator('[data-testid="model-option-test-GLM4_7-Claude"]').first()
+  // Select 公网:GLM-5 model (data-testid replaces special chars with -)
+  const modelOption = page.locator('[data-testid="model-option-公网-GLM-5"]').first()
   if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
     await modelOption.click()
   } else {
     // Try to find by text content
-    const modelOptions = page.locator('[data-testid^="model-option-"]').filter({ hasText: /test-GLM4.7-Claude/i })
+    const modelOptions = page.locator('[data-testid^="model-option-"]').filter({ hasText: /GLM-5/i })
     if (await modelOptions.count() > 0) {
       await modelOptions.first().click()
     }
