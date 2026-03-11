@@ -329,9 +329,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
       // Strategy 2: Try TeamSelectorButton in ChatInputControls (for new chat sessions)
       // This button shows "智能体" or "Agent" with AgentIcon
-      const teamSelectorButton = page.locator(
-        'button:has-text("智能体"), button:has-text("Agent")'
-      ).first()
+      const teamSelectorButton = page
+        .locator('button:has-text("智能体"), button:has-text("Agent")')
+        .first()
       if (await teamSelectorButton.isVisible({ timeout: 2000 }).catch(() => false)) {
         console.log('Found TeamSelectorButton, clicking...')
         await teamSelectorButton.click()

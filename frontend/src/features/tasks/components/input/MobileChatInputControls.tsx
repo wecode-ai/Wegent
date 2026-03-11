@@ -224,7 +224,10 @@ export function MobileChatInputControls({
       className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       {/* Left: Attachment, Context, Settings menu - hidden when hideSelectors is true */}
-      <div className={`flex items-center gap-1 flex-shrink-0 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`} data-tour="input-controls">
+      <div
+        className={`flex items-center gap-1 flex-shrink-0 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+        data-tour="input-controls"
+      >
         {/* Attachment */}
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
@@ -321,7 +324,9 @@ export function MobileChatInputControls({
       {/* Right: Model selector, Send button */}
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
         {selectedTeam && (
-          <div className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}>
+          <div
+            className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+          >
             <MobileModelSelector
               selectedModel={selectedModel}
               setSelectedModel={setSelectedModel}
