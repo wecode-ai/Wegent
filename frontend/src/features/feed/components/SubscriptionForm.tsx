@@ -424,26 +424,35 @@ export function SubscriptionForm({
     }
   }, [isEditing, subscription, isRental, open])
 
-  // Load teams - only show teams with chat or code mode (exclude knowledge-only teams)
+  // Determine if device mode is selected
+  const isDeviceMode = executionTarget.type !== 'managed'
+
+  // Load teams - filter based on execution target type
+  // Device mode: show teams with 'task' mode
+  // Managed mode: show teams with 'chat' or 'code' mode
   useEffect(() => {
     const loadTeams = async () => {
       setTeamsLoading(true)
       try {
         const response = await teamApis.getTeams({ page: 1, limit: 100 })
-        // Filter teams to only include those with chat or code mode
+        // Filter teams based on execution target type
         const filteredTeams = response.items.filter(team => {
           const bindMode = team.bind_mode
-          // If bind_mode is not set, include the team (backward compatibility)
+          // If bind_mode is not set, include the team only for managed mode (backward compatibility)
           if (!bindMode || bindMode.length === 0) {
-            return true
+            return !isDeviceMode
           }
-          // Include team if it has chat or code mode
+          // Device mode: only show teams with 'task' mode
+          if (isDeviceMode) {
+            return bindMode.includes('task')
+          }
+          // Managed mode: show teams with chat or code mode
           return bindMode.includes('chat') || bindMode.includes('code')
         })
         setTeams(filteredTeams)
 
-        // Auto-select default chat team when creating new subscription
-        if (!isEditing && !isRental && filteredTeams.length > 0) {
+        // Auto-select default chat team when creating new subscription (only for managed mode)
+        if (!isEditing && !isRental && filteredTeams.length > 0 && !isDeviceMode) {
           try {
             const defaultTeams = await userApis.getDefaultTeams()
             const chatDefault = defaultTeams.chat
@@ -470,7 +479,7 @@ export function SubscriptionForm({
     if (open) {
       loadTeams()
     }
-  }, [open, isEditing, isRental])
+  }, [open, isEditing, isRental, isDeviceMode])
 
   // Load models
   useEffect(() => {
@@ -628,6 +637,12 @@ export function SubscriptionForm({
 
   const handleExecutionTargetTypeChange = useCallback(
     (type: SubscriptionExecutionTargetType | 'device') => {
+      // Reset team selection when switching execution target type
+      // because available teams are filtered based on execution target
+      setTeamId(null)
+      setSelectedRepo(null)
+      setSelectedBranch(null)
+
       if (type === 'managed') {
         setExecutionTarget({ type: 'managed' })
         return
