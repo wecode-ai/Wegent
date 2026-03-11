@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState } from 'react'
+import React from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
 import TeamSelectorButton from '../selector/TeamSelectorButton'
