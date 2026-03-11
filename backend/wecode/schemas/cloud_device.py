@@ -38,6 +38,12 @@ class CloudDeviceConfig(BaseModel):
 
     sandboxId: str = Field(..., description="Nevis sandbox ID")
     imageId: str = Field(..., description="Image ID used for VM creation")
+    deviceId: Optional[str] = Field(
+        None, description="Server-generated device UUID"
+    )
+    deviceName: Optional[str] = Field(
+        None, description="Server-generated device name"
+    )
     createdAt: datetime = Field(
         default_factory=datetime.now,
         description="Cloud device creation timestamp",
@@ -51,8 +57,8 @@ class CloudDeviceResponse(BaseModel):
     """
 
     id: int = Field(..., description="Device CRD ID in database")
-    device_id: str = Field(..., description="Device unique identifier (sandbox ID)")
-    name: str = Field(..., description="Device display name")
+    device_id: str = Field(..., description="Server-generated device UUID")
+    name: str = Field(..., description="Server-generated device name")
     status: str = Field(
         default="offline",
         description="Device status (offline until executor connects)",
