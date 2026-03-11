@@ -472,6 +472,9 @@ def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool
         .first()
     )
 
+    # Determine is_group_chat from params
+    is_group_chat = params.is_group_chat
+
     if existing_placeholder:
         # Update the existing Placeholder record to become a Task
         existing_placeholder.user_id = user.id
@@ -482,6 +485,9 @@ def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool
         existing_placeholder.is_active = True
         existing_placeholder.linked_group_id = (
             linked_group_id  # Set linked_group_id for fast queries
+        )
+        existing_placeholder.is_group_chat = (
+            is_group_chat  # Set is_group_chat for fast queries
         )
         existing_placeholder.updated_at = datetime.now()
         task = existing_placeholder
@@ -496,6 +502,7 @@ def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool
             json=task_json,
             is_active=True,
             linked_group_id=linked_group_id,  # Set linked_group_id for fast queries
+            is_group_chat=is_group_chat,  # Set is_group_chat for fast queries
         )
         db.add(task)
 

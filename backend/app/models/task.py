@@ -84,6 +84,14 @@ class TaskResource(Base):
         index=True,
         comment="Linked namespace ID for group chats (0 = not linked)",
     )
+    is_group_chat = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="0",
+        index=True,
+        comment="Whether this task is a group chat (0 = false, 1 = true)",
+    )
 
     __table_args__ = (
         UniqueConstraint(

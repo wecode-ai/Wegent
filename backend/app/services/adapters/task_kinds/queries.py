@@ -274,66 +274,54 @@ class TaskQueryMixin:
 
         Returns only group chat tasks sorted by updated_at descending.
         Includes:
-        1. Tasks with ResourceMember records (regular group chats)
-        2. Tasks with is_group_chat=true explicitly set
+        1. Tasks with is_group_chat=true (using indexed column)
+        2. Tasks with ResourceMember records (regular group chats)
         3. Tasks with linked_group where user is a member of the linked group (namespace)
 
-        Performance optimized: Uses linked_group_id column with index instead of JSON_EXTRACT.
+        Performance optimized: Uses is_group_chat column with index instead of JSON parsing.
         """
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
-        # Get task IDs that are group chats (have members) using resource_members
-        # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
-        # Share-copy records are created when users import shared tasks, not for group chat membership
-        member_task_ids_sql = text(
+        # Step 1: Get tasks with is_group_chat=true using indexed column (fast)
+        # This is the primary query for group chat tasks
+        group_chat_tasks_sql = text(
             """
-            SELECT DISTINCT tm.resource_id
-            FROM resource_members tm
-            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-            WHERE tm.status = 'approved'
-            AND k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND (k.user_id = :user_id OR tm.user_id = :user_id)
-            AND tm.copied_resource_id = 0
+            SELECT id, json, updated_at
+            FROM tasks
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            AND namespace != 'system'
+            AND is_group_chat = true
+            ORDER BY updated_at DESC
+            LIMIT :limit OFFSET :skip
         """
         )
-        member_task_ids_result = db.execute(
-            member_task_ids_sql, {"user_id": user_id}
+        group_chat_tasks_result = db.execute(
+            group_chat_tasks_sql, {"user_id": user_id, "limit": limit, "skip": skip}
         ).fetchall()
-        member_task_ids = {row[0] for row in member_task_ids_result}
 
-        # Also get tasks where is_group_chat is explicitly set to true
-        # Using application-layer filtering to avoid JSON_EXTRACT in SQL
-        candidate_tasks_sql = text(
+        # Get total count for pagination
+        count_sql = text(
             """
-            SELECT DISTINCT k.id, k.json
-            FROM tasks k
-            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+            SELECT COUNT(*)
+            FROM tasks
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            AND namespace != 'system'
+            AND is_group_chat = true
         """
         )
-        candidate_tasks_result = db.execute(
-            candidate_tasks_sql, {"user_id": user_id}
-        ).fetchall()
+        total_result = db.execute(count_sql, {"user_id": user_id}).fetchone()
+        total = total_result[0] if total_result else 0
 
-        # Filter tasks that are group tasks (is_group_chat=true or has linked_group)
-        # Using the unified helper to ensure consistent definition of "group task"
-        explicit_group_ids = set()
-        for row in candidate_tasks_result:
-            task_id, task_json = row
-            if task_id in member_task_ids:
-                continue  # Already counted
-            if is_group_task_or_linked(task_id, task_json):
-                explicit_group_ids.add(task_id)
+        # Collect task IDs from the main query
+        group_task_ids = {row[0] for row in group_chat_tasks_result}
 
-        # Get tasks with linked_group where user is a member of the linked namespace (group)
-        # Optimized: Use linked_group_id column with index instead of JSON_EXTRACT
-        # First, get user's group namespace IDs
+        # Step 2: Get tasks with linked_group where user is a member of the linked namespace
+        # This handles linked group chats that may not have is_group_chat set
         user_namespace_ids_sql = text(
             """
             SELECT DISTINCT rm.resource_id
@@ -350,9 +338,7 @@ class TaskQueryMixin:
 
         linked_group_ids = set()
         if user_namespace_ids:
-            # Query tasks using linked_group_id column (indexed) instead of JSON_EXTRACT
-            # Use bindparam with expanding=True for IN clause parameters
-            # Note: We don't filter by user_id/member_task_ids here to include namespace-only shared tasks
+            # Query tasks using linked_group_id column (indexed)
             linked_group_sql = text(
                 """
                 SELECT DISTINCT k.id
@@ -361,30 +347,68 @@ class TaskQueryMixin:
                 AND k.is_active = true
                 AND k.namespace != 'system'
                 AND k.linked_group_id IN :namespace_ids
+                AND k.id NOT IN :existing_ids
             """
             ).bindparams(
                 bindparam("namespace_ids", expanding=True),
+                bindparam("existing_ids", expanding=True),
             )
-            # Use a list for the IN clause
-            namespace_ids_list = list(user_namespace_ids)
 
             linked_group_result = db.execute(
                 linked_group_sql,
                 {
-                    "namespace_ids": namespace_ids_list,
+                    "namespace_ids": list(user_namespace_ids),
+                    "existing_ids": list(group_task_ids) if group_task_ids else [0],
                 },
             ).fetchall()
             linked_group_ids = {row[0] for row in linked_group_result}
 
-            # Note: We don't subtract member_task_ids here to preserve namespace-only linked groups
+        # Step 3: Get tasks where user is a member via resource_members (legacy support)
+        # Note: copied_resource_id = 0 filters out share-copy records
+        member_task_ids = set()
+        if len(group_task_ids) < limit:
+            remaining_limit = limit - len(group_task_ids)
+            member_task_ids_sql = text(
+                """
+                SELECT DISTINCT tm.resource_id
+                FROM resource_members tm
+                INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
+                WHERE tm.status = 'approved'
+                AND k.kind = 'Task'
+                AND k.is_active = true
+                AND k.namespace != 'system'
+                AND tm.user_id = :user_id
+                AND tm.copied_resource_id = 0
+                AND k.id NOT IN :existing_ids
+                LIMIT :limit
+            """
+            ).bindparams(
+                bindparam("existing_ids", expanding=True),
+            )
+            member_task_ids_result = db.execute(
+                member_task_ids_sql,
+                {
+                    "user_id": user_id,
+                    "existing_ids": (
+                        list(group_task_ids | linked_group_ids)
+                        if (group_task_ids | linked_group_ids)
+                        else [0]
+                    ),
+                    "limit": remaining_limit,
+                },
+            ).fetchall()
+            member_task_ids = {row[0] for row in member_task_ids_result}
+
+        # Combine all task IDs
+        all_group_task_ids = group_task_ids | linked_group_ids | member_task_ids
 
         logger.info(
-            f"[get_user_group_tasks_lite] user_id={user_id}, member_task_ids={len(member_task_ids)}, "
-            f"explicit_group_ids={len(explicit_group_ids)}, linked_group_ids={len(linked_group_ids)}"
+            f"[get_user_group_tasks_lite] user_id={user_id}, "
+            f"is_group_chat={len(group_task_ids)}, "
+            f"linked_group={len(linked_group_ids)}, "
+            f"member_tasks={len(member_task_ids)}, "
+            f"total={total}"
         )
-
-        # Combine all sets
-        all_group_task_ids = member_task_ids | explicit_group_ids | linked_group_ids
 
         if not all_group_task_ids:
             return [], 0
@@ -405,13 +429,10 @@ class TaskQueryMixin:
         # Sort by updated_at descending
         valid_tasks.sort(key=lambda t: t.updated_at, reverse=True)
 
-        # Apply pagination
-        paginated_tasks = valid_tasks[skip : skip + limit]
-
         # Build lightweight result
-        result = build_lite_task_list(db, paginated_tasks, user_id)
+        result = build_lite_task_list(db, valid_tasks, user_id)
 
-        return result, len(valid_tasks)
+        return result, total
 
     def get_user_personal_tasks_lite(
         self,

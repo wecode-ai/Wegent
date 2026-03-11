@@ -8,24 +8,22 @@ Revision ID: a8b9c0d1e2f3
 Revises: c9900f078622
 Create Date: 2026-03-10 14:00:00.000000
 
-This migration includes four performance optimizations:
+This migration includes performance optimizations:
 
 1. linked_group_id column on tasks table:
    - Stores the namespace_id of the linked group for group chats
    - Eliminates the need for slow JSON_EXTRACT queries on linked_group
 
-2. task_knowledge_base_bindings table:
-   - Stores Task-KnowledgeBase relationships
-   - Enables efficient indexed queries instead of JSON parsing
+2. is_group_chat column on tasks table:
+   - Boolean flag to quickly identify group chat tasks
+   - Enables efficient indexed queries for group chat list loading
    - Performance improvement: O(n) JSON scan -> O(log n) index lookup
 
-3. Composite index idx_tasks_user_kind_active on tasks table:
-   - Optimizes _get_bound_kb_ids_for_user query in knowledge_service.py
-   - Supports efficient filtering by user_id, kind, and is_active
+3. task_knowledge_base_bindings table:
+   - Stores Task-KnowledgeBase relationships
+   - Enables efficient indexed queries instead of JSON parsing
 
-4. Composite index idx_resource_members_user_type_status on resource_members table:
-   - Optimizes _get_kb_binding_member_role query in knowledge_share_service.py
-   - Supports efficient filtering by user_id, resource_type, and status
+4. Composite indexes for optimized queries
 """
 
 import json
@@ -52,10 +50,13 @@ def upgrade() -> None:
     # Part 1: Add linked_group_id column to tasks table
     _upgrade_linked_group_id()
 
-    # Part 2: Create task_knowledge_base_bindings table
+    # Part 2: Add is_group_chat column to tasks table
+    _upgrade_is_group_chat()
+
+    # Part 3: Create task_knowledge_base_bindings table
     _upgrade_task_kb_bindings()
 
-    # Part 3: Create composite indexes for KB binding query optimization
+    # Part 4: Create composite indexes for KB binding query optimization
     _upgrade_tasks_composite_index()
     _upgrade_resource_members_composite_index()
 
@@ -90,6 +91,86 @@ def _upgrade_resource_members_composite_index() -> None:
         ["user_id", "resource_type", "status"],
         mysql_length={"resource_type": 50, "status": 20},
     )
+
+
+def _upgrade_is_group_chat() -> None:
+    """Add is_group_chat column and index to tasks table.
+
+    This column stores a boolean flag indicating if the task is a group chat,
+    enabling efficient indexed queries for group chat list loading without
+    parsing JSON.
+    """
+    # Add is_group_chat column with NOT NULL constraint and default value False
+    op.add_column(
+        "tasks",
+        sa.Column(
+            "is_group_chat",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("0"),
+            comment="Whether this task is a group chat (0 = false, 1 = true)",
+        ),
+    )
+
+    # Create index for fast group chat lookups
+    op.create_index(
+        "ix_tasks_is_group_chat",
+        "tasks",
+        ["is_group_chat"],
+        unique=False,
+    )
+
+    # Create composite index for user group chat queries with pagination
+    op.create_index(
+        "ix_tasks_user_is_group_chat_updated",
+        "tasks",
+        ["user_id", "is_group_chat", "updated_at"],
+        unique=False,
+    )
+
+    # Migrate existing data: extract is_group_chat from JSON
+    conn = op.get_bind()
+
+    # Get all tasks that have is_group_chat=true in their JSON
+    if conn.dialect.name == "mysql":
+        # MySQL: use JSON_EXTRACT to find tasks with is_group_chat=true
+        conn.execute(
+            sa.text(
+                """
+                UPDATE tasks
+                SET is_group_chat = TRUE
+                WHERE kind = 'Task'
+                AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.is_group_chat')) = 'true'
+            """
+            )
+        )
+    else:
+        # SQLite: load all tasks and update in Python
+        result = conn.execute(
+            sa.text(
+                """
+                SELECT id, json
+                FROM tasks
+                WHERE kind = 'Task'
+            """
+            )
+        ).fetchall()
+
+        # Update tasks with is_group_chat=true in Python for SQLite
+        for row in result:
+            task_id = row[0]
+            try:
+                task_json = json.loads(row[1]) if isinstance(row[1], str) else row[1]
+                is_group_chat = task_json.get("spec", {}).get("is_group_chat")
+                if is_group_chat is True:
+                    conn.execute(
+                        sa.text(
+                            "UPDATE tasks SET is_group_chat = 1 WHERE id = :task_id"
+                        ),
+                        {"task_id": task_id},
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to parse JSON for task id={task_id}: {e}")
 
 
 def _upgrade_linked_group_id() -> None:
@@ -527,7 +608,12 @@ def downgrade() -> None:
     op.drop_index("idx_tkb_task_id", table_name="task_knowledge_base_bindings")
     op.drop_table("task_knowledge_base_bindings")
 
-    # Part 3: Drop linked_group_id column and indexes
+    # Part 3: Drop is_group_chat column and indexes
+    op.drop_index("ix_tasks_user_is_group_chat_updated", table_name="tasks")
+    op.drop_index("ix_tasks_is_group_chat", table_name="tasks")
+    op.drop_column("tasks", "is_group_chat")
+
+    # Part 4: Drop linked_group_id column and indexes
     op.drop_index("ix_tasks_user_id_linked_group_id", table_name="tasks")
     op.drop_index("ix_tasks_linked_group_id", table_name="tasks")
     op.drop_column("tasks", "linked_group_id")
