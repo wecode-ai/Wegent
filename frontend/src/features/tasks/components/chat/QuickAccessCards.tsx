@@ -248,9 +248,9 @@ export function QuickAccessCards({
           flexGrow: 0,
         }}
       >
-        <div className="mb-1">
+        <div className="mb-1 w-full">
           <span
-            className={`text-[15px] font-semibold leading-5 truncate ${
+            className={`block text-[15px] font-semibold leading-5 truncate ${
               isSelected ? 'text-primary' : 'text-text-primary'
             }`}
           >
@@ -258,7 +258,7 @@ export function QuickAccessCards({
           </span>
         </div>
 
-        <p className="text-xs text-text-muted leading-[18px] line-clamp-1">{description}</p>
+        <p className="text-xs text-text-muted leading-[18px] line-clamp-1 w-full">{description}</p>
       </div>
     )
   }
