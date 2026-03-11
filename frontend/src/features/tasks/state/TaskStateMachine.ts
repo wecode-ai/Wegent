@@ -95,14 +95,16 @@ export interface UnifiedMessage {
 }
 
 /**
- * Streaming info from joinTask response
- */
+ /**
+  * Streaming info from joinTask response
+  */
 export interface StreamingInfo {
   subtask_id: number
   offset: number
   cached_content: string
+  /** Blocks from Redis for page refresh recovery (tool blocks and text blocks) */
+  blocks?: MessageBlock[]
 }
-
 /**
  * Pending chunk event to be applied after sync completes
  */
@@ -599,23 +601,39 @@ export class TaskStateMachine {
             content: streamingInfo.cached_content || '',
             timestamp: Date.now(),
             subtaskId: streamingInfo.subtask_id,
+            // Include blocks from Redis for page refresh recovery
+            // This preserves tool-text-tool-text order during streaming
+            result: streamingInfo.blocks?.length ? { blocks: streamingInfo.blocks } : undefined,
           })
           this.state = { ...this.state, messages: newMessages }
-        } else if (
-          existingMessage.status === 'streaming' &&
-          streamingInfo.cached_content &&
-          streamingInfo.cached_content.length > existingMessage.content.length
-        ) {
-          // Update existing message with longer cached_content from Redis
-          // This handles the case where the message was created from subtasks
-          // but Redis has more recent content
+        } else if (existingMessage.status === 'streaming') {
+          // Update existing message with Redis data if it has more recent content or blocks
+          const shouldUpdateContent =
+            streamingInfo.cached_content &&
+            streamingInfo.cached_content.length > existingMessage.content.length
+          const shouldUpdateBlocks =
+            streamingInfo.blocks?.length &&
+            (!existingMessage.result?.blocks ||
+              streamingInfo.blocks.length > existingMessage.result.blocks.length)
 
-          const newMessages = new Map(this.state.messages)
-          newMessages.set(aiMessageId, {
-            ...existingMessage,
-            content: streamingInfo.cached_content,
-          })
-          this.state = { ...this.state, messages: newMessages }
+          if (shouldUpdateContent || shouldUpdateBlocks) {
+            const newMessages = new Map(this.state.messages)
+            const updatedMessage: UnifiedMessage = { ...existingMessage }
+
+            if (shouldUpdateContent) {
+              updatedMessage.content = streamingInfo.cached_content!
+            }
+
+            if (shouldUpdateBlocks) {
+              updatedMessage.result = {
+                ...existingMessage.result,
+                blocks: streamingInfo.blocks,
+              }
+            }
+
+            newMessages.set(aiMessageId, updatedMessage)
+            this.state = { ...this.state, messages: newMessages }
+          }
         }
       }
 

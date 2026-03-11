@@ -426,13 +426,15 @@ class ChatNamespace(socketio.AsyncNamespace):
         if streaming_info:
             subtask_id = streaming_info["subtask_id"]
 
-            # Get cached content from Redis
+            # Get cached content and blocks from Redis
             cached_content = await session_manager.get_streaming_content(subtask_id)
+            blocks = await session_manager.get_blocks(subtask_id)
             offset = len(cached_content) if cached_content else 0
 
             logger.info(
                 f"[WS] task:join found active streaming: subtask_id={subtask_id}, "
-                f"cached_content_len={len(cached_content) if cached_content else 0}, offset={offset}"
+                f"cached_content_len={len(cached_content) if cached_content else 0}, "
+                f"blocks_count={len(blocks)}, offset={offset}"
             )
 
             return {
@@ -440,6 +442,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "subtask_id": subtask_id,
                     "offset": offset,
                     "cached_content": cached_content or "",
+                    "blocks": blocks,
                 },
                 "subtasks": subtasks_dict,
             }
