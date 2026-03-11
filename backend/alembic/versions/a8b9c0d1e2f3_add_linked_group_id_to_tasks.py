@@ -165,7 +165,7 @@ def _upgrade_linked_group_id() -> None:
                 linked_group = task_json.get("spec", {}).get("linked_group")
                 is_group_chat = task_json.get("spec", {}).get("is_group_chat")
                 # Only include tasks with both linked_group and is_group_chat=true
-                if linked_group and is_group_chat:
+                if linked_group and is_group_chat is True:
                     filtered_result.append((task_id, linked_group))
             except Exception as e:
                 # Log warning with task ID for malformed JSON
@@ -258,18 +258,19 @@ def _upgrade_task_kb_bindings() -> None:
 
 
 def _resolve_kb_by_name(
-    conn, kb_name: str, kb_namespace: str, task_id: int
+    conn, kb_name: str, kb_namespace: str, task_id: int, user_id: int
 ) -> Optional[int]:
-    """Resolve knowledge base ID by name and namespace.
+    """Resolve knowledge base ID by name, namespace, and user_id.
 
     This function queries the kinds table to find a knowledge base
-    matching the given display name (spec.name) and namespace.
+    matching the given display name (spec.name), namespace, and user_id.
 
     Args:
         conn: Database connection
         kb_name: Knowledge base display name (spec.name)
         kb_namespace: Knowledge base namespace
         task_id: Task ID for logging purposes
+        user_id: Task owner user_id for filtering KBs by owner
 
     Returns:
         Knowledge base Kind.id if found and unambiguous, None otherwise
@@ -277,7 +278,7 @@ def _resolve_kb_by_name(
     if not kb_name:
         return None
 
-    # Query all active KnowledgeBase kinds in the namespace
+    # Query all active KnowledgeBase kinds in the namespace for the specific user
     if conn.dialect.name == "mysql":
         kb_result = conn.execute(
             sa.text(
@@ -286,10 +287,11 @@ def _resolve_kb_by_name(
                 FROM kinds
                 WHERE kind = 'KnowledgeBase'
                   AND namespace = :namespace
+                  AND user_id = :user_id
                   AND is_active = true
             """
             ),
-            {"namespace": kb_namespace},
+            {"namespace": kb_namespace, "user_id": user_id},
         ).fetchall()
     else:
         kb_result = conn.execute(
@@ -299,10 +301,11 @@ def _resolve_kb_by_name(
                 FROM kinds
                 WHERE kind = 'KnowledgeBase'
                   AND namespace = :namespace
+                  AND user_id = :user_id
                   AND is_active = 1
             """
             ),
-            {"namespace": kb_namespace},
+            {"namespace": kb_namespace, "user_id": user_id},
         ).fetchall()
 
     # Filter by matching display name in spec
@@ -333,14 +336,14 @@ def _resolve_kb_by_name(
         # Multiple matches - log warning and skip
         logger.warning(
             f"Ambiguous knowledge base name '{kb_name}' in namespace '{kb_namespace}' "
-            f"for task {task_id}: found {len(matching_kbs)} matches. Skipping binding."
+            f"for user {user_id} and task {task_id}: found {len(matching_kbs)} matches. Skipping binding."
         )
         return None
     else:
         # No match found
         logger.warning(
             f"Knowledge base '{kb_name}' not found in namespace '{kb_namespace}' "
-            f"for task {task_id}"
+            f"for user {user_id} and task {task_id}"
         )
         return None
 
@@ -366,7 +369,7 @@ def _migrate_kb_bindings() -> None:
             result = conn.execute(
                 sa.text(
                     """
-                    SELECT id, json
+                    SELECT id, json, user_id
                     FROM tasks
                     WHERE kind = 'Task'
                       AND is_active = 1
@@ -382,7 +385,7 @@ def _migrate_kb_bindings() -> None:
             result = conn.execute(
                 sa.text(
                     """
-                    SELECT id, json
+                    SELECT id, json, user_id
                     FROM tasks
                     WHERE kind = 'Task'
                       AND is_active = 1
@@ -401,6 +404,7 @@ def _migrate_kb_bindings() -> None:
         for row in result:
             task_id = row[0]
             task_json_raw = row[1]
+            task_user_id = row[2]
 
             # Parse JSON
             try:
@@ -433,7 +437,9 @@ def _migrate_kb_bindings() -> None:
                         continue
 
                     # Resolve KB by name
-                    kb_id = _resolve_kb_by_name(conn, kb_name, kb_namespace, task_id)
+                    kb_id = _resolve_kb_by_name(
+                        conn, kb_name, kb_namespace, task_id, task_user_id
+                    )
 
                     if kb_id is None:
                         # Could not resolve - skip this binding

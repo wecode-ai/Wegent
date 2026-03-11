@@ -1702,7 +1702,7 @@ class KnowledgeService:
                 .join(
                     ResourceMember,
                     (ResourceMember.resource_id == TaskResource.id)
-                    & (ResourceMember.resource_type == ResourceType.TASK)
+                    & (ResourceMember.resource_type == ResourceType.TASK.value)
                     & (ResourceMember.user_id == user_id)
                     & (ResourceMember.status == MemberStatus.APPROVED),
                 )

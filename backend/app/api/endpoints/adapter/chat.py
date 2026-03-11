@@ -226,10 +226,10 @@ async def correct_response(
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == request.task_id,
                 ResourceMember.user_id == current_user.id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )
@@ -426,10 +426,10 @@ async def delete_correction(
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == subtask.task_id,
                 ResourceMember.user_id == current_user.id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )
@@ -500,10 +500,10 @@ async def apply_correction(
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == subtask.task_id,
                 ResourceMember.user_id == current_user.id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )

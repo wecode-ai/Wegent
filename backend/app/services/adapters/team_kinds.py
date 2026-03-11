@@ -305,11 +305,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         .join(
                             ResourceMember,
                             (ResourceMember.resource_id == Kind.id)
-                            & (ResourceMember.resource_type == ResourceType.TEAM),
+                            & (ResourceMember.resource_type == ResourceType.TEAM.value),
                         )
                         .filter(
                             ResourceMember.user_id == user_id,
-                            ResourceMember.status == MemberStatus.APPROVED,
+                            ResourceMember.status == MemberStatus.APPROVED.value,
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )
@@ -731,10 +731,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             shared_member = (
                 db.query(ResourceMember)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_type == ResourceType.TEAM.value,
                     ResourceMember.resource_id == team_id,
                     ResourceMember.user_id == user_id,
-                    ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .first()
             )
@@ -1058,10 +1058,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             shared_member = (
                 db.query(ResourceMember)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_type == ResourceType.TEAM.value,
                     ResourceMember.resource_id == team_id,
                     ResourceMember.user_id == user_id,
-                    ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .first()
             )
@@ -1102,7 +1102,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # delete share team - use ResourceMember
         db.query(ResourceMember).filter(
-            ResourceMember.resource_type == ResourceType.TEAM,
+            ResourceMember.resource_type == ResourceType.TEAM.value,
             ResourceMember.resource_id == team_id,
         ).delete()
 
@@ -1169,11 +1169,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         .join(
                             Kind,
                             (ResourceMember.resource_id == Kind.id)
-                            & (ResourceMember.resource_type == ResourceType.TEAM),
+                            & (ResourceMember.resource_type == ResourceType.TEAM.value),
                         )
                         .filter(
                             ResourceMember.user_id == user_id,
-                            ResourceMember.status == MemberStatus.APPROVED,
+                            ResourceMember.status == MemberStatus.APPROVED.value,
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )
@@ -1947,10 +1947,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             shared_member = (
                 db.query(ResourceMember)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_type == ResourceType.TEAM.value,
                     ResourceMember.resource_id == team_id,
                     ResourceMember.user_id == user_id,
-                    ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .first()
             )
@@ -2135,10 +2135,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             shared_member = (
                 db.query(ResourceMember)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
+                    ResourceMember.resource_type == ResourceType.TEAM.value,
                     ResourceMember.resource_id == team_id,
                     ResourceMember.user_id == user_id,
-                    ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .first()
             )

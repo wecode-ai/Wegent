@@ -149,10 +149,10 @@ def get_task_with_access_check(
     member = (
         db.query(ResourceMember)
         .filter(
-            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_type == ResourceType.TASK.value,
             ResourceMember.resource_id == task_id,
             ResourceMember.user_id == user_id,
-            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .first()
     )

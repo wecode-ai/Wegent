@@ -111,25 +111,12 @@ class TaskQueryMixin:
         DELETE status tasks are filtered in application layer.
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Use raw SQL to get task IDs where user is owner OR member (using resource_members)
+        # Get all task IDs where user is owner OR member (using resource_members)
         # Exclude system namespace tasks (background tasks)
-        count_sql = text(
+        # First, get all candidate tasks without pagination
+        all_ids_sql = text(
             """
-            SELECT COUNT(DISTINCT k.id)
-            FROM tasks k
-            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-        """
-        )
-        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
-
-        # Get task IDs sorted by created_at
-        ids_sql = text(
-            """
-            SELECT DISTINCT k.id, k.created_at
+            SELECT DISTINCT k.id, k.json
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
@@ -137,32 +124,44 @@ class TaskQueryMixin:
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
-            LIMIT :limit OFFSET :skip
         """
         )
-        task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
-        ).fetchall()
-        task_ids = [row[0] for row in task_id_rows]
+        all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
 
-        if not task_ids:
-            return [], 0
+        # Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
+        filtered_task_ids = []
+        for row in all_tasks_result:
+            task_id, task_json = row
+            try:
+                task_crd = Task.model_validate(task_json)
+            except Exception:
+                continue
 
-        # Load full task data for the selected IDs
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status == "DELETE":
+                continue
+            if is_background_task(task_crd):
+                continue
+            if is_non_interacted_subscription_task(task_crd):
+                continue
 
-        # Filter tasks for display
-        id_to_task = filter_tasks_for_display(tasks)
+            filtered_task_ids.append(task_id)
 
-        # Restore the original order and apply limit
-        filtered_tasks = []
-        for tid in task_ids:
-            if tid in id_to_task:
-                filtered_tasks.append(id_to_task[tid])
-                if len(filtered_tasks) >= limit:
-                    break
+        # Calculate total from filtered results
+        total = len(filtered_task_ids)
 
-        total = total_result if total_result else 0
+        # Apply pagination to the filtered ID list
+        paginated_ids = filtered_task_ids[skip : skip + limit]
+
+        if not paginated_ids:
+            return [], total
+
+        # Load full task data for paginated IDs
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
+
+        # Maintain order
+        id_to_task = {t.id: t for t in tasks}
+        filtered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
 
         if not filtered_tasks:
             return [], total
@@ -189,24 +188,11 @@ class TaskQueryMixin:
         Only returns essential fields without JOIN queries for better performance.
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Get task IDs where user is owner OR member (using resource_members)
-        count_sql = text(
+        # Get all task IDs where user is owner OR member (using resource_members)
+        # Exclude system namespace tasks (background tasks)
+        all_ids_sql = text(
             """
-            SELECT COUNT(DISTINCT k.id)
-            FROM tasks k
-            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-        """
-        )
-        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
-
-        # Get task IDs sorted by created_at
-        ids_sql = text(
-            """
-            SELECT DISTINCT k.id, k.created_at
+            SELECT DISTINCT k.id, k.json
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
@@ -214,32 +200,44 @@ class TaskQueryMixin:
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
-            LIMIT :limit OFFSET :skip
         """
         )
-        task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
-        ).fetchall()
-        task_ids = [row[0] for row in task_id_rows]
+        all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
 
-        if not task_ids:
-            return [], 0
+        # Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
+        filtered_task_ids = []
+        for row in all_tasks_result:
+            task_id, task_json = row
+            try:
+                task_crd = Task.model_validate(task_json)
+            except Exception:
+                continue
 
-        # Load full task data for the selected IDs
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status == "DELETE":
+                continue
+            if is_background_task(task_crd):
+                continue
+            if is_non_interacted_subscription_task(task_crd):
+                continue
 
-        # Filter tasks for display
-        id_to_task = filter_tasks_for_display(tasks)
+            filtered_task_ids.append(task_id)
 
-        # Restore the original order and apply limit
-        filtered_tasks = []
-        for tid in task_ids:
-            if tid in id_to_task:
-                filtered_tasks.append(id_to_task[tid])
-                if len(filtered_tasks) >= limit:
-                    break
+        # Calculate total from filtered results
+        total = len(filtered_task_ids)
 
-        total = total_result if total_result else 0
+        # Apply pagination to the filtered ID list
+        paginated_ids = filtered_task_ids[skip : skip + limit]
+
+        if not paginated_ids:
+            return [], total
+
+        # Load full task data for paginated IDs
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
+
+        # Maintain order
+        id_to_task = {t.id: t for t in tasks}
+        filtered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
 
         # Get task member counts in batch for is_group_chat detection using ResourceMember
         from app.models.resource_member import MemberStatus, ResourceMember
@@ -254,9 +252,9 @@ class TaskQueryMixin:
                     func.count(ResourceMember.id).label("count"),
                 )
                 .filter(
-                    ResourceMember.resource_type == ResourceType.TASK,
+                    ResourceMember.resource_type == ResourceType.TASK.value,
                     ResourceMember.resource_id.in_(task_ids_for_members),
-                    ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .group_by(ResourceMember.resource_id)
                 .all()
@@ -486,64 +484,82 @@ class TaskQueryMixin:
         # Combine all group task IDs to exclude
         all_group_task_ids = member_task_ids | explicit_group_ids
 
-        # Get user's owned tasks (not group chats)
-        count_sql = text(
+        # Get all user's owned tasks first (before pagination)
+        all_tasks_sql = text(
             """
-            SELECT COUNT(*)
-            FROM tasks k
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.user_id = :user_id
-        """
-        )
-        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
-
-        # Get task IDs sorted by created_at
-        ids_sql = text(
-            """
-            SELECT k.id, k.created_at
+            SELECT k.id, k.json
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND k.user_id = :user_id
             ORDER BY k.created_at DESC
-            LIMIT :limit OFFSET :skip
         """
         )
-        task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 200, "skip": skip}
-        ).fetchall()
-        task_ids = [row[0] for row in task_id_rows]
+        all_tasks_result = db.execute(all_tasks_sql, {"user_id": user_id}).fetchall()
 
-        if not task_ids:
-            return [], 0
+        # Filter tasks: exclude group tasks, deleted tasks, and apply type filters
+        include_online = "online" in types
+        include_offline = "offline" in types
+        include_subscription = "subscription" in types
 
-        # Load full task data
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
+        filtered_task_ids = []
+        for row in all_tasks_result:
+            task_id, task_json = row
 
-        # Filter tasks
-        valid_tasks = self._filter_personal_tasks(tasks, all_group_task_ids, types)
+            # Skip group chat tasks
+            if task_id in all_group_task_ids:
+                continue
 
-        # Restore original order and apply limit
-        id_to_task = {t.id: t for t in valid_tasks}
-        ordered_tasks = []
-        for tid in task_ids:
-            if tid in id_to_task:
-                ordered_tasks.append(id_to_task[tid])
-                if len(ordered_tasks) >= limit:
-                    break
+            # Parse task to check status and type
+            try:
+                task_crd = Task.model_validate(task_json)
+            except Exception:
+                continue
+
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status == "DELETE":
+                continue
+
+            # Determine task type from labels
+            labels = task_crd.metadata.labels or {}
+            is_subscription = labels.get("type") == "subscription"
+            task_type_label = labels.get("taskType", "chat")
+            is_code = task_type_label == "code"
+
+            # Apply type filter
+            if is_subscription:
+                if not include_subscription:
+                    continue
+            elif is_code:
+                if not include_offline:
+                    continue
+            else:
+                if not include_online:
+                    continue
+
+            filtered_task_ids.append(task_id)
+
+        # Calculate total from filtered results
+        total = len(filtered_task_ids)
+
+        # Apply pagination to the filtered ID list
+        paginated_ids = filtered_task_ids[skip : skip + limit]
+
+        if not paginated_ids:
+            return [], total
+
+        # Load full task data for paginated IDs
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
+
+        # Maintain order
+        id_to_task = {t.id: t for t in tasks}
+        ordered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
 
         # Build lightweight result
         result = build_lite_task_list(db, ordered_tasks, user_id)
 
-        # Recalculate total
-        total = total_result - len(all_group_task_ids) if total_result else 0
-        if total < 0:
-            total = len(ordered_tasks)
-
-        return result, max(total, len(ordered_tasks))
+        return result, total
 
     def _filter_personal_tasks(
         self,
@@ -596,53 +612,58 @@ class TaskQueryMixin:
 
         Excludes DELETE status tasks.
         """
-        # Get task IDs
-        count_sql = text(
+        # Get all user's tasks first (before pagination)
+        all_ids_sql = text(
             """
-            SELECT COUNT(*) FROM tasks
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
-            AND namespace != 'system'
-        """
-        )
-        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
-
-        ids_sql = text(
-            """
-            SELECT id FROM tasks
+            SELECT id, json FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
             AND is_active = true
             AND namespace != 'system'
             ORDER BY created_at DESC
-            LIMIT :limit OFFSET :skip
         """
         )
-        task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
-        ).fetchall()
-        task_ids = [row[0] for row in task_id_rows]
+        all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
 
-        if not task_ids:
-            return [], 0
-
-        # Load full task data
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
-
-        # Filter by title
+        # Filter by title and other criteria
         title_lower = title.lower()
-        id_to_task = filter_tasks_with_title_match(tasks, title_lower)
+        filtered_task_ids = []
+        for row in all_tasks_result:
+            task_id, task_json = row
+            try:
+                task_crd = Task.model_validate(task_json)
+            except Exception:
+                continue
 
-        # Restore the original order and apply limit
-        filtered_tasks = []
-        for tid in task_ids:
-            if tid in id_to_task:
-                filtered_tasks.append(id_to_task[tid])
-                if len(filtered_tasks) >= limit:
-                    break
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status == "DELETE":
+                continue
 
-        total = len(id_to_task)
+            task_title = task_crd.spec.title or ""
+            if title_lower not in task_title.lower():
+                continue
+
+            # Filter out non-interacted Subscription tasks
+            if is_non_interacted_subscription_task(task_crd):
+                continue
+
+            filtered_task_ids.append(task_id)
+
+        # Calculate total from filtered results
+        total = len(filtered_task_ids)
+
+        # Apply pagination to the filtered ID list
+        paginated_ids = filtered_task_ids[skip : skip + limit]
+
+        if not paginated_ids:
+            return [], total
+
+        # Load full task data for paginated IDs
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
+
+        # Maintain order
+        id_to_task = {t.id: t for t in tasks}
+        filtered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
 
         if not filtered_tasks:
             return [], total
@@ -686,13 +707,21 @@ class TaskQueryMixin:
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        # Check DELETE status in application layer to avoid JSON_EXTRACT in SQL
-        task_crd = Task.model_validate(task.json)
-        if task_crd.status and task_crd.status.status == "DELETE":
+        # Check if user has access (owner or active member) BEFORE validating JSON
+        # This prevents 500 errors from invalid JSON for unauthorized requests
+        if not task_member_service.is_member(db, task_id, user_id):
             raise HTTPException(status_code=404, detail="Task not found")
 
-        # Check if user has access (owner or active member)
-        if not task_member_service.is_member(db, task_id, user_id):
+        # Check DELETE status in application layer to avoid JSON_EXTRACT in SQL
+        # Use defensive parsing to avoid ValidationError for malformed JSON
+        try:
+            task_crd = Task.model_validate(task.json)
+            if task_crd.status and task_crd.status.status == "DELETE":
+                raise HTTPException(status_code=404, detail="Task not found")
+        except HTTPException:
+            raise
+        except Exception:
+            # If validation fails, treat as not found
             raise HTTPException(status_code=404, detail="Task not found")
 
         # Use task owner's user_id for conversion
@@ -1022,9 +1051,9 @@ class TaskQueryMixin:
         members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )

@@ -379,8 +379,8 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.resource_type == ResourceType.TASK.value,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )

@@ -128,9 +128,9 @@ async def notify_group_members_task_updated(
             members = (
                 db.query(ResourceMember)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.TASK,
+                    ResourceMember.resource_type == ResourceType.TASK.value,
                     ResourceMember.resource_id == task.id,
-                    ResourceMember.status == MemberStatus.APPROVED,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .all()
             )

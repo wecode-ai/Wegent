@@ -74,10 +74,10 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
                 task_member = (
                     db.query(ResourceMember)
                     .filter(
-                        ResourceMember.resource_type == ResourceType.TASK,
+                        ResourceMember.resource_type == ResourceType.TASK.value,
                         ResourceMember.resource_id == subtask.task_id,
                         ResourceMember.user_id == current_user.id,
-                        ResourceMember.status == MemberStatus.APPROVED,
+                        ResourceMember.status == MemberStatus.APPROVED.value,
                     )
                     .first()
                 )
@@ -652,10 +652,10 @@ async def get_all_task_attachments(
     is_member = (
         db.query(ResourceMember)
         .filter(
-            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_type == ResourceType.TASK.value,
             ResourceMember.resource_id == task_id,
             ResourceMember.user_id == current_user.id,
-            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .first()
         is not None

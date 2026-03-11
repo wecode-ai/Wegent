@@ -90,10 +90,10 @@ class TaskMemberService:
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
                 ResourceMember.copied_resource_id == 0,
             )
             .first()
@@ -163,9 +163,9 @@ class TaskMemberService:
         member_count = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
                 ResourceMember.copied_resource_id == 0,
             )
             .count()
@@ -222,9 +222,9 @@ class TaskMemberService:
         task_members = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
                 ResourceMember.copied_resource_id == 0,
             )
             .all()
@@ -283,7 +283,7 @@ class TaskMemberService:
         existing = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
             )
@@ -365,10 +365,10 @@ class TaskMemberService:
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
+                ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id == task_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )
@@ -571,7 +571,7 @@ class TaskMemberService:
             .filter(
                 ResourceMember.resource_type == "Namespace",
                 ResourceMember.resource_id == namespace.id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
@@ -654,7 +654,7 @@ class TaskMemberService:
             .filter(
                 ResourceMember.resource_type == "Namespace",
                 ResourceMember.resource_id == namespace.id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .count()
         )

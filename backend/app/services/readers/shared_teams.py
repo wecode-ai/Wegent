@@ -72,10 +72,10 @@ class SharedTeamReader(ISharedTeamReader):
         return (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.resource_id == team_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
             is not None
@@ -85,9 +85,9 @@ class SharedTeamReader(ISharedTeamReader):
         results = (
             db.query(ResourceMember.resource_id)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
         )
@@ -99,10 +99,10 @@ class SharedTeamReader(ISharedTeamReader):
         return (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.TEAM,
+                ResourceMember.resource_type == ResourceType.TEAM.value,
                 ResourceMember.resource_id == team_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
         )
