@@ -31,7 +31,7 @@ This migration includes four performance optimizations:
 import json
 import logging
 from datetime import datetime
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 
 import sqlalchemy as sa
 
@@ -257,13 +257,102 @@ def _upgrade_task_kb_bindings() -> None:
     _migrate_kb_bindings()
 
 
+def _resolve_kb_by_name(
+    conn, kb_name: str, kb_namespace: str, task_id: int
+) -> Optional[int]:
+    """Resolve knowledge base ID by name and namespace.
+
+    This function queries the kinds table to find a knowledge base
+    matching the given display name (spec.name) and namespace.
+
+    Args:
+        conn: Database connection
+        kb_name: Knowledge base display name (spec.name)
+        kb_namespace: Knowledge base namespace
+        task_id: Task ID for logging purposes
+
+    Returns:
+        Knowledge base Kind.id if found and unambiguous, None otherwise
+    """
+    if not kb_name:
+        return None
+
+    # Query all active KnowledgeBase kinds in the namespace
+    if conn.dialect.name == "mysql":
+        kb_result = conn.execute(
+            sa.text(
+                """
+                SELECT id, json
+                FROM kinds
+                WHERE kind = 'KnowledgeBase'
+                  AND namespace = :namespace
+                  AND is_active = true
+            """
+            ),
+            {"namespace": kb_namespace},
+        ).fetchall()
+    else:
+        kb_result = conn.execute(
+            sa.text(
+                """
+                SELECT id, json
+                FROM kinds
+                WHERE kind = 'KnowledgeBase'
+                  AND namespace = :namespace
+                  AND is_active = 1
+            """
+            ),
+            {"namespace": kb_namespace},
+        ).fetchall()
+
+    # Filter by matching display name in spec
+    matching_kbs = []
+    for kb_row in kb_result:
+        kb_id = kb_row[0]
+        kb_json_raw = kb_row[1]
+
+        try:
+            if isinstance(kb_json_raw, str):
+                kb_json = json.loads(kb_json_raw)
+            elif isinstance(kb_json_raw, dict):
+                kb_json = kb_json_raw
+            else:
+                continue
+
+            kb_spec = kb_json.get("spec", {})
+            display_name = kb_spec.get("name")
+            if display_name == kb_name:
+                matching_kbs.append(kb_id)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    if len(matching_kbs) == 1:
+        # Single unambiguous match
+        return matching_kbs[0]
+    elif len(matching_kbs) > 1:
+        # Multiple matches - log warning and skip
+        logger.warning(
+            f"Ambiguous knowledge base name '{kb_name}' in namespace '{kb_namespace}' "
+            f"for task {task_id}: found {len(matching_kbs)} matches. Skipping binding."
+        )
+        return None
+    else:
+        # No match found
+        logger.warning(
+            f"Knowledge base '{kb_name}' not found in namespace '{kb_namespace}' "
+            f"for task {task_id}"
+        )
+        return None
+
+
 def _migrate_kb_bindings() -> None:
     """Migrate existing knowledgeBaseRefs from JSON to the bindings table.
 
     This function:
     1. Queries all Tasks with knowledgeBaseRefs in their JSON
     2. Extracts KB bindings with valid IDs
-    3. Batch inserts into the new table
+    3. For legacy refs without ID, resolves KB by name
+    4. Batch inserts into the new table
     """
     conn = op.get_bind()
     batch_size = 1000
@@ -330,9 +419,25 @@ def _migrate_kb_bindings() -> None:
 
             for ref in kb_refs:
                 kb_id = ref.get("id")
+
+                # If no ID, try to resolve by name (legacy data)
                 if kb_id is None:
-                    # Skip legacy refs without ID (they need to be migrated first)
-                    continue
+                    kb_name = ref.get("name") or ref.get("knowledgeBaseName")
+                    kb_namespace = ref.get("namespace", "default")
+
+                    if not kb_name:
+                        # Skip if no name available to resolve
+                        logger.warning(
+                            f"Skipping KB ref without id or name for task {task_id}"
+                        )
+                        continue
+
+                    # Resolve KB by name
+                    kb_id = _resolve_kb_by_name(conn, kb_name, kb_namespace, task_id)
+
+                    if kb_id is None:
+                        # Could not resolve - skip this binding
+                        continue
 
                 bound_by = ref.get("boundBy", "migration")
                 bound_at_str = ref.get("boundAt")

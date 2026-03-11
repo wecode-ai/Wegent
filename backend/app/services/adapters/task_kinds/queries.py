@@ -49,12 +49,53 @@ def parse_is_group_chat(task_id: int, task_json: Any) -> Optional[bool]:
     try:
         if isinstance(task_json, dict):
             return task_json.get("spec", {}).get("is_group_chat") is True
-        return False
+        # Non-dict task_json is malformed - log warning and return None
+        logger.warning(
+            f"[parse_is_group_chat] Malformed task_json for task_id={task_id}: "
+            f"expected dict, got {type(task_json).__name__}"
+        )
+        return None
     except (KeyError, TypeError, ValueError) as e:
         logger.warning(
             f"[parse_is_group_chat] Failed to parse is_group_chat for task_id={task_id}: {e}"
         )
         return None
+
+
+def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
+    """Check if a task is a group task or has a linked group.
+
+    This helper determines if a task should be considered a "group task"
+    based on either:
+    1. is_group_chat flag in spec
+    2. linked_group_id being set (> 0)
+
+    Args:
+        task_id: Task ID for logging purposes
+        task_json: Task JSON data (expected to be a dict)
+
+    Returns:
+        True if the task is a group task or has a linked group
+        False otherwise (including malformed data)
+    """
+    try:
+        if not isinstance(task_json, dict):
+            return False
+
+        spec = task_json.get("spec", {})
+
+        # Check is_group_chat flag
+        if spec.get("is_group_chat") is True:
+            return True
+
+        # Check linked_group_id (could be in spec or as a column in the row)
+        # In JSON, it would be under spec.linked_group
+        if spec.get("linked_group"):
+            return True
+
+        return False
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 class TaskQueryMixin:
@@ -282,13 +323,14 @@ class TaskQueryMixin:
             candidate_tasks_sql, {"user_id": user_id}
         ).fetchall()
 
-        # Filter tasks with is_group_chat=true in application layer
+        # Filter tasks that are group tasks (is_group_chat=true or has linked_group)
+        # Using the unified helper to ensure consistent definition of "group task"
         explicit_group_ids = set()
         for row in candidate_tasks_result:
             task_id, task_json = row
             if task_id in member_task_ids:
                 continue  # Already counted
-            if parse_is_group_chat(task_id, task_json) is True:
+            if is_group_task_or_linked(task_id, task_json):
                 explicit_group_ids.add(task_id)
 
         # Get tasks with linked_group where user is a member of the linked namespace (group)
@@ -431,13 +473,14 @@ class TaskQueryMixin:
             explicit_group_sql, {"user_id": user_id}
         ).fetchall()
 
-        # Filter tasks with is_group_chat=true in application layer
+        # Filter tasks that are group tasks (is_group_chat=true or has linked_group)
+        # Using the unified helper to ensure consistent definition of "group task"
         explicit_group_ids = set()
         for row in explicit_group_result:
             task_id, task_json = row
             if task_id in member_task_ids:
                 continue  # Already counted
-            if parse_is_group_chat(task_id, task_json) is True:
+            if is_group_task_or_linked(task_id, task_json):
                 explicit_group_ids.add(task_id)
 
         # Combine all group task IDs to exclude

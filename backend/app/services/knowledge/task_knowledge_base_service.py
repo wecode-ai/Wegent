@@ -779,12 +779,17 @@ class TaskKnowledgeBaseService:
             bound_by=user_name,
             bound_at=datetime.utcnow(),
         )
+
+        # Use nested transaction (savepoint) to handle IntegrityError
+        # without rolling back the outer transaction (which would undo JSON updates)
+        nested = db.begin_nested()
         try:
             db.add(binding)
             db.flush()
+            nested.commit()
         except IntegrityError:
-            # Binding already exists, rollback and continue
-            db.rollback()
+            # Binding already exists, rollback only the nested transaction
+            nested.rollback()
             logger.info(
                 f"[bind_knowledge_base] Binding already exists for task {task_id} and KB {kb.id}"
             )
@@ -1027,12 +1032,17 @@ class TaskKnowledgeBaseService:
                 bound_by=user_name,
                 bound_at=bound_at,
             )
+
+            # Use nested transaction (savepoint) to handle IntegrityError
+            # without rolling back the outer transaction (which would undo JSON updates)
+            nested = db.begin_nested()
             try:
                 db.add(binding)
                 db.flush()
+                nested.commit()
             except IntegrityError:
-                # Binding already exists, rollback and continue
-                db.rollback()
+                # Binding already exists, rollback only the nested transaction
+                nested.rollback()
                 logger.info(
                     f"[sync_subtask_kb_to_task] Binding already exists for task {task.id} and KB {kb.id}"
                 )
