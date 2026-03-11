@@ -25,6 +25,8 @@ def generate_cloud_init_script(
     install_script_token: str = "",
     mail_email: str = "",
     mail_password: str = "",
+    device_id: str = "",
+    device_name: str = "",
 ) -> str:
     """Generate Base64 encoded cloud-init startup script.
 
@@ -41,6 +43,8 @@ def generate_cloud_init_script(
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
         mail_password: Optional mail account password for himalaya mail skill.
+        device_id: Server-generated device UUID.
+        device_name: Server-generated device name.
 
     Returns:
         Base64 encoded script string for cloud-init user_data
@@ -53,6 +57,8 @@ def generate_cloud_init_script(
         install_script_token,
         mail_email,
         mail_password,
+        device_id,
+        device_name,
     )
 
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
@@ -73,6 +79,8 @@ def generate_simple_startup_script(
     install_script_token: str = "",
     mail_email: str = "",
     mail_password: str = "",
+    device_id: str = "",
+    device_name: str = "",
 ) -> str:
     """Generate Base64 encoded simple startup script (non-MIME format).
 
@@ -87,6 +95,8 @@ def generate_simple_startup_script(
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
         mail_password: Optional mail account password for himalaya mail skill.
+        device_id: Server-generated device UUID.
+        device_name: Server-generated device name.
 
     Returns:
         Base64 encoded script string
@@ -99,13 +109,15 @@ def generate_simple_startup_script(
         install_script_token,
         mail_email,
         mail_password,
+        device_id,
+        device_name,
     )
 
     encoded = base64.b64encode(script.encode("utf-8")).decode("utf-8")
 
-    logger.debug(
+    logger.info(
         f"Generated simple startup script for user_name={user_name}, "
-        f"script_length={len(script)}"
+        f"script_length={script}"
     )
 
     return encoded
@@ -119,6 +131,8 @@ def _generate_user_data_script(
     install_script_token: str = "",
     mail_email: str = "",
     mail_password: str = "",
+    device_id: str = "",
+    device_name: str = "",
 ) -> str:
     """Generate startup script (user_data) for cloud device.
 
@@ -134,6 +148,8 @@ def _generate_user_data_script(
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
         mail_password: Optional mail account password for himalaya mail skill.
+        device_id: Server-generated device UUID.
+        device_name: Server-generated device name.
     """
     # Build curl command for downloading the install script
     curl_parts = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "5"]
@@ -172,6 +188,10 @@ set -x
 
 # Pre-set backend URL so the install script uses it instead of default
 export WEGENT_BACKEND_URL="{backend_url}"
+
+# Export server-generated device ID and name
+export DEVICE_ID="{device_id}"
+export DEVICE_NAME="{device_name}"
 
 # Download and execute the shared install script
 {curl_download_cmd} | bash -s -- {install_args}
