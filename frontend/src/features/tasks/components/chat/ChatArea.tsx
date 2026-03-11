@@ -904,6 +904,11 @@ function ChatAreaContent({
     teams: teams,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
+    onTeamsRefresh: async () => {
+      if (onRefreshTeams) {
+        await onRefreshTeams()
+      }
+    },
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
     // Only enable restore when default team exists
