@@ -135,7 +135,7 @@ export default function DeviceChatPage() {
   const showVncPanel = isVncOpen && sandboxId && selectedDeviceId && !isMobile
 
   // Check if selected device is OpenClaw type (used for conditional rendering)
-  const _isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
+  const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -225,6 +225,7 @@ export default function DeviceChatPage() {
                     ? t('device_offline_cannot_send')
                     : undefined
                 }
+                hideSelectors={isOpenClaw}
               />
             </div>
 
