@@ -440,7 +440,9 @@ async def export_task_docx(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active.in_(
+                [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+            ),
         )
         .first()
     )
@@ -515,7 +517,9 @@ def get_task_services(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active.in_(
+                [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+            ),
         )
         .first()
     )
@@ -556,7 +560,9 @@ def update_task_services(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active.in_(
+                [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+            ),
         )
         .first()
     )
@@ -613,7 +619,9 @@ def delete_task_services(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active.in_(
+                [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+            ),
         )
         .first()
     )

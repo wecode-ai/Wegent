@@ -51,7 +51,7 @@ class TaskShareService(UnifiedShareService):
             .filter(
                 TaskResource.id == resource_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -147,7 +147,7 @@ class TaskShareService(UnifiedShareService):
                         TaskResource.name == workspace_ref,
                         TaskResource.user_id == task.user_id,
                         TaskResource.kind == "Workspace",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )

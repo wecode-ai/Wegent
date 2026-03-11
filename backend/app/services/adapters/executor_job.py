@@ -62,7 +62,7 @@ class JobService(BaseService[Kind, None, None]):
                         ),
                         Subtask.updated_at <= cutoff,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                         TaskResource.updated_at <= cutoff,
                         Subtask.executor_name.isnot(None),
                         Subtask.executor_name != "",
@@ -85,7 +85,7 @@ class JobService(BaseService[Kind, None, None]):
                     .filter(
                         TaskResource.id == subtask.task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )
