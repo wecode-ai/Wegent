@@ -382,7 +382,13 @@ class TaskQueryMixin:
         """
         )
         task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 200, "skip": skip}
+            ids_sql,
+            {
+                "user_id": user_id,
+                "is_active": TaskResource.STATE_ACTIVE,
+                "limit": limit + 200,
+                "skip": skip,
+            },
         ).fetchall()
         task_ids = [row[0] for row in task_id_rows]
 
@@ -857,7 +863,12 @@ class TaskQueryMixin:
                     LIMIT 1
                 """
                 ),
-                {"user_id": user_id, "name": team_name, "namespace": team_namespace},
+                {
+                    "user_id": user_id,
+                    "name": team_name,
+                    "namespace": team_namespace,
+                    "is_active": TaskResource.STATE_ACTIVE,
+                },
             ).fetchone()
 
             team_id = team_result[0] if team_result else None
@@ -882,6 +893,7 @@ class TaskQueryMixin:
                         "user_id": user_id,
                         "name": team_name,
                         "namespace": team_namespace,
+                        "is_active": TaskResource.STATE_ACTIVE,
                     },
                 ).fetchone()
                 team_id = shared_team_result[0] if shared_team_result else None
@@ -906,6 +918,7 @@ class TaskQueryMixin:
                     "user_id": user_id,
                     "name": workspace_name,
                     "namespace": workspace_namespace,
+                    "is_active": TaskResource.STATE_ACTIVE,
                 },
             ).fetchone()
 
