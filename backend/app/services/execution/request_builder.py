@@ -295,20 +295,12 @@ class TaskRequestBuilder:
         if not knowledge_base_ids:
             return False
 
-        from app.models.resource_member import ResourceRole
         from app.services.share import knowledge_share_service
 
-        restricted_observer_count = 0
-        for kb_id in knowledge_base_ids:
-            has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
-                self.db, kb_id, user_id
-            )
-            if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
-                restricted_observer_count += 1
-
-        return (
-            restricted_observer_count == len(knowledge_base_ids)
-            and restricted_observer_count > 0
+        # Use the shared helper to check if user is RestrictedObserver for any KB
+        # If they are RestrictedObserver for ANY KB, we treat it as restricted for all
+        return knowledge_share_service.is_user_restricted_observer_for_any_kb(
+            self.db, user_id, knowledge_base_ids
         )
 
     # =========================================================================

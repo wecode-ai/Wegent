@@ -303,6 +303,36 @@ class KnowledgeShareService(UnifiedShareService):
 
         return False, None, None, False
 
+    def is_user_restricted_observer_for_any_kb(
+        self,
+        db: Session,
+        user_id: int,
+        knowledge_base_ids: list[int],
+    ) -> bool:
+        """Check if user has RestrictedObserver role for ANY of the given knowledge bases.
+
+        This is used to determine if the user should be restricted to RAG-only access
+        when using multiple knowledge bases. If the user is a RestrictedObserver for
+        ANY KB, the entire request is restricted to prevent raw content leaking.
+
+        Args:
+            db: Database session
+            user_id: User ID to check
+            knowledge_base_ids: List of knowledge base IDs to check
+
+        Returns:
+            True if user has RestrictedObserver role for any KB, False otherwise
+        """
+        if not knowledge_base_ids:
+            return False
+
+        for kb_id in knowledge_base_ids:
+            has_access, role, _, _ = self.get_user_kb_permission(db, kb_id, user_id)
+            if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
+                return True
+
+        return False
+
     def _is_kb_bound_to_user_group_chat(
         self, db: Session, kb_id: int, user_id: int
     ) -> bool:

@@ -21,13 +21,16 @@ This migration includes two performance optimizations:
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from sqlalchemy.dialects import mysql
 
 from alembic import op
+
+logger = logging.getLogger(__name__)
+
 
 # revision identifiers, used by Alembic.
 revision: str = "a8b9c0d1e2f3"
@@ -111,13 +114,15 @@ def _upgrade_linked_group_id() -> None:
         # Filter tasks with linked_group in Python for SQLite
         filtered_result = []
         for row in result:
+            task_id = row[0]
             try:
                 task_json = json.loads(row[1]) if isinstance(row[1], str) else row[1]
                 linked_group = task_json.get("spec", {}).get("linked_group")
                 if linked_group:
-                    filtered_result.append((row[0], linked_group))
-            except Exception:
-                pass
+                    filtered_result.append((task_id, linked_group))
+            except Exception as e:
+                # Log warning with task ID for malformed JSON
+                logger.warning(f"Failed to parse JSON for task id={task_id}: {e}")
         result = filtered_result
 
     # For each task with linked_group, find the namespace_id and update
@@ -129,10 +134,21 @@ def _upgrade_linked_group_id() -> None:
             continue
 
         # Find namespace_id by name
-        namespace_result = conn.execute(
-            sa.text("SELECT id FROM namespace WHERE name = :name AND is_active = true"),
-            {"name": linked_group_name},
-        ).fetchone()
+        # Use dialect-compatible boolean: SQLite uses 1, MySQL/PostgreSQL support true
+        if conn.dialect.name == "mysql":
+            namespace_result = conn.execute(
+                sa.text(
+                    "SELECT id FROM namespace WHERE name = :name AND is_active = true"
+                ),
+                {"name": linked_group_name},
+            ).fetchone()
+        else:
+            namespace_result = conn.execute(
+                sa.text(
+                    "SELECT id FROM namespace WHERE name = :name AND is_active = 1"
+                ),
+                {"name": linked_group_name},
+            ).fetchone()
 
         if namespace_result:
             namespace_id = namespace_result[0]
@@ -310,9 +326,9 @@ def _migrate_kb_bindings() -> None:
                             binding,
                         )
                         total_migrated += 1
-                    except Exception:
-                        # Skip on error (e.g., FK constraint if KB was deleted)
-                        pass
+                    except Exception as e:
+                        # Log warning but continue to skip the record
+                        logger.warning(f"Failed to insert KB binding {binding}: {e}")
             else:
                 # SQLite: use INSERT OR IGNORE
                 for binding in bindings:
@@ -328,8 +344,9 @@ def _migrate_kb_bindings() -> None:
                             binding,
                         )
                         total_migrated += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Log warning but continue to skip the record
+                        logger.warning(f"Failed to insert KB binding {binding}: {e}")
 
         offset += batch_size
 
