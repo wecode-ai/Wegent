@@ -54,7 +54,7 @@ class TaskQueryMixin:
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
         """
@@ -68,7 +68,7 @@ class TaskQueryMixin:
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
@@ -131,7 +131,7 @@ class TaskQueryMixin:
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
         """
@@ -145,7 +145,7 @@ class TaskQueryMixin:
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
@@ -224,7 +224,7 @@ class TaskQueryMixin:
             INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
             WHERE tm.status = 'approved'
             AND k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.user_id = :user_id)
             AND tm.copied_resource_id = 0
@@ -242,7 +242,7 @@ class TaskQueryMixin:
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
@@ -316,7 +316,7 @@ class TaskQueryMixin:
             INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
             WHERE tm.status = 'approved'
             AND k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND tm.copied_resource_id = 0
         """
@@ -330,7 +330,7 @@ class TaskQueryMixin:
             SELECT DISTINCT k.id
             FROM tasks k
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND k.user_id = :user_id
             AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
@@ -350,7 +350,7 @@ class TaskQueryMixin:
             SELECT COUNT(*)
             FROM tasks k
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND k.user_id = :user_id
         """
@@ -363,7 +363,7 @@ class TaskQueryMixin:
             SELECT k.id, k.created_at
             FROM tasks k
             WHERE k.kind = 'Task'
-            AND k.is_active = true
+            AND k.is_active = 1
             AND k.namespace != 'system'
             AND k.user_id = :user_id
             ORDER BY k.created_at DESC
@@ -460,7 +460,7 @@ class TaskQueryMixin:
             SELECT COUNT(*) FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
-            AND is_active = true
+            AND is_active = 1
             AND namespace != 'system'
         """
         )
@@ -471,7 +471,7 @@ class TaskQueryMixin:
             SELECT id FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
-            AND is_active = true
+            AND is_active = 1
             AND namespace != 'system'
             ORDER BY created_at DESC
             LIMIT :limit OFFSET :skip
@@ -534,7 +534,7 @@ class TaskQueryMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
                 text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
             )
             .first()
@@ -832,7 +832,7 @@ class TaskQueryMixin:
                     AND kind = 'Team'
                     AND name = :name
                     AND namespace = :namespace
-                    AND is_active = true
+                    AND is_active = 1
                     LIMIT 1
                 """
                 ),
@@ -853,7 +853,7 @@ class TaskQueryMixin:
                         AND k.kind = 'Team'
                         AND k.name = :name
                         AND k.namespace = :namespace
-                        AND k.is_active = true
+                        AND k.is_active = 1
                         LIMIT 1
                     """
                     ),
@@ -877,7 +877,7 @@ class TaskQueryMixin:
                     AND kind = 'Workspace'
                     AND name = :name
                     AND namespace = :namespace
-                    AND is_active = true
+                    AND is_active = 1
                     LIMIT 1
                 """
                 ),
@@ -963,7 +963,7 @@ class TaskQueryMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )

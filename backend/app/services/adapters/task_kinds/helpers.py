@@ -650,7 +650,7 @@ def build_lite_task_list(
                 AND kind = 'Workspace'
                 AND name = :name
                 AND namespace = :namespace
-                AND is_active = true
+                AND is_active = 1
                 LIMIT 1
             """
             ),
