@@ -337,6 +337,7 @@ export function ChatInputCard({
             teamId={teamId}
             taskId={taskId}
             taskModelId={selectedTaskDetail?.model_id}
+            isGroupChat={selectedTaskDetail?.is_group_chat}
             showRepositorySelector={showRepositorySelector}
             selectedRepo={selectedRepo}
             setSelectedRepo={setSelectedRepo}

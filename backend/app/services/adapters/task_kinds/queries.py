@@ -126,7 +126,7 @@ class TaskQueryMixin:
         # First, get all candidate tasks without pagination
         all_ids_sql = text(
             """
-            SELECT DISTINCT k.id, k.json
+            SELECT k.id, k.json
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
@@ -204,7 +204,7 @@ class TaskQueryMixin:
         # Exclude system namespace tasks (background tasks)
         all_ids_sql = text(
             """
-            SELECT DISTINCT k.id, k.json
+            SELECT k.id, k.json, k.created_at
             FROM tasks k
             LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
             WHERE k.kind = 'Task'
@@ -223,7 +223,7 @@ class TaskQueryMixin:
         # Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
         filtered_task_ids = []
         for row in all_tasks_result:
-            task_id, task_json = row
+            task_id, task_json, _created_at = row
             try:
                 task_crd = Task.model_validate(task_json)
             except Exception:
@@ -904,22 +904,12 @@ class TaskQueryMixin:
 
     def _add_group_chat_info_to_task(
         self, db: Session, task_id: int, task_dict: Dict[str, Any], user_id: int
-    ) -> Dict[str, Any]:
+    ) -> None:
         """Add group chat information to task dict using ResourceMember."""
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        members = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.TASK.value,
-                ResourceMember.resource_id == task_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
         # Delegate to the shared helper to populate group-chat metadata
-        return add_group_chat_info_to_task(task_dict, members, user_id)
+        add_group_chat_info_to_task(
+            db, task_id=task_id, task_dict=task_dict, user_id=user_id
+        )
 
     def get_task_skills(
         self, db: Session, *, task_id: int, user_id: int

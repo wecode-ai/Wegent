@@ -77,6 +77,8 @@ export interface UseModelSelectionOptions {
   disabled?: boolean
   /** Model category type to filter models (default: 'llm') */
   modelCategoryType?: ModelCategoryType
+  /** Whether this is a group chat - if true, skip taskModelId and use user's own preference */
+  isGroupChat?: boolean
 }
 
 /** Return type for useModelSelection hook */
@@ -159,6 +161,7 @@ export function useModelSelection({
   selectedTeam,
   disabled = false,
   modelCategoryType = 'llm',
+  isGroupChat = false,
 }: UseModelSelectionOptions): UseModelSelectionReturn {
   const { t } = useTranslation()
 
@@ -313,7 +316,8 @@ export function useModelSelection({
 
       // Priority 1: Use taskModelId from API (if exists and not default)
       // Search in ALL models, not just filtered ones, since task already has a recorded model
-      if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
+      // NOTE: For group chat, skip this step - each user should use their own model preference
+      if (!isGroupChat && taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
           restoredModel = foundModel
@@ -340,7 +344,8 @@ export function useModelSelection({
       }
 
       // Priority 3: Use team's bot bind_model as fallback
-      if (!restoredModel && !taskModelId) {
+      // For group chat, use this as fallback when no user preference exists
+      if (!restoredModel && (!taskModelId || isGroupChat)) {
         const teamDefaultModel = getTeamDefaultModel()
         if (teamDefaultModel) {
           restoredModel = teamDefaultModel
@@ -392,6 +397,7 @@ export function useModelSelection({
     taskId,
     taskModelId,
     compatibleProvider,
+    isGroupChat,
   ])
 
   // -------------------------------------------------------------------------

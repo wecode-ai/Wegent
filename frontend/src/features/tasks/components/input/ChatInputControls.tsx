@@ -58,6 +58,8 @@ export interface ChatInputControlsProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Whether this is a group chat - if true, each user uses their own model preference */
+  isGroupChat?: boolean
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -181,6 +183,7 @@ export function ChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  isGroupChat = false,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -334,6 +337,7 @@ export function ChatInputControls({
         teamId={teamId}
         taskId={taskId}
         taskModelId={taskModelId}
+        isGroupChat={isGroupChat}
         knowledgeBaseId={knowledgeBaseId}
         showRepositorySelector={showRepositorySelector}
         selectedRepo={selectedRepo}
@@ -466,7 +470,11 @@ export function ChatInputControls({
 
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
-          <div className={hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'}>
+          <div
+            className={
+              hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'
+            }
+          >
             {/* Context Selection - only show for chat shell */}
             {isChatShell(selectedTeam) && (
               <ChatContextInput
@@ -569,6 +577,7 @@ export function ChatInputControls({
                   teamId={teamId}
                   taskId={taskId}
                   taskModelId={taskModelId}
+                  isGroupChat={isGroupChat}
                 />
               </div>
             )}

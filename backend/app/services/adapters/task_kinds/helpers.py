@@ -537,10 +537,9 @@ def build_lite_task_list(
         List of task dictionaries with essential fields
     """
     if not tasks:
-        if not tasks:
-            return []
+        return []
 
-        related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
+    related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
     result = []
     for task in tasks:
         task_crd = Task.model_validate(task.json)

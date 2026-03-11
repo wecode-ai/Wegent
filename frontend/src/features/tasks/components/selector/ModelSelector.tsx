@@ -90,6 +90,8 @@ export interface ModelSelectorProps {
   taskModelId?: string | null
   /** Model category type for filtering and display (default: 'llm') */
   modelCategoryType?: ModelCategoryType
+  /** Whether this is a group chat - if true, each user uses their own model preference */
+  isGroupChat?: boolean
 }
 
 // ============================================================================
@@ -123,6 +125,7 @@ export default function ModelSelector({
   taskId,
   taskModelId,
   modelCategoryType = 'llm',
+  isGroupChat = false,
 }: ModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -136,6 +139,7 @@ export default function ModelSelector({
     selectedTeam,
     disabled,
     modelCategoryType,
+    isGroupChat,
   })
 
   // Get icon based on model category type

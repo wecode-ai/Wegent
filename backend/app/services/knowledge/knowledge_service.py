@@ -1674,6 +1674,7 @@ class KnowledgeService:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
         from app.models.task import TaskResource
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
         try:
             # Optimization: Split into separate queries to avoid OR condition
@@ -1723,7 +1724,7 @@ class KnowledgeService:
                 .join(
                     ResourceMember,
                     (ResourceMember.resource_id == TaskResource.linked_group_id)
-                    & (ResourceMember.resource_type == ResourceType.NAMESPACE.value)
+                    & (ResourceMember.resource_type == "Namespace")
                     & (ResourceMember.user_id == user_id)
                     & (ResourceMember.status == MemberStatus.APPROVED.value),
                 )
@@ -1744,8 +1745,6 @@ class KnowledgeService:
                 kb_id_set.add(row[0])
             for row in linked_ns_kb_ids:
                 kb_id_set.add(row[0])
-
-            return list(kb_id_set)
 
             return list(kb_id_set)
         except ProgrammingError:

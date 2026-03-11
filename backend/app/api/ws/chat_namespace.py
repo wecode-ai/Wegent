@@ -386,6 +386,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                         ),
                         "contexts": contexts_list,
                         "sender": None,
+                        "sender_user_id": None,
+                        "sender_user_name": None,
                     }
 
                     # Add sender info for user messages
@@ -397,6 +399,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                                 "user_name": user.user_name,
                                 "avatar": user.avatar,
                             }
+                            # Also add flattened fields for frontend compatibility
+                            subtask_dict["sender_user_id"] = user.id
+                            subtask_dict["sender_user_name"] = user.user_name
 
                     subtasks_dict.append(subtask_dict)
 
@@ -462,6 +467,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                         ),
                         "contexts": contexts_list,
                         "sender": None,
+                        "sender_user_id": None,
+                        "sender_user_name": None,
                     }
 
                     # Add sender info for user messages
@@ -470,11 +477,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                         and st.sender_user_id
                         and st.sender_user_id > 0
                     ):
+                        sender_user_name = getattr(st, "sender_user_name", None)
                         subtask_dict["sender"] = {
                             "user_id": st.sender_user_id,
-                            "user_name": getattr(st, "sender_user_name", None),
+                            "user_name": sender_user_name,
                             "avatar": None,  # Avatar not loaded in batch query
                         }
+                        # Also add flattened fields for frontend compatibility
+                        subtask_dict["sender_user_id"] = st.sender_user_id
+                        subtask_dict["sender_user_name"] = sender_user_name
 
                     subtasks_dict.append(subtask_dict)
 

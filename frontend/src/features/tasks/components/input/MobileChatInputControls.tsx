@@ -41,6 +41,8 @@ export interface MobileChatInputControlsProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  /** Whether this is a group chat - if true, each user uses their own model preference */
+  isGroupChat?: boolean
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -114,6 +116,7 @@ export function MobileChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  isGroupChat = false,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -224,7 +227,10 @@ export function MobileChatInputControls({
       className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       {/* Left: Attachment, Context, Settings menu - hidden when hideSelectors is true */}
-      <div className={`flex items-center gap-1 flex-shrink-0 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`} data-tour="input-controls">
+      <div
+        className={`flex items-center gap-1 flex-shrink-0 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+        data-tour="input-controls"
+      >
         {/* Attachment */}
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
@@ -321,7 +327,9 @@ export function MobileChatInputControls({
       {/* Right: Model selector, Send button */}
       <div className="flex items-center gap-2 min-w-0 overflow-hidden">
         {selectedTeam && (
-          <div className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}>
+          <div
+            className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+          >
             <MobileModelSelector
               selectedModel={selectedModel}
               setSelectedModel={setSelectedModel}
@@ -332,6 +340,7 @@ export function MobileChatInputControls({
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}
+              isGroupChat={isGroupChat}
             />
           </div>
         )}
