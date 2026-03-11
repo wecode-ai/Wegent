@@ -90,17 +90,26 @@ def can_access_task_sync(db: Session, user_id: int, task_id: int) -> bool:
     )
 
     if linked_group:
+        from app.schemas.namespace import GroupRole
         from app.services.group_permission import get_effective_role_in_group
 
         role = get_effective_role_in_group(db, user_id, linked_group)
         logger.info(
             f"[can_access_task_sync] User {user_id} role in linked group '{linked_group}': {role}"
         )
-        if role is not None:
+        # RestrictedObserver role does not grant task access via linked group
+        # This preserves the role→permission mapping and prevents linked-group
+        # membership from becoming equivalent to full task access
+        if role is not None and role != GroupRole.RestrictedObserver:
             logger.info(
                 f"[can_access_task_sync] User {user_id} has access via linked group '{linked_group}' with role '{role}'"
             )
             return True
+        elif role == GroupRole.RestrictedObserver:
+            logger.info(
+                f"[can_access_task_sync] User {user_id} has RestrictedObserver role in linked group '{linked_group}', "
+                f"denying task access via linked group membership"
+            )
 
     # Check if user is a member via ResourceMember (includes shared tasks and group chat members)
     from app.models.resource_member import MemberStatus, ResourceMember

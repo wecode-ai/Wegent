@@ -67,20 +67,17 @@ def test_get_user_group_tasks_lite_uses_db_pagination_and_count():
     def mock_execute(sql, params=None):
         result = Mock()
         sql_str = str(sql)
-        if "COUNT(*)" in sql_str and "is_group_chat = true" in sql_str:
-            # Count query
-            result.fetchone.return_value = (9,)
-        elif (
-            "SELECT id, json, updated_at" in sql_str
-            and "is_group_chat = true" in sql_str
-        ):
-            # Select group chat tasks
+        if "SELECT id, updated_at" in sql_str and "is_group_chat = true" in sql_str:
+            # Select group chat tasks (no limit/skip, just IDs)
             result.fetchall.return_value = [
-                (11, mock_task1.json, mock_task1.updated_at),
-                (22, mock_task2.json, mock_task2.updated_at),
+                (11, mock_task1.updated_at),
+                (22, mock_task2.updated_at),
             ]
         elif "resource_members" in sql_str and "resource_type = 'Namespace'" in sql_str:
             # Namespace query
+            result.fetchall.return_value = []
+        elif "resource_members" in sql_str and "resource_type = 'Task'" in sql_str:
+            # Member task IDs query
             result.fetchall.return_value = []
         else:
             result.fetchall.return_value = []
@@ -100,9 +97,10 @@ def test_get_user_group_tasks_lite_uses_db_pagination_and_count():
         return_value=[{"id": 11}, {"id": 22}],
     ) as mock_build:
         items, total = task_service.get_user_group_tasks_lite(
-            db, user_id=7, skip=50, limit=25
+            db, user_id=7, skip=0, limit=25
         )
 
-    assert total == 9
+    # Total is now computed from the union of all task IDs (2 tasks from group_chat)
+    assert total == 2
     assert items == [{"id": 11}, {"id": 22}]
     mock_build.assert_called_once()

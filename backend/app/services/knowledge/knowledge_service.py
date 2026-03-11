@@ -1683,12 +1683,14 @@ class KnowledgeService:
 
             # Query 1: Get KB IDs where user is the task owner
             # Uses index: tasks(user_id, kind, is_active)
+            # Only include group chat tasks (is_group_chat == True)
             owner_kb_ids = (
                 db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
                 .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
                 .filter(
                     TaskResource.is_active == True,
                     TaskResource.kind == "Task",
+                    TaskResource.is_group_chat == True,
                     TaskResource.user_id == user_id,
                 )
                 .all()
@@ -1696,6 +1698,7 @@ class KnowledgeService:
 
             # Query 2: Get KB IDs where user is an approved resource member
             # Uses index: resource_members(resource_type, resource_id, status, user_id)
+            # Only include group chat tasks (is_group_chat == True)
             member_kb_ids = (
                 db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
                 .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
@@ -1709,6 +1712,7 @@ class KnowledgeService:
                 .filter(
                     TaskResource.is_active == True,
                     TaskResource.kind == "Task",
+                    TaskResource.is_group_chat == True,
                 )
                 .all()
             )

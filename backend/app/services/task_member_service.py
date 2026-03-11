@@ -465,16 +465,36 @@ class TaskMemberService:
             task_id: Task ID
 
         Returns:
-            Linked group name if set, None otherwise
+            Linked group name if set and valid, None otherwise
         """
         task = self.get_task(db, task_id)
         if not task:
             logger.info(f"[get_linked_group] Task {task_id} not found")
             return None
 
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
+        # Validate task.json is a dict
+        if not isinstance(task.json, dict):
+            logger.warning(
+                f"[get_linked_group] task_id={task_id}, task.json is not a dict: {type(task.json)}"
+            )
+            return None
+
+        spec = task.json.get("spec")
+        # Validate spec is a dict
+        if not isinstance(spec, dict):
+            logger.warning(
+                f"[get_linked_group] task_id={task_id}, spec is not a dict: {type(spec)}"
+            )
+            return None
+
         linked_group = spec.get("linked_group")
+        # Validate linked_group is a non-empty string
+        if not isinstance(linked_group, str) or not linked_group.strip():
+            logger.info(
+                f"[get_linked_group] task_id={task_id}, linked_group is not a valid string: {linked_group}"
+            )
+            return None
+
         logger.info(
             f"[get_linked_group] task_id={task_id}, linked_group={linked_group}, spec_keys={list(spec.keys())}"
         )
@@ -493,7 +513,9 @@ class TaskMemberService:
         Returns:
             True if the task is a linked group chat
         """
-        return self.get_linked_group(db, task_id) is not None
+        # Check that get_linked_group returns a truthy valid string
+        linked_group = self.get_linked_group(db, task_id)
+        return bool(linked_group)
 
     def is_member_via_linked_group(
         self, db: Session, task_id: int, user_id: int
@@ -557,7 +579,7 @@ class TaskMemberService:
         # Get the namespace (group)
         namespace = (
             db.query(Namespace)
-            .filter(Namespace.name == linked_group, Namespace.is_active == True)
+            .filter(Namespace.name == linked_group, Namespace.is_active)
             .first()
         )
         logger.info(
@@ -583,6 +605,7 @@ class TaskMemberService:
 
         members = []
         task_owner_id = task.user_id
+        owner_in_group = False
 
         for gm in group_members:
             user = self.get_user(db, gm.user_id)
@@ -594,6 +617,8 @@ class TaskMemberService:
 
             # Determine if this user is the task owner
             is_owner = gm.user_id == task_owner_id
+            if is_owner:
+                owner_in_group = True
 
             member = TaskMemberResponse(
                 id=gm.id,
@@ -612,6 +637,32 @@ class TaskMemberService:
             logger.debug(
                 f"[get_linked_group_members] Added member: user_id={gm.user_id}, username={user.user_name}, role={gm.role}"
             )
+
+        # If task owner is not in the group, explicitly add them
+        if not owner_in_group:
+            owner = self.get_user(db, task_owner_id)
+            if owner:
+                owner_member = TaskMemberResponse(
+                    id=0,  # Special ID for owner
+                    task_id=task_id,
+                    user_id=task_owner_id,
+                    username=owner.user_name,
+                    avatar=None,
+                    invited_by=task_owner_id,  # Self-invited
+                    inviter_name=owner.user_name,  # Self
+                    status=SchemaMemberStatus.ACTIVE,
+                    joined_at=task.created_at,
+                    is_owner=True,
+                    role=None,  # No group role for owner
+                )
+                members.append(owner_member)
+                logger.info(
+                    f"[get_linked_group_members] Added task owner {task_owner_id} to members list"
+                )
+            else:
+                logger.warning(
+                    f"[get_linked_group_members] Task owner {task_owner_id} not found in users table"
+                )
 
         # Sort: owner first, then by username
         members.sort(key=lambda m: (not m.is_owner, m.username.lower()))
@@ -634,7 +685,8 @@ class TaskMemberService:
             task_id: Task ID
 
         Returns:
-            Number of members in the linked group, or 0 if not a linked group chat
+            Number of members in the linked group (including task owner),
+            or 0 if not a linked group chat
         """
         linked_group = self.get_linked_group(db, task_id)
         if not linked_group:
@@ -643,15 +695,22 @@ class TaskMemberService:
         # Get the namespace (group)
         namespace = (
             db.query(Namespace)
-            .filter(Namespace.name == linked_group, Namespace.is_active == True)
+            .filter(Namespace.name == linked_group, Namespace.is_active)
             .first()
         )
 
         if not namespace:
             return 0
 
+        # Get the task to check owner
+        task = self.get_task(db, task_id)
+        if not task:
+            return 0
+
+        task_owner_id = task.user_id
+
         # Count approved members in the group
-        return (
+        group_member_count = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == "Namespace",
@@ -660,6 +719,25 @@ class TaskMemberService:
             )
             .count()
         )
+
+        # Check if task owner is already in the group
+        owner_in_group = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == namespace.id,
+                ResourceMember.user_id == task_owner_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+            is not None
+        )
+
+        # If owner is not in the group, add 1 to the count
+        if not owner_in_group:
+            return group_member_count + 1
+
+        return group_member_count
 
 
 task_member_service = TaskMemberService()

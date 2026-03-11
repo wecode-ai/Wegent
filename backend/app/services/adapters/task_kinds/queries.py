@@ -5,6 +5,7 @@
 """Task query methods."""
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -298,11 +299,10 @@ class TaskQueryMixin:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
-        # Step 1: Get tasks with is_group_chat=true using indexed column (fast)
-        # This is the primary query for group chat tasks
+        # Step 1: Get all task IDs with is_group_chat=true (no limit/skip)
         group_chat_tasks_sql = text(
             """
-            SELECT id, json, updated_at
+            SELECT id, updated_at
             FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
@@ -310,33 +310,15 @@ class TaskQueryMixin:
             AND namespace != 'system'
             AND is_group_chat = true
             ORDER BY updated_at DESC
-            LIMIT :limit OFFSET :skip
         """
         )
         group_chat_tasks_result = db.execute(
-            group_chat_tasks_sql, {"user_id": user_id, "limit": limit, "skip": skip}
+            group_chat_tasks_sql, {"user_id": user_id}
         ).fetchall()
-
-        # Get total count for pagination
-        count_sql = text(
-            """
-            SELECT COUNT(*)
-            FROM tasks
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
-            AND namespace != 'system'
-            AND is_group_chat = true
-        """
-        )
-        total_result = db.execute(count_sql, {"user_id": user_id}).fetchone()
-        total = total_result[0] if total_result else 0
-
-        # Collect task IDs from the main query
         group_task_ids = {row[0] for row in group_chat_tasks_result}
+        group_task_updated_at = {row[0]: row[1] for row in group_chat_tasks_result}
 
         # Step 2: Get tasks with linked_group where user is a member of the linked namespace
-        # This handles linked group chats that may not have is_group_chat set
         user_namespace_ids_sql = text(
             """
             SELECT DISTINCT rm.resource_id
@@ -352,70 +334,57 @@ class TaskQueryMixin:
         user_namespace_ids = {row[0] for row in user_namespace_ids_result}
 
         linked_group_ids = set()
+        linked_group_updated_at = {}
         if user_namespace_ids:
             # Query tasks using linked_group_id column (indexed)
             linked_group_sql = text(
                 """
-                SELECT DISTINCT k.id
+                SELECT DISTINCT k.id, k.updated_at
                 FROM tasks k
                 WHERE k.kind = 'Task'
                 AND k.is_active = true
                 AND k.namespace != 'system'
                 AND k.linked_group_id IN :namespace_ids
-                AND k.id NOT IN :existing_ids
             """
             ).bindparams(
                 bindparam("namespace_ids", expanding=True),
-                bindparam("existing_ids", expanding=True),
             )
 
             linked_group_result = db.execute(
                 linked_group_sql,
                 {
                     "namespace_ids": list(user_namespace_ids),
-                    "existing_ids": list(group_task_ids) if group_task_ids else [0],
                 },
             ).fetchall()
             linked_group_ids = {row[0] for row in linked_group_result}
+            linked_group_updated_at = {row[0]: row[1] for row in linked_group_result}
 
-        # Step 3: Get tasks where user is a member via resource_members (legacy support)
+        # Step 3: Get all tasks where user is a member via resource_members (no limit)
         # Note: copied_resource_id = 0 filters out share-copy records
-        member_task_ids = set()
-        if len(group_task_ids) < limit:
-            remaining_limit = limit - len(group_task_ids)
-            member_task_ids_sql = text(
-                """
-                SELECT DISTINCT tm.resource_id
-                FROM resource_members tm
-                INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
-                WHERE tm.status = 'approved'
-                AND k.kind = 'Task'
-                AND k.is_active = true
-                AND k.namespace != 'system'
-                AND tm.user_id = :user_id
-                AND tm.copied_resource_id = 0
-                AND k.id NOT IN :existing_ids
-                LIMIT :limit
+        member_task_ids_sql = text(
             """
-            ).bindparams(
-                bindparam("existing_ids", expanding=True),
-            )
-            member_task_ids_result = db.execute(
-                member_task_ids_sql,
-                {
-                    "user_id": user_id,
-                    "existing_ids": (
-                        list(group_task_ids | linked_group_ids)
-                        if (group_task_ids | linked_group_ids)
-                        else [0]
-                    ),
-                    "limit": remaining_limit,
-                },
-            ).fetchall()
-            member_task_ids = {row[0] for row in member_task_ids_result}
+            SELECT DISTINCT tm.resource_id, k.updated_at
+            FROM resource_members tm
+            INNER JOIN tasks k ON k.id = tm.resource_id AND tm.resource_type = 'Task'
+            WHERE tm.status = 'approved'
+            AND k.kind = 'Task'
+            AND k.is_active = true
+            AND k.namespace != 'system'
+            AND tm.user_id = :user_id
+            AND tm.copied_resource_id = 0
+        """
+        )
+        member_task_ids_result = db.execute(
+            member_task_ids_sql, {"user_id": user_id}
+        ).fetchall()
+        member_task_ids = {row[0] for row in member_task_ids_result}
+        member_task_updated_at = {row[0]: row[1] for row in member_task_ids_result}
 
-        # Combine all task IDs
+        # Step 4: Combine all task IDs (union/deduplication)
         all_group_task_ids = group_task_ids | linked_group_ids | member_task_ids
+
+        # Step 5: Compute total from deduplicated set
+        total = len(all_group_task_ids)
 
         logger.info(
             f"[get_user_group_tasks_lite] user_id={user_id}, "
@@ -428,10 +397,28 @@ class TaskQueryMixin:
         if not all_group_task_ids:
             return [], 0
 
-        # Load full task data for all group chat IDs
-        tasks = (
-            db.query(TaskResource).filter(TaskResource.id.in_(all_group_task_ids)).all()
+        # Step 6: Sort by updated_at descending and apply pagination
+        # Merge updated_at from all sources
+        all_updated_at = {}
+        all_updated_at.update(group_task_updated_at)
+        all_updated_at.update(linked_group_updated_at)
+        all_updated_at.update(member_task_updated_at)
+
+        # Sort all IDs by updated_at descending
+        sorted_task_ids = sorted(
+            all_group_task_ids,
+            key=lambda tid: all_updated_at.get(tid, None) or datetime.min,
+            reverse=True,
         )
+
+        # Apply skip/limit to get paginated IDs
+        paginated_ids = sorted_task_ids[skip : skip + limit]
+
+        if not paginated_ids:
+            return [], total
+
+        # Step 7: Load full task data for paginated IDs
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
 
         # Filter out DELETE status tasks
         valid_tasks = []
@@ -441,11 +428,12 @@ class TaskQueryMixin:
             if status != "DELETE":
                 valid_tasks.append(t)
 
-        # Sort by updated_at descending
-        valid_tasks.sort(key=lambda t: t.updated_at, reverse=True)
+        # Maintain order from sorted_task_ids
+        id_to_task = {t.id: t for t in valid_tasks}
+        ordered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
 
         # Build lightweight result
-        result = build_lite_task_list(db, valid_tasks, user_id)
+        result = build_lite_task_list(db, ordered_tasks, user_id)
 
         return result, total
 
