@@ -122,6 +122,7 @@ export function RepoListView({
                   key={item.value}
                   value={item.searchText || item.label}
                   onSelect={() => onSelect(item.value)}
+                  data-testid={`repo-option-${item.label.replace(/\//g, '-')}`}
                   className={cn(
                     'group cursor-pointer select-none',
                     'px-3 py-1.5 text-sm text-text-primary',

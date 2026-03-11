@@ -48,6 +48,10 @@ def is_non_interacted_subscription_task(task_crd: Task) -> bool:
 
     Subscription tasks with userInteracted != 'true' should be filtered out
     from regular task lists.
+
+    Note: This is now redundant for queries that filter is_active=1 at SQL level,
+    since subscription tasks have is_active=2 and are excluded at the database level.
+    Kept as a safety net for edge cases and backward compatibility.
     """
     try:
         labels = task_crd.metadata.labels or {}

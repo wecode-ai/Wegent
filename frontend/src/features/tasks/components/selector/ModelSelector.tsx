@@ -245,6 +245,7 @@ export default function ModelSelector({
                   aria-expanded={isOpen}
                   aria-controls="model-selector-popover"
                   disabled={isDisabled}
+                  data-testid="model-selector"
                   className={cn(
                     'flex items-center gap-1 min-w-0 rounded-[24px] pl-2.5 pr-3 py-2.5 h-9',
                     'transition-colors',
@@ -361,6 +362,7 @@ export default function ModelSelector({
                         value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
                         onSelect={() => handleModelSelect(getModelKey(model))}
                         data-model-key={getModelKey(model)}
+                        data-testid={`model-option-${model.name.replace(/[.:]/g, '-')}`}
                         className={cn(
                           'group cursor-pointer select-none',
                           'px-3 py-2 text-sm text-text-primary',

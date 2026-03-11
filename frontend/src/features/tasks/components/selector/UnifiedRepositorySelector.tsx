@@ -388,7 +388,7 @@ export default function UnifiedRepositorySelector({
   const isLoading = repoLoading || branchLoading
 
   return (
-    <div className={cn('flex items-center min-w-0', className)} data-tour="unified-repo-selector">
+    <div className={cn('flex items-center min-w-0', className)} data-tour="unified-repo-selector" data-testid="repo-branch-selector">
       <Popover
         open={isOpen}
         onOpenChange={open => {
