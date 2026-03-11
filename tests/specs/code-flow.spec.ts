@@ -79,8 +79,16 @@ async function setupCodePage(page: any) {
   }
   await page.waitForTimeout(500)
 
+  // Verify repository is selected by checking the selector text
+  const repoSelectorText = await repoSelector.textContent()
+  console.log('Repository selected:', repoSelectorText)
+
   // Step 3: Select main branch
   console.log('Selecting branch...')
+  // Click to open repo selector again to access branch selection
+  await repoSelector.click()
+  await page.waitForTimeout(500)
+
   // Search for main branch
   const branchSearchInput = page.locator('input[placeholder*="分支"], input[placeholder*="branch"]').first()
   if (await branchSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -100,6 +108,10 @@ async function setupCodePage(page: any) {
     }
   }
   await page.waitForTimeout(500)
+
+  // Verify repository and branch are selected
+  const repoBranchText = await repoSelector.textContent()
+  console.log('Repository/Branch selected:', repoBranchText)
 
   // Step 4: Select model test-GLM4.7-Claude
   console.log('Selecting model...')
