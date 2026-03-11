@@ -31,6 +31,16 @@ class DeviceType(str, Enum):
     CLOUD = "cloud"
 
 
+class BindShell(str, Enum):
+    """Bind shell type enumeration.
+
+    Defines which shell runtime the device is bound to.
+    """
+
+    CLAUDECODE = "claudecode"
+    OPENCLAW = "openclaw"
+
+
 class DeviceConnectionMode(str, Enum):
     """Device connection mode enumeration.
 
@@ -42,8 +52,10 @@ class DeviceConnectionMode(str, Enum):
     # API = "api"  # For cloud provider API-based connections
 
 
-# Maximum concurrent tasks per device
-MAX_DEVICE_SLOTS = 5
+# Maximum concurrent tasks per device (0 = unlimited)
+# With ephemeral CC sessions (auto-close after each message),
+# slot limits are no longer needed for local devices.
+MAX_DEVICE_SLOTS = 0
 
 
 class DeviceRunningTask(BaseModel):
@@ -54,6 +66,16 @@ class DeviceRunningTask(BaseModel):
     title: str = Field(..., description="Task title")
     status: str = Field(..., description="Task status")
     created_at: Optional[str] = Field(None, description="Task creation timestamp")
+
+
+class CloudConfig(BaseModel):
+    """Cloud device configuration from Device CRD spec."""
+
+    sandboxId: str = Field(..., description="Cloud sandbox ID")
+    imageId: str = Field(..., description="Image ID used for VM creation")
+    createdAt: Optional[str] = Field(
+        None, description="Cloud device creation timestamp"
+    )
 
 
 class DeviceInfo(BaseModel):
@@ -92,6 +114,15 @@ class DeviceInfo(BaseModel):
     update_available: bool = Field(False, description="Whether an update is available")
     # Network information
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
+    # Cloud device specific config
+    cloud_config: Optional[CloudConfig] = Field(
+        None, description="Cloud device configuration (only for cloud devices)"
+    )
+    # Shell binding type
+    bind_shell: BindShell = Field(
+        BindShell.CLAUDECODE,
+        description="Shell runtime binding (claudecode or openclaw)",
+    )
 
     class Config:
         from_attributes = True
@@ -136,6 +167,10 @@ class DeviceRegisterPayload(BaseModel):
         None,
         max_length=50,
         description="Device's client IP address",
+    )
+    bind_shell: BindShell = Field(
+        BindShell.CLAUDECODE,
+        description="Shell runtime binding (claudecode or openclaw)",
     )
 
 

@@ -142,21 +142,37 @@ class AgentService:
             )
             return None
 
-    def execute_agent_task(
+    async def create_agent_async(self, task_data: ExecutionRequest) -> Optional[Agent]:
+        """Async version of create_agent that runs blocking operations in executor.
+
+        This method offloads the synchronous agent creation (including Git clone
+        and skill deployment) to a thread pool executor to avoid blocking the
+        event loop.
+
+        Args:
+            task_data: Execution request data
+
+        Returns:
+            Created agent or None if creation failed
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.create_agent, task_data)
+
+    async def execute_agent_task(
         self, agent: Agent, pre_executed: Optional[TaskStatus] = None
     ) -> Tuple[TaskStatus, Optional[str]]:
         try:
             logger.info(
                 f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Executing with pre_executed={pre_executed}"
             )
-            return agent.handle(pre_executed)
+            return await agent.handle(pre_executed)
         except Exception as e:
             logger.exception(
                 f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Execution error: {e}"
             )
             return TaskStatus.FAILED, str(e)
 
-    def execute_task(
+    async def execute_task(
         self, task_data: ExecutionRequest
     ) -> Tuple[TaskStatus, Optional[str]]:
         task_id = task_data.task_id
@@ -178,15 +194,15 @@ class AgentService:
                         f"{agent.subtask_id} -> {subtask_id}"
                     )
                     agent.update_emitter(subtask_id)
-            # If agent doesn't exist, create new agent
+            # If agent doesn't exist, create new agent asynchronously
             elif not agent:
-                agent = self.create_agent(task_data)
+                agent = await self.create_agent_async(task_data)
 
             if not agent:
                 msg = f"[{_format_task_log(task_id, subtask_id)}] Unable to get or create agent"
                 logger.error(msg)
                 return TaskStatus.FAILED, msg
-            return self.execute_agent_task(agent)
+            return await self.execute_agent_task(agent)
         except Exception as e:
             logger.exception(
                 f"[{_format_task_log(task_id, subtask_id)}] Task execution error: {e}"

@@ -32,6 +32,7 @@ from app.schemas.subscription import (
     Subscription,
     SubscriptionCreate,
     SubscriptionEventType,
+    SubscriptionExecutionTarget,
     SubscriptionMetadata,
     SubscriptionSpec,
     SubscriptionStatus,
@@ -139,6 +140,7 @@ def build_subscription_crd(
     spec = SubscriptionSpec(
         displayName=subscription_in.display_name,
         taskType=subscription_in.task_type,
+        visibility=subscription_in.visibility,
         trigger=trigger,
         teamRef=SubscriptionTeamRef(name=team.name, namespace=team.namespace),
         workspaceRef=(
@@ -152,6 +154,9 @@ def build_subscription_crd(
         retryCount=subscription_in.retry_count,
         timeoutSeconds=subscription_in.timeout_seconds,
         enabled=subscription_in.enabled,
+        executionTarget=SubscriptionExecutionTarget.model_validate(
+            subscription_in.execution_target.model_dump()
+        ),
         description=subscription_in.description,
         # History preservation settings
         preserveHistory=subscription_in.preserve_history,

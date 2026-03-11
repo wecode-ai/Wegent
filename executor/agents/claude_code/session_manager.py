@@ -98,6 +98,32 @@ class SessionManager:
             logger.warning(f"Failed to save session ID for task {task_id}: {e}")
 
     @classmethod
+    def delete_saved_session_id(cls, task_id: int) -> bool:
+        """Delete saved Claude session ID file for a task.
+
+        This is used when a saved session ID is invalid or expired,
+        allowing a fresh session to be created on retry.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            True if file was deleted, False otherwise
+        """
+        session_file = cls.get_session_id_file_path(task_id)
+        try:
+            if os.path.exists(session_file):
+                os.remove(session_file)
+                logger.info(
+                    f"Deleted invalid session ID file for task {task_id}: {session_file}"
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to delete session ID file for task {task_id}: {e}")
+            return False
+
+    @classmethod
     def get_client(cls, session_id: str) -> Optional[ClaudeSDKClient]:
         """Get cached client by session_id.
 
@@ -312,6 +338,37 @@ class SessionManager:
                 f"Error terminating process for session_id={session_id}: {e}"
             )
             return False
+
+    @classmethod
+    def cleanup_session_tracking(
+        cls, session_id: str, internal_key: str = None
+    ) -> None:
+        """Remove in-memory tracking for a session without touching disk files.
+
+        Removes the client from _clients and the mapping from _session_id_map,
+        but preserves the on-disk .claude_session_id file for future resume.
+
+        Args:
+            session_id: Session ID to remove from _clients
+            internal_key: Internal session key to remove from _session_id_map.
+                          If None, searches _session_id_map for matching session_id.
+        """
+        # Remove client from cache
+        if session_id in cls._clients:
+            del cls._clients[session_id]
+            logger.info(f"Removed client from cache: session_id={session_id}")
+
+        # Remove session_id_map entry
+        if internal_key:
+            cls._session_id_map.pop(internal_key, None)
+            logger.info(f"Removed session_id_map entry: {internal_key} -> {session_id}")
+        else:
+            # Search for matching entry
+            for key, sid in list(cls._session_id_map.items()):
+                if sid == session_id:
+                    del cls._session_id_map[key]
+                    logger.info(f"Removed session_id_map entry: {key} -> {session_id}")
+                    break
 
     @classmethod
     async def cleanup_task_clients(cls, task_id: int) -> int:

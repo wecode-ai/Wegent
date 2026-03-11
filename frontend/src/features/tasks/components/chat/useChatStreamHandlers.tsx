@@ -19,7 +19,14 @@ import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import type { Model } from '../selector/ModelSelector'
-import type { Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api'
+import type {
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  Attachment,
+  SubtaskContextBrief,
+  TaskType,
+} from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
@@ -56,7 +63,7 @@ export interface UseChatStreamHandlersOptions {
   isAttachmentReadyToSend: boolean
 
   // Task type
-  taskType: 'chat' | 'code' | 'knowledge' | 'task'
+  taskType: TaskType
 
   // Knowledge base ID (for knowledge type tasks)
   knowledgeBaseId?: number
@@ -80,6 +87,27 @@ export interface UseChatStreamHandlersOptions {
   // Skill selection
   /** Additional skills selected by user (backend determines preload vs download based on executor type) */
   additionalSkills?: SkillRef[]
+
+  // Generation mode props (used when taskType === 'video' or 'image')
+  /** Generation-specific parameters (resolution, ratio, etc.) */
+  generateParams?: GenerateParams
+}
+
+/**
+ * Parameters for content generation (video, image, etc.)
+ * Used when taskType is 'video' or 'image' to provide generation-specific settings.
+ */
+export interface GenerateParams {
+  /** Resolution for generation (e.g., '1080p', '720p', '480p') */
+  resolution?: string
+  /** Aspect ratio for generation (e.g., '16:9', '9:16', '1:1') */
+  ratio?: string
+  /** Duration in seconds for video generation */
+  duration?: number
+  /** Model name for video/image generation (for display in user message) */
+  model?: string
+  /** Image size for image generation (e.g., '2048x2048') */
+  size?: string
 }
 
 export interface ChatStreamHandlers {
@@ -163,6 +191,7 @@ export function useChatStreamHandlers({
   onTaskCreated,
   selectedDocumentIds,
   additionalSkills,
+  generateParams,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -536,6 +565,8 @@ export function useChatStreamHandlers({
             // Skill selection - backend determines preload vs download based on executor type
             additional_skills:
               additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
+            // Generation parameters for video/image generation tasks
+            generate_params: generateParams,
           },
           {
             pendingUserMessage: message,
@@ -627,9 +658,9 @@ export function useChatStreamHandlers({
       selectedDeviceId,
       effectiveRequiresWorkspace,
       additionalSkills,
+      generateParams,
     ]
   )
-
   /**
    * Send a message with a temporary model override.
    * This is used for regeneration where user selects a specific model for that single regeneration.

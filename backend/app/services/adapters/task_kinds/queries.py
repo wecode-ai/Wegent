@@ -251,6 +251,7 @@ class TaskQueryMixin:
         explicit_group_result = db.execute(
             explicit_group_sql, {"user_id": user_id}
         ).fetchall()
+
         explicit_group_ids = {row[0] for row in explicit_group_result}
 
         # Combine both sets
@@ -370,7 +371,7 @@ class TaskQueryMixin:
         """
         )
         task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
+            ids_sql, {"user_id": user_id, "limit": limit + 200, "skip": skip}
         ).fetchall()
         task_ids = [row[0] for row in task_id_rows]
 
@@ -444,73 +445,6 @@ class TaskQueryMixin:
             valid_tasks.append(t)
 
         return valid_tasks
-
-    def get_new_tasks_since_id(
-        self, db: Session, *, user_id: int, since_id: int, limit: int = 50
-    ) -> List[Dict[str, Any]]:
-        """
-        Get new tasks created after the specified task ID.
-
-        Returns tasks with ID greater than since_id, ordered by ID descending.
-        """
-        # Get task IDs where user is owner OR member, with ID > since_id (using resource_members)
-        ids_sql = text(
-            """
-            SELECT DISTINCT k.id, k.created_at
-            FROM tasks k
-            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND k.id > :since_id
-            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-            ORDER BY k.id DESC
-            LIMIT :limit
-        """
-        )
-        task_id_rows = db.execute(
-            ids_sql, {"user_id": user_id, "since_id": since_id, "limit": limit}
-        ).fetchall()
-        task_ids = [row[0] for row in task_id_rows]
-
-        if not task_ids:
-            return []
-
-        # Load full task data
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
-
-        # Filter tasks
-        id_to_task = filter_tasks_since_id(tasks)
-
-        # Restore the original order
-        filtered_tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
-
-        # Get task member counts using ResourceMember
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        task_ids_for_members = [t.id for t in filtered_tasks]
-        member_counts = {}
-        if task_ids_for_members:
-            member_count_results = (
-                db.query(
-                    ResourceMember.resource_id,
-                    func.count(ResourceMember.id).label("count"),
-                )
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TASK,
-                    ResourceMember.resource_id.in_(task_ids_for_members),
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .group_by(ResourceMember.resource_id)
-                .all()
-            )
-            member_counts = {row[0]: row[1] for row in member_count_results}
-
-        # Build lightweight result
-        result = self._build_lite_result(db, filtered_tasks, user_id, member_counts)
-
-        return result
 
     def get_user_tasks_by_title_with_pagination(
         self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
@@ -702,6 +636,7 @@ class TaskQueryMixin:
             agent_config = {}
 
             # Get Model data for agent_config
+            # Only return model binding info, not sensitive env (api_key etc.)
             if bot_crd.spec.modelRef:
                 model = kindReader.get_by_name_and_namespace(
                     db,
@@ -710,9 +645,11 @@ class TaskQueryMixin:
                     bot_crd.spec.modelRef.namespace,
                     bot_crd.spec.modelRef.name,
                 )
-                if model and model.json:
-                    model_crd = Model.model_validate(model.json)
-                    agent_config = model_crd.spec.modelConfig
+                model_type = "public" if model and model.user_id == 0 else "user"
+                agent_config = {
+                    "bind_model": bot_crd.spec.modelRef.name,
+                    "bind_model_type": model_type,
+                }
 
             # Get Shell data for shell_type
             shell = kindReader.get_by_name_and_namespace(

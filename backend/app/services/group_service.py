@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.namespace import Namespace
-from app.models.namespace_member import NamespaceMember
+from app.models.resource_member import MemberStatus, ResourceMember
 from app.schemas.namespace import (
     GroupCreate,
     GroupLevel,
@@ -22,6 +23,17 @@ from app.schemas.namespace_member import (
     GroupMemberCreate,
     GroupMemberResponse,
     GroupMemberUpdate,
+)
+from app.services.group_member_helper import (
+    NAMESPACE_RESOURCE_TYPE,
+    count_group_members_by_role,
+    create_group_member,
+    delete_group_member,
+    get_group_member,
+    get_group_member_count,
+    get_group_members,
+    get_namespace_id_by_name,
+    get_user_groups_with_roles,
 )
 from app.services.group_permission import (
     check_group_permission,
@@ -130,13 +142,19 @@ def create_group(
     db.add(new_group)
     db.flush()  # Flush to get the group ID
 
-    # Add creator as Owner member
-    owner_member = NamespaceMember(
-        group_name=group_data.name,
+    # Add creator as Owner member using ResourceMember
+    owner_member = ResourceMember(
+        resource_type=NAMESPACE_RESOURCE_TYPE,
+        resource_id=new_group.id,
         user_id=owner_user_id,
         role=GroupRole.Owner.value,
+        permission_level="manage",
+        status=MemberStatus.APPROVED.value,
         invited_by_user_id=owner_user_id,  # Self-invited
-        is_active=True,
+        share_link_id=0,
+        reviewed_by_user_id=0,
+        copied_resource_id=0,
+        requested_at=datetime.now(),
     )
 
     db.add(owner_member)
@@ -194,14 +212,7 @@ def list_user_groups(
         List of GroupResponse objects with additional fields
     """
     # Get all groups where user is an active member with their role
-    member_data = (
-        db.query(NamespaceMember.group_name, NamespaceMember.role)
-        .filter(
-            NamespaceMember.user_id == user_id,
-            NamespaceMember.is_active == True,
-        )
-        .all()
-    )
+    member_data = get_user_groups_with_roles(db, user_id)
 
     if not member_data:
         return []
@@ -228,15 +239,7 @@ def list_user_groups(
     # Get member counts for all groups
     member_counts = {}
     for group_name in group_names:
-        count = (
-            db.query(NamespaceMember)
-            .filter(
-                NamespaceMember.group_name == group_name,
-                NamespaceMember.is_active == True,
-            )
-            .count()
-        )
-        member_counts[group_name] = count
+        member_counts[group_name] = get_group_member_count(db, group_name)
 
     # Build response with additional fields
     result = []
@@ -396,8 +399,13 @@ def delete_group(db: Session, group_name: str, user_id: int) -> None:
             detail="Cannot delete group with existing resources. Move or delete resources first.",
         )
 
-    # Hard delete all members
-    db.query(NamespaceMember).filter(NamespaceMember.group_name == group_name).delete()
+    # Hard delete all members from resource_members
+    namespace_id = get_namespace_id_by_name(db, group_name)
+    if namespace_id:
+        db.query(ResourceMember).filter(
+            ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
+            ResourceMember.resource_id == namespace_id,
+        ).delete()
 
     # Hard delete group
     db.delete(group)
@@ -426,8 +434,10 @@ def add_member(
         Created member response
 
     Raises:
-        HTTPException: If group not found, user already member, or insufficient permissions
+        HTTPException: If group not found, user not found, user already member, or insufficient permissions
     """
+    from app.models.user import User
+
     # Check group exists
     group = (
         db.query(Namespace)
@@ -441,6 +451,13 @@ def add_member(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
+    # Check target user exists
+    target_user = (
+        db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    )
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     # Check inviter has permission (must be at least Maintainer)
     if not check_group_permission(
         db, invited_by_user_id, group_name, GroupRole.Maintainer
@@ -451,36 +468,41 @@ def add_member(
         )
 
     # Check if user is already a member
-    existing = (
-        db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.user_id == user_id,
-            NamespaceMember.is_active == True,
-        )
-        .first()
-    )
-
+    existing = get_group_member(db, group_name, user_id)
     if existing:
         raise HTTPException(
             status_code=400,
             detail="User is already a member of this group",
         )
 
-    # Create member
-    new_member = NamespaceMember(
+    # Create member using ResourceMember
+    new_member = create_group_member(
+        db=db,
         group_name=group_name,
         user_id=user_id,
         role=role.value,
         invited_by_user_id=invited_by_user_id,
-        is_active=True,
     )
 
-    db.add(new_member)
+    if not new_member:
+        raise HTTPException(status_code=404, detail="Group not found")
+
     db.commit()
     db.refresh(new_member)
 
-    return GroupMemberResponse.model_validate(new_member)
+    # Build response with group_name field for backward compatibility
+    response_data = {
+        "id": new_member.id,
+        "group_name": group_name,
+        "user_id": new_member.user_id,
+        "role": new_member.role,
+        "invited_by_user_id": new_member.invited_by_user_id,
+        "is_active": new_member.status == MemberStatus.APPROVED.value,
+        "created_at": new_member.created_at,
+        "updated_at": new_member.updated_at,
+    }
+
+    return GroupMemberResponse(**response_data)
 
 
 def remove_member(
@@ -501,15 +523,7 @@ def remove_member(
         HTTPException: If member not found or insufficient permissions
     """
     # Check member exists
-    member = (
-        db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.user_id == user_id,
-            NamespaceMember.is_active == True,
-        )
-        .first()
-    )
+    member = get_group_member(db, group_name, user_id)
 
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -556,15 +570,7 @@ def remove_member(
 
     # Prevent removing the last owner
     if target_role == GroupRole.Owner:
-        owner_count = (
-            db.query(NamespaceMember)
-            .filter(
-                NamespaceMember.group_name == group_name,
-                NamespaceMember.role == GroupRole.Owner.value,
-                NamespaceMember.is_active == True,
-            )
-            .count()
-        )
+        owner_count = count_group_members_by_role(db, group_name, GroupRole.Owner.value)
 
         if owner_count <= 1:
             raise HTTPException(
@@ -604,15 +610,7 @@ def update_member_role(
         HTTPException: If member not found or insufficient permissions
     """
     # Check member exists
-    member = (
-        db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.user_id == user_id,
-            NamespaceMember.is_active == True,
-        )
-        .first()
-    )
+    member = get_group_member(db, group_name, user_id)
 
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -642,15 +640,7 @@ def update_member_role(
 
     # Prevent downgrading the last owner
     if current_role == GroupRole.Owner and new_role != GroupRole.Owner:
-        owner_count = (
-            db.query(NamespaceMember)
-            .filter(
-                NamespaceMember.group_name == group_name,
-                NamespaceMember.role == GroupRole.Owner.value,
-                NamespaceMember.is_active == True,
-            )
-            .count()
-        )
+        owner_count = count_group_members_by_role(db, group_name, GroupRole.Owner.value)
 
         if owner_count <= 1:
             raise HTTPException(
@@ -658,12 +648,32 @@ def update_member_role(
                 detail="Cannot change role of the last owner. Add another owner first.",
             )
 
-    # Update role
+    # Update role and permission_level
     member.role = new_role.value
+    role_to_permission = {
+        GroupRole.Owner.value: "manage",
+        GroupRole.Maintainer.value: "manage",
+        GroupRole.Developer.value: "edit",
+        GroupRole.Reporter.value: "view",
+    }
+    member.permission_level = role_to_permission.get(new_role.value, "view")
+
     db.commit()
     db.refresh(member)
 
-    return GroupMemberResponse.model_validate(member)
+    # Build response with group_name field for backward compatibility
+    response_data = {
+        "id": member.id,
+        "group_name": group_name,
+        "user_id": member.user_id,
+        "role": member.role,
+        "invited_by_user_id": member.invited_by_user_id,
+        "is_active": member.status == MemberStatus.APPROVED.value,
+        "created_at": member.created_at,
+        "updated_at": member.updated_at,
+    }
+
+    return GroupMemberResponse(**response_data)
 
 
 def transfer_ownership(
@@ -716,25 +726,8 @@ def transfer_ownership(
         )
 
     # Get member records
-    current_owner_member = (
-        db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.user_id == current_owner_user_id,
-            NamespaceMember.is_active == True,
-        )
-        .first()
-    )
-
-    new_owner_member = (
-        db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.user_id == new_owner_user_id,
-            NamespaceMember.is_active == True,
-        )
-        .first()
-    )
+    current_owner_member = get_group_member(db, group_name, current_owner_user_id)
+    new_owner_member = get_group_member(db, group_name, new_owner_user_id)
 
     # Update group owner
     group.owner_user_id = new_owner_user_id
@@ -742,9 +735,11 @@ def transfer_ownership(
     # Update member roles
     if current_owner_member:
         current_owner_member.role = GroupRole.Maintainer.value
+        current_owner_member.permission_level = "manage"
 
     if new_owner_member:
         new_owner_member.role = GroupRole.Owner.value
+        new_owner_member.permission_level = "manage"
 
     db.commit()
     db.refresh(group)
@@ -797,26 +792,25 @@ def invite_all_users(
     all_users = db.query(User).filter(User.is_active == True).all()
 
     # Get existing members
-    existing_member_ids = {
-        m.user_id
-        for m in db.query(NamespaceMember)
-        .filter(
-            NamespaceMember.group_name == group_name,
-            NamespaceMember.is_active == True,
-        )
-        .all()
-    }
+    existing_members = get_group_members(db, group_name)
+    existing_member_ids = {m.user_id for m in existing_members}
 
     # Create new members
     new_members = []
     for user in all_users:
         if user.id not in existing_member_ids:
-            new_member = NamespaceMember(
-                group_name=group_name,
+            new_member = ResourceMember(
+                resource_type=NAMESPACE_RESOURCE_TYPE,
+                resource_id=group.id,
                 user_id=user.id,
                 role=GroupRole.Reporter.value,
+                permission_level="view",
+                status=MemberStatus.APPROVED.value,
                 invited_by_user_id=invited_by_user_id,
-                is_active=True,
+                share_link_id=0,
+                reviewed_by_user_id=0,
+                copied_resource_id=0,
+                requested_at=datetime.now(),
             )
             db.add(new_member)
             new_members.append(new_member)
@@ -826,7 +820,22 @@ def invite_all_users(
         for member in new_members:
             db.refresh(member)
 
-    return [GroupMemberResponse.model_validate(m) for m in new_members]
+    # Build responses
+    result = []
+    for member in new_members:
+        response_data = {
+            "id": member.id,
+            "group_name": group_name,
+            "user_id": member.user_id,
+            "role": member.role,
+            "invited_by_user_id": member.invited_by_user_id,
+            "is_active": member.status == MemberStatus.APPROVED.value,
+            "created_at": member.created_at,
+            "updated_at": member.updated_at,
+        }
+        result.append(GroupMemberResponse(**response_data))
+
+    return result
 
 
 def _transfer_resources_to_owner(

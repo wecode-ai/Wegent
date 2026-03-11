@@ -323,7 +323,7 @@ class AgnoAgent(Agent):
             self.options, self.mode, self.session_id, self.task_data
         )
 
-    def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> TaskStatus:
         """
         Pre-execution setup for Agno Agent
 
@@ -339,7 +339,7 @@ class AgnoAgent(Agent):
                     report_immediately=False,
                     details={"git_url": git_url},
                 )
-                self.download_code()
+                await self.download_code()
         except Exception as e:
             logger.error(f"Pre-execution failed: {str(e)}")
             self.add_thinking_step_by_key(

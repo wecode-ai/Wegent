@@ -76,6 +76,13 @@ export interface DisplayMessage {
     sources?: SourceReference[] // RAG knowledge base sources
     reasoning_content?: string // DeepSeek R1 reasoning content
     blocks?: MessageBlock[] // Message blocks for mixed content rendering
+    /** Video generation config (stored in user message subtask for display) */
+    video_config?: {
+      model?: string
+      resolution?: string
+      ratio?: string
+      duration?: number
+    }
   }
   /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
   sources?: SourceReference[]

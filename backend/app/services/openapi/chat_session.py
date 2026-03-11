@@ -129,11 +129,26 @@ def setup_chat_session(
                 detail="Failed to create task ID",
             )
 
+        # Extract workspace data from tool_settings (from wegent_code_bot tool)
+        workspace_data = tool_settings.get("workspace")
+
+        # Build repository spec from workspace data
+        repository_spec = {}
+        if workspace_data:
+            if workspace_data.get("git_url"):
+                repository_spec["gitUrl"] = workspace_data["git_url"]
+            if workspace_data.get("branch"):
+                repository_spec["branchName"] = workspace_data["branch"]
+            if workspace_data.get("git_repo"):
+                repository_spec["gitRepo"] = workspace_data["git_repo"]
+            if workspace_data.get("git_domain"):
+                repository_spec["gitDomain"] = workspace_data["git_domain"]
+
         # Create workspace
         workspace_name = f"workspace-{new_task_id}"
         workspace_json = {
             "kind": "Workspace",
-            "spec": {"repository": {}},
+            "spec": {"repository": repository_spec},
             "status": {"state": "Available"},
             "metadata": {"name": workspace_name, "namespace": "default"},
             "apiVersion": "agent.wecode.io/v1",
@@ -148,6 +163,11 @@ def setup_chat_session(
             is_active=True,
         )
         db.add(workspace)
+
+        # Determine task type based on git_url presence (code if git_url, otherwise chat)
+        task_type = (
+            "code" if workspace_data and workspace_data.get("git_url") else "chat"
+        )
 
         # Create task
         title = input_text[:50] + "..." if len(input_text) > 50 else input_text
@@ -179,7 +199,7 @@ def setup_chat_session(
                 "namespace": "default",
                 "labels": {
                     "type": "online",
-                    "taskType": "chat",
+                    "taskType": task_type,
                     "autoDeleteExecutor": "false",
                     "source": "chat_shell",
                     "is_api_call": "true",
@@ -199,16 +219,37 @@ def setup_chat_session(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        task = TaskResource(
-            id=new_task_id,
-            user_id=user.id,
-            kind="Task",
-            name=f"task-{new_task_id}",
-            namespace="default",
-            json=task_json,
-            is_active=True,
+        # Check if a Placeholder record exists for this task_id
+        # If so, update it instead of inserting to avoid PRIMARY KEY conflict
+        existing_placeholder = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == new_task_id,
+                TaskResource.kind == "Placeholder",
+            )
+            .first()
         )
-        db.add(task)
+
+        if existing_placeholder:
+            # Update the existing Placeholder record to become a Task
+            existing_placeholder.user_id = user.id
+            existing_placeholder.kind = "Task"
+            existing_placeholder.name = f"task-{new_task_id}"
+            existing_placeholder.namespace = "default"
+            existing_placeholder.json = task_json
+            existing_placeholder.is_active = True
+            task = existing_placeholder
+        else:
+            task = TaskResource(
+                id=new_task_id,
+                user_id=user.id,
+                kind="Task",
+                name=f"task-{new_task_id}",
+                namespace="default",
+                json=task_json,
+                is_active=True,
+            )
+            db.add(task)
         task_id = new_task_id
 
     # Get existing subtasks

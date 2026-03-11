@@ -19,6 +19,13 @@ export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 // Event trigger sub-type enumeration
 export type SubscriptionEventType = 'webhook' | 'git_push'
 
+export type SubscriptionExecutionTargetType = 'managed' | 'local' | 'cloud'
+
+export interface SubscriptionExecutionTarget {
+  type: SubscriptionExecutionTargetType
+  device_id?: string
+}
+
 // Background execution status enumeration
 export type BackgroundExecutionStatus =
   | 'PENDING'
@@ -98,6 +105,7 @@ export interface Subscription {
   retry_count: number
   timeout_seconds: number // Execution timeout (60-3600s, default 600)
   enabled: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   bound_task_id?: number // Task ID bound to this subscription for history preservation
@@ -107,6 +115,8 @@ export interface Subscription {
   last_execution_status?: string
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
   next_execution_time?: string
   execution_count: number
   success_count: number
@@ -150,10 +160,13 @@ export interface SubscriptionCreateRequest {
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
 }
 
 // Subscription update request
@@ -178,10 +191,13 @@ export interface SubscriptionUpdateRequest {
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  execution_target?: SubscriptionExecutionTarget
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Market whitelist (empty means visible to all market users)
+  market_whitelist_user_ids?: number[]
 }
 
 // Subscription list response

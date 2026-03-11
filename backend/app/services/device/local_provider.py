@@ -123,7 +123,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             )
         else:
             # Check if this is the first device for the user
-            existing_count = (
+            existing_devices = (
                 db.query(Kind)
                 .filter(
                     and_(
@@ -133,7 +133,13 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         Kind.is_active == True,
                     )
                 )
-                .count()
+                .all()
+            )
+            existing_count = sum(
+                1
+                for device in existing_devices
+                if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
+                == DeviceType.LOCAL.value
             )
             is_first_device = existing_count == 0
 
@@ -283,6 +289,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "latest_version": latest_version,
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
+            "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
     async def _get_online_info(
@@ -325,9 +332,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
             spec = device_json.get("spec", {})
             device_id = device_kind.name
 
-            # Skip non-local devices (future-proofing)
+            # Skip cloud devices (cloud devices have their own provider)
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type != DeviceType.LOCAL.value:
+            if device_type == DeviceType.CLOUD.value:
                 continue
 
             # Get online status from Redis
@@ -376,6 +383,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "latest_version": latest_version,
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
+                    "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
 

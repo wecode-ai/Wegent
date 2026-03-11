@@ -239,10 +239,22 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
           await page.waitForTimeout(500)
           console.log('Clicked close/skip button')
         } else {
-          // Press Escape to dismiss
+          // Press Escape multiple times to dismiss all tour steps
+          console.log('Pressing Escape to dismiss overlay...')
+          await page.keyboard.press('Escape')
+          await page.waitForTimeout(300)
+          // Press Escape again to ensure all steps are dismissed
           await page.keyboard.press('Escape')
           await page.waitForTimeout(500)
           console.log('Pressed Escape to dismiss overlay')
+        }
+
+        // Verify overlay is gone
+        if (await driverOverlay.isVisible({ timeout: 500 }).catch(() => false)) {
+          console.warn('Overlay still visible, trying to click outside')
+          // Click outside the overlay to dismiss it
+          await page.mouse.click(10, 10)
+          await page.waitForTimeout(500)
         }
       }
     } catch (_error) {
@@ -252,6 +264,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
   /**
    * Helper function to select the test team in the UI
+   * Updated to work with the new QuickAccessCards pagination design (removed "More" button)
    */
   async function selectTestTeam(page: Page): Promise<boolean> {
     try {
@@ -267,39 +280,69 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       console.log('Saved initial page screenshot')
 
       // Strategy 1: Look for team card directly in QuickAccessCards
-      const teamCardButton = page.locator(`button:has-text("${TEST_TEAM_NAME}")`).first()
-      if (await teamCardButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        console.log('Found team card button directly, clicking...')
-        await teamCardButton.click()
-        await page.waitForTimeout(1000)
-        return true
-      }
+      // Note: Team cards are now div elements, not buttons
+      const quickAccessCards = page.locator('[data-tour="quick-access-cards"]')
+      if (await quickAccessCards.isVisible({ timeout: 3000 }).catch(() => false)) {
+        console.log('Found QuickAccessCards container')
 
-      // Strategy 2: Look for QuickAccessCards "More" button and search for team
-      const moreButton = page.locator(
-        '[data-tour="quick-access-cards"] button:has-text("更多"), [data-tour="quick-access-cards"] button:has-text("More")'
-      )
-      if (await moreButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        console.log('Found "More" button in QuickAccessCards')
-        // Use force click to bypass any remaining overlays
-        await moreButton.click({ force: true })
-        await page.waitForTimeout(500)
-
-        // Search for the test team
-        const searchInput = page
-          .locator('input[placeholder*="搜索"], input[placeholder*="search" i]')
-          .first()
-        if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await searchInput.fill(TEST_TEAM_NAME)
-          await page.waitForTimeout(500)
+        // Try to find the team card by text (cards are divs with team.name)
+        const teamCard = quickAccessCards.locator(`div:has-text("${TEST_TEAM_NAME}")`).first()
+        if (await teamCard.isVisible({ timeout: 2000 }).catch(() => false)) {
+          console.log('Found team card directly, clicking...')
+          // Dismiss tour before clicking
+          await dismissOnboardingTour(page)
+          await teamCard.click({ force: true })
+          await page.waitForTimeout(1000)
+          return true
         }
 
-        // Click on the team in the dropdown
-        const teamOption = page.locator(`[role="option"]:has-text("${TEST_TEAM_NAME}")`).first()
+        // Strategy 1b: If not visible, try scrolling through pages using right arrow
+        console.log('Team card not visible, trying pagination...')
+        const rightArrow = quickAccessCards.locator('button[aria-label="Scroll right"]')
+        let attempts = 0
+        const maxAttempts = 5 // Maximum number of pages to scroll through
+
+        while (attempts < maxAttempts) {
+          // Check if right arrow exists and is visible
+          if (!(await rightArrow.isVisible({ timeout: 1000 }).catch(() => false))) {
+            console.log('No more pages to scroll')
+            break
+          }
+
+          console.log(`Scrolling to next page (attempt ${attempts + 1})...`)
+          await rightArrow.click()
+          await page.waitForTimeout(500)
+
+          // Check if team card is now visible
+          if (await teamCard.isVisible({ timeout: 1000 }).catch(() => false)) {
+            console.log('Found team card after scrolling, clicking...')
+            // Dismiss tour before clicking
+            await dismissOnboardingTour(page)
+            await teamCard.click({ force: true })
+            await page.waitForTimeout(1000)
+            return true
+          }
+
+          attempts++
+        }
+      }
+
+      // Strategy 2: Try TeamSelectorButton in ChatInputControls (for new chat sessions)
+      // This button shows "智能体" or "Agent" with AgentIcon
+      const teamSelectorButton = page.locator(
+        'button:has-text("智能体"), button:has-text("Agent")'
+      ).first()
+      if (await teamSelectorButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('Found TeamSelectorButton, clicking...')
+        await teamSelectorButton.click()
+        await page.waitForTimeout(500)
+
+        // Look for the test team in the popover (uses role="button" instead of role="option")
+        const teamOption = page.locator(`[role="button"]:has-text("${TEST_TEAM_NAME}")`).first()
         if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+          console.log('Found team in TeamSelectorButton popover, selecting...')
           await teamOption.click()
           await page.waitForTimeout(1000)
-          console.log(`Selected team from More dropdown: ${TEST_TEAM_NAME}`)
           return true
         }
       }
@@ -321,7 +364,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         }
       }
 
-      // Strategy 4: Direct click on team card if visible
+      // Strategy 4: Direct click on team card if visible anywhere on page
       const teamCard = page.locator(`text="${TEST_TEAM_NAME}"`).first()
       if (await teamCard.isVisible({ timeout: 3000 }).catch(() => false)) {
         await teamCard.click()
@@ -361,7 +404,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         // Check if model selection is required
         if (buttonText?.includes('Please select') || buttonText?.includes('请选择模型')) {
           console.log('Model selection required, clicking selector...')
-          await modelSelectorButton.click()
+          // Dismiss tour before clicking
+          await dismissOnboardingTour(page)
+          await modelSelectorButton.click({ force: true })
           await page.waitForTimeout(500)
 
           // Look for our test model in the dropdown
@@ -567,8 +612,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       return
     }
 
+    // Dismiss any onboarding tour overlay before clicking input
+    await dismissOnboardingTour(page)
+
     // For contentEditable elements, we need to click first, then type
-    await messageInput.click()
+    await messageInput.click({ force: true })
     await page.keyboard.type('What is in this image?')
 
     // Step 5: Send message
@@ -707,8 +755,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       return
     }
 
+    // Dismiss any onboarding tour overlay before clicking input
+    await dismissOnboardingTour(page)
+
     // For contentEditable elements, we need to click first, then type
-    await messageInput.click()
+    await messageInput.click({ force: true })
     await page.keyboard.type('Describe this image')
 
     // Look for send button

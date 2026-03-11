@@ -18,10 +18,11 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { Check, Brain, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, Video, ImageIcon } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { ModelIcon } from '@/components/icons/ModelIcon'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
@@ -40,13 +41,18 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useModelSelection } from '@/features/tasks/hooks/useModelSelection'
 import type { Team, BotSummary } from '@/types/api'
+import type { ModelCategoryType } from '@/apis/models'
 
 // Re-export types and constants from useModelSelection for backward compatibility
 export {
   DEFAULT_MODEL_NAME,
   allBotsHavePredefinedModel,
 } from '@/features/tasks/hooks/useModelSelection'
-export type { Model, ModelRegion } from '@/features/tasks/hooks/useModelSelection'
+export type {
+  Model,
+  ModelRegion,
+  ModelCategoryType,
+} from '@/features/tasks/hooks/useModelSelection'
 
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection'
@@ -82,6 +88,8 @@ export interface ModelSelectorProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Model category type for filtering and display (default: 'llm') */
+  modelCategoryType?: ModelCategoryType
 }
 
 // ============================================================================
@@ -114,6 +122,7 @@ export default function ModelSelector({
   teamId,
   taskId,
   taskModelId,
+  modelCategoryType = 'llm',
 }: ModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -126,7 +135,20 @@ export default function ModelSelector({
     taskModelId,
     selectedTeam,
     disabled,
+    modelCategoryType,
   })
+
+  // Get icon based on model category type
+  const IconComponent = useMemo(() => {
+    switch (modelCategoryType) {
+      case 'video':
+        return Video
+      case 'image':
+        return ImageIcon
+      default:
+        return ModelIcon
+    }
+  }, [modelCategoryType])
 
   // Sync external state with internal hook state
   // This allows the component to work with both legacy and new APIs
@@ -224,17 +246,17 @@ export default function ModelSelector({
                   aria-controls="model-selector-popover"
                   disabled={isDisabled}
                   className={cn(
-                    'flex items-center gap-1 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
-                    'border transition-colors',
+                    'flex items-center gap-1 min-w-0 rounded-[24px] pl-2.5 pr-3 py-2.5 h-9',
+                    'transition-colors',
                     modelSelection.isModelRequired
-                      ? 'border-error text-error bg-error/5 hover:bg-error/10'
-                      : 'border-border bg-base text-text-primary hover:bg-hover',
+                      ? 'border border-error text-error bg-error/5 hover:bg-error/10'
+                      : 'bg-transparent text-text-primary hover:bg-hover',
                     modelSelection.isLoading || externalLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
                 >
-                  <Brain className="h-4 w-4 flex-shrink-0" />
+                  <IconComponent className="h-4 w-4 flex-shrink-0" />
                   {!compact && (
                     <span className="truncate text-xs min-w-0">
                       {modelSelection.getDisplayText()}
@@ -409,6 +431,28 @@ export default function ModelSelector({
                   />
                   <span className="text-xs text-text-secondary">
                     {t('common:task_submit.override_default_model', '覆盖默认模型')}
+                  </span>
+                </div>
+              )}
+              {/* Show advanced models checkbox */}
+              {modelSelection.hasAdvancedModels && (
+                <div
+                  className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-hover transition-colors duration-150"
+                  onClick={e => {
+                    e.stopPropagation()
+                    modelSelection.setShowAdvancedModels(!modelSelection.showAdvancedModels)
+                  }}
+                >
+                  <Checkbox
+                    id="show-advanced-models-dropdown"
+                    checked={modelSelection.showAdvancedModels}
+                    onCheckedChange={(checked: boolean | 'indeterminate') =>
+                      modelSelection.setShowAdvancedModels(checked === true)
+                    }
+                    className="h-4 w-4"
+                  />
+                  <span className="text-xs text-text-secondary">
+                    {t('common:task_submit.show_advanced_models', '显示高级模型')}
                   </span>
                 </div>
               )}

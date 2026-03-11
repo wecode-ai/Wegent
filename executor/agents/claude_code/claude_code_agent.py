@@ -35,6 +35,13 @@ from executor.agents.claude_code.mode_strategy import (
     ExecutionModeStrategy,
     ModeStrategyFactory,
 )
+from executor.agents.claude_code.multimodal_prompt import (
+    append_text_to_vision_prompt,
+    convert_openai_to_anthropic_content,
+    create_multimodal_query,
+    is_vision_prompt,
+    save_vision_images,
+)
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import (
     process_response,
@@ -180,6 +187,17 @@ class ClaudeCodeAgent(Agent):
 
         # Note: emitter is created in base class Agent.__init__()
         # using EmitterBuilder with CallbackTransport
+
+    def _stderr_callback(self, stderr_output: str) -> None:
+        """
+        Callback for handling stderr output from Claude CLI.
+
+        Args:
+            stderr_output: The stderr output string from CLI
+        """
+        if stderr_output:
+            # Log stderr output for debugging
+            logger.warning(f"Claude CLI stderr: {stderr_output}")
 
     def add_thinking_step(
         self,
@@ -386,7 +404,7 @@ class ClaudeCodeAgent(Agent):
         self._claude_config_dir = config_dir
         self._claude_env_config = env_config
 
-    def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> TaskStatus:
         """
         Pre-execution setup for Claude Code Agent
 
@@ -397,7 +415,7 @@ class ClaudeCodeAgent(Agent):
             git_url = self.task_data.git_url
             # Download code if git_url is provided
             if git_url and git_url != "":
-                self.download_code()
+                await self.download_code()
 
                 # Update cwd in options if not already set
                 if (
@@ -655,20 +673,45 @@ class ClaudeCodeAgent(Agent):
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
             user_selected_skills = self.task_data.user_selected_skills
-            if user_selected_skills:
-                skill_emphasis = self._build_skill_emphasis_prompt(user_selected_skills)
-                prompt = skill_emphasis + "\n\n" + prompt
-                logger.info(
-                    f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
-                )
-
-            if self.options.get("cwd"):
-                prompt = (
-                    prompt + "\nCurrent working directory: " + self.options.get("cwd")
-                )
-                git_url = self.task_data.git_url
-                if git_url:
-                    prompt = prompt + "\n project url:" + git_url
+            if is_vision_prompt(prompt):
+                # Vision content: append text to the text block in the list
+                if user_selected_skills:
+                    skill_emphasis = self._build_skill_emphasis_prompt(
+                        user_selected_skills
+                    )
+                    prompt = append_text_to_vision_prompt(
+                        prompt, skill_emphasis, prepend=True
+                    )
+                    logger.info(
+                        f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                    )
+                if self.options.get("cwd"):
+                    cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
+                    git_url = self.task_data.git_url
+                    if git_url:
+                        cwd_text += "\n project url:" + git_url
+                    prompt = append_text_to_vision_prompt(
+                        prompt, cwd_text, prepend=False
+                    )
+            else:
+                # Plain text prompt
+                if user_selected_skills:
+                    skill_emphasis = self._build_skill_emphasis_prompt(
+                        user_selected_skills
+                    )
+                    prompt = skill_emphasis + "\n\n" + prompt
+                    logger.info(
+                        f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                    )
+                if self.options.get("cwd"):
+                    prompt = (
+                        prompt
+                        + "\nCurrent working directory: "
+                        + self.options.get("cwd")
+                    )
+                    git_url = self.task_data.git_url
+                    if git_url:
+                        prompt = prompt + "\n project url:" + git_url
 
             progress = 75
             # Update current progress
@@ -703,13 +746,27 @@ class ClaudeCodeAgent(Agent):
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
+            prompt_length = len(prompt) if isinstance(prompt, str) else len(str(prompt))
             logger.info(
-                f"Sending query with prompt (length: {len(self.prompt)}) for session_id: {self.session_id}"
+                f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
 
-            await self.client.query(prompt, session_id=self.session_id)
+            if is_vision_prompt(prompt):
+                # Save images to disk before sending to SDK
+                saved_paths = save_vision_images(prompt, task_id=self.task_id)
+                if saved_paths:
+                    logger.info(
+                        f"Saved {len(saved_paths)} images to disk: {saved_paths}"
+                    )
+                anthropic_content = convert_openai_to_anthropic_content(prompt)
+                await self.client.query(
+                    create_multimodal_query(anthropic_content),
+                    session_id=self.session_id,
+                )
+            else:
+                await self.client.query(prompt, session_id=self.session_id)
 
-            logger.info(f"Waiting for response for prompt: {prompt}")
+            logger.info(f"Waiting for response for session_id: {self.session_id}")
 
             # Process and handle the response using the external processor
             result = await process_response(
@@ -736,6 +793,12 @@ class ClaudeCodeAgent(Agent):
             elif result == TaskStatus.CANCELLED:
                 self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
 
+            # Auto-close CC process after completion to free device slot.
+            # Session ID is preserved on disk for resume on next message.
+            # Skip for CANCELLED — cancel/interrupt flow has its own cleanup.
+            if result in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                await self._auto_close_session()
+
             return result
 
         except Exception as e:
@@ -748,6 +811,9 @@ class ClaudeCodeAgent(Agent):
         connects it, and stores it in the cache.
 
         Config files are generated in initialize() and passed via 'settings' parameter.
+
+        If resuming a saved session fails (e.g., session expired or invalid),
+        automatically retries with a fresh session.
         """
         logger.info(f"Creating new Claude client for session_id: {self.session_id}")
 
@@ -767,6 +833,7 @@ class ClaudeCodeAgent(Agent):
 
         # Check if there's a saved session ID to resume
         # Skip if resume option is already set (e.g., from retry logic)
+        saved_session_id = None
         if "resume" not in self.options:
             saved_session_id = SessionManager.load_saved_session_id(self.task_id)
             if saved_session_id:
@@ -783,15 +850,78 @@ class ClaudeCodeAgent(Agent):
             self.options, self._get_claude_config_dir()
         )
 
+        # Add stderr callback to capture CLI stderr output
+        self.options["stderr"] = self._stderr_callback
+
         # Create client with options
         if self.options:
+            # Log MCP servers being passed to SDK
+            mcp_in_opts = self.options.get("mcp_servers") or self.options.get(
+                "mcpServers"
+            )
+            if mcp_in_opts:
+                if isinstance(mcp_in_opts, dict):
+                    logger.info(
+                        "[SDK-INIT] Passing %d MCP server(s) to Claude SDK: %s",
+                        len(mcp_in_opts),
+                        list(mcp_in_opts.keys()),
+                    )
+                    for sname, scfg in mcp_in_opts.items():
+                        logger.info(
+                            "[SDK-INIT]   %s -> type=%s, url=%s",
+                            sname,
+                            scfg.get("type", "?") if isinstance(scfg, dict) else "?",
+                            scfg.get("url", "?") if isinstance(scfg, dict) else "?",
+                        )
+                elif isinstance(mcp_in_opts, str):
+                    logger.info(
+                        "[SDK-INIT] MCP servers via config file: %s", mcp_in_opts
+                    )
+                else:
+                    logger.info(
+                        "[SDK-INIT] MCP servers (type=%s): %s",
+                        type(mcp_in_opts).__name__,
+                        mcp_in_opts,
+                    )
+            else:
+                logger.info("[SDK-INIT] No MCP servers in options")
+
             code_options = ClaudeAgentOptions(**self.options)
             self.client = ClaudeSDKClient(options=code_options)
         else:
             self.client = ClaudeSDKClient()
 
-        # Connect the client
-        await self.client.connect()
+        # Connect the client with retry logic for resume failures
+        try:
+            await self.client.connect()
+        except Exception as e:
+            # Check if this is a resume failure (session expired or invalid)
+            if saved_session_id and "resume" in self.options:
+                logger.warning(
+                    f"Failed to resume session {saved_session_id} for task {self.task_id}: {e}. "
+                    f"Deleting invalid session file and retrying with fresh session."
+                )
+                # Delete the invalid session ID file
+                SessionManager.delete_saved_session_id(self.task_id)
+
+                # Remove resume option and retry
+                del self.options["resume"]
+
+                # Recreate client without resume option
+                if self.options:
+                    code_options = ClaudeAgentOptions(**self.options)
+                    self.client = ClaudeSDKClient(options=code_options)
+                else:
+                    self.client = ClaudeSDKClient()
+
+                # Retry connection
+                logger.info(
+                    f"Retrying connection for task {self.task_id} with fresh session"
+                )
+                await self.client.connect()
+            else:
+                # Not a resume failure, re-raise the exception
+                raise
 
         # Store client connection for reuse
         SessionManager.set_client(self.session_id, self.client)
@@ -851,6 +981,59 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.warning(f"Error closing client for retry: {e}")
             # Clear client reference anyway to allow new client creation
+            self.client = None
+
+    async def _auto_close_session(self) -> None:
+        """
+        Auto-close the CC process after message completion (local mode only).
+
+        Terminates the CC process and removes all in-memory tracking, but
+        preserves the on-disk session ID file so the next message can resume.
+        This frees the device slot immediately instead of keeping the process
+        alive between messages.
+        """
+        if config.EXECUTOR_MODE != "local":
+            return
+
+        if self.client is None:
+            logger.debug("No client to auto-close")
+            return
+
+        try:
+            logger.info(
+                f"Auto-closing CC session after completion: "
+                f"session_id={self.session_id}, task_id={self.task_id}"
+            )
+
+            # Terminate the CC process
+            await SessionManager._terminate_client_process(self.client, self.session_id)
+
+            # Remove all in-memory tracking (client cache + session_id_map)
+            # but preserve the on-disk .claude_session_id file for resume
+            internal_key = getattr(self, "_internal_session_key", None)
+            SessionManager.cleanup_session_tracking(self.session_id, internal_key)
+
+            # Clear local client reference
+            self.client = None
+
+            # Trigger heartbeat callback to immediately update slot usage
+            if self.on_client_created_callback:
+                try:
+                    if asyncio.iscoroutinefunction(self.on_client_created_callback):
+                        await self.on_client_created_callback()
+                    else:
+                        result = self.on_client_created_callback()
+                        if asyncio.iscoroutine(result):
+                            await result
+                except Exception as e:
+                    logger.warning(f"Error in heartbeat callback after auto-close: {e}")
+
+            logger.info(
+                f"Auto-closed CC session: session_id={self.session_id}, "
+                f"task_id={self.task_id}. Session ID preserved on disk for resume."
+            )
+        except Exception as e:
+            logger.warning(f"Error auto-closing CC session: {e}")
             self.client = None
 
     def _handle_execution_result(

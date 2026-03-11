@@ -17,6 +17,8 @@ interface AttachmentButtonProps {
   onFileSelect: (files: File | File[]) => void
   /** Whether the button is disabled */
   disabled?: boolean
+  /** Override the accepted file types (e.g. image-only for generation modes) */
+  accept?: string
 }
 
 /**
@@ -27,6 +29,7 @@ interface AttachmentButtonProps {
 export default function AttachmentButton({
   onFileSelect,
   disabled = false,
+  accept,
 }: AttachmentButtonProps) {
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -40,18 +43,47 @@ export default function AttachmentButton({
     }
   }, [disabled])
 
+  // Build accept string for file input - use override if provided
+  const acceptString = accept ?? SUPPORTED_EXTENSIONS.join(',')
+
+  // Check if a file matches the accept criteria
+  const isFileAccepted = useCallback(
+    (file: File) => {
+      if (!accept) return true
+
+      return accept.split(',').some(rule => {
+        const token = rule.trim().toLowerCase()
+        if (!token) return false
+
+        if (token.endsWith('/*')) {
+          return file.type.toLowerCase().startsWith(token.slice(0, -1))
+        }
+
+        if (token.startsWith('.')) {
+          return file.name.toLowerCase().endsWith(token)
+        }
+
+        return file.type.toLowerCase() === token
+      })
+    },
+    [accept]
+  )
+
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files
       if (files && files.length > 0) {
-        onFileSelect(Array.from(files))
+        const acceptedFiles = Array.from(files).filter(isFileAccepted)
+        if (acceptedFiles.length > 0) {
+          onFileSelect(acceptedFiles)
+        }
       }
       // Reset input so same file can be selected again
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
     },
-    [onFileSelect]
+    [isFileAccepted, onFileSelect]
   )
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -68,19 +100,24 @@ export default function AttachmentButton({
 
       const files = e.dataTransfer.files
       if (files && files.length > 0) {
-        onFileSelect(Array.from(files))
+        const acceptedFiles = Array.from(files).filter(isFileAccepted)
+        if (acceptedFiles.length > 0) {
+          onFileSelect(acceptedFiles)
+        }
       }
     },
-    [disabled, onFileSelect]
+    [disabled, isFileAccepted, onFileSelect]
   )
 
-  // Build accept string for file input
-  const acceptString = SUPPORTED_EXTENSIONS.join(',')
-
-  // Tooltip content
-  const tooltipContent = t('chat:upload.tooltip', {
-    maxSize: MAX_FILE_SIZE / (1024 * 1024),
-  })
+  // Tooltip content - use image-specific tooltip when accept is image/*
+  const isImageOnly = accept === 'image/*'
+  const tooltipContent = isImageOnly
+    ? t('chat:upload.image_tooltip', {
+        maxSize: MAX_FILE_SIZE / (1024 * 1024),
+      })
+    : t('chat:upload.tooltip', {
+        maxSize: MAX_FILE_SIZE / (1024 * 1024),
+      })
 
   return (
     <div onDragOver={handleDragOver} onDrop={handleDrop}>
@@ -101,11 +138,9 @@ export default function AttachmentButton({
           <TooltipTrigger asChild>
             <div>
               <ActionButton
-                variant="outline"
                 onClick={handleClick}
                 disabled={disabled}
                 icon={<Paperclip className="h-4 w-4" />}
-                className="border-border bg-base text-text-primary hover:bg-hover"
               />
             </div>
           </TooltipTrigger>

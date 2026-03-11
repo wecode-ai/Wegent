@@ -6,6 +6,7 @@
 
 # -*- coding: utf-8 -*-
 
+import asyncio
 import os
 from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
@@ -108,7 +109,7 @@ class Agent:
             f"{old_subtask_id} -> {new_subtask_id}"
         )
 
-    def handle(
+    async def handle(
         self, pre_executed: Optional[TaskStatus] = None
     ) -> Tuple[TaskStatus, Optional[str]]:
         """
@@ -132,12 +133,10 @@ class Agent:
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] handle: Starting pre_execute."
                 )
-                pre_execute_status = self.pre_execute()
+                pre_execute_status = await self.pre_execute()
                 if pre_execute_status != TaskStatus.SUCCESS:
                     error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute failed."
                     logger.error(error_msg)
-                    # Try to record error thinking
-                    # self._record_error_thinking("Pre-execution failed", error_msg)
                     return TaskStatus.FAILED, error_msg
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute succeeded, starting execute."
@@ -157,8 +156,6 @@ class Agent:
         except Exception as e:
             error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: Exception during execute: {str(e)}"
             logger.exception(error_msg)
-            # Record error thinking
-            # self._record_error_thinking("Execution Exception", error_msg)
             return TaskStatus.FAILED, error_msg
 
     def report_progress(
@@ -220,7 +217,7 @@ class Agent:
                 f"status={status}, error={type(e).__name__}: {str(e)}"
             )
 
-    def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> TaskStatus:
         """
         Pre-execution hook for tasks such as code download, environment setup, etc.
         Subclasses can override this method to implement custom pre-execution logic.
@@ -242,7 +239,7 @@ class Agent:
         """
         raise NotImplementedError("Subclasses must implement execute()")
 
-    def download_code(self):
+    async def download_code(self):
         git_url = self.task_data.git_url or ""
         if git_url == "":
             logger.info("git url is empty, skip download code")
@@ -273,13 +270,19 @@ class Agent:
             self.project_path = project_path
 
         if not os.path.exists(project_path):
-            success, error_msg = git_util.clone_repo(
-                git_url, branch_name, project_path, username, git_token
+            # Offload blocking git clone to a thread so the event loop is not blocked
+            success, error_msg = await asyncio.to_thread(
+                git_util.clone_repo,
+                git_url,
+                branch_name,
+                project_path,
+                username,
+                git_token,
             )
 
             if success:
                 # Setup git config with user information
-                self.setup_git_config(user_config, project_path)
+                await self.setup_git_config(user_config, project_path)
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] Project cloned to {project_path}"
                 )
@@ -307,7 +310,7 @@ class Agent:
         )
         return TaskStatus.SUCCESS
 
-    def setup_git_config(self, user_config, project_path):
+    async def setup_git_config(self, user_config, project_path):
         """
         Setup git config with user information
 
@@ -327,8 +330,9 @@ class Agent:
                 f"Agent[{self.get_name()}][{self.task_id}] "
                 f"Setting git config user.name='{git_login}', user.email='{git_email}'"
             )
-            success, error_msg = git_util.set_git_config(
-                project_path, git_login, git_email
+            # Offload subprocess to thread
+            success, error_msg = await asyncio.to_thread(
+                git_util.set_git_config, project_path, git_login, git_email
             )
             if not success:
                 logger.error(

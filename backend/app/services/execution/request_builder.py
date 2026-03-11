@@ -11,7 +11,8 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
-from typing import Any, List, Optional
+import urllib.request
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -62,7 +63,7 @@ class TaskRequestBuilder:
         task: TaskResource,
         user: User,
         team: Kind,
-        message: str,
+        message: Union[str, list],
         *,
         # Feature toggles
         enable_tools: bool = True,
@@ -198,6 +199,21 @@ class TaskRequestBuilder:
             override_model_name=override_model_name,
             force_override=force_override,
         )
+
+        # Merge user-selected skills into bot_config so Executor downloads them
+        if bot_config and resolved_skills:
+            all_skill_names = [s["name"] for s in resolved_skills]
+            existing_skills = set(bot_config[0].get("skills", []))
+            for name in all_skill_names:
+                if name not in existing_skills:
+                    bot_config[0].setdefault("skills", []).append(name)
+                    existing_skills.add(name)
+
+        # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
+        if bot_config:
+            shell_type = bot_config[0].get("shell_type", "")
+            if shell_type == "ClaudeCode":
+                self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
 
         # Build MCP servers configuration
         mcp_servers = self._build_mcp_servers(bot, team)
@@ -365,6 +381,7 @@ class TaskRequestBuilder:
         - Environment variable placeholder replacement
         - API key decryption
         - Custom placeholder replacement (user_id, task_id, etc.)
+        - Secondary model config for video models
 
         Args:
             bot: Bot Kind object
@@ -414,7 +431,102 @@ class TaskRequestBuilder:
             task_data=task_data,
         )
 
+        # Handle secondaryModelRef for generation models (video and image).
+        # When modelType is 'video' or 'image', resolve secondary model for intent analysis
+        # used in multi-turn follow-up generation.
+        if model_config.get("modelType") in ("video", "image"):
+            secondary_model_config = self._get_secondary_model_config(
+                bot=bot,
+                user_id=user_id,
+                user_name=user_name,
+                task_id=task_id,
+                team_id=team_id,
+            )
+            if secondary_model_config:
+                model_config["secondary_model_config"] = secondary_model_config
+
         return model_config
+
+    def _get_secondary_model_config(
+        self,
+        bot: Kind,
+        user_id: int,
+        user_name: str,
+        task_id: int,
+        team_id: int,
+    ) -> dict[str, Any] | None:
+        """Get secondary model configuration from bot's secondaryModelRef.
+
+        Used for auxiliary tasks like intent analysis in video/image generation
+        follow-up conversations.
+
+        Args:
+            bot: Bot Kind object
+            user_id: User ID
+            user_name: User name for placeholder replacement
+            task_id: Task ID for placeholder replacement
+            team_id: Team ID for placeholder replacement
+
+        Returns:
+            Secondary model configuration dictionary or None if not configured
+        """
+        from app.services.chat.config.model_resolver import (
+            _extract_model_config,
+            _find_model_with_namespace,
+            _process_model_config_placeholders,
+        )
+
+        bot_crd = Bot.model_validate(bot.json)
+
+        if not bot_crd.spec or not bot_crd.spec.secondaryModelRef:
+            logger.debug(
+                "[TaskRequestBuilder] No secondaryModelRef configured for bot=%s",
+                bot.name,
+            )
+            return None
+
+        secondary_model_ref = bot_crd.spec.secondaryModelRef
+        model_name = secondary_model_ref.name
+
+        # Find the secondary model
+        model_kind, model_spec = _find_model_with_namespace(
+            self.db, model_name, user_id
+        )
+
+        if not model_spec:
+            logger.warning(
+                "[TaskRequestBuilder] Secondary model not found: name=%s",
+                model_name,
+            )
+            return None
+
+        # Extract and process model config
+        secondary_config = _extract_model_config(model_spec)
+
+        # Process placeholders
+        bot_spec = bot.json.get("spec", {}) if bot.json else {}
+        agent_config = bot_spec.get("agent_config", {})
+        user_info = {"id": user_id, "name": user_name}
+        task_data = ExecutionRequest(
+            task_id=task_id,
+            team_id=team_id,
+            user=user_info,
+        )
+
+        secondary_config = _process_model_config_placeholders(
+            model_config=secondary_config,
+            user_id=user_id,
+            user_name=user_name,
+            agent_config=agent_config,
+            task_data=task_data,
+        )
+
+        logger.info(
+            "[TaskRequestBuilder] Resolved secondaryModelRef: model=%s",
+            model_name,
+        )
+
+        return secondary_config
 
     # =========================================================================
     # System Prompt (from ChatConfigBuilder)
@@ -659,6 +771,9 @@ class TaskRequestBuilder:
                 user_preload_skills,
             )
 
+            # Get team namespace for fallback skill lookup
+            team_namespace = team.namespace if team.namespace else "default"
+
             for add_skill in user_preload_skills:
                 # Handle both dict and Pydantic model (SkillRef)
                 if isinstance(add_skill, BaseModel):
@@ -686,9 +801,13 @@ class TaskRequestBuilder:
                     )
                     continue
 
-                # Find and add new skill
+                # Find and add new skill (with team_namespace fallback)
                 skill = self._find_skill_by_ref(
-                    skill_name, skill_namespace, is_public, user_id
+                    skill_name,
+                    skill_namespace,
+                    is_public,
+                    user_id,
+                    team_namespace=team_namespace,
                 )
                 if skill:
                     skill_data = self._build_skill_data(skill)
@@ -702,10 +821,11 @@ class TaskRequestBuilder:
                     )
                 else:
                     logger.warning(
-                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s",
+                        "[_get_bot_skills] User-selected skill not found: name=%s, namespace=%s, is_public=%s, team_namespace=%s",
                         skill_name,
                         skill_namespace,
                         is_public,
+                        team_namespace,
                     )
 
         logger.info(
@@ -780,7 +900,12 @@ class TaskRequestBuilder:
         )
 
     def _find_skill_by_ref(
-        self, skill_name: str, namespace: str, is_public: bool, user_id: int
+        self,
+        skill_name: str,
+        namespace: str,
+        is_public: bool,
+        user_id: int,
+        team_namespace: str | None = None,
     ) -> Kind | None:
         """Find skill by name, namespace, and public flag.
 
@@ -790,13 +915,15 @@ class TaskRequestBuilder:
         Search order for non-public skills:
         1. Current user's skill in specified namespace (personal)
         2. ANY user's skill in specified namespace (group-level, for group namespaces)
-        3. Current user's skill in default namespace (fallback)
+        3. ANY user's skill in team namespace (if different from specified namespace)
+        4. Current user's skill in default namespace (fallback)
 
         Args:
             skill_name: Skill name
             namespace: Skill namespace
             is_public: Whether the skill is public (user_id=0)
             user_id: User ID for skill lookup
+            team_namespace: Optional team namespace to search (for group-level skills)
 
         Returns:
             Skill Kind object or None if not found
@@ -845,7 +972,33 @@ class TaskRequestBuilder:
                 if skill:
                     return skill
 
-            # 3. Fallback to current user's skill in default namespace
+            # 3. Team namespace skill (if different from specified namespace)
+            # This handles the case where preload_skills only contains name
+            # without namespace, but the skill exists in the team's namespace
+            if (
+                team_namespace
+                and team_namespace != "default"
+                and team_namespace != namespace
+            ):
+                skill = (
+                    self.db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.name == skill_name,
+                        Kind.namespace == team_namespace,
+                        Kind.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if skill:
+                    logger.info(
+                        "[_find_skill_by_ref] Found skill '%s' in team namespace '%s'",
+                        skill_name,
+                        team_namespace,
+                    )
+                    return skill
+
+            # 4. Fallback to current user's skill in default namespace
             if namespace != "default":
                 return (
                     self.db.query(Kind)
@@ -1178,6 +1331,194 @@ class TaskRequestBuilder:
             )
 
         return merged_servers
+
+    # =========================================================================
+    # Claude Code MCP Processing
+    # =========================================================================
+
+    def _prepare_mcp_for_claude_code(
+        self, bot_config: dict, skill_configs: list
+    ) -> None:
+        """Prepare MCP servers for Claude Code executor.
+
+        For ClaudeCode shell type, this method:
+        1. Extracts skill MCP servers and merges into bot mcp_servers
+        2. Normalizes types (streamable-http -> http) for Claude Code SDK
+        3. Filters out unreachable servers to prevent SDK initialization timeout
+
+        Modifies bot_config in-place.
+
+        Args:
+            bot_config: Single bot configuration dict (modified in-place)
+            skill_configs: List of resolved skill config dicts
+        """
+        # Step 1: Extract skill MCP servers and merge
+        skill_mcp = self._extract_skill_mcp_to_list(skill_configs)
+        if skill_mcp:
+            bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
+            logger.info(
+                "[MCP-CLAUDE] Merged %d skill MCP server(s): %s",
+                len(skill_mcp),
+                [s.get("name", "?") for s in skill_mcp],
+            )
+
+        mcp_list = bot_config.get("mcp_servers", [])
+        if not mcp_list:
+            return
+
+        # Step 2: Normalize types (streamable-http -> http)
+        self._normalize_mcp_types_for_claude_code(mcp_list)
+
+        # Step 3: Filter out unreachable servers
+        bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
+        if not bot_config["mcp_servers"]:
+            logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
+
+    @staticmethod
+    def _extract_skill_mcp_to_list(skill_configs: list) -> list:
+        """Extract MCP servers from skill configs in list format.
+
+        Each skill may declare mcpServers in dict format. This converts them
+        to list format with prefixed names to avoid cross-skill conflicts.
+
+        Args:
+            skill_configs: List of resolved skill config dicts
+
+        Returns:
+            List of MCP server dicts in list format:
+            [{"name": "skillName_serverName", "type": "...", "url": "...", ...}]
+        """
+        if not skill_configs:
+            return []
+
+        result: list[dict] = []
+        for skill_config in skill_configs:
+            skill_name = skill_config.get("name", "unknown")
+            mcp_servers = skill_config.get("mcpServers")
+            if not mcp_servers or not isinstance(mcp_servers, dict):
+                continue
+
+            for server_name, server_config in mcp_servers.items():
+                if not isinstance(server_config, dict):
+                    continue
+                entry = {
+                    "name": f"{skill_name}_{server_name}",
+                    **server_config,
+                }
+                result.append(entry)
+                logger.info(
+                    "[SKILL-MCP] Extracted: %s -> type=%s, url=%s",
+                    entry["name"],
+                    server_config.get("type", "?"),
+                    server_config.get("url", "?"),
+                )
+
+        return result
+
+    @staticmethod
+    def _normalize_mcp_types_for_claude_code(mcp_servers: list) -> None:
+        """Normalize MCP server types for Claude Code SDK compatibility.
+
+        Claude Code SDK supports "http" but skill/ghost configs use
+        "streamable-http". Converts in-place.
+
+        Args:
+            mcp_servers: List of MCP server config dicts (modified in-place)
+        """
+        TYPE_MAPPING = {"streamable-http": "http"}
+
+        for server in mcp_servers:
+            if not isinstance(server, dict):
+                continue
+            original_type = server.get("type", "")
+            mapped = TYPE_MAPPING.get(original_type)
+            if mapped:
+                server["type"] = mapped
+                logger.info(
+                    "[MCP-NORMALIZE] '%s': type '%s' -> '%s'",
+                    server.get("name", "?"),
+                    original_type,
+                    mapped,
+                )
+
+    @staticmethod
+    def _check_mcp_server_reachable(server: dict) -> bool:
+        """Check if an MCP server URL is reachable with a short timeout.
+
+        Sends a GET request (not HEAD, as some servers like SSE endpoints
+        don't support HEAD method and will timeout). Any HTTP response
+        (including 4xx/5xx) means the server is reachable. Only connection
+        failures are treated as unreachable.
+
+        Args:
+            server: Server config dict with 'url' and optional 'headers'
+
+        Returns:
+            True if server responded, False on connection failure
+        """
+        url = server.get("url", "")
+        if not url:
+            return False
+
+        try:
+            # Use GET instead of HEAD because some servers (especially SSE endpoints)
+            # don't support HEAD method and will timeout
+            req = urllib.request.Request(url, method="GET")
+            # Add headers, skipping unresolved placeholders
+            headers = server.get("headers", server.get("auth", {}))
+            if isinstance(headers, dict):
+                for k, v in headers.items():
+                    if isinstance(v, str) and not v.startswith("${{"):
+                        req.add_header(k, v)
+            urllib.request.urlopen(req, timeout=5)
+            return True
+        except urllib.error.HTTPError:
+            # Any HTTP response (including 4xx/5xx) means the server is reachable
+            return True
+        except Exception as e:
+            logger.warning(
+                "[MCP-CHECK] Failed to check server reachability: url=%s, error=%s",
+                url,
+                str(e),
+            )
+            return False
+
+    def _filter_reachable_mcp_servers(self, mcp_servers: list) -> list:
+        """Filter out unreachable MCP servers.
+
+        Args:
+            mcp_servers: List of MCP server config dicts
+
+        Returns:
+            List containing only reachable MCP servers
+        """
+        if not mcp_servers:
+            return mcp_servers
+
+        reachable = []
+        unreachable_names: list[str] = []
+
+        for server in mcp_servers:
+            name = server.get("name", "?")
+            if self._check_mcp_server_reachable(server):
+                reachable.append(server)
+                logger.info("[MCP-CHECK] '%s' is reachable", name)
+            else:
+                unreachable_names.append(name)
+                logger.warning(
+                    "[MCP-CHECK] '%s' is NOT reachable: %s",
+                    name,
+                    server.get("url", "?"),
+                )
+
+        if unreachable_names:
+            logger.warning(
+                "[MCP-FILTER] Removed %d unreachable server(s): %s",
+                len(unreachable_names),
+                unreachable_names,
+            )
+
+        return reachable
 
     # =========================================================================
     # Helper Methods

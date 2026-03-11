@@ -27,6 +27,7 @@ from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
+    ChatErrorPayload,
     ChatResumePayload,
     ChatRetryPayload,
     ChatSendAck,
@@ -35,6 +36,7 @@ from app.api.ws.events import (
     GenericAck,
     HistorySyncAck,
     HistorySyncPayload,
+    ServerEvents,
     TaskJoinAck,
     TaskJoinPayload,
     TaskLeavePayload,
@@ -665,6 +667,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                     f"[WS] chat:send pipeline:confirm using pipeline_bot_ids={pipeline_bot_ids}"
                 )
 
+            # Convert generate_params to dict if present
+            generate_params_dict = None
+            if payload.generate_params:
+                generate_params_dict = {
+                    "resolution": payload.generate_params.resolution,
+                    "ratio": payload.generate_params.ratio,
+                    "duration": payload.generate_params.duration,
+                }
+
             params = TaskCreationParams(
                 message=payload.message,
                 title=payload.title,
@@ -681,6 +692,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 knowledge_base_id=payload.knowledge_base_id,
                 additional_skills=additional_skills_dicts,
                 pipeline_bot_ids=pipeline_bot_ids,
+                device_id=payload.device_id,
+                generate_params=generate_params_dict,
             )
 
             result = await create_chat_task(
@@ -847,6 +860,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                     except Exception as e:
                         logger.exception(
                             f"[WS] chat:send AI trigger failed: task_id={task.id}, error={e}"
+                        )
+                        # Emit error to frontend so user sees the failure
+                        await self.emit(
+                            ServerEvents.CHAT_ERROR,
+                            ChatErrorPayload(
+                                subtask_id=assistant_subtask.id,
+                                error=str(e),
+                            ).model_dump(),
+                            room=task_room,
                         )
 
                 asyncio.create_task(_trigger_ai())

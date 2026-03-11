@@ -75,6 +75,7 @@ interface StreamingMessageBubbleProps {
   isGroupChat?: boolean
   isPendingConfirmation?: boolean
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
+  onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
 }
 
 function StreamingMessageBubble({
@@ -90,6 +91,7 @@ function StreamingMessageBubble({
   isGroupChat,
   isPendingConfirmation,
   onContextReselect,
+  onUseAsReference,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '')
@@ -148,6 +150,8 @@ function StreamingMessageBubble({
       isGroupChat={isGroupChat}
       isPendingConfirmation={isPendingConfirmation}
       onContextReselect={onContextReselect}
+      onUseAsReference={onUseAsReference}
+      taskType={selectedTaskDetail?.task_type}
     />
   )
 }
@@ -188,9 +192,13 @@ interface MessagesAreaProps {
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
   /** Hide group chat management button (e.g., in notebook mode) */
   hideGroupChatOptions?: boolean
+  /** Callback when user wants to use a generated image as reference for follow-up generation */
+  onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
+  /** Callback when user clicks re-edit button on an AI message */
+  onReEdit?: (msg: Message) => void
 }
 
-export default function MessagesArea({
+function MessagesArea({
   selectedTeam,
   selectedRepo,
   selectedBranch,
@@ -208,6 +216,8 @@ export default function MessagesArea({
   isPendingConfirmation,
   onContextReselect,
   hideGroupChatOptions = false,
+  onUseAsReference,
+  onReEdit,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -1013,7 +1023,6 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     selectedTaskDetail?.is_group_chat,
     selectedTaskDetail?.team?.agent_type,
-    selectedTaskDetail?.status,
     selectedTaskDetail?.preserve_executor,
     selectedTaskDetail?.task_type,
     messages.length,
@@ -1138,6 +1147,7 @@ export default function MessagesArea({
                   isGroupChat={isGroupChat}
                   isPendingConfirmation={isPendingConfirmation}
                   onContextReselect={onContextReselect}
+                  onUseAsReference={onUseAsReference}
                 />
               )
             }
@@ -1168,6 +1178,9 @@ export default function MessagesArea({
                     isGroupChat={isGroupChat}
                     isPendingConfirmation={isPendingConfirmation}
                     onContextReselect={onContextReselect}
+                    onUseAsReference={onUseAsReference}
+                    onReEdit={onReEdit}
+                    taskType={selectedTaskDetail?.task_type}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -1236,6 +1249,9 @@ export default function MessagesArea({
                 isLastAiMessage={isLastAiMessage}
                 onRegenerate={!isGroupChat ? handleRegenerate : undefined}
                 isRegenerating={isRegenerating}
+                onUseAsReference={onUseAsReference}
+                onReEdit={onReEdit}
+                taskType={selectedTaskDetail?.task_type}
               />
             )
           })}
@@ -1279,3 +1295,5 @@ export default function MessagesArea({
     </div>
   )
 }
+
+export default React.memo(MessagesArea)

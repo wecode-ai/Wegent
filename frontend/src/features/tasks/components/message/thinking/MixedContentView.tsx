@@ -13,6 +13,8 @@ import { normalizeToolName } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
 import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
+import VideoPlayer from '../VideoPlayer'
+import { ImageGallery } from '../ImageGallery'
 
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
@@ -21,6 +23,8 @@ interface MixedContentViewProps {
   theme: 'light' | 'dark'
   blocks?: MessageBlock[] // NEW: Block-based rendering support
   annotations?: GeminiAnnotation[]
+  /** Optional callback when user wants to use a generated image as reference for follow-up */
+  onUseAsReference?: (item: import('../ImageGallery').ImageItem) => void
 }
 
 /**
@@ -38,6 +42,7 @@ const MixedContentView = memo(function MixedContentView({
   theme,
   blocks,
   annotations,
+  onUseAsReference,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
@@ -54,6 +59,7 @@ const MixedContentView = memo(function MixedContentView({
     return map
   }, [toolGroups])
 
+  // Build mixed content array - prefer blocks if available
   // Build mixed content array - prefer blocks if available
   const mixedItems = useMemo(() => {
     // NEW: Block-based rendering (preferred)
@@ -83,8 +89,33 @@ const MixedContentView = memo(function MixedContentView({
               content: textContent,
               blockId: block.id,
             }
+          } else if (block.type === 'video') {
+            // Video block - render VideoPlayer component
+            return {
+              type: 'video' as const,
+              blockId: block.id,
+              isPlaceholder: block.is_placeholder ?? false,
+              videoUrl: block.video_url || '',
+              thumbnail: block.video_thumbnail,
+              duration: block.video_duration,
+              attachmentId: block.video_attachment_id,
+              progress: block.video_progress ?? 0,
+              status: block.status,
+              message: block.content, // Progress message
+            }
+          } else if (block.type === 'image') {
+            // Image block - render ImageGallery component
+            return {
+              type: 'image' as const,
+              blockId: block.id,
+              isPlaceholder: block.is_placeholder ?? false,
+              imageUrls: block.image_urls || [],
+              imageAttachmentIds: block.image_attachment_ids || [],
+              imageCount: block.image_count ?? 0,
+              status: block.status,
+              message: block.content, // Progress message
+            }
           } else if (block.type === 'tool') {
-            // Convert MessageBlock to ToolPair format for ToolBlock component
             // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
             const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
             const toolPair = {
@@ -230,12 +261,62 @@ const MixedContentView = memo(function MixedContentView({
             return null
           }
           const key = 'blockId' in item ? item.blockId : `content-${index}`
-          const textContent = annotations && annotations.length > 0
-            ? processCitePatterns(item.content, annotations)
-            : item.content
+          const textContent =
+            annotations && annotations.length > 0
+              ? processCitePatterns(item.content, annotations)
+              : item.content
           return (
             <div key={key} className="text-sm">
               <EnhancedMarkdown source={textContent} theme={theme} />
+            </div>
+          )
+        } else if (item.type === 'video') {
+          // Render video block using VideoPlayer component
+          return (
+            <div key={item.blockId} className="space-y-2">
+              <VideoPlayer
+                videoUrl={item.videoUrl}
+                thumbnail={item.thumbnail ?? undefined}
+                duration={item.duration ?? undefined}
+                attachmentId={item.attachmentId ?? undefined}
+                isPlaceholder={item.isPlaceholder}
+                progress={item.progress}
+              />
+              {/* Show progress message if available */}
+              {item.isPlaceholder && item.message && (
+                <div className="text-xs text-text-muted">{item.message}</div>
+              )}
+            </div>
+          )
+        } else if (item.type === 'image') {
+          // Render image block using ImageGallery component
+          return (
+            <div key={item.blockId} className="space-y-2">
+              {item.isPlaceholder ? (
+                // Show loading state for placeholder images
+                <div className="flex items-center gap-3 p-4 rounded-lg bg-surface border border-border">
+                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-text-primary">
+                      {t('image.generating') || 'Generating images...'}
+                    </div>
+                    {item.message && (
+                      <div className="text-xs text-text-muted mt-1">{item.message}</div>
+                    )}
+                  </div>
+                </div>
+              ) : item.imageUrls && item.imageUrls.length > 0 ? (
+                // Show generated images
+                <ImageGallery
+                  images={item.imageUrls.map((url: string, i: number) => ({
+                    url,
+                    attachmentId: item.imageAttachmentIds?.[i],
+                  }))}
+                  onUseAsReference={onUseAsReference}
+                />
+              ) : null}
             </div>
           )
         } else if (item.type === 'tool') {

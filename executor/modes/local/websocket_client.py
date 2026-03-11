@@ -106,9 +106,11 @@ class WebSocketClient:
                 or device_config.connection.auth_token
                 or config.WEGENT_AUTH_TOKEN
             )
-            # Use device_id and device_name from config if provided
+            # Use device_id, device_name, device_type from config if provided
             self.device_id = device_config.device_id or self._generate_device_id()
             self.device_name = device_config.device_name or self._get_device_name()
+            self.device_type = device_config.device_type or "local"
+            self.bind_shell = device_config.bind_shell or "claudecode"
         else:
             self.backend_url = backend_url or config.WEGENT_BACKEND_URL
             self.auth_token = self._normalize_token(
@@ -116,6 +118,8 @@ class WebSocketClient:
             )
             self.device_id = self._generate_device_id()
             self.device_name = self._get_device_name()
+            self.device_type = "local"
+            self.bind_shell = "claudecode"
 
         # Reconnection settings
         reconnection_delay = reconnection_delay or config.LOCAL_RECONNECT_DELAY
@@ -472,6 +476,8 @@ class WebSocketClient:
             register_data = {
                 "device_id": self.device_id,
                 "name": self.device_name,
+                "device_type": self.device_type,
+                "bind_shell": self.bind_shell,
                 "executor_version": get_version(),
                 "client_ip": self._get_client_ip(),
             }

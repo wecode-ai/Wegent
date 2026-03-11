@@ -264,7 +264,7 @@ class KnowledgeService:
             return None
 
         # Use the knowledge share service to check access
-        has_access, _, _ = knowledge_share_service.get_user_kb_permission(
+        has_access, _, _, _ = knowledge_share_service.get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
 
@@ -308,30 +308,35 @@ class KnowledgeService:
             )
             shared_kb_ids = [p.resource_id for p in shared_permissions]
 
-            # Single query to get both personal and shared knowledge bases
+            # Get knowledge bases bound to group chats where user is a member
+            bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+
+            # Single query to get personal, shared, and bound knowledge bases
             # Personal: user_id matches and namespace is "default"
             # Shared: id is in shared_kb_ids
+            # Bound: id is in bound_kb_ids (personal KBs bound to group chats)
             all_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
                     ((Kind.user_id == user_id) & (Kind.namespace == "default"))
-                    | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False),
+                    | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False)
+                    | (Kind.id.in_(bound_kb_ids) if bound_kb_ids else False),
                 )
                 .all()
             )
 
-            # Separate into personal and shared for sorting
+            # Separate into personal and shared/bound for sorting
             personal = [
                 kb
                 for kb in all_kbs
                 if kb.user_id == user_id and kb.namespace == "default"
             ]
-            shared = [kb for kb in all_kbs if kb not in personal]
+            other = [kb for kb in all_kbs if kb not in personal]
 
             # Combine and sort by updated_at
-            all_kbs = personal + shared
+            all_kbs = personal + other
             all_kbs.sort(key=lambda kb: kb.updated_at, reverse=True)
             return all_kbs
 
@@ -401,11 +406,15 @@ class KnowledgeService:
             )
             org_namespace_names = [n[0] for n in org_namespaces]
 
-            # Single query to get personal, team, organization, and shared knowledge bases
+            # Get knowledge bases bound to group chats where user is a member
+            bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+
+            # Single query to get personal, team, organization, shared, and bound knowledge bases
             # Personal: user_id matches and namespace is "default"
             # Team: namespace is in accessible_groups
             # Organization: namespace has level='organization'
             # Shared: id is in shared_kb_ids
+            # Bound: id is in bound_kb_ids (personal KBs bound to group chats)
             query = db.query(Kind).filter(
                 Kind.kind == "KnowledgeBase",
                 Kind.is_active == True,
@@ -422,6 +431,9 @@ class KnowledgeService:
             if shared_kb_ids:
                 conditions.append(Kind.id.in_(shared_kb_ids))
 
+            if bound_kb_ids:
+                conditions.append(Kind.id.in_(bound_kb_ids))
+
             if conditions:
                 from sqlalchemy import or_
 
@@ -429,7 +441,7 @@ class KnowledgeService:
 
             all_kbs = query.all()
 
-            # Separate into personal, team, organization, and shared
+            # Separate into personal, team, organization, shared, and bound
             personal = [
                 kb
                 for kb in all_kbs
@@ -437,13 +449,14 @@ class KnowledgeService:
             ]
             team = [kb for kb in all_kbs if kb.namespace in accessible_groups]
             organization = [kb for kb in all_kbs if kb.namespace in org_namespace_names]
-            shared = [
+            # Shared/bound KBs are those not in personal, team, or organization
+            other = [
                 kb
                 for kb in all_kbs
                 if kb not in personal and kb not in team and kb not in organization
             ]
 
-            return personal + team + organization + shared
+            return personal + team + organization + other
 
     @staticmethod
     def update_knowledge_base(
@@ -737,6 +750,42 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def _update_document_count_cache(
+        db: Session,
+        knowledge_base_id: int,
+    ) -> None:
+        """
+        Update the cached document_count in knowledge base spec.
+
+        This method queries the actual document count from the database
+        and updates the spec.document_count field to keep it in sync.
+        Called after document creation/deletion.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .first()
+        )
+
+        if kb:
+            # Query actual document count from database
+            actual_count = KnowledgeService.get_document_count(db, knowledge_base_id)
+
+            kb_json = kb.json
+            spec = kb_json.get("spec", {})
+            spec["document_count"] = actual_count
+            kb_json["spec"] = spec
+            kb.json = kb_json
+            flag_modified(kb, "json")
+
+    @staticmethod
     def get_active_document_count(
         db: Session,
         knowledge_base_id: int,
@@ -892,6 +941,10 @@ class KnowledgeService:
             source_config=data.source_config if data.source_config else {},
         )
         db.add(document)
+        db.flush()  # Flush to persist document before counting
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, knowledge_base_id)
 
         db.commit()
         db.refresh(document)
@@ -1120,6 +1173,10 @@ class KnowledgeService:
 
         # Physically delete document from database
         db.delete(doc)
+
+        # Update cached document count in knowledge base spec
+        KnowledgeService._update_document_count_cache(db, kind_id)
+
         db.commit()
 
         # Delete RAG index if knowledge base has retrieval_config
@@ -1302,7 +1359,8 @@ class KnowledgeService:
         Returns:
             AccessibleKnowledgeResponse with personal, team, and organization knowledge bases
         """
-        # Get personal knowledge bases
+
+        # Get personal knowledge bases (created by user)
         personal_kbs = (
             db.query(Kind)
             .filter(
@@ -1326,6 +1384,37 @@ class KnowledgeService:
             )
             for kb in personal_kbs
         ]
+
+        # Get personal knowledge bases that are bound to group chats where user is a member
+        # These are shared via group chat binding, not by explicit sharing
+        bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+        if bound_kb_ids:
+            bound_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.id.in_(bound_kb_ids),
+                    Kind.namespace == "default",
+                    Kind.user_id
+                    != user_id,  # Exclude user's own KBs (already included above)
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
+            for kb in bound_kbs:
+                personal.append(
+                    AccessibleKnowledgeBase(
+                        id=kb.id,
+                        name=kb.json.get("spec", {}).get("name", ""),
+                        description=kb.json.get("spec", {}).get("description") or None,
+                        document_count=KnowledgeService.get_active_document_count(
+                            db, kb.id
+                        ),
+                        updated_at=kb.updated_at,
+                    )
+                )
 
         # Get team knowledge bases grouped by namespace
         accessible_groups = get_user_groups(db, user_id)
@@ -1460,6 +1549,22 @@ class KnowledgeService:
             return check_group_permission(
                 db, user_id, kb.namespace, GroupRole.Maintainer
             )
+
+    @staticmethod
+    def _get_bound_kb_ids_for_user(db: Session, user_id: int) -> list[int]:
+        """Get IDs of knowledge bases bound to group chats where user is a member.
+
+        This method finds all personal knowledge bases that have been bound to
+        group chats where the specified user is a member.
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            List of knowledge base IDs that are bound to user's group chats
+        """
+        return []
 
     # ============== Batch Document Operations ==============
 

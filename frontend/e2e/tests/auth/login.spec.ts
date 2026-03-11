@@ -12,9 +12,9 @@ test.describe('Authentication - Login', () => {
     loginPage = new LoginPage(page)
     // Navigate to login page before each test
     await page.goto('/login')
-    await page.waitForLoadState('domcontentloaded')
-    // Wait for page to stabilize
-    await page.waitForTimeout(1000)
+    await page.waitForLoadState('networkidle')
+    // Wait for the first input to be visible instead of fixed timeout
+    await page.locator('input').first().waitFor({ state: 'visible', timeout: 30000 })
   })
 
   test('should display login form', async ({ page }) => {
@@ -63,8 +63,12 @@ test.describe('Authentication - Login', () => {
       await loginPage.fillCredentials('invaliduser', 'wrongpassword')
       await loginPage.clickLogin()
 
-      // Wait for error message or toast, or just wait a bit
-      await page.waitForTimeout(2000)
+      // Wait for error message or toast to appear
+      await page
+        .locator('[role="alert"], .toast, [data-testid="error-message"]')
+        .first()
+        .waitFor({ state: 'visible', timeout: 5000 })
+        .catch(() => {})
 
       // Should still be on login page
       expect(loginPage.isOnLoginPage()).toBe(true)
@@ -95,8 +99,12 @@ test.describe('Authentication - Login', () => {
 
       await loginPage.clickLogin()
 
-      // Wait a bit for validation
-      await page.waitForTimeout(1000)
+      // Wait for validation message to appear or form to show validation state
+      await page
+        .locator('[data-invalid="true"], .error, [aria-invalid="true"]')
+        .first()
+        .waitFor({ state: 'visible', timeout: 3000 })
+        .catch(() => {})
 
       // Should show validation or remain on login page (form has required fields)
       expect(loginPage.isOnLoginPage()).toBe(true)
@@ -108,10 +116,16 @@ test.describe('Authentication - Login', () => {
   test('should redirect to login when not authenticated', async ({ page }) => {
     // Navigate to a protected route
     await page.goto('/settings')
-    await page.waitForLoadState('domcontentloaded')
 
-    // Should redirect to login or show login-related content
-    await page.waitForTimeout(2000)
+    // Wait for redirect to complete - either to login page or settings loads
+    await Promise.race([
+      page.waitForURL(/\/login/, { timeout: 10000 }),
+      page.locator('input').first().waitFor({ state: 'visible', timeout: 10000 }),
+      page
+        .locator('[data-testid="settings-page"], h1, h2')
+        .first()
+        .waitFor({ state: 'visible', timeout: 10000 }),
+    ]).catch(() => {})
 
     const url = page.url()
     const isOnLoginOrRedirected = url.includes('/login') || url.includes('/settings')

@@ -99,7 +99,8 @@ class TaskHandler:
         )
 
         # Chat messages are processed as tasks
-        await self.runner.enqueue_task(data)
+        execution_request = ExecutionRequest.from_dict(data)
+        await self.runner.enqueue_task(execution_request)
 
 
 class ConnectionHandler:

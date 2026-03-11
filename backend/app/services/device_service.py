@@ -17,12 +17,14 @@ via the DeviceProviderFactory, allowing for extensibility to support
 different device types (local, cloud, etc.) in the future.
 """
 
+import copy
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
@@ -230,8 +232,14 @@ class DeviceService:
         Returns:
             List of device info dicts
         """
-        provider = DeviceService._get_provider(DeviceType.LOCAL)
-        return await provider.list_devices(db, user_id, include_offline=True)
+        from app.services.device.provider_factory import DeviceProviderFactory
+
+        devices: List[Dict[str, Any]] = []
+        for provider in DeviceProviderFactory.get_all_providers().values():
+            devices.extend(
+                await provider.list_devices(db, user_id, include_offline=True)
+            )
+        return devices
 
     @staticmethod
     async def get_online_devices(db: Session, user_id: int) -> List[Dict[str, Any]]:
@@ -244,8 +252,14 @@ class DeviceService:
         Returns:
             List of online device info dicts
         """
-        provider = DeviceService._get_provider(DeviceType.LOCAL)
-        return await provider.list_devices(db, user_id, include_offline=False)
+        from app.services.device.provider_factory import DeviceProviderFactory
+
+        devices: List[Dict[str, Any]] = []
+        for provider in DeviceProviderFactory.get_all_providers().values():
+            devices.extend(
+                await provider.list_devices(db, user_id, include_offline=False)
+            )
+        return devices
 
     @staticmethod
     def upsert_device_crd(
@@ -254,6 +268,8 @@ class DeviceService:
         device_id: str,
         name: str,
         client_ip: Optional[str] = None,
+        device_type: Optional[str] = None,
+        bind_shell: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -266,6 +282,11 @@ class DeviceService:
             device_id: Device unique identifier (stored in Kind.name)
             name: Device display name (stored in spec.displayName)
             client_ip: Device's client IP address (stored in spec.clientIp)
+            device_type: Device type ('local' or 'cloud'). If None, defaults
+                         to 'local' for new devices or preserves existing value.
+            bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
+                        If None, defaults to 'claudecode' for new devices or
+                        preserves existing value.
 
         Returns:
             Kind model instance for the device
@@ -286,24 +307,33 @@ class DeviceService:
 
         if device_kind:
             # Update existing device (reactivate if soft-deleted)
-            device_json = device_kind.json.copy()
+            # Use deepcopy to ensure SQLAlchemy detects nested JSON changes
+            device_json = copy.deepcopy(device_kind.json)
             device_json["spec"]["displayName"] = name
-            # Ensure device type fields are set for backward compatibility
-            if "deviceType" not in device_json["spec"]:
+            # Update device type if provided, otherwise preserve existing value
+            if device_type is not None:
+                device_json["spec"]["deviceType"] = device_type
+            elif "deviceType" not in device_json["spec"]:
                 device_json["spec"]["deviceType"] = DeviceType.LOCAL.value
             if "connectionMode" not in device_json["spec"]:
                 device_json["spec"]["connectionMode"] = "websocket"
             # Update client IP if provided
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
+            # Update bind_shell if provided, otherwise preserve existing value
+            if bind_shell is not None:
+                device_json["spec"]["bindShell"] = bind_shell
+            elif "bindShell" not in device_json["spec"]:
+                device_json["spec"]["bindShell"] = "claudecode"
             device_kind.json = device_json
+            flag_modified(device_kind, "json")
             device_kind.updated_at = datetime.now()
             device_kind.is_active = True
             db.add(device_kind)
             logger.info(f"Updated device CRD: user_id={user_id}, device_id={device_id}")
         else:
             # Check if this is the first device for the user
-            existing_device_count = (
+            existing_devices = (
                 db.query(Kind)
                 .filter(
                     and_(
@@ -313,9 +343,20 @@ class DeviceService:
                         Kind.is_active == True,
                     )
                 )
-                .count()
+                .all()
+            )
+            existing_device_count = sum(
+                1
+                for device in existing_devices
+                if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
+                == DeviceType.LOCAL.value
             )
             is_first_device = existing_device_count == 0
+
+            # Resolve device type: use provided value, or default to 'local'
+            resolved_device_type = device_type or DeviceType.LOCAL.value
+            # Resolve bind_shell: use provided value, or default to 'claudecode'
+            resolved_bind_shell = bind_shell or "claudecode"
 
             # Create new device CRD
             device_json = {
@@ -329,8 +370,9 @@ class DeviceService:
                 "spec": {
                     "deviceId": device_id,
                     "displayName": name,
-                    "deviceType": DeviceType.LOCAL.value,
+                    "deviceType": resolved_device_type,
                     "connectionMode": "websocket",
+                    "bindShell": resolved_bind_shell,
                     "isDefault": is_first_device,
                     "capabilities": None,
                     "clientIp": client_ip,
@@ -388,16 +430,28 @@ class DeviceService:
         )
 
         found = False
+        target_type = None
         for device_kind in devices:
-            device_json = device_kind.json.copy()
+            if device_kind.name == device_id:
+                target_type = device_kind.json.get("spec", {}).get(
+                    "deviceType", DeviceType.LOCAL.value
+                )
+                break
+
+        for device_kind in devices:
+            device_json = copy.deepcopy(device_kind.json)
+            device_type = device_json.get("spec", {}).get(
+                "deviceType", DeviceType.LOCAL.value
+            )
 
             if device_kind.name == device_id:
                 device_json["spec"]["isDefault"] = True
                 found = True
-            else:
+            elif target_type and device_type == target_type:
                 device_json["spec"]["isDefault"] = False
 
             device_kind.json = device_json
+            flag_modified(device_kind, "json")
             db.add(device_kind)
 
         if found:
@@ -475,6 +529,46 @@ class DeviceService:
             )
             .first()
         )
+
+    @staticmethod
+    def get_default_device_for_type(
+        db: Session,
+        user_id: int,
+        device_type: DeviceType,
+    ) -> Optional[Kind]:
+        """Get the default device for a specific device type.
+
+        If no explicit default exists for the type and there is exactly one active
+        device of the requested type, that device is returned.
+        """
+        devices = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+            )
+            .all()
+        )
+
+        matching_devices = []
+        default_device = None
+        for device in devices:
+            spec = device.json.get("spec", {})
+            if spec.get("deviceType", DeviceType.LOCAL.value) != device_type.value:
+                continue
+            matching_devices.append(device)
+            if spec.get("isDefault", False):
+                default_device = device
+
+        if default_device:
+            return default_device
+        if len(matching_devices) == 1:
+            return matching_devices[0]
+        return None
 
 
 # Singleton instance
