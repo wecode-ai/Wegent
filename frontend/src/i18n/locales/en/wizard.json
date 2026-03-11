@@ -68,6 +68,7 @@
   "name_required": "Please give your assistant a name",
   "wizard_button": "Quick Create",
   "wizard_button_tooltip": "Create your AI assistant in a few simple steps",
+  "quick_create_agent": "Quick Create Agent",
   "shell_type_chat": "Chat Assistant",
   "shell_type_chat_desc": "Great for Q&A, writing, and organizing information",
   "shell_type_claudecode": "Coding Assistant",
