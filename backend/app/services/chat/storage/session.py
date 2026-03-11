@@ -851,6 +851,37 @@ class SessionManager:
                 f"[SessionManager] Failed to finalize text block for subtask {subtask_id}: {e}"
             )
 
+    async def get_blocks(self, subtask_id: int) -> List[Dict[str, Any]]:
+        """Get all blocks for a subtask without finalizing.
+
+        This is used for page refresh recovery to get the current state
+        of blocks during streaming without modifying them.
+
+        Args:
+            subtask_id: Subtask ID
+
+        Returns:
+            List of all blocks for the subtask
+        """
+        try:
+            blocks_key = self._get_blocks_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            try:
+                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
+                blocks = [json.loads(b) for b in blocks_raw] if blocks_raw else []
+                logger.debug(
+                    f"[SessionManager] get_blocks for subtask {subtask_id}: "
+                    f"count={len(blocks)}"
+                )
+                return blocks
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to get blocks for subtask {subtask_id}: {e}"
+            )
+            return []
+
     async def finalize_and_get_blocks(self, subtask_id: int) -> List[Dict[str, Any]]:
         """Finalize any pending text block and return all blocks.
 
