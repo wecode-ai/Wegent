@@ -528,13 +528,13 @@ class TaskQueryMixin:
         """
         from app.services.task_member_service import task_member_service
 
-        # Check if task exists
+        # Check if task exists (include both regular tasks and subscription tasks)
         task = (
             db.query(TaskResource)
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == 1,
+                TaskResource.is_active.in_([1, 2]),
                 text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
             )
             .first()
