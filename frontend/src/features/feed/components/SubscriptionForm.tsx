@@ -8,7 +8,19 @@
  * Subscription creation/edit form component.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff, Database } from 'lucide-react'
+import {
+  Copy,
+  Check,
+  Terminal,
+  Brain,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Database,
+  Bell,
+  Plus,
+  Trash2,
+} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,10 +55,13 @@ import { deviceApis, type DeviceInfo } from '@/apis/devices'
 import { subscriptionApis } from '@/apis/subscription'
 import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
+import { userApis } from '@/apis/user'
 import type { Team, GitRepoInfo, GitBranch, SearchUser } from '@/types/api'
 import type {
   NotificationChannelInfo,
   NotificationLevel,
+  NotificationWebhook,
+  NotificationWebhookType,
   Subscription,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
@@ -357,17 +372,46 @@ export function SubscriptionForm({
   const [devAvailableChannels, setDevAvailableChannels] = useState<NotificationChannelInfo[]>([])
   const [devSettingsLoading, setDevSettingsLoading] = useState(false)
 
-  // Load developer notification settings when editing
+  // Notification webhooks state
+  const [notificationWebhooks, setNotificationWebhooks] = useState<NotificationWebhook[]>([])
+
+  // Load developer notification settings when editing, or load available channels when creating
   useEffect(() => {
     const loadDeveloperSettings = async () => {
-      if (!isEditing || !subscription || isRental) return
+      if (isRental) return
 
       setDevSettingsLoading(true)
       try {
-        const response = await subscriptionApis.getDeveloperNotificationSettings(subscription.id)
-        setDevNotificationLevel(response.notification_level)
-        setDevNotificationChannels(response.notification_channel_ids || [])
-        setDevAvailableChannels(response.available_channels || [])
+        if (isEditing && subscription) {
+          // When editing, load existing settings
+          const response = await subscriptionApis.getDeveloperNotificationSettings(subscription.id)
+          setDevNotificationLevel(response.notification_level)
+          setDevNotificationChannels(response.notification_channel_ids || [])
+          setDevAvailableChannels(response.available_channels || [])
+        } else {
+          // When creating, we need to get available channels
+          // Use a workaround: get channels from any existing subscription or use empty list
+          // The channels will be loaded after creation when we call updateDeveloperNotificationSettings
+          // For now, just reset to defaults
+          setDevNotificationLevel('notify')
+          setDevNotificationChannels([])
+          // Try to load available channels from user's existing subscriptions
+          try {
+            const subscriptionsResponse = await subscriptionApis.getSubscriptions({
+              page: 1,
+              limit: 1,
+            })
+            if (subscriptionsResponse.items.length > 0) {
+              const firstSubId = subscriptionsResponse.items[0].id
+              const settingsResponse =
+                await subscriptionApis.getDeveloperNotificationSettings(firstSubId)
+              setDevAvailableChannels(settingsResponse.available_channels || [])
+            }
+          } catch {
+            // If no existing subscriptions, channels will be empty
+            setDevAvailableChannels([])
+          }
+        }
       } catch (error) {
         console.error('Failed to load developer notification settings:', error)
       } finally {
@@ -397,6 +441,26 @@ export function SubscriptionForm({
           return bindMode.includes('chat') || bindMode.includes('code')
         })
         setTeams(filteredTeams)
+
+        // Auto-select default chat team when creating new subscription
+        if (!isEditing && !isRental && filteredTeams.length > 0) {
+          try {
+            const defaultTeams = await userApis.getDefaultTeams()
+            const chatDefault = defaultTeams.chat
+            if (chatDefault) {
+              const matchedTeam = filteredTeams.find(
+                team =>
+                  team.name === chatDefault.name &&
+                  (team.namespace || 'default') === chatDefault.namespace
+              )
+              if (matchedTeam) {
+                setTeamId(matchedTeam.id)
+              }
+            }
+          } catch (error) {
+            console.error('Failed to load default teams:', error)
+          }
+        }
       } catch (error) {
         console.error('Failed to load teams:', error)
       } finally {
@@ -406,7 +470,7 @@ export function SubscriptionForm({
     if (open) {
       loadTeams()
     }
-  }, [open])
+  }, [open, isEditing, isRental])
 
   // Load models
   useEffect(() => {
@@ -619,6 +683,7 @@ export function SubscriptionForm({
         }))
       )
       setKnowledgeBaseRefs(subscription.knowledge_base_refs || [])
+      setNotificationWebhooks(subscription.notification_webhooks || [])
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
       setSelectedBranch(
@@ -661,6 +726,7 @@ export function SubscriptionForm({
       setSelectedBranch(null)
       setSelectedModel(null)
       setKnowledgeBaseRefs([])
+      setNotificationWebhooks([])
     }
   }, [subscription, open, initialData])
 
@@ -768,6 +834,8 @@ export function SubscriptionForm({
           force_override_bot_model: !!selectedModel, // Always override when model is selected
           // Include knowledge base references
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
+          // Include notification webhooks
+          notification_webhooks: notificationWebhooks.length > 0 ? notificationWebhooks : undefined,
         }
         await subscriptionApis.updateSubscription(subscription.id, updateData)
 
@@ -822,8 +890,22 @@ export function SubscriptionForm({
           force_override_bot_model: !!selectedModel, // Always override when model is selected
           // Include knowledge base references
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
+          // Include notification webhooks
+          notification_webhooks: notificationWebhooks.length > 0 ? notificationWebhooks : undefined,
         }
-        await subscriptionApis.createSubscription(createData)
+        const createdSubscription = await subscriptionApis.createSubscription(createData)
+
+        // Update developer notification settings for the newly created subscription
+        try {
+          await subscriptionApis.updateDeveloperNotificationSettings(createdSubscription.id, {
+            notification_level: devNotificationLevel,
+            notification_channel_ids: devNotificationChannels,
+          })
+        } catch (error) {
+          console.error('Failed to update developer notification settings:', error)
+          // Don't block the main creation if this fails
+        }
+
         toast.success(t('create_success'))
       }
       onSuccess()
@@ -855,6 +937,7 @@ export function SubscriptionForm({
     selectedBranch,
     selectedModel,
     knowledgeBaseRefs,
+    notificationWebhooks,
     isEditing,
     isRental,
     subscription,
@@ -1442,95 +1525,6 @@ export function SubscriptionForm({
                 <Label className="text-sm font-medium">{t('enable_subscription')}</Label>
                 <Switch checked={enabled} onCheckedChange={setEnabled} />
               </div>
-
-              {/* Developer Notification Settings - Only show when editing and not rental */}
-              {isEditing && !isRental && (
-                <div className="space-y-3 pt-4 border-t border-border/50">
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">
-                      {t('developer_notification_settings.title')}
-                    </Label>
-                    <p className="text-xs text-text-muted">
-                      {t('developer_notification_settings.description', {
-                        name: subscription?.display_name || displayName,
-                      })}
-                    </p>
-                  </div>
-
-                  {/* Notification Level Selection */}
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      {(['silent', 'default', 'notify'] as NotificationLevel[]).map(level => (
-                        <Button
-                          key={level}
-                          type="button"
-                          variant={devNotificationLevel === level ? 'primary' : 'outline'}
-                          size="sm"
-                          className="flex-1 h-9"
-                          onClick={() => setDevNotificationLevel(level)}
-                          disabled={devSettingsLoading}
-                        >
-                          {t(`notification_level.${level}`)}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Notification Channels - Only show when level is 'notify' */}
-                  {devNotificationLevel === 'notify' && (
-                    <div className="space-y-2">
-                      <Label className="text-xs text-text-muted">
-                        {t('developer_notification_settings.channels')}
-                      </Label>
-                      {devAvailableChannels.length > 0 ? (
-                        <>
-                          <div className="flex flex-wrap gap-2">
-                            {devAvailableChannels.map(channel => (
-                              <Button
-                                key={channel.id}
-                                type="button"
-                                variant={
-                                  devNotificationChannels.includes(channel.id)
-                                    ? 'primary'
-                                    : 'outline'
-                                }
-                                size="sm"
-                                className="h-8"
-                                onClick={() => {
-                                  setDevNotificationChannels(prev =>
-                                    prev.includes(channel.id)
-                                      ? prev.filter(id => id !== channel.id)
-                                      : [...prev, channel.id]
-                                  )
-                                }}
-                                disabled={devSettingsLoading}
-                              >
-                                {channel.name}
-                                {!channel.is_bound && (
-                                  <span className="ml-1 text-xs opacity-60">
-                                    ({t('common:actions.configure')})
-                                  </span>
-                                )}
-                              </Button>
-                            ))}
-                          </div>
-                          <p className="text-xs text-text-muted">
-                            {t('developer_notification_settings.channels_hint')}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="text-xs text-text-muted">
-                          {t('developer_notification_settings.no_channels_hint')}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {devSettingsLoading && (
-                    <p className="text-xs text-text-muted">{t('common:loading')}</p>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Right Column - Trigger & Execution */}
@@ -1618,6 +1612,208 @@ export function SubscriptionForm({
                 </div>
               </div>
               <p className="text-xs text-text-muted -mt-2">{t('timeout_hint')}</p>
+
+              {/* Notification Settings - Show for both creating and editing (not rental) */}
+              {!isRental && (
+                <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium text-text-secondary">
+                      {t('notification_settings.title')}
+                    </span>
+                  </div>
+
+                  {/* Notification Level Selection */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">
+                      {t('notification_settings.level_label')}
+                    </Label>
+                    <div className="flex gap-2">
+                      {(['silent', 'default', 'notify'] as NotificationLevel[]).map(level => (
+                        <Button
+                          key={level}
+                          type="button"
+                          variant={devNotificationLevel === level ? 'primary' : 'outline'}
+                          size="sm"
+                          className="flex-1 h-9"
+                          onClick={() => setDevNotificationLevel(level)}
+                          disabled={devSettingsLoading}
+                        >
+                          {t(`notification_level.${level}`)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Notification Channels - Only show when level is 'notify' */}
+                  {devNotificationLevel === 'notify' && (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-text-muted">
+                        {t('notification_settings.channels_label')}
+                      </Label>
+                      {devAvailableChannels.length > 0 ? (
+                        <>
+                          <div className="flex flex-wrap gap-2">
+                            {devAvailableChannels.map(channel => (
+                              <Button
+                                key={channel.id}
+                                type="button"
+                                variant={
+                                  devNotificationChannels.includes(channel.id)
+                                    ? 'primary'
+                                    : 'outline'
+                                }
+                                size="sm"
+                                className="h-8"
+                                onClick={() => {
+                                  setDevNotificationChannels(prev =>
+                                    prev.includes(channel.id)
+                                      ? prev.filter(id => id !== channel.id)
+                                      : [...prev, channel.id]
+                                  )
+                                }}
+                                disabled={devSettingsLoading}
+                              >
+                                {channel.name}
+                                {!channel.is_bound && (
+                                  <span className="ml-1 text-xs opacity-60">
+                                    ({t('common:actions.configure')})
+                                  </span>
+                                )}
+                              </Button>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-text-muted">
+                          {t('notification_settings.no_channels')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {devSettingsLoading && (
+                    <p className="text-xs text-text-muted">{t('common:loading')}</p>
+                  )}
+
+                  {/* Webhook Notifications */}
+                  <div className="space-y-3 pt-3 border-t border-border/50">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">
+                        {t('notification_settings.webhook_title')}
+                      </Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2"
+                        onClick={() => {
+                          setNotificationWebhooks(prev => [
+                            ...prev,
+                            { type: 'dingtalk' as NotificationWebhookType, url: '', enabled: true },
+                          ])
+                        }}
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        {t('notification_settings.add_webhook')}
+                      </Button>
+                    </div>
+
+                    {notificationWebhooks.length === 0 ? (
+                      <p className="text-xs text-text-muted">
+                        {t('notification_settings.no_webhooks')}
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {notificationWebhooks.map((webhook, index) => (
+                          <div
+                            key={index}
+                            className="space-y-2 p-3 rounded-md border border-border bg-background"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Select
+                                  value={webhook.type}
+                                  onValueChange={(value: NotificationWebhookType) => {
+                                    setNotificationWebhooks(prev =>
+                                      prev.map((w, i) => (i === index ? { ...w, type: value } : w))
+                                    )
+                                  }}
+                                >
+                                  <SelectTrigger className="h-8 w-[120px]">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="dingtalk">
+                                      {t('notification_settings.webhook_type_dingtalk')}
+                                    </SelectItem>
+                                    <SelectItem value="feishu">
+                                      {t('notification_settings.webhook_type_feishu')}
+                                    </SelectItem>
+                                    <SelectItem value="custom">
+                                      {t('notification_settings.webhook_type_custom')}
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Switch
+                                  checked={webhook.enabled}
+                                  onCheckedChange={checked => {
+                                    setNotificationWebhooks(prev =>
+                                      prev.map((w, i) =>
+                                        i === index ? { ...w, enabled: checked } : w
+                                      )
+                                    )
+                                  }}
+                                />
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  setNotificationWebhooks(prev =>
+                                    prev.filter((_, i) => i !== index)
+                                  )
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                            <Input
+                              value={webhook.url}
+                              onChange={e => {
+                                setNotificationWebhooks(prev =>
+                                  prev.map((w, i) =>
+                                    i === index ? { ...w, url: e.target.value } : w
+                                  )
+                                )
+                              }}
+                              placeholder={t('notification_settings.webhook_url_placeholder')}
+                              className="h-8 text-xs"
+                            />
+                            <Input
+                              value={webhook.secret || ''}
+                              onChange={e => {
+                                setNotificationWebhooks(prev =>
+                                  prev.map((w, i) =>
+                                    i === index ? { ...w, secret: e.target.value || undefined } : w
+                                  )
+                                )
+                              }}
+                              placeholder={t('notification_settings.webhook_secret_placeholder')}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-text-muted">
+                      {t('notification_settings.webhook_hint')}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

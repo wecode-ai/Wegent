@@ -165,6 +165,27 @@ class SubscriptionKnowledgeBaseRef(BaseModel):
     namespace: str = Field("default", description="Knowledge base namespace")
 
 
+class NotificationWebhookType(str, Enum):
+    """Notification webhook type enumeration."""
+
+    DINGTALK = "dingtalk"
+    FEISHU = "feishu"
+    CUSTOM = "custom"
+
+
+class NotificationWebhook(BaseModel):
+    """Notification webhook configuration for subscription."""
+
+    type: NotificationWebhookType = Field(
+        ..., description="Webhook type: dingtalk, feishu, or custom"
+    )
+    url: str = Field(..., description="Webhook URL")
+    secret: Optional[str] = Field(
+        None, description="Optional signing secret for webhook verification"
+    )
+    enabled: bool = Field(True, description="Whether this webhook is enabled")
+
+
 class SourceSubscriptionRef(BaseModel):
     """Reference to source subscription for rentals."""
 
@@ -244,6 +265,12 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Knowledge bases to bind to this subscription. "
         "AI will have access to these knowledge bases during execution.",
+    )
+    # Notification webhooks
+    notificationWebhooks: Optional[List[NotificationWebhook]] = Field(
+        None,
+        description="Notification webhooks to send execution results to. "
+        "Supports DingTalk, Feishu, and custom webhooks.",
     )
 
 
@@ -361,6 +388,12 @@ class SubscriptionBase(BaseModel):
         description="Knowledge bases to bind to this subscription. "
         "AI will have access to these knowledge bases during execution.",
     )
+    # Notification webhooks
+    notification_webhooks: Optional[List[NotificationWebhook]] = Field(
+        None,
+        description="Notification webhooks to send execution results to. "
+        "Supports DingTalk, Feishu, and custom webhooks.",
+    )
     market_whitelist_user_ids: Optional[List[int]] = Field(
         None,
         description="User IDs allowed to discover and rent this market subscription. "
@@ -403,6 +436,8 @@ class SubscriptionUpdate(BaseModel):
     history_message_count: Optional[int] = Field(None, ge=0, le=50)
     # Knowledge base references
     knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = None
+    # Notification webhooks
+    notification_webhooks: Optional[List[NotificationWebhook]] = None
     # Market whitelist
     market_whitelist_user_ids: Optional[List[int]] = None
 
