@@ -572,7 +572,13 @@ export function parseMarkdownClarification(content: string): ParsedClarification
       const innerResult = parseFromTokens(innerTokens, token.text, 0)
       if (!innerResult) continue
 
-      const codeBlockStart = content.indexOf(token.raw)
+      // Track position as we iterate to handle duplicate content
+      let searchStart = 0
+      for (const t of tokens) {
+        if (t === token) break
+        searchStart += t.raw.length
+      }
+      const codeBlockStart = searchStart
       const outerPrefix = content.substring(0, codeBlockStart).trim()
       const outerSuffix = content.substring(codeBlockStart + token.raw.length).trim()
 
