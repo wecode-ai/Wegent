@@ -220,6 +220,42 @@ def check_task_status(db: Session, task: TaskResource) -> None:
         raise HTTPException(status_code=400, detail="Task is still running")
 
 
+def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool:
+    """Validate that the linked group exists and user is authorized to link to it.
+
+    Args:
+        db: Database session
+        user_id: User ID attempting to link
+        linked_group: Group/namespace name to link to
+
+    Returns:
+        True if group exists and user is authorized, False otherwise
+    """
+    from app.models.namespace import Namespace
+    from app.services.group_permission import get_effective_role_in_group
+
+    # Check if namespace exists
+    namespace = (
+        db.query(Namespace)
+        .filter(Namespace.name == linked_group, Namespace.is_active == True)
+        .first()
+    )
+
+    if not namespace:
+        logger.warning(f"[_validate_linked_group] Namespace '{linked_group}' not found")
+        return False
+
+    # Check if user is a member of the group
+    role = get_effective_role_in_group(db, user_id, linked_group)
+    if role is None:
+        logger.warning(
+            f"[_validate_linked_group] User {user_id} is not a member of group '{linked_group}'"
+        )
+        return False
+
+    return True
+
+
 def create_new_task(
     db: Session,
     user: User,
@@ -424,42 +460,6 @@ def create_new_task(
             logger.warning(
                 f"[create_new_task] Could not find namespace for linked_group='{params.linked_group}'"
             )
-
-
-def _validate_linked_group(db: Session, user_id: int, linked_group: str) -> bool:
-    """Validate that the linked group exists and user is authorized to link to it.
-
-    Args:
-        db: Database session
-        user_id: User ID attempting to link
-        linked_group: Group/namespace name to link to
-
-    Returns:
-        True if group exists and user is authorized, False otherwise
-    """
-    from app.models.namespace import Namespace
-    from app.services.group_permission import get_effective_role_in_group
-
-    # Check if namespace exists
-    namespace = (
-        db.query(Namespace)
-        .filter(Namespace.name == linked_group, Namespace.is_active == True)
-        .first()
-    )
-
-    if not namespace:
-        logger.warning(f"[_validate_linked_group] Namespace '{linked_group}' not found")
-        return False
-
-    # Check if user is a member of the group
-    role = get_effective_role_in_group(db, user_id, linked_group)
-    if role is None:
-        logger.warning(
-            f"[_validate_linked_group] User {user_id} is not a member of group '{linked_group}'"
-        )
-        return False
-
-    return True
 
     # Check if a Placeholder record exists for this task_id
     # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
