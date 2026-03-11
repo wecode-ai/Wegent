@@ -4,7 +4,7 @@
 
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
 import TeamSelectorButton from '../selector/TeamSelectorButton'
@@ -410,7 +410,7 @@ export function ChatInputControls({
                 selectedModel={selectedVideoModel ?? null}
                 setSelectedModel={model => model && onVideoModelChange(model)}
                 forceOverride={false}
-                setForceOverride={() => {}}
+                setForceOverride={() => { }}
                 selectedTeam={null}
                 disabled={isLoading || isStreaming}
                 isLoading={isVideoModelsLoading}
@@ -445,7 +445,7 @@ export function ChatInputControls({
                 selectedModel={selectedImageModel ?? null}
                 setSelectedModel={model => model && onImageModelChange(model)}
                 forceOverride={false}
-                setForceOverride={() => {}}
+                setForceOverride={() => { }}
                 selectedTeam={null}
                 disabled={isLoading || isStreaming}
                 isLoading={isImageModelsLoading}
@@ -467,15 +467,6 @@ export function ChatInputControls({
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
           <div className={hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'}>
-            {/* Context Selection - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
-              <ChatContextInput
-                selectedContexts={selectedContexts}
-                onContextsChange={setSelectedContexts}
-                excludeKnowledgeBaseId={knowledgeBaseId}
-              />
-            )}
-
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
@@ -516,6 +507,15 @@ export function ChatInputControls({
                 isChatShell={isChatShell(selectedTeam)}
                 disabled={isLoading || isStreaming}
                 readOnly={hasMessages}
+              />
+            )}
+
+            {/* Context Selection - only show for chat shell */}
+            {isChatShell(selectedTeam) && (
+              <ChatContextInput
+                selectedContexts={selectedContexts}
+                onContextsChange={setSelectedContexts}
+                excludeKnowledgeBaseId={knowledgeBaseId}
               />
             )}
 

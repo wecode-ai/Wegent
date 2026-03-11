@@ -227,6 +227,7 @@
     "select_team": "Select a team",
     "search_team": "Select a team",
     "no_bots": "No bots",
+    "no_description": "No description",
     "edit": "Edit Team",
     "chat": "Send Task",
     "delete": "Delete Team",
