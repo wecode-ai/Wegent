@@ -522,6 +522,28 @@ class SubscriptionService:
         if "knowledge_base_refs" in update_data:
             subscription_crd.spec.knowledgeBaseRefs = update_data["knowledge_base_refs"]
 
+        # Update notification webhooks
+        if "notification_webhooks" in update_data:
+            from app.schemas.subscription import NotificationWebhook
+            from shared.utils.crypto import encrypt_sensitive_data
+
+            if update_data["notification_webhooks"]:
+                # Encrypt secret for each webhook before saving
+                encrypted_webhooks = []
+                for w in update_data["notification_webhooks"]:
+                    webhook = (
+                        NotificationWebhook.model_validate(w)
+                        if isinstance(w, dict)
+                        else w
+                    )
+                    # Encrypt secret if provided and not already encrypted
+                    if webhook.secret and not webhook.secret.startswith("ENC:"):
+                        webhook.secret = f"ENC:{encrypt_sensitive_data(webhook.secret)}"
+                    encrypted_webhooks.append(webhook)
+                subscription_crd.spec.notificationWebhooks = encrypted_webhooks
+            else:
+                subscription_crd.spec.notificationWebhooks = None
+
         if "market_whitelist_user_ids" in update_data:
             internal["market_whitelist_user_ids"] = (
                 filter_existing_market_whitelist_user_ids(
@@ -858,6 +880,46 @@ class SubscriptionService:
         """Calculate next execution time."""
         return calculate_next_execution_time(trigger_type, trigger_config)
 
+    def _decrypt_webhook_secrets(
+        self,
+        webhooks: Optional[List[Any]],
+    ) -> Optional[List[Any]]:
+        """Decrypt webhook secrets for display in frontend.
+
+        Args:
+            webhooks: List of NotificationWebhook objects or None
+
+        Returns:
+            List of webhooks with decrypted secrets, or None if input is None
+        """
+        if not webhooks:
+            return webhooks
+
+        from app.schemas.subscription import NotificationWebhook
+        from shared.utils.crypto import decrypt_sensitive_data
+
+        decrypted_webhooks = []
+        for webhook in webhooks:
+            # Convert to NotificationWebhook if it's a dict
+            if isinstance(webhook, dict):
+                webhook_obj = NotificationWebhook.model_validate(webhook)
+            else:
+                webhook_obj = webhook
+
+            # Decrypt secret if it's encrypted
+            if webhook_obj.secret and webhook_obj.secret.startswith("ENC:"):
+                try:
+                    encrypted_value = webhook_obj.secret[4:]  # Remove "ENC:" prefix
+                    webhook_obj.secret = decrypt_sensitive_data(encrypted_value)
+                except Exception as e:
+                    logger.warning(f"Failed to decrypt webhook secret: {e}")
+                    # Keep the encrypted value if decryption fails
+                    pass
+
+            decrypted_webhooks.append(webhook_obj)
+
+        return decrypted_webhooks
+
     def _convert_to_subscription_in_db(
         self,
         subscription: Kind,
@@ -976,6 +1038,10 @@ class SubscriptionService:
             bound_task_id=internal.get("bound_task_id", 0),
             # Knowledge base references
             knowledge_base_refs=subscription_crd.spec.knowledgeBaseRefs,
+            # Notification webhooks - decrypt secret for display
+            notification_webhooks=self._decrypt_webhook_secrets(
+                subscription_crd.spec.notificationWebhooks
+            ),
             webhook_url=webhook_url,
             webhook_secret=internal.get("webhook_secret"),
             last_execution_time=last_execution_time,

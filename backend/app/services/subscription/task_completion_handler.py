@@ -270,11 +270,12 @@ class SubscriptionTaskCompletionHandler:
                 subscription_info = f"{subscription_info} ({team_display_name})"
 
             # Format result summary
+            # Format result summary
             formatted_summary = self._format_result_summary(
                 execution.prompt, result_summary, execution.status
             )
 
-            # Dispatch notifications
+            # Dispatch follower notifications (via Messager channels)
             await subscription_notification_dispatcher.dispatch_execution_notifications(
                 db,
                 subscription_id=execution.subscription_id,
@@ -284,12 +285,22 @@ class SubscriptionTaskCompletionHandler:
                 status=execution.status,
                 detail_url=None,  # Could be added if needed
             )
+            # Dispatch webhook notifications (configured on subscription)
+            # Title is the subscription display name
+            if subscription_crd.spec.notificationWebhooks:
+                await subscription_notification_dispatcher.dispatch_webhook_notifications(
+                    webhooks=subscription_crd.spec.notificationWebhooks,
+                    subscription_display_name=subscription_display_name,
+                    result_summary=result_summary or "",
+                    status=execution.status,
+                    execution_id=execution.id,
+                    detail_url=None,
+                )
 
             logger.info(
                 f"[TaskCompletionHandler] Notifications dispatched for "
                 f"execution {execution.id}"
             )
-
         except Exception as e:
             logger.error(
                 f"[TaskCompletionHandler] Failed to dispatch notifications for "
