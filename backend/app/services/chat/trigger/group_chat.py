@@ -111,7 +111,7 @@ async def notify_group_members_task_updated(
                     .filter(
                         ResourceMember.resource_type == "Namespace",
                         ResourceMember.resource_id == namespace.id,
-                        ResourceMember.status == MemberStatus.APPROVED,
+                        ResourceMember.status == MemberStatus.APPROVED.value,
                     )
                     .all()
                 )

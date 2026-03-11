@@ -129,6 +129,8 @@ class TaskQueryMixin:
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
         """
+        )
+
         task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
@@ -205,6 +207,8 @@ class TaskQueryMixin:
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
         """
+        )
+
         task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
