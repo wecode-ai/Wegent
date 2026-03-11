@@ -8,7 +8,7 @@ Revision ID: a8b9c0d1e2f3
 Revises: c9900f078622
 Create Date: 2026-03-10 14:00:00.000000
 
-This migration includes two performance optimizations:
+This migration includes four performance optimizations:
 
 1. linked_group_id column on tasks table:
    - Stores the namespace_id of the linked group for group chats
@@ -18,6 +18,14 @@ This migration includes two performance optimizations:
    - Stores Task-KnowledgeBase relationships
    - Enables efficient indexed queries instead of JSON parsing
    - Performance improvement: O(n) JSON scan -> O(log n) index lookup
+
+3. Composite index idx_tasks_user_kind_active on tasks table:
+   - Optimizes _get_bound_kb_ids_for_user query in knowledge_service.py
+   - Supports efficient filtering by user_id, kind, and is_active
+
+4. Composite index idx_resource_members_user_type_status on resource_members table:
+   - Optimizes _get_kb_binding_member_role query in knowledge_share_service.py
+   - Supports efficient filtering by user_id, resource_type, and status
 """
 
 import json
@@ -46,6 +54,42 @@ def upgrade() -> None:
 
     # Part 2: Create task_knowledge_base_bindings table
     _upgrade_task_kb_bindings()
+
+    # Part 3: Create composite indexes for KB binding query optimization
+    _upgrade_tasks_composite_index()
+    _upgrade_resource_members_composite_index()
+
+
+def _upgrade_tasks_composite_index() -> None:
+    """Add composite index on tasks table for optimized KB binding queries.
+
+    This index optimizes the _get_bound_kb_ids_for_user query which filters by:
+    - user_id = <user_id>
+    - kind = 'Task'
+    - is_active = True
+    """
+    op.create_index(
+        "idx_tasks_user_kind_active",
+        "tasks",
+        ["user_id", "kind", "is_active"],
+        mysql_length={"kind": 50},
+    )
+
+
+def _upgrade_resource_members_composite_index() -> None:
+    """Add composite index on resource_members table for optimized KB binding queries.
+
+    This index optimizes the _get_kb_binding_member_role query which filters by:
+    - user_id = <user_id>
+    - resource_type = 'Task'
+    - status = 'approved'
+    """
+    op.create_index(
+        "idx_resource_members_user_type_status",
+        "resource_members",
+        ["user_id", "resource_type", "status"],
+        mysql_length={"resource_type": 50, "status": 20},
+    )
 
 
 def _upgrade_linked_group_id() -> None:
@@ -359,14 +403,20 @@ def _migrate_kb_bindings() -> None:
 
 def downgrade() -> None:
     """Remove linked_group_id column, indexes, and task_knowledge_base_bindings table."""
-    # Part 1: Drop task_knowledge_base_bindings table
+    # Part 1: Drop composite indexes for KB binding queries
+    op.drop_index(
+        "idx_resource_members_user_type_status", table_name="resource_members"
+    )
+    op.drop_index("idx_tasks_user_kind_active", table_name="tasks")
+
+    # Part 2: Drop task_knowledge_base_bindings table
     # Note: op.drop_constraint is not needed as constraints are dropped with the table
     # and it's not supported on SQLite
     op.drop_index("idx_tkb_kb_id", table_name="task_knowledge_base_bindings")
     op.drop_index("idx_tkb_task_id", table_name="task_knowledge_base_bindings")
     op.drop_table("task_knowledge_base_bindings")
 
-    # Part 2: Drop linked_group_id column and indexes
+    # Part 3: Drop linked_group_id column and indexes
     op.drop_index("ix_tasks_user_id_linked_group_id", table_name="tasks")
     op.drop_index("ix_tasks_linked_group_id", table_name="tasks")
     op.drop_column("tasks", "linked_group_id")

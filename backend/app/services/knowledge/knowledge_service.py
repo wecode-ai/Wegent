@@ -1658,6 +1658,11 @@ class KnowledgeService:
         This method finds all personal knowledge bases that have been bound to
         group chats where the specified user is a member.
 
+        Optimized for large datasets by splitting the query into two parts:
+        1. Query bindings where user is the task owner
+        2. Query bindings where user is an approved resource member
+        Then merge results in Python to avoid expensive OR conditions and DISTINCT.
+
         Args:
             db: Database session
             user_id: User ID
@@ -1673,12 +1678,28 @@ class KnowledgeService:
         from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
         try:
-            # Query to find KBs bound to group chats where user is a member
-            # User can be a member either as task owner or as approved resource_member
-            bound_kb_ids = (
+            # Optimization: Split into two separate queries to avoid OR condition
+            # and expensive DISTINCT operation on large datasets
+
+            # Query 1: Get KB IDs where user is the task owner
+            # Uses index: tasks(user_id, kind, is_active)
+            owner_kb_ids = (
                 db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
                 .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
-                .outerjoin(
+                .filter(
+                    TaskResource.is_active == True,
+                    TaskResource.kind == "Task",
+                    TaskResource.user_id == user_id,
+                )
+                .all()
+            )
+
+            # Query 2: Get KB IDs where user is an approved resource member
+            # Uses index: resource_members(resource_type, resource_id, status, user_id)
+            member_kb_ids = (
+                db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
+                .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
+                .join(
                     ResourceMember,
                     (ResourceMember.resource_id == TaskResource.id)
                     & (ResourceMember.resource_type == ResourceType.TASK)
@@ -1688,17 +1709,19 @@ class KnowledgeService:
                 .filter(
                     TaskResource.is_active == True,
                     TaskResource.kind == "Task",
-                    # User is either the task owner or an approved member
-                    (
-                        (TaskResource.user_id == user_id)
-                        | (ResourceMember.id.isnot(None))
-                    ),
                 )
-                .distinct()
                 .all()
             )
 
-            return [kb_id[0] for kb_id in bound_kb_ids]
+            # Merge results in Python using set for deduplication
+            # This is much faster than SQL DISTINCT on large datasets with OR conditions
+            kb_id_set = set()
+            for row in owner_kb_ids:
+                kb_id_set.add(row[0])
+            for row in member_kb_ids:
+                kb_id_set.add(row[0])
+
+            return list(kb_id_set)
         except ProgrammingError:
             # Table may not exist yet (migration not run), return empty list
             return []
