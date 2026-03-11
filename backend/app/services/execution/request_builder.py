@@ -1657,7 +1657,7 @@ class TaskRequestBuilder:
                     TaskResource.kind == "Workspace",
                     TaskResource.name == workspace_ref.name,
                     TaskResource.namespace == workspace_ref.namespace,
-                    TaskResource.is_active.is_(True),
+                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 )
                 .first()
             )

@@ -76,7 +76,7 @@ class TaskKnowledgeBaseService:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )

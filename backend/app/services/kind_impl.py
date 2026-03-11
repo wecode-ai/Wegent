@@ -404,7 +404,7 @@ class TaskKindService(TaskResourceBaseService):
                 TaskResource.kind == "Workspace",
                 TaskResource.namespace == workspace_namespace,
                 TaskResource.name == workspace_name,
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -422,7 +422,7 @@ class TaskKindService(TaskResourceBaseService):
                 TaskResource.kind == "Task",
                 TaskResource.namespace == resource["metadata"]["namespace"],
                 TaskResource.name == resource["metadata"]["name"],
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )

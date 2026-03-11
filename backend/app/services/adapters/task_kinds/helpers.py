@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -385,7 +385,7 @@ def _batch_query_workspaces(
             TaskResource.kind == "Workspace",
             TaskResource.name.in_(workspace_names),
             TaskResource.namespace.in_(workspace_namespaces),
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .all()
     )
@@ -503,16 +503,17 @@ def _add_group_chat_info(
     )
     member_counts = {row[0]: row[1] for row in member_count_results}
 
+    task_map = {task.id: task for task in tasks}
+
     # Add is_group_chat to result
     for task_id_str, data in result.items():
         task_id = int(task_id_str)
-        # First check task JSON, fallback to member count
-        task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
-        if task and task.json:
-            is_group_chat = task.json.get("spec", {}).get("is_group_chat", False)
-            if not is_group_chat:
-                is_group_chat = member_counts.get(task_id, 0) > 0
-        else:
+        # First check task JSON, fallback to member count.
+        # Use in-memory task map to avoid N+1 database lookups.
+        task = task_map.get(task_id)
+        task_json = task.json if task and task.json else {}
+        is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+        if not is_group_chat:
             is_group_chat = member_counts.get(task_id, 0) > 0
         data["is_group_chat"] = is_group_chat
 
@@ -560,10 +561,13 @@ def build_lite_task_list(
             .all()
         )
         member_counts = {row[0]: row[1] for row in member_count_results}
+    related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
 
     result = []
     for task in tasks:
         task_crd = Task.model_validate(task.json)
+        task_related_data = related_data_batch.get(str(task.id), {})
+        workspace_data = task_related_data.get("workspace_data", {})
 
         # Extract basic fields from task JSON
         task_type = (
@@ -578,102 +582,15 @@ def build_lite_task_list(
         )
         status = task_crd.status.status if task_crd.status else "PENDING"
 
-        # Parse timestamps
-        created_at = task.created_at
-        updated_at = task.updated_at
-        completed_at = None
-        if task_crd.status:
-            try:
-                if task_crd.status.createdAt:
-                    created_at = task_crd.status.createdAt
-                if task_crd.status.updatedAt:
-                    updated_at = task_crd.status.updatedAt
-                if task_crd.status.completedAt:
-                    completed_at = task_crd.status.completedAt
-            except:
-                pass
-
-        # Get team_id using direct SQL query
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace
-        team_result = db.execute(
-            text(
-                """
-                SELECT id FROM kinds
-                WHERE user_id = :user_id
-                AND kind = 'Team'
-                AND name = :name
-                AND namespace = :namespace
-                AND is_active = true
-                LIMIT 1
-            """
-            ),
-            {"user_id": user_id, "name": team_name, "namespace": team_namespace},
-        ).fetchone()
-
-        # If not found in user's teams, check shared teams via resource_members
-        team_id = team_result[0] if team_result else None
-        if not team_id:
-            shared_team_result = db.execute(
-                text(
-                    """
-                    SELECT k.id FROM kinds k
-                    INNER JOIN resource_members rm
-                        ON rm.resource_id = k.id
-                        AND rm.resource_type = 'Team'
-                    WHERE rm.user_id = :user_id
-                    AND rm.status = 'approved'
-                    AND k.kind = 'Team'
-                    AND k.name = :name
-                    AND k.namespace = :namespace
-                    AND k.is_active = true
-                    LIMIT 1
-                """
-                ),
-                {
-                    "user_id": user_id,
-                    "name": team_name,
-                    "namespace": team_namespace,
-                },
-            ).fetchone()
-            team_id = shared_team_result[0] if shared_team_result else None
-
-        # Get git_repo from workspace using direct SQL query
-        workspace_name = task_crd.spec.workspaceRef.name
-        workspace_namespace = task_crd.spec.workspaceRef.namespace
-        workspace_result = db.execute(
-            text(
-                """
-                SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
-                FROM tasks
-                WHERE user_id = :user_id
-                AND kind = 'Workspace'
-                AND name = :name
-                AND namespace = :namespace
-                AND is_active = true
-                LIMIT 1
-            """
-            ),
-            {
-                "user_id": user_id,
-                "name": workspace_name,
-                "namespace": workspace_namespace,
-            },
-        ).fetchone()
-
-        git_repo = None
-        if workspace_result and workspace_result[0]:
-            git_repo = (
-                workspace_result[0].strip('"')
-                if isinstance(workspace_result[0], str)
-                else workspace_result[0]
-            )
-
-        # Check if this is a group chat
-        task_json = task.json or {}
-        is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
-        if not is_group_chat:
-            is_group_chat = member_counts.get(task.id, 0) > 0
+        created_at = task_related_data.get("created_at", task.created_at)
+        updated_at = task_related_data.get("updated_at", task.updated_at)
+        completed_at = task_related_data.get("completed_at")
+        team_id = task_related_data.get("team_id")
+        git_repo = workspace_data.get("git_repo")
+        is_group_chat = task_related_data.get(
+            "is_group_chat",
+            (task.json or {}).get("spec", {}).get("is_group_chat", False),
+        )
 
         # Extract knowledge_base_id from knowledgeBaseRefs for knowledge type tasks
         knowledge_base_id = None

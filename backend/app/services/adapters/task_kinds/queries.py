@@ -2,12 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Task query methods.
-
-This module contains methods for querying tasks with various filters,
-pagination, and search capabilities.
-"""
+"""Task query methods."""
 
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,19 +11,28 @@ from fastapi import HTTPException
 from sqlalchemy import bindparam, func, text
 from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
 from app.models.task import TaskResource
-from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
+from app.schemas.kind import Task
 
 from .converters import convert_to_task_dict, convert_to_task_dict_optimized
-from .filters import (
-    filter_tasks_for_display,
-    filter_tasks_since_id,
-    filter_tasks_with_title_match,
-    is_background_task,
-    is_non_interacted_subscription_task,
-)
+from .filters import filter_tasks_for_display, filter_tasks_with_title_match
 from .helpers import build_lite_task_list, get_tasks_related_data_batch
+from .query_utils import (
+    count_non_deleted_tasks_by_ids,
+    get_accessible_task_ids_and_total,
+    get_group_task_ids_for_accessible_user,
+    get_group_task_ids_for_owned_tasks,
+    get_owned_task_ids_and_total,
+    load_tasks_by_ids,
+    load_tasks_by_ids_ordered,
+    restore_task_order,
+)
+from .task_detail_helpers import (
+    add_group_chat_info_to_task,
+    convert_subtasks_to_dict,
+    get_bots_for_subtasks,
+)
+from .task_skills_resolver import resolve_task_skills
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +129,8 @@ class TaskQueryMixin:
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
         """
+        task_ids, total = get_accessible_task_ids_and_total(
+            db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
         all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
 
@@ -166,9 +172,7 @@ class TaskQueryMixin:
         if not filtered_tasks:
             return [], total
 
-        # Get all related data in batch to avoid N+1 queries
         related_data_batch = get_tasks_related_data_batch(db, filtered_tasks, user_id)
-
         result = []
         for task in filtered_tasks:
             task_crd = Task.model_validate(task.json)
@@ -201,6 +205,8 @@ class TaskQueryMixin:
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
         """
+        task_ids, total = get_accessible_task_ids_and_total(
+            db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
         all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
 
@@ -592,25 +598,22 @@ class TaskQueryMixin:
         valid_tasks = []
         include_online = "online" in types
         include_offline = "offline" in types
-        include_subscription = "subscription" in types
+        include_subscription = "subscription" in types or "flow" in types
 
-        for t in tasks:
-            # Skip group chat tasks
-            if t.id in all_group_task_ids:
+        for task in tasks:
+            if task.id in all_group_task_ids:
                 continue
 
-            task_crd = Task.model_validate(t.json)
+            task_crd = Task.model_validate(task.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
             if status == "DELETE":
                 continue
 
-            # Determine task type from labels
             labels = task_crd.metadata.labels or {}
             is_subscription = labels.get("type") == "subscription"
             task_type_label = labels.get("taskType", "chat")
             is_code = task_type_label == "code"
 
-            # Apply type filter
             if is_subscription:
                 if not include_subscription:
                     continue
@@ -621,7 +624,7 @@ class TaskQueryMixin:
                 if not include_online:
                     continue
 
-            valid_tasks.append(t)
+            valid_tasks.append(task)
 
         return valid_tasks
 
@@ -689,9 +692,7 @@ class TaskQueryMixin:
         if not filtered_tasks:
             return [], total
 
-        # Get all related data in batch
         related_data_batch = get_tasks_related_data_batch(db, filtered_tasks, user_id)
-
         result = []
         for task in filtered_tasks:
             task_crd = Task.model_validate(task.json)
@@ -706,7 +707,7 @@ class TaskQueryMixin:
         self, db: Session, *, task_id: int, user_id: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Get Task by ID and user ID (only active tasks).
+        Get task by ID and user ID (only active tasks).
 
         Allows access if user is the owner OR a member of the group chat.
 
@@ -752,9 +753,7 @@ class TaskQueryMixin:
     def get_task_detail(
         self, db: Session, *, task_id: int, user_id: int
     ) -> Dict[str, Any]:
-        """
-        Get detailed task information including related user, team, subtasks.
-        """
+        """Get detailed task information including related entities."""
         from app.services.adapters.team_kinds import team_kinds_service
         from app.services.readers.kinds import KindType, kindReader
         from app.services.readers.users import userReader
@@ -762,22 +761,24 @@ class TaskQueryMixin:
         from app.services.task_member_service import task_member_service
 
         task_dict = self.get_task_by_id(db, task_id=task_id, user_id=user_id)
-
-        # Get related user
         user = userReader.get_by_id(db, user_id)
 
-        # Get related team
         team_id = task_dict.get("team_id")
         team = None
         if team_id:
             logger.info(
-                f"[get_task_detail] task_id={task_id}, team_id={team_id}, user_id={user_id}"
+                "[get_task_detail] task_id=%s, team_id=%s, user_id=%s",
+                task_id,
+                team_id,
+                user_id,
             )
             team = kindReader.get_by_id(db, KindType.TEAM, team_id)
             if team:
                 task_owner_id = task_member_service.get_task_owner_id(db, task_id)
                 logger.info(
-                    f"[get_task_detail] task_owner_id={task_owner_id}, team found: {team is not None}"
+                    "[get_task_detail] task_owner_id=%s, team found: %s",
+                    task_owner_id,
+                    team is not None,
                 )
                 if task_owner_id:
                     team = team_kinds_service._convert_to_team_dict(
@@ -785,25 +786,22 @@ class TaskQueryMixin:
                     )
                 else:
                     logger.warning(
-                        f"[get_task_detail] task_owner_id is None for task_id={task_id}"
+                        "[get_task_detail] task_owner_id is None for task_id=%s",
+                        task_id,
                     )
                     team = None
 
-        # Get related subtasks
         subtasks = subtask_service.get_by_task(
             db=db, task_id=task_id, user_id=user_id, from_latest=True
         )
 
-        # Get all bot objects for the subtasks
         all_bot_ids = set()
         for subtask in subtasks:
             if subtask.bot_ids:
                 all_bot_ids.update(subtask.bot_ids)
 
-        bots = self._get_bots_for_subtasks(db, all_bot_ids)
-
-        # Convert subtasks to dict
-        subtasks_dict = self._convert_subtasks_to_dict(subtasks, bots)
+        bots = get_bots_for_subtasks(db, all_bot_ids)
+        subtasks_dict = convert_subtasks_to_dict(subtasks, bots)
 
         task_dict["user"] = user
         task_dict["team"] = team
@@ -1078,303 +1076,10 @@ class TaskQueryMixin:
             )
             .all()
         )
-
-        is_group_chat = task_dict.get("is_group_chat", False)
-        if not is_group_chat:
-            is_group_chat = len(members) > 0
-        task_dict["is_group_chat"] = is_group_chat
-        task_dict["is_group_owner"] = task_dict.get("user_id") == user_id
-        task_dict["member_count"] = len(members) if is_group_chat else None
-
-    def _build_lite_result(
-        self,
-        db: Session,
-        tasks: List[TaskResource],
-        user_id: int,
-        member_counts: Dict[int, int],
-    ) -> List[Dict[str, Any]]:
-        """Build lightweight task list result."""
-        result = []
-        for task in tasks:
-            task_crd = Task.model_validate(task.json)
-
-            task_type = (
-                task_crd.metadata.labels
-                and task_crd.metadata.labels.get("taskType")
-                or "chat"
-            )
-            type_value = (
-                task_crd.metadata.labels
-                and task_crd.metadata.labels.get("type")
-                or "online"
-            )
-            status = task_crd.status.status if task_crd.status else "PENDING"
-
-            # Parse timestamps
-            created_at = task.created_at
-            updated_at = task.updated_at
-            completed_at = None
-            if task_crd.status:
-                try:
-                    if task_crd.status.createdAt:
-                        created_at = task_crd.status.createdAt
-                    if task_crd.status.updatedAt:
-                        updated_at = task_crd.status.updatedAt
-                    if task_crd.status.completedAt:
-                        completed_at = task_crd.status.completedAt
-                except:
-                    pass
-
-            # Get team_id
-            team_name = task_crd.spec.teamRef.name
-            team_namespace = task_crd.spec.teamRef.namespace
-            team_result = db.execute(
-                text(
-                    """
-                    SELECT id FROM kinds
-                    WHERE user_id = :user_id
-                    AND kind = 'Team'
-                    AND name = :name
-                    AND namespace = :namespace
-                    AND is_active = true
-                    LIMIT 1
-                """
-                ),
-                {"user_id": user_id, "name": team_name, "namespace": team_namespace},
-            ).fetchone()
-
-            team_id = team_result[0] if team_result else None
-            if not team_id:
-                shared_team_result = db.execute(
-                    text(
-                        """
-                        SELECT k.id FROM kinds k
-                        INNER JOIN resource_members rm
-                            ON rm.resource_id = k.id
-                            AND rm.resource_type = 'Team'
-                        WHERE rm.user_id = :user_id
-                        AND rm.status = 'approved'
-                        AND k.kind = 'Team'
-                        AND k.name = :name
-                        AND k.namespace = :namespace
-                        AND k.is_active = true
-                        LIMIT 1
-                    """
-                    ),
-                    {
-                        "user_id": user_id,
-                        "name": team_name,
-                        "namespace": team_namespace,
-                    },
-                ).fetchone()
-                team_id = shared_team_result[0] if shared_team_result else None
-
-            # Get git_repo
-            workspace_name = task_crd.spec.workspaceRef.name
-            workspace_namespace = task_crd.spec.workspaceRef.namespace
-            workspace_result = db.execute(
-                text(
-                    """
-                    SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
-                    FROM tasks
-                    WHERE user_id = :user_id
-                    AND kind = 'Workspace'
-                    AND name = :name
-                    AND namespace = :namespace
-                    AND is_active = true
-                    LIMIT 1
-                """
-                ),
-                {
-                    "user_id": user_id,
-                    "name": workspace_name,
-                    "namespace": workspace_namespace,
-                },
-            ).fetchone()
-
-            git_repo = None
-            if workspace_result and workspace_result[0]:
-                git_repo = (
-                    workspace_result[0].strip('"')
-                    if isinstance(workspace_result[0], str)
-                    else workspace_result[0]
-                )
-
-            # Check if group chat
-            task_json = task.json or {}
-            is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
-            if not is_group_chat:
-                is_group_chat = member_counts.get(task.id, 0) > 0
-
-            # Extract knowledge_base_id
-            knowledge_base_id = None
-            if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
-                first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
-                knowledge_base_id = first_kb_ref.id
-
-            result.append(
-                {
-                    "id": task.id,
-                    "title": task_crd.spec.title,
-                    "status": status,
-                    "task_type": task_type,
-                    "type": type_value,
-                    "created_at": created_at,
-                    "updated_at": updated_at,
-                    "completed_at": completed_at,
-                    "team_id": team_id,
-                    "git_repo": git_repo,
-                    "is_group_chat": is_group_chat,
-                    "knowledge_base_id": knowledge_base_id,
-                }
-            )
-
-        return result
+        return task_dict
 
     def get_task_skills(
         self, db: Session, *, task_id: int, user_id: int
     ) -> Dict[str, Any]:
-        """Get all skills associated with a task.
-
-        Follows the chain: task → team → bots → ghosts → skills
-        Also includes user-selected skills from task labels (additionalSkills).
-
-        Args:
-            db: Database session
-            task_id: Task ID
-            user_id: User ID (for authorization)
-
-        Returns:
-            Dictionary with:
-            - task_id: The task ID
-            - team_id: The team ID (if found)
-            - team_namespace: The team namespace
-            - skills: List of skill names (deduplicated, includes user-selected skills)
-            - preload_skills: List of skills to preload
-
-        Raises:
-            HTTPException: If task not found
-        """
-        import json as json_lib
-
-        from app.models.task import TaskResource
-        from app.services.readers.kinds import KindType, kindReader
-        from app.services.task_member_service import task_member_service
-
-        # Check if task exists and user has access
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
-            )
-            .first()
-        )
-
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-
-        # Check if user has access (owner or active member)
-        if not task_member_service.is_member(db, task_id, user_id):
-            raise HTTPException(status_code=404, detail="Task not found")
-
-        # Parse task CRD to get team reference
-        task_crd = Task.model_validate(task.json)
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace
-
-        # Use task owner's user_id for querying related resources
-        task_owner_id = task.user_id
-
-        # Extract user-selected skills from task labels (additionalSkills)
-        # These are skills explicitly selected by the user for this task
-        user_selected_skills = []
-        if task_crd.metadata.labels:
-            additional_skills_json = task_crd.metadata.labels.get("additionalSkills")
-            if additional_skills_json:
-                try:
-                    parsed_skills = json_lib.loads(additional_skills_json)
-                    if isinstance(parsed_skills, list):
-                        user_selected_skills = [
-                            s for s in parsed_skills if isinstance(s, str) and s
-                        ]
-                        logger.info(
-                            f"[get_task_skills] Found {len(user_selected_skills)} user-selected skills "
-                            f"from task labels: {user_selected_skills}"
-                        )
-                except json_lib.JSONDecodeError as e:
-                    logger.warning(
-                        f"[get_task_skills] Failed to parse additionalSkills JSON for task {task_id}: {e}"
-                    )
-
-        # Get team
-        team = kindReader.get_by_name_and_namespace(
-            db, task_owner_id, KindType.TEAM, team_namespace, team_name
-        )
-
-        if not team:
-            logger.warning(
-                f"[get_task_skills] Team not found for task {task_id}: "
-                f"namespace={team_namespace}, name={team_name}"
-            )
-            # Even if team not found, return user-selected skills
-            return {
-                "task_id": task_id,
-                "team_id": None,
-                "team_namespace": team_namespace,
-                "skills": user_selected_skills,
-                "preload_skills": [],
-            }
-
-        team_crd = Team.model_validate(team.json)
-        all_skills = set()
-        all_preload_skills = set()
-
-        # Iterate through team members to get bot → ghost → skills
-        for member in team_crd.spec.members or []:
-            bot = kindReader.get_by_name_and_namespace(
-                db,
-                task_owner_id,
-                KindType.BOT,
-                member.botRef.namespace,
-                member.botRef.name,
-            )
-            if not bot:
-                continue
-
-            bot_crd = Bot.model_validate(bot.json)
-
-            # Get ghost (stores skills)
-            ghost = kindReader.get_by_name_and_namespace(
-                db,
-                task_owner_id,
-                KindType.GHOST,
-                bot_crd.spec.ghostRef.namespace,
-                bot_crd.spec.ghostRef.name,
-            )
-            if ghost and ghost.json:
-                ghost_crd = Ghost.model_validate(ghost.json)
-                if ghost_crd.spec.skills:
-                    all_skills.update(ghost_crd.spec.skills)
-                if ghost_crd.spec.preload_skills:
-                    all_preload_skills.update(ghost_crd.spec.preload_skills)
-
-        # Add user-selected skills to the skills set
-        # This ensures user-selected skills are downloaded by sandbox/executor
-        if user_selected_skills:
-            all_skills.update(user_selected_skills)
-
-        logger.info(
-            f"[get_task_skills] task_id={task_id}, team_id={team.id}, "
-            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}, "
-            f"user_selected_skills={user_selected_skills}"
-        )
-
-        return {
-            "task_id": task_id,
-            "team_id": team.id,
-            "team_namespace": team.namespace or "default",
-            "skills": list(all_skills),
-            "preload_skills": list(all_preload_skills),
-        }
+        """Get all skills associated with a task."""
+        return resolve_task_skills(db, task_id=task_id, user_id=user_id)

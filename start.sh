@@ -831,6 +831,58 @@ check_port() {
     return 0
 }
 
+# Check if WEGENT_SOCKET_URL IP matches local IP
+check_socket_url_ip() {
+    local local_ip=$(get_local_ip)
+    local socket_ip=""
+
+    # Extract IP from WEGENT_SOCKET_URL (format: http://IP:PORT or https://IP:PORT)
+    if [ -n "$WEGENT_SOCKET_URL" ]; then
+        socket_ip=$(echo "$WEGENT_SOCKET_URL" | sed -E 's|^https?://||' | cut -d':' -f1)
+    fi
+
+    # Skip check if not configured
+    if [ -z "$socket_ip" ]; then
+        return 0
+    fi
+
+    # Skip check for localhost/127.0.0.1 as they should work on any machine
+    if [ "$socket_ip" = "localhost" ] || [ "$socket_ip" = "127.0.0.1" ]; then
+        return 0
+    fi
+
+    # Check if IPs match
+    if [ "$socket_ip" != "$local_ip" ]; then
+        echo ""
+        echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║                     ⚠️  IP 地址不一致警告                      ║${NC}"
+        echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}当前机器 IP:${NC}        ${CYAN}$local_ip${NC}"
+        echo -e "${YELLOW}WEGENT_SOCKET_URL:${NC} ${CYAN}$WEGENT_SOCKET_URL${NC}"
+        echo ""
+        echo -e "${RED}⚠️  警告：配置的 Socket URL IP 与当前机器 IP 不一致！${NC}"
+        echo ""
+        echo -e "${YELLOW}这可能导致：${NC}"
+        echo -e "  • 前端页面无法正常连接 WebSocket"
+        echo -e "  • 页面显示连接失败或超时"
+        echo -e "  • 实时消息无法推送"
+        echo ""
+        echo -e "${YELLOW}建议操作：${NC}"
+        echo -e "  1. 修改 .env 文件中的 WEGENT_SOCKET_URL 为："
+        echo -e "     ${GREEN}http://$local_ip:$BACKEND_PORT${NC}"
+        echo -e "  2. 或者重新运行配置：${BLUE}./start.sh --init${NC}"
+        echo ""
+        echo -e "${YELLOW}是否继续启动? [y/N]:${NC} \c"
+        read -r confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}已取消启动${NC}"
+            exit 1
+        fi
+        echo ""
+    fi
+}
+
 # Check all required ports
 check_all_ports() {
     local ports=("$BACKEND_PORT:Backend" "$CHAT_SHELL_PORT:Chat Shell" "$EXECUTOR_MANAGER_PORT:Executor Manager" "$WEGENT_FRONTEND_PORT:Frontend")
@@ -865,66 +917,54 @@ check_all_ports() {
 }
 
 # Stop all services
-# Stop all services
 stop_services() {
     echo -e "${YELLOW}Stopping all Wegent services...${NC}"
 
     local services=("backend" "frontend" "chat_shell" "executor_manager")
-    local stopped_pids=()
+    local service_ports=("$BACKEND_PORT" "$WEGENT_FRONTEND_PORT" "$CHAT_SHELL_PORT" "$EXECUTOR_MANAGER_PORT")
 
+    # First: try to stop via PID files
     for service in "${services[@]}"; do
         local pid_file="$PID_DIR/${service}.pid"
         if [ -f "$pid_file" ]; then
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping $service (PID: $pid)..."
-                stopped_pids+=("$pid")
-                # Kill the process group to ensure child processes are also killed
-                # uvicorn --reload creates child processes that need to be terminated
-                kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
-                # Wait for process to exit
-                for i in {1..10}; do
-                    if ! kill -0 "$pid" 2>/dev/null; then
-                        break
-                    fi
-                    sleep 0.5
-                done
-                # Force terminate
-                if kill -0 "$pid" 2>/dev/null; then
-                    kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
-                fi
+                # Kill the process group first
+                kill -9 -- -"$pid" 2>/dev/null || true
+                # Kill the process itself
+                kill -9 "$pid" 2>/dev/null || true
             fi
             rm -f "$pid_file"
         fi
     done
 
-    # Only clean up child processes of the PIDs we stopped
-    # DO NOT blindly kill all processes on ports - this could kill Docker or other important services
-    # The port-based cleanup was removed because it's dangerous and can kill unrelated processes
-    # If a Wegent service was started by this script, it will have a PID file and be stopped above
+    # Second: force kill any processes still occupying our ports
+    for port in "${service_ports[@]}"; do
+        local pids=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+        if [ -n "$pids" ]; then
+            echo -e "  Force killing processes on port $port: $pids"
+            echo "$pids" | xargs kill -9 2>/dev/null || true
+        fi
+    done
 
-    # Wait for stopped processes to fully exit
-    if [ ${#stopped_pids[@]} -gt 0 ]; then
-        echo -e "  Waiting for processes to exit..."
-        local max_wait=10
-        local waited=0
-        while [ $waited -lt $max_wait ]; do
-            local still_running=0
-            for pid in "${stopped_pids[@]}"; do
-                if kill -0 "$pid" 2>/dev/null; then
-                    still_running=1
-                    break
-                fi
-            done
-            if [ $still_running -eq 0 ]; then
-                break
-            fi
-            sleep 1
-            waited=$((waited + 1))
-        done
+    sleep 1
+
+    # Verify all ports are free
+    local ports_freed=1
+    for port in "${service_ports[@]}"; do
+        if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+            ports_freed=0
+            echo -e "  ${RED}✗${NC} Port $port still in use"
+        fi
+    done
+
+    if [ $ports_freed -eq 1 ]; then
+        echo -e "${GREEN}All services stopped${NC}"
+    else
+        echo -e "${YELLOW}Some ports could not be freed. You may need to kill processes manually:${NC}"
+        echo -e "  ${BLUE}lsof -i :PORT${NC} && ${BLUE}kill -9 PID${NC}"
     fi
-
-    echo -e "${GREEN}All services stopped${NC}"
 }
 # Show service status
 show_status() {
@@ -1098,6 +1138,9 @@ start_services() {
     echo -e "  Task API Domain:     $TASK_API_DOMAIN"
     echo -e "  Executor Manager:    $EXECUTOR_MANAGER_URL"
     echo ""
+
+    # Check if WEGENT_SOCKET_URL IP matches local IP
+    check_socket_url_ip
 
     # Check port conflicts
     echo -e "${BLUE}Checking port usage...${NC}"
