@@ -359,7 +359,7 @@ export const ROLE_DISPLAY_NAMES: Record<MemberRole, string> = {
   Maintainer: '管理员',
   Developer: '开发者',
   Reporter: '使用者',
-  RestrictedObserver: '受限观察者',
+  RestrictedObserver: '盲分析师',
 }
 
 // Role display names (English)

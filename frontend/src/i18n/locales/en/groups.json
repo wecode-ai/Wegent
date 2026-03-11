@@ -125,6 +125,13 @@
     "adding": "Adding...",
     "addCount": "Add ({{count}})",
     "rolePermissions": "Role Permissions",
+    "roleShortDescriptions": {
+      "Owner": "Has full control of the group",
+      "Maintainer": "Manage resources and members, except delete group",
+      "Developer": "Can edit resources, cannot manage members",
+      "Reporter": "Can only view resources",
+      "RestrictedObserver": "Can only use knowledge base via chat"
+    },
     "roleDescriptions": {
       "Reporter": "Can only view group resources, cannot make any modifications, can leave group",
       "Developer": "Can view, create, and edit group resources, can leave group, but cannot delete resources or manage members",
