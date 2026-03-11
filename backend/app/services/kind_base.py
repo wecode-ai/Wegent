@@ -353,7 +353,7 @@ class TaskResourceBaseService(KindBaseService):
         filters = [
             TaskResource.kind == self.kind,
             TaskResource.namespace == namespace,
-            TaskResource.is_active == True,
+            TaskResource.is_active == 1,
         ]
 
         # For personal resources, filter by user_id

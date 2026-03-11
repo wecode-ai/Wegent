@@ -45,7 +45,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
             TaskResource.kind == "Workspace",
             TaskResource.name == task_crd.spec.workspaceRef.name,
             TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active == 1,
         )
         .first()
     )

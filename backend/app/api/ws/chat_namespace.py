@@ -612,7 +612,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     .filter(
                         TaskResource.id == payload.task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == 1,
                     )
                     .first()
                 )
@@ -1126,7 +1126,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 .filter(
                     TaskResource.id == task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active == 1,
                 )
                 .first()
             )

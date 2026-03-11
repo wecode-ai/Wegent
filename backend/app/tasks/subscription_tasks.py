@@ -281,7 +281,7 @@ def _load_workspace_info(db: Session, workspace_id: Optional[int]) -> WorkspaceI
         .filter(
             TaskResource.id == workspace_id,
             TaskResource.kind == KIND_WORKSPACE,
-            TaskResource.is_active == True,
+            TaskResource.is_active == 1,
         )
         .first()
     )
@@ -492,7 +492,7 @@ async def _create_subscription_task(
             .filter(
                 TaskResource.id == ctx.bound_task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == 1,
             )
             .first()
         )

@@ -158,7 +158,7 @@ class SubscriptionService:
                 .filter(
                     TaskResource.id == subscription_in.workspace_id,
                     TaskResource.kind == "Workspace",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active == 1,
                 )
                 .first()
             )
@@ -385,7 +385,7 @@ class SubscriptionService:
                     .filter(
                         TaskResource.id == update_data["workspace_id"],
                         TaskResource.kind == "Workspace",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == 1,
                     )
                     .first()
                 )
@@ -420,7 +420,7 @@ class SubscriptionService:
                     .filter(
                         TaskResource.id == workspace_id,
                         TaskResource.kind == "Workspace",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == 1,
                     )
                     .first()
                 )

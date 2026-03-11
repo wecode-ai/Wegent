@@ -184,7 +184,7 @@ def _validate_share_token_access(
             TaskResource.id == share_info.task_id,
             TaskResource.user_id == share_info.user_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active == 1,
         )
         .first()
     )

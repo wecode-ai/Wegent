@@ -187,7 +187,7 @@ class CollaborationStrategyFactory:
                 .filter(
                     TaskResource.id == task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active.is_(True),
+                    TaskResource.is_active == 1,
                 )
                 .first()
             )

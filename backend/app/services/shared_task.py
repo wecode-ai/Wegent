@@ -146,7 +146,7 @@ class SharedTaskService:
                     .filter(
                         TaskResource.id == task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == 1,
                     )
                     .first()
                 )
@@ -261,7 +261,7 @@ class SharedTaskService:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -295,7 +295,7 @@ class SharedTaskService:
                 TaskResource.id == share_info.task_id,
                 TaskResource.user_id == share_info.user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -655,7 +655,7 @@ class SharedTaskService:
                 TaskResource.id == share_info.task_id,
                 TaskResource.user_id == share_info.user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -686,7 +686,7 @@ class SharedTaskService:
                         TaskResource.id == existing_share.copied_resource_id,
                         TaskResource.user_id == user_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == 1,
                     )
                     .first()
                 )
@@ -831,7 +831,7 @@ class SharedTaskService:
                 TaskResource.id == task_id,
                 TaskResource.user_id == user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == 1,
             )
             .first()
         )

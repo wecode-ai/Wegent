@@ -325,7 +325,7 @@ class KnowledgeShareService(UnifiedShareService):
             db.query(TaskResource)
             .filter(
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == 1,
                 TaskResource.user_id == user_id,
             )
             .all()
@@ -337,7 +337,7 @@ class KnowledgeShareService(UnifiedShareService):
             .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
             .filter(
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == 1,
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.user_id == user_id,
                 ResourceMember.status == MemberStatus.APPROVED,

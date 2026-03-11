@@ -441,7 +441,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                     .filter(
                         TaskResource.id == self._task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active == 1,
                     )
                     .first()
                 )

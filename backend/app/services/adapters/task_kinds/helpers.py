@@ -385,7 +385,7 @@ def _batch_query_workspaces(
             TaskResource.kind == "Workspace",
             TaskResource.name.in_(workspace_names),
             TaskResource.namespace.in_(workspace_namespaces),
-            TaskResource.is_active.is_(True),
+            TaskResource.is_active == 1,
         )
         .all()
     )
