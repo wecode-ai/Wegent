@@ -961,7 +961,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             db.query(TaskResource)
             .filter(
                 TaskResource.kind == "Task",
-                TaskResource.is_active == 1,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 # Filter by team reference using JSON path
                 func.json_unquote(
                     func.json_extract(TaskResource.json, "$.spec.teamRef.name")
@@ -1904,7 +1904,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             .filter(
                 TaskResource.user_id == user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == 1,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .all()
         )

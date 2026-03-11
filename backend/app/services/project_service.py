@@ -153,7 +153,7 @@ def list_projects(
                 db.query(TaskResource)
                 .filter(
                     TaskResource.project_id == project.id,
-                    TaskResource.is_active == 1,
+                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 )
                 .count()
             )
@@ -223,7 +223,7 @@ def update_project(
         db.query(TaskResource)
         .filter(
             TaskResource.project_id == project_id,
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .count()
     )
@@ -306,7 +306,7 @@ def add_task_to_project(
             TaskResource.id == task_id,
             TaskResource.user_id == user_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -371,7 +371,7 @@ def remove_task_from_project(
         .filter(
             TaskResource.id == task_id,
             TaskResource.project_id == project_id,
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -400,7 +400,7 @@ def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse
         .filter(
             TaskResource.project_id == project_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .order_by(TaskResource.created_at.desc())
         .all()

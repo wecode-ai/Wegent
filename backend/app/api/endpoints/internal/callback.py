@@ -118,7 +118,7 @@ async def handle_callback(
             .filter(
                 TaskResource.id == request.task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == 1,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -212,7 +212,7 @@ async def handle_batch_callback(
                     .filter(
                         TaskResource.id == request.task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == 1,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )

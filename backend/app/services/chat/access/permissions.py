@@ -60,7 +60,7 @@ def can_access_task_sync(db: Session, user_id: int, task_id: int) -> bool:
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )

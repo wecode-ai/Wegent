@@ -192,7 +192,7 @@ async def create_response(
                 .filter(
                     TaskResource.id == previous_task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == 1,
+                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 )
                 .first()
             )
@@ -835,7 +835,7 @@ async def get_response(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -906,7 +906,7 @@ async def cancel_response(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -1095,7 +1095,7 @@ async def delete_response(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )

@@ -30,9 +30,19 @@ class TaskResource(Base):
 
     Separated from kinds table to improve query performance for task-related operations.
     The table structure mirrors the kinds table but only contains Task and Workspace resources.
+
+    Task State Constants:
+        STATE_DELETED: Task is soft-deleted (is_active=0)
+        STATE_ACTIVE: Regular active task (is_active=1)
+        STATE_SUBSCRIPTION: Subscription task (is_active=2)
     """
 
     __tablename__ = "tasks"
+
+    # Task state constants
+    STATE_DELETED = 0
+    STATE_ACTIVE = 1
+    STATE_SUBSCRIPTION = 2
 
     id = Column(Integer, primary_key=True, index=True, comment="Primary key")
     user_id = Column(
@@ -57,7 +67,7 @@ class TaskResource(Base):
     is_active = Column(
         Integer,
         nullable=False,
-        default=1,
+        default=STATE_ACTIVE,
         comment="Task state: 0=deleted, 1=active, 2=subscription",
     )
     created_at = Column(

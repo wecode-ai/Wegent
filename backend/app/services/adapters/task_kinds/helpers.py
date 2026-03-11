@@ -385,7 +385,7 @@ def _batch_query_workspaces(
             TaskResource.kind == "Workspace",
             TaskResource.name.in_(workspace_names),
             TaskResource.namespace.in_(workspace_namespaces),
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .all()
     )
@@ -650,7 +650,7 @@ def build_lite_task_list(
                 AND kind = 'Workspace'
                 AND name = :name
                 AND namespace = :namespace
-                AND is_active = 1
+                AND is_active = :is_active
                 LIMIT 1
             """
             ),
@@ -658,6 +658,7 @@ def build_lite_task_list(
                 "user_id": user_id,
                 "name": workspace_name,
                 "namespace": workspace_namespace,
+                "is_active": TaskResource.STATE_ACTIVE,
             },
         ).fetchone()
 

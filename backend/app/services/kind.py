@@ -80,7 +80,7 @@ class KindService:
                     .filter(
                         TaskResource.id == resource_id,
                         TaskResource.kind == kind,
-                        TaskResource.is_active == 1,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )
@@ -115,7 +115,7 @@ class KindService:
                     .filter(
                         TaskResource.id == resource_id,
                         TaskResource.kind == kind,
-                        TaskResource.is_active == 1,
+                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
                     )
                     .first()
                 )

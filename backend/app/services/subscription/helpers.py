@@ -452,7 +452,7 @@ def create_or_get_workspace(
             TaskResource.kind == KIND_WORKSPACE,
             TaskResource.name == workspace_name,
             TaskResource.namespace == namespace,
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -534,7 +534,7 @@ def build_workspace_repo_cache(
         .filter(
             TaskResource.id.in_(workspace_id_list),
             TaskResource.kind == "Workspace",
-            TaskResource.is_active == 1,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .all()
     )
@@ -572,7 +572,7 @@ def resolve_workspace_repo_fields(
             .filter(
                 TaskResource.id == workspace_id,
                 TaskResource.kind == "Workspace",
-                TaskResource.is_active == 1,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -584,7 +584,7 @@ def resolve_workspace_repo_fields(
                 TaskResource.kind == "Workspace",
                 TaskResource.name == workspace_ref.name,
                 TaskResource.namespace == workspace_ref.namespace,
-                TaskResource.is_active == 1,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
