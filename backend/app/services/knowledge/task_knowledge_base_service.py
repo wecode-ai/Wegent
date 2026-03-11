@@ -139,6 +139,9 @@ class TaskKnowledgeBaseService:
         When a knowledge base is bound to a group chat, all members of that group chat
         should have access to the knowledge base (reporter permission level).
 
+        This method uses the task_knowledge_base_bindings table for efficient indexed
+        queries instead of scanning JSON data.
+
         Args:
             db: Database session
             kb_id: Knowledge base Kind.id
@@ -147,67 +150,54 @@ class TaskKnowledgeBaseService:
         Returns:
             True if KB is bound to at least one group chat where user is a member
         """
+        from sqlalchemy import or_, select
+
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
         from app.models.task import TaskResource
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
-        # Query all group chat tasks where this KB is bound and user is a member
-        # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
-        # First, get tasks where user is the owner
-        owned_tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+        # Use EXISTS with the bindings table for efficient indexed query
+        # Check if there's any binding where:
+        # 1. The KB matches the given kb_id
+        # 2. The task is either owned by the user OR the user is an approved member
+        # Subquery: tasks owned by user
+        owned_task_subquery = (
+            select(TaskResource.id)
+            .where(
                 TaskResource.user_id == user_id,
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
             )
-            .all()
+            .correlate(TaskKnowledgeBaseBinding)
         )
 
-        # Then, get tasks where user is an approved member via ResourceMember
-        member_tasks = (
-            db.query(TaskResource)
-            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                ResourceMember.resource_type == ResourceType.TASK,
+        # Subquery: tasks where user is approved member
+        member_task_subquery = (
+            select(ResourceMember.resource_id)
+            .where(
                 ResourceMember.user_id == user_id,
+                ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.status == MemberStatus.APPROVED,
             )
-            .all()
+            .correlate(TaskKnowledgeBaseBinding)
         )
 
-        # Combine owned and member tasks
-        tasks_with_kb = list(owned_tasks) + list(member_tasks)
+        # Main query: check if any binding exists
+        exists_query = (
+            db.query(TaskKnowledgeBaseBinding)
+            .filter(
+                TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                or_(
+                    TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
+                    TaskKnowledgeBaseBinding.task_id.in_(member_task_subquery),
+                ),
+            )
+            .exists()
+        )
 
-        for task in tasks_with_kb:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
-
-            for ref in kb_refs:
-                # Check if this KB is bound (match by ID or by name+namespace)
-                ref_id = ref.get("id")
-                ref_name = ref.get("name")
-                ref_namespace = ref.get("namespace", "default")
-
-                if ref_id == kb_id:
-                    return True
-
-                # Fallback: check by name+namespace if ID not available (legacy data)
-                if ref_id is None and ref_name and ref_namespace:
-                    kb = self.get_knowledge_base_by_id(db, kb_id)
-                    if kb:
-                        kb_spec = kb.json.get("spec", {}) if kb.json else {}
-                        kb_display_name = kb_spec.get("name")
-                        if (
-                            kb_display_name == ref_name
-                            and kb.namespace == ref_namespace
-                        ):
-                            return True
-
-        return False
+        result = db.query(exists_query).scalar()
+        return bool(result)
 
     def get_knowledge_base_by_name(
         self, db: Session, name: str, namespace: str
@@ -768,11 +758,22 @@ class TaskKnowledgeBaseService:
         )
         kb_refs.append(new_ref.model_dump())
 
-        # Update task spec
+        # Update task spec (JSON)
         spec["knowledgeBaseRefs"] = kb_refs
         task_json["spec"] = spec
         task.json = task_json
         flag_modified(task, "json")
+
+        # Also write to bindings table for efficient queries
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+        binding = TaskKnowledgeBaseBinding(
+            task_id=task_id,
+            knowledge_base_id=kb.id,
+            bound_by=user_name,
+            bound_at=datetime.utcnow(),
+        )
+        db.add(binding)
 
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -843,17 +844,20 @@ class TaskKnowledgeBaseService:
 
         # Find and remove the binding (by ID or by name+namespace)
         found = False
+        found_kb_id = None
         new_refs = []
         for ref in kb_refs:
             # Match by ID (preferred) or by name+namespace
             is_match = False
             if kb_id is not None and ref.get("id") == kb_id:
                 is_match = True
+                found_kb_id = kb_id
             elif (
                 ref.get("name") == kb_name
                 and ref.get("namespace", "default") == kb_namespace
             ):
                 is_match = True
+                found_kb_id = ref.get("id")  # Get ID from ref for bindings table
 
             if is_match:
                 found = True
@@ -865,11 +869,20 @@ class TaskKnowledgeBaseService:
                 status_code=404, detail="Knowledge base is not bound to this task"
             )
 
-        # Update task spec
+        # Update task spec (JSON)
         spec["knowledgeBaseRefs"] = new_refs
         task_json["spec"] = spec
         task.json = task_json
         flag_modified(task, "json")
+
+        # Also delete from bindings table
+        if found_kb_id is not None:
+            from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+            db.query(TaskKnowledgeBaseBinding).filter(
+                TaskKnowledgeBaseBinding.task_id == task_id,
+                TaskKnowledgeBaseBinding.knowledge_base_id == found_kb_id,
+            ).delete()
 
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -973,20 +986,32 @@ class TaskKnowledgeBaseService:
                     return False
 
             # Add new binding with ID for stable references
+            bound_at = datetime.utcnow()
             new_ref = KnowledgeBaseTaskRef(
                 id=kb.id,
                 name=kb_name,
                 namespace=kb_namespace,
                 boundBy=user_name,
-                boundAt=datetime.utcnow().isoformat() + "Z",
+                boundAt=bound_at.isoformat() + "Z",
             )
             kb_refs.append(new_ref.model_dump())
 
-            # Update task spec
+            # Update task spec (JSON)
             spec["knowledgeBaseRefs"] = kb_refs
             task_json["spec"] = spec
             task.json = task_json
             flag_modified(task, "json")
+
+            # Also write to bindings table for efficient queries
+            from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+            binding = TaskKnowledgeBaseBinding(
+                task_id=task.id,
+                knowledge_base_id=kb.id,
+                bound_by=user_name,
+                bound_at=bound_at,
+            )
+            db.add(binding)
 
             task.updated_at = datetime.utcnow()
             db.commit()

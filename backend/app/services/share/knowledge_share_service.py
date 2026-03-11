@@ -311,6 +311,9 @@ class KnowledgeShareService(UnifiedShareService):
         When a knowledge base is bound to a group chat, all members of that group chat
         should have access to the knowledge base (reporter permission level).
 
+        This method uses the task_knowledge_base_bindings table for efficient indexed
+        queries instead of scanning JSON data.
+
         Args:
             db: Database session
             kb_id: Knowledge base Kind.id
@@ -319,52 +322,54 @@ class KnowledgeShareService(UnifiedShareService):
         Returns:
             True if KB is bound to at least one group chat where user is a member
         """
+        from sqlalchemy import and_, exists, literal, or_, select
+
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
         from app.models.task import TaskResource
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
-        # Query all group chat tasks where this KB is bound and user is a member
-        # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
-        # First, get tasks where user is the owner
-        owned_tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+        # Use EXISTS with the bindings table for efficient indexed query
+        # Check if there's any binding where:
+        # 1. The KB matches the given kb_id
+        # 2. The task is either owned by the user OR the user is an approved member
+        # Subquery: tasks owned by user
+        owned_task_subquery = (
+            select(TaskResource.id)
+            .where(
                 TaskResource.user_id == user_id,
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
             )
-            .all()
+            .correlate(TaskKnowledgeBaseBinding)
         )
 
-        # Then, get tasks where user is an approved member via ResourceMember
-        member_tasks = (
-            db.query(TaskResource)
-            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
-                ResourceMember.resource_type == ResourceType.TASK,
+        # Subquery: tasks where user is approved member
+        member_task_subquery = (
+            select(ResourceMember.resource_id)
+            .where(
                 ResourceMember.user_id == user_id,
+                ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.status == MemberStatus.APPROVED,
             )
-            .all()
+            .correlate(TaskKnowledgeBaseBinding)
         )
 
-        # Combine owned and member tasks
-        tasks_with_kb = list(owned_tasks) + list(member_tasks)
+        # Main query: check if any binding exists
+        exists_query = (
+            db.query(TaskKnowledgeBaseBinding)
+            .filter(
+                TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                or_(
+                    TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
+                    TaskKnowledgeBaseBinding.task_id.in_(member_task_subquery),
+                ),
+            )
+            .exists()
+        )
 
-        for task in tasks_with_kb:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
-
-            for ref in kb_refs:
-                # Check if this KB is bound (match by ID or by name+namespace)
-                ref_id = ref.get("id")
-                if ref_id == kb_id:
-                    return True
-
-        return False
+        result = db.query(exists_query).scalar()
+        return bool(result)
 
     def can_manage_permissions(
         self,
