@@ -202,6 +202,10 @@ test.describe('Code Flow', () => {
     const sendButton = page.locator('[data-testid="send-button"]').first()
     await expect(sendButton).toBeEnabled({ timeout: 5000 })
     await sendButton.click()
+    console.log('Message sent, waiting for response...')
+
+    // Wait for page to transition to chat view
+    await page.waitForTimeout(2000)
 
     // Wait for AI response
     const messagesContainer = page.locator('.messages-container').first()
