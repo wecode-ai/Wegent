@@ -54,7 +54,12 @@ class TaskResource(Base):
         String(100), nullable=False, default="default", comment="Namespace"
     )
     json = Column(JSON, nullable=False, comment="Resource-specific data (JSON)")
-    is_active = Column(Boolean, nullable=False, default=True, comment="Active flag")
+    is_active = Column(
+        Integer,
+        nullable=False,
+        default=1,
+        comment="Task state: 0=deleted, 1=active, 2=subscription",
+    )
     created_at = Column(
         DateTime,
         nullable=False,
