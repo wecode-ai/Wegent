@@ -95,7 +95,7 @@ export default function TeamSelectorButton({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <div>
+              <div data-testid="team-selector">
                 <ActionButton
                   onClick={() => setOpen(!open)}
                   disabled={disabled}
@@ -148,6 +148,7 @@ export default function TeamSelectorButton({
                 return (
                   <div
                     key={team.id}
+                    data-testid={`team-option-${team.name}`}
                     className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
                       isSelected ? 'bg-primary/10' : 'hover:bg-hover'
                     }`}

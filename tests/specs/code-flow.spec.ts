@@ -23,7 +23,7 @@ async function setupCodePage(page: any) {
 
   // Step 1: Select dev-team agent
   console.log('Selecting dev-team agent...')
-  const teamSelector = page.locator('[data-tour="team-selector"]').first()
+  const teamSelector = page.locator('[data-testid="team-selector"]').first()
   await expect(teamSelector).toBeVisible({ timeout: 10000 })
 
   // Click to open team selector dropdown
@@ -38,12 +38,12 @@ async function setupCodePage(page: any) {
   }
 
   // Select dev-team from dropdown
-  const devTeamOption = page.locator('[data-testid="team-option-dev-team"], .text-sm:has-text("dev-team")').first()
+  const devTeamOption = page.locator('[data-testid="team-option-dev-team"]').first()
   if (await devTeamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
     await devTeamOption.click()
   } else {
     // Try to find by text content
-    const teamOptions = page.locator('.text-sm').filter({ hasText: /dev-team/i })
+    const teamOptions = page.locator('[data-testid^="team-option-"]').filter({ hasText: /dev-team/i })
     if (await teamOptions.count() > 0) {
       await teamOptions.first().click()
     }
@@ -52,7 +52,7 @@ async function setupCodePage(page: any) {
 
   // Step 2: Select repository wecode-ai/Wegent
   console.log('Selecting repository...')
-  const repoSelector = page.locator('[data-tour="repo-selector"]').first()
+  const repoSelector = page.locator('[data-testid="repo-branch-selector"]').first()
   await expect(repoSelector).toBeVisible({ timeout: 10000 })
 
   // Click to open repository selector
@@ -67,12 +67,12 @@ async function setupCodePage(page: any) {
   }
 
   // Select wecode-ai/Wegent repository
-  const wegentRepoOption = page.locator('[data-testid="repo-option-wecode-ai-Wegent"], [title="wecode-ai/Wegent"]').first()
+  const wegentRepoOption = page.locator('[data-testid="repo-option-wecode-ai-Wegent"]').first()
   if (await wegentRepoOption.isVisible({ timeout: 3000 }).catch(() => false)) {
     await wegentRepoOption.click()
   } else {
     // Try to find by text content
-    const repoOptions = page.locator('text=wecode-ai/Wegent')
+    const repoOptions = page.locator('[data-testid^="repo-option-"]').filter({ hasText: /wecode-ai/i })
     if (await repoOptions.count() > 0) {
       await repoOptions.first().click()
     }
@@ -81,27 +81,20 @@ async function setupCodePage(page: any) {
 
   // Step 3: Select main branch
   console.log('Selecting branch...')
-  const branchSelector = page.locator('[data-testid="branch-selector"]').first()
-  await expect(branchSelector).toBeVisible({ timeout: 10000 })
-
-  // Click to open branch selector
-  await branchSelector.click()
-  await page.waitForTimeout(500)
-
   // Search for main branch
-  const branchSearchInput = page.locator('input[placeholder*="分支"], input[placeholder*="branch"], input[placeholder*="搜索"]').first()
+  const branchSearchInput = page.locator('input[placeholder*="分支"], input[placeholder*="branch"]').first()
   if (await branchSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
     await branchSearchInput.fill('main')
     await page.waitForTimeout(500)
   }
 
   // Select main branch
-  const mainBranchOption = page.locator('[data-testid="branch-option-main"], .text-sm:has-text("main")').first()
+  const mainBranchOption = page.locator('[data-testid="branch-option-main"]').first()
   if (await mainBranchOption.isVisible({ timeout: 3000 }).catch(() => false)) {
     await mainBranchOption.click()
   } else {
     // Try to find by text content
-    const branchOptions = page.locator('.text-sm').filter({ hasText: /^main$/ })
+    const branchOptions = page.locator('[data-testid^="branch-option-"]').filter({ hasText: /^main$/ })
     if (await branchOptions.count() > 0) {
       await branchOptions.first().click()
     }
