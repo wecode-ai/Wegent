@@ -22,8 +22,6 @@ const CONTAINER_HEIGHT = 108
 
 // Card dimensions
 const CARD_WIDTH = 154
-const CARD_GAP = 12
-const CARDS_PER_PAGE = 5
 // Maximum number of team cards to display before showing "More" button
 const MAX_TEAM_CARDS = 4
 // Small button width (compact size for more/quick create buttons)
