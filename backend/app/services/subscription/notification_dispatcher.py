@@ -8,18 +8,25 @@ Subscription notification dispatcher for sending notifications to followers.
 This module provides functionality to:
 - Dispatch notifications to followers based on their notification settings
 - Send notifications via Messager channels (DingTalk, Feishu, etc.)
+- Send notifications via configured webhooks (DingTalk, Feishu, custom)
 - Handle notification failures gracefully
 """
 
 import asyncio
+import hashlib
+import hmac
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.subscription import (
     NotificationLevel,
+    NotificationWebhook,
+    NotificationWebhookType,
     SubscriptionFollowConfig,
 )
 from app.services.subscription.notification_service import (
@@ -470,6 +477,408 @@ class SubscriptionNotificationDispatcher:
         message = "\n".join(message_lines)
 
         return message
+
+    async def dispatch_webhook_notifications(
+        self,
+        *,
+        webhooks: List[NotificationWebhook],
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        execution_id: int,
+        detail_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Dispatch notifications to configured webhooks.
+
+        This method sends notifications directly to webhooks configured on the subscription,
+        without requiring user bindings. It supports DingTalk, Feishu, and custom webhooks.
+
+        Args:
+            webhooks: List of NotificationWebhook configurations
+            subscription_display_name: Display name of the subscription
+            result_summary: Summary of the execution result
+            status: Execution status (COMPLETED, FAILED, etc.)
+            execution_id: Background execution ID
+            detail_url: URL to view execution details
+
+        Returns:
+            Dict with webhook notification dispatch results
+        """
+        results = {
+            "total_webhooks": len(webhooks),
+            "enabled_count": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "errors": [],
+        }
+
+        # Filter enabled webhooks
+        enabled_webhooks = [w for w in webhooks if w.enabled]
+        results["enabled_count"] = len(enabled_webhooks)
+
+        if not enabled_webhooks:
+            logger.info(
+                f"[SubscriptionNotificationDispatcher] No enabled webhooks for "
+                f"subscription {subscription_display_name}"
+            )
+            return results
+
+        # Send to each webhook concurrently
+        tasks = []
+        for webhook in enabled_webhooks:
+            tasks.append(
+                self._send_webhook_notification(
+                    webhook=webhook,
+                    subscription_display_name=subscription_display_name,
+                    result_summary=result_summary,
+                    status=status,
+                    execution_id=execution_id,
+                    detail_url=detail_url,
+                )
+            )
+
+        # Gather results
+        task_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, result in enumerate(task_results):
+            if isinstance(result, Exception):
+                results["failed_count"] += 1
+                results["errors"].append(
+                    f"Webhook {enabled_webhooks[i].type.value} failed: {str(result)}"
+                )
+            elif result.get("success"):
+                results["success_count"] += 1
+            else:
+                results["failed_count"] += 1
+                results["errors"].append(
+                    f"Webhook {enabled_webhooks[i].type.value} failed: {result.get('error', 'Unknown error')}"
+                )
+
+        logger.info(
+            f"[SubscriptionNotificationDispatcher] Webhook notifications for "
+            f"subscription {subscription_display_name}: "
+            f"total={results['total_webhooks']}, enabled={results['enabled_count']}, "
+            f"success={results['success_count']}, failed={results['failed_count']}"
+        )
+
+        return results
+
+    def _decrypt_webhook_secret(self, secret: Optional[str]) -> Optional[str]:
+        """
+        Decrypt webhook secret if it's encrypted.
+
+        Args:
+            secret: The secret value (may be encrypted with ENC: prefix)
+
+        Returns:
+            Decrypted secret or original value if not encrypted
+        """
+        if not secret:
+            return None
+
+        # Check if secret is encrypted (has ENC: prefix)
+        if secret.startswith("ENC:"):
+            from shared.utils.crypto import decrypt_sensitive_data
+
+            encrypted_value = secret[4:]  # Remove "ENC:" prefix
+            return decrypt_sensitive_data(encrypted_value)
+
+        return secret
+
+    async def _send_webhook_notification(
+        self,
+        *,
+        webhook: NotificationWebhook,
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        execution_id: int,
+        detail_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send notification to a single webhook.
+
+        Args:
+            webhook: Webhook configuration
+            subscription_display_name: Display name of the subscription
+            result_summary: Summary of the execution result
+            status: Execution status
+            execution_id: Background execution ID
+            detail_url: URL to view execution details
+
+        Returns:
+            Dict with success status and optional error message
+        """
+        # Decrypt secret if encrypted
+        decrypted_secret = self._decrypt_webhook_secret(webhook.secret)
+
+        try:
+            if webhook.type == NotificationWebhookType.DINGTALK:
+                return await self._send_dingtalk_webhook(
+                    url=webhook.url,
+                    secret=decrypted_secret,
+                    subscription_display_name=subscription_display_name,
+                    result_summary=result_summary,
+                    status=status,
+                    detail_url=detail_url,
+                )
+            elif webhook.type == NotificationWebhookType.FEISHU:
+                return await self._send_feishu_webhook(
+                    url=webhook.url,
+                    secret=decrypted_secret,
+                    subscription_display_name=subscription_display_name,
+                    result_summary=result_summary,
+                    status=status,
+                    detail_url=detail_url,
+                )
+            elif webhook.type == NotificationWebhookType.CUSTOM:
+                return await self._send_custom_webhook(
+                    url=webhook.url,
+                    secret=decrypted_secret,
+                    subscription_display_name=subscription_display_name,
+                    result_summary=result_summary,
+                    status=status,
+                    execution_id=execution_id,
+                    detail_url=detail_url,
+                )
+            else:
+                return {
+                    "success": False,
+                    "error": f"Unknown webhook type: {webhook.type}",
+                }
+        except Exception as e:
+            logger.error(
+                f"[SubscriptionNotificationDispatcher] Failed to send {webhook.type.value} "
+                f"webhook notification: {e}"
+            )
+            return {"success": False, "error": str(e)}
+
+    async def _send_dingtalk_webhook(
+        self,
+        *,
+        url: str,
+        secret: Optional[str],
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        detail_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send notification via DingTalk webhook.
+
+        DingTalk webhook format:
+        https://oapi.dingtalk.com/robot/send?access_token=xxx
+
+        With signing:
+        https://oapi.dingtalk.com/robot/send?access_token=xxx&timestamp=xxx&sign=xxx
+
+        Args:
+            url: DingTalk webhook URL
+            secret: Optional signing secret
+            subscription_display_name: Display name of the subscription
+            result_summary: Summary of the execution result
+            status: Execution status
+            detail_url: URL to view execution details
+
+        Returns:
+            Dict with success status and optional error message
+        """
+        # Build the webhook URL with signature if secret is provided
+        # DingTalk signing algorithm:
+        # 1. timestamp (milliseconds) + "\n" + secret
+        # 2. HMAC-SHA256 with secret as key
+        # 3. Base64 encode
+        # 4. URL encode (quote_plus)
+        final_url = url
+        if secret:
+            import base64
+            import urllib.parse
+
+            timestamp = str(int(time.time() * 1000))
+            string_to_sign = f"{timestamp}\n{secret}"
+            hmac_code = hmac.new(
+                secret.encode("utf-8"),
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).digest()
+            # Use standard base64 encoding, then URL encode
+            sign = urllib.parse.quote_plus(base64.b64encode(hmac_code).decode("utf-8"))
+
+            # Append timestamp and sign to URL
+            separator = "&" if "?" in url else "?"
+            final_url = f"{url}{separator}timestamp={timestamp}&sign={sign}"
+
+        # Send model output directly as markdown
+        # DingTalk webhook payload:
+        # - title: Shows in contact list preview, use content preview instead of subscription name
+        # - text: The actual message content with subscription name as header
+        # Truncate title to first 20 chars of result_summary for contact list preview
+        title_preview = (
+            result_summary[:20] + "..." if len(result_summary) > 20 else result_summary
+        )
+        # Remove newlines from title preview for cleaner display
+        title_preview = title_preview.replace("\n", " ").strip()
+        text_with_title = f"### {subscription_display_name}\n\n{result_summary}"
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": title_preview,
+                "text": text_with_title,
+            },
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(final_url, json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("errcode") == 0:
+                logger.info(
+                    f"[SubscriptionNotificationDispatcher] Sent DingTalk webhook notification "
+                    f"for subscription {subscription_display_name}"
+                )
+                return {"success": True}
+            else:
+                error_msg = result.get("errmsg", "Unknown error")
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] DingTalk webhook failed: {error_msg}"
+                )
+                return {"success": False, "error": error_msg}
+
+    async def _send_feishu_webhook(
+        self,
+        *,
+        url: str,
+        secret: Optional[str],
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        detail_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send notification via Feishu webhook.
+
+        Feishu webhook format:
+        https://open.feishu.cn/open-apis/bot/v2/hook/xxx
+
+        With signing:
+        timestamp + sign in request body
+
+        Args:
+            url: Feishu webhook URL
+            secret: Optional signing secret
+            subscription_display_name: Display name of the subscription
+            result_summary: Summary of the execution result
+            status: Execution status
+            detail_url: URL to view execution details
+
+        Returns:
+            Dict with success status and optional error message
+        """
+        # Send model output directly as rich text
+        # Build rich text content - just the result_summary
+        content_lines = [
+            [{"tag": "text", "text": result_summary}],
+        ]
+
+        # Feishu webhook payload - just send the result_summary
+        payload: Dict[str, Any] = {
+            "msg_type": "post",
+            "content": {
+                "post": {
+                    "zh_cn": {
+                        "title": subscription_display_name,
+                        "content": content_lines,
+                    }
+                }
+            },
+        }
+
+        # Add signature if secret is provided
+        if secret:
+            timestamp = str(int(time.time()))
+            string_to_sign = f"{timestamp}\n{secret}"
+            hmac_code = hmac.new(
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).digest()
+            import base64
+
+            sign = base64.b64encode(hmac_code).decode("utf-8")
+            payload["timestamp"] = timestamp
+            payload["sign"] = sign
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("code") == 0 or result.get("StatusCode") == 0:
+                logger.info(
+                    f"[SubscriptionNotificationDispatcher] Sent Feishu webhook notification "
+                    f"for subscription {subscription_display_name}"
+                )
+                return {"success": True}
+            else:
+                error_msg = result.get(
+                    "msg", result.get("StatusMessage", "Unknown error")
+                )
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] Feishu webhook failed: {error_msg}"
+                )
+                return {"success": False, "error": error_msg}
+
+    async def _send_custom_webhook(
+        self,
+        *,
+        url: str,
+        secret: Optional[str],
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        execution_id: int,
+        detail_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send notification via custom webhook.
+
+        Custom webhook sends a JSON payload with all execution details.
+        If secret is provided, it's included in the X-Webhook-secret header.
+
+        Args:
+            url: Custom webhook URL
+            secret: Optional secret for authentication header
+            subscription_display_name: Display name of the subscription
+            result_summary: Summary of the execution result
+            status: Execution status
+            execution_id: Background execution ID
+            detail_url: URL to view execution details
+
+        Returns:
+            Dict with success status and optional error message
+        """
+        # Custom webhook payload - just send the model output
+        payload = {
+            "content": result_summary,
+            "subscription_name": subscription_display_name,
+            "timestamp": int(time.time()),
+        }
+
+        # Build headers
+        headers = {"Content-Type": "application/json"}
+        if secret:
+            headers["X-Webhook-secret"] = secret
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+            logger.info(
+                f"[SubscriptionNotificationDispatcher] Sent custom webhook notification "
+                f"for subscription {subscription_display_name} to {url}"
+            )
+            return {"success": True}
 
 
 # Singleton instance
