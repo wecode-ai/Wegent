@@ -27,6 +27,7 @@ import { teamService } from '@/features/tasks/service/teamService'
 import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
+import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
@@ -116,6 +117,9 @@ export default function DeviceChatPage() {
   // Get selected device info
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
 
+  // Check if selected device is OpenClaw type
+  const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
+
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* URL parameter sync for task selection */}
@@ -192,6 +196,7 @@ export default function DeviceChatPage() {
                 ? t('device_offline_cannot_send')
                 : undefined
             }
+            hideSelectors={isOpenClaw}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-base">

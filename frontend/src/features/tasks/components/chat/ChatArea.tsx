@@ -66,6 +66,8 @@ interface ChatAreaProps {
   selectedDocumentIds?: number[]
   /** Reason why input is disabled (e.g., device offline). If set, input will be disabled and show this message. */
   disabledReason?: string
+  /** When true, hide all selectors (team, model, skills, attachments, etc.) - only show text input + send button */
+  hideSelectors?: boolean
   /** Callback when user switches between video and image mode (only used in generate page) */
   onGenerateModeChange?: (mode: GenerateMode) => void
 }
@@ -87,6 +89,7 @@ function ChatAreaContent({
   knowledgeBaseId,
   selectedDocumentIds,
   disabledReason,
+  hideSelectors,
   onGenerateModeChange,
 }: ChatAreaProps) {
   const { t } = useTranslation()
@@ -171,15 +174,15 @@ function ChatAreaContent({
   // Derive available options and defaults from selected video model's config
   const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
     | {
-        resolution?: string
-        ratio?: string
-        duration?: number
-        capabilities?: {
-          aspect_ratios?: { value: string }[]
-          resolutions?: { label: string }[]
-          durations_sec?: number[]
-        }
+      resolution?: string
+      ratio?: string
+      duration?: number
+      capabilities?: {
+        aspect_ratios?: { value: string }[]
+        resolutions?: { label: string }[]
+        durations_sec?: number[]
       }
+    }
     | undefined
   const videoCapabilities = videoConfig?.capabilities
 
@@ -536,6 +539,8 @@ function ChatAreaContent({
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
+    // OpenClaw devices handle model on device side, no model selection required
+    if (hideSelectors) return false
     // Video mode uses video model selection, not regular model selection
     if (taskType === 'video') {
       // In video mode, we need a video model selected
@@ -554,6 +559,7 @@ function ChatAreaContent({
     chatState.selectedTeam,
     chatState.selectedModel,
     taskType,
+    hideSelectors,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
   ])
@@ -579,6 +585,29 @@ function ChatAreaContent({
   const shouldCollapseSelectors =
     controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD
 
+  // Keep latest mutable values in refs so callbacks passed to MessagesArea remain stable.
+  const taskInputMessageRef = useRef(chatState.taskInputMessage)
+  taskInputMessageRef.current = chatState.taskInputMessage
+
+  const stateMessagesRef = useRef(taskState?.messages)
+  stateMessagesRef.current = taskState?.messages
+
+  const handleSendMessageRef = useRef(streamHandlers.handleSendMessage)
+  handleSendMessageRef.current = streamHandlers.handleSendMessage
+
+  const handleSendMessageWithModelRef = useRef(streamHandlers.handleSendMessageWithModel)
+  handleSendMessageWithModelRef.current = streamHandlers.handleSendMessageWithModel
+
+  const handleRetryRef = useRef(streamHandlers.handleRetry)
+  handleRetryRef.current = streamHandlers.handleRetry
+
+  const setTaskInputMessage = chatState.setTaskInputMessage
+  const setSelectedContexts = chatState.setSelectedContexts
+  const resetAttachment = chatState.resetAttachment
+  const addExistingAttachment = chatState.addExistingAttachment
+  const selectedContextsRef = useRef(chatState.selectedContexts)
+  selectedContextsRef.current = chatState.selectedContexts
+
   // Load prompt from sessionStorage - single remaining useEffect
   useEffect(() => {
     if (hasMessages) return
@@ -590,7 +619,7 @@ function ChatAreaContent({
         const isRecent = Date.now() - data.timestamp < 5 * 60 * 1000
 
         if (isRecent && data.prompt) {
-          chatState.setTaskInputMessage(data.prompt)
+          setTaskInputMessage(data.prompt)
           sessionStorage.removeItem('pendingTaskPrompt')
         }
       } catch (error) {
@@ -598,7 +627,7 @@ function ChatAreaContent({
         sessionStorage.removeItem('pendingTaskPrompt')
       }
     }
-  }, [hasMessages, chatState])
+  }, [hasMessages, setTaskInputMessage])
 
   // Use attachment upload hook - centralizes all attachment upload logic
   const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
@@ -621,21 +650,29 @@ function ChatAreaContent({
   // Callback for child components to send messages
   const handleSendMessageFromChild = useCallback(
     async (content: string) => {
-      const existingInput = chatState.taskInputMessage.trim()
+      const existingInput = taskInputMessageRef.current.trim()
       const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content
-      chatState.setTaskInputMessage('')
-      await streamHandlers.handleSendMessage(combinedMessage)
+      setTaskInputMessage('')
+      await handleSendMessageRef.current(combinedMessage)
     },
-    [chatState, streamHandlers]
+    [setTaskInputMessage]
   )
 
   // Callback for child components to send messages with a specific model (for regeneration)
   // Accepts optional existingContexts to preserve attachments/knowledge bases from the original message
   const handleSendMessageWithModelFromChild = useCallback(
     async (content: string, model: Model, existingContexts?: SubtaskContextBrief[]) => {
-      await streamHandlers.handleSendMessageWithModel(content, model, existingContexts)
+      await handleSendMessageWithModelRef.current(content, model, existingContexts)
     },
-    [streamHandlers]
+    []
+  )
+
+  // Keep retry callback stable so MessagesArea can skip re-render on input typing.
+  const handleRetryFromMessagesArea = useCallback(
+    (message: import('../message/MessageBubble').Message) => {
+      void handleRetryRef.current(message)
+    },
+    []
   )
 
   // Callback for re-selecting a context from a message badge
@@ -663,17 +700,15 @@ function ChatAreaContent({
 
       if (!contextItem) return
 
-      // Check if context is already selected
-      const isAlreadySelected = chatState.selectedContexts.some(
-        c => c.type === contextItem!.type && c.id === contextItem!.id
+      const currentContexts = selectedContextsRef.current
+      const isAlreadySelected = currentContexts.some(
+        c => c.type === contextItem.type && c.id === contextItem.id
       )
+      if (isAlreadySelected) return
 
-      // If not already selected, add it to selectedContexts
-      if (!isAlreadySelected) {
-        chatState.setSelectedContexts([...chatState.selectedContexts, contextItem!])
-      }
+      setSelectedContexts([...currentContexts, contextItem])
     },
-    [chatState]
+    [setSelectedContexts]
   )
 
   // Callback when user wants to use a previously generated image as reference
@@ -683,7 +718,7 @@ function ChatAreaContent({
       if (!item.attachmentId) return
       try {
         const detail = await getAttachment(item.attachmentId)
-        chatState.addExistingAttachment({
+        addExistingAttachment({
           id: detail.id,
           filename: detail.filename,
           file_size: detail.file_size,
@@ -701,7 +736,7 @@ function ChatAreaContent({
         console.error('Failed to use image as reference:', error)
       }
     },
-    [chatState]
+    [addExistingAttachment]
   )
 
   // Callback when user clicks re-edit on an AI message
@@ -711,7 +746,7 @@ function ChatAreaContent({
       if (!aiMsg.subtaskId) return
 
       // Locate the AI message in the state machine to get its messageId (shared with the user message)
-      const stateMessages = taskState?.messages
+      const stateMessages = stateMessagesRef.current
       if (!stateMessages) return
 
       const aiStateMsg = stateMessages.get(`ai-${aiMsg.subtaskId}`)
@@ -755,13 +790,13 @@ function ChatAreaContent({
 
       // Restore text prompt to input
       if (userStateMsg.content) {
-        chatState.setTaskInputMessage(userStateMsg.content)
+        setTaskInputMessage(userStateMsg.content)
       }
 
       // Clear any existing draft attachments and contexts before restoring the original ones
       // so the restored set exactly matches the original user message
-      chatState.resetAttachment()
-      chatState.setSelectedContexts([])
+      resetAttachment()
+      setSelectedContexts([])
 
       // Restore all contexts (attachments and knowledge bases) from the user message
       const rawContexts = (userStateMsg.contexts || []) as SubtaskContextBrief[]
@@ -771,7 +806,7 @@ function ChatAreaContent({
       for (const ctx of attachmentContexts) {
         try {
           const detail = await getAttachment(ctx.id)
-          chatState.addExistingAttachment({
+          addExistingAttachment({
             id: detail.id,
             filename: detail.filename,
             file_size: detail.file_size,
@@ -810,10 +845,10 @@ function ChatAreaContent({
         }
       }
       if (restoredContextItems.length > 0) {
-        chatState.setSelectedContexts(restoredContextItems)
+        setSelectedContexts(restoredContextItems)
       }
     },
-    [taskState, chatState]
+    [setTaskInputMessage, resetAttachment, setSelectedContexts, addExistingAttachment]
   )
 
   // Handle access denied state
@@ -863,6 +898,7 @@ function ChatAreaContent({
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
     selectedTeam: chatState.selectedTeam,
+    teams: teams,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
@@ -974,6 +1010,8 @@ function ChatAreaContent({
     onImageSizeChange: setSelectedImageSize,
     // Generate mode switch props - only passed when in generate page
     onGenerateModeChange,
+    // Hide all selectors (for OpenClaw devices)
+    hideSelectors,
   }
 
   return (
@@ -1027,7 +1065,7 @@ function ChatAreaContent({
               onSendMessage={handleSendMessageFromChild}
               onSendMessageWithModel={handleSendMessageWithModelFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
-              onRetry={streamHandlers.handleRetry}
+              onRetry={handleRetryFromMessagesArea}
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
@@ -1050,10 +1088,10 @@ function ChatAreaContent({
           <div
             className={
               taskType === 'knowledge'
-                ? 'flex-1 flex items-end justify-center w-full pb-6'
+                ? 'flex-1 flex items-end justify-center w-full pb-10'
                 : 'flex-1 flex items-center justify-center w-full'
             }
-            style={taskType === 'knowledge' ? undefined : { marginBottom: '20vh' }}
+            style={taskType === 'knowledge' ? undefined : { marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
@@ -1062,7 +1100,7 @@ function ChatAreaContent({
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              {taskType !== 'knowledge' && (
+              {taskType !== 'knowledge' && !hideSelectors && (
                 <QuickAccessCards
                   teams={teams}
                   selectedTeam={chatState.selectedTeam}
@@ -1092,9 +1130,10 @@ function ChatAreaContent({
           >
             {/* Bottom gradient fade effect - text fades as it approaches the input, limited width to avoid overlapping scrollbar */}
             <div
-              className="absolute top-0 left-0 h-8 -translate-y-full pointer-events-none"
+              className="absolute top-0 h-8 -translate-y-full pointer-events-none"
               style={{
-                width: 'calc(100% - 12px)',
+                left: '18px',
+                width: 'calc(100% - 36px)',
                 background:
                   'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.6) 50%, rgb(var(--color-bg-base) / 0) 100%)',
               }}
@@ -1106,8 +1145,10 @@ function ChatAreaContent({
                 onClick={() => scrollToBottom(true)}
               />
             </div>
-            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4 bg-base">
-              <ChatInputCard {...inputCardProps} />
+            <div className="relative w-full max-w-[820px] mx-auto px-4 sm:px-6">
+              <div className="py-4 bg-base">
+                <ChatInputCard {...inputCardProps} />
+              </div>
             </div>
           </div>
         )}

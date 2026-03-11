@@ -304,6 +304,10 @@
       "join_description_suffix": "\" will be added to your agent list, and you can use it to create and execute tasks."
     }
   },
+  "teamSelector": {
+    "agent_label": "Agent",
+    "select_agent_tooltip": "Select agent"
+  },
   "team": {
     "name": "Name",
     "name_required": "Team name is required",
@@ -1286,6 +1290,7 @@
     "no_matching_skills": "No matching skills",
     "already_selected": "Already selected",
     "skill_button_tooltip": "Select skills to use with this message",
+    "skill_button_label": "Skills",
     "manage_skills": "Manage"
   },
   "mcpProviders": {

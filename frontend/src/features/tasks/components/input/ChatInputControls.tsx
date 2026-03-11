@@ -7,6 +7,7 @@
 import React from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
+import TeamSelectorButton from '../selector/TeamSelectorButton'
 import UnifiedRepositorySelector from '../selector/UnifiedRepositorySelector'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
@@ -44,6 +45,8 @@ export interface ChatInputControlsProps {
   taskType?: TaskType
   // Team and Model
   selectedTeam: Team | null
+  /** Available teams for team selector */
+  teams?: Team[]
   onTeamChange?: (team: Team) => void
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
@@ -145,6 +148,9 @@ export interface ChatInputControlsProps {
   // Generate mode switch props (only used when taskType is 'video' or 'image')
   /** Callback when user switches between video and image mode */
   onGenerateModeChange?: (mode: GenerateMode) => void
+
+  /** When true, hide all selectors - only show send button + quota */
+  hideSelectors?: boolean
 }
 
 /**
@@ -166,6 +172,7 @@ export interface ChatInputControlsProps {
 export function ChatInputControls({
   taskType,
   selectedTeam,
+  teams = [],
   onTeamChange: _onTeamChange,
   selectedModel,
   setSelectedModel,
@@ -235,6 +242,8 @@ export function ChatInputControls({
   onImageSizeChange,
   // Generate mode switch props
   onGenerateModeChange,
+  // Hide all selectors (for OpenClaw devices)
+  hideSelectors,
 }: ChatInputControlsProps) {
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
@@ -359,6 +368,7 @@ export function ChatInputControls({
         preloadedSkillNames={preloadedSkillNames}
         selectedSkillNames={selectedSkillNames}
         onToggleSkill={onToggleSkill}
+        hideSelectors={hideSelectors}
       />
     )
   }
@@ -366,10 +376,10 @@ export function ChatInputControls({
   // Desktop layout: original full layout
   return (
     <div
-      className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
+      className={`flex items-center justify-between px-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 -mt-2.5'}`}
     >
       <div
-        className="flex-1 min-w-0 overflow-visible flex items-center gap-3 flex-wrap"
+        className="flex-1 min-w-0 overflow-visible flex items-center gap-0 flex-wrap"
         data-tour="input-controls"
       >
         {/* Generate Mode Selector - show when in video or image mode */}
@@ -456,7 +466,7 @@ export function ChatInputControls({
 
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
-          <>
+          <div className={hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'}>
             {/* Context Selection - only show for chat shell */}
             {isChatShell(selectedTeam) && (
               <ChatContextInput
@@ -469,6 +479,28 @@ export function ChatInputControls({
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
+            )}
+
+            {/* Divider between attachment and other controls */}
+            {supportsAttachments(selectedTeam) && selectedTeam && (
+              <div className="w-px h-4 bg-border mx-1 flex-shrink-0" />
+            )}
+
+            {/* Team Selector - show when teams are available, onTeamChange is provided, and no messages yet */}
+            {teams.length > 0 && _onTeamChange && !hasMessages && (
+              <TeamSelectorButton
+                selectedTeam={selectedTeam}
+                setSelectedTeam={(team: Team | null) => {
+                  if (team) {
+                    _onTeamChange(team)
+                  }
+                }}
+                teams={teams}
+                disabled={isLoading || isStreaming}
+                taskDetail={selectedTaskDetail}
+                hideSettingsLink={true}
+                currentMode={taskType}
+              />
             )}
 
             {/* Skill Selector - show when skills are available */}
@@ -523,22 +555,24 @@ export function ChatInputControls({
               />
             )}
 
-            {/* Model Selector */}
+            {/* Model Selector - placed at the end of left side buttons */}
             {selectedTeam && (
-              <ModelSelector
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
-                selectedTeam={selectedTeam}
-                disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
-                compact={shouldCollapseSelectors}
-                teamId={teamId}
-                taskId={taskId}
-                taskModelId={taskModelId}
-              />
+              <div className={hideSelectors ? 'hidden' : ''}>
+                <ModelSelector
+                  selectedModel={selectedModel}
+                  setSelectedModel={setSelectedModel}
+                  forceOverride={forceOverride}
+                  setForceOverride={setForceOverride}
+                  selectedTeam={selectedTeam}
+                  disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+                  compact={shouldCollapseSelectors}
+                  teamId={teamId}
+                  taskId={taskId}
+                  taskModelId={taskModelId}
+                />
+              </div>
             )}
-          </>
+          </div>
         )}
       </div>
 
@@ -547,15 +581,6 @@ export function ChatInputControls({
         {!shouldHideQuotaUsage && (
           <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
         )}
-
-        {/* Deep Thinking Toggle Button - hidden for now */}
-        {/* {isChatShell(selectedTeam) && (
-          <DeepThinkingToggle
-            enabled={enableDeepThinking}
-            onToggle={setEnableDeepThinking}
-            disabled={isLoading || isStreaming}
-          />
-        )} */}
 
         {/* Send/Stop Button */}
         {renderSendButton()}

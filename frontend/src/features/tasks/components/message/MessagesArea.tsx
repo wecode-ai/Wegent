@@ -212,7 +212,7 @@ interface MessagesAreaProps {
   onReEdit?: (msg: Message) => void
 }
 
-export default function MessagesArea({
+function MessagesArea({
   selectedTeam,
   selectedRepo,
   selectedBranch,
@@ -1055,7 +1055,6 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     selectedTaskDetail?.is_group_chat,
     selectedTaskDetail?.team?.agent_type,
-    selectedTaskDetail?.status,
     selectedTaskDetail?.preserve_executor,
     selectedTaskDetail?.task_type,
     messages.length,
@@ -1328,3 +1327,5 @@ export default function MessagesArea({
     </div>
   )
 }
+
+export default React.memo(MessagesArea)
