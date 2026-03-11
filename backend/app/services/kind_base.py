@@ -353,7 +353,7 @@ class TaskResourceBaseService(KindBaseService):
         filters = [
             TaskResource.kind == self.kind,
             TaskResource.namespace == namespace,
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         ]
 
         # For personal resources, filter by user_id
@@ -503,7 +503,7 @@ class TaskResourceBaseService(KindBaseService):
                 )
                 raise NotFoundException(f"{self.kind} '{name}' not found")
 
-            db_resource.is_active = False
+            db_resource.is_active = TaskResource.STATE_DELETED
             db_resource.updated_at = datetime.now()
 
             # Perform pre-delete side effects

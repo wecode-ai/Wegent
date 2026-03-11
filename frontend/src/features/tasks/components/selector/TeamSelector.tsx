@@ -200,7 +200,7 @@ export default function TeamSelector({
         label: team.name,
         searchText: team.name,
         content: (
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0" data-testid={`team-option-${team.name}`}>
             <TeamIconDisplay
               iconId={team.icon}
               size="sm"
