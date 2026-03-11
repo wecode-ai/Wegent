@@ -544,23 +544,6 @@ def build_lite_task_list(
     from app.models.share_link import ResourceType
 
     task_ids_for_members = [t.id for t in tasks]
-    member_counts = {}
-    if task_ids_for_members:
-        member_count_results = (
-            db.query(
-                ResourceMember.resource_id, func.count(ResourceMember.id).label("count")
-            )
-            .filter(
-                ResourceMember.resource_type == ResourceType.TASK.value,
-                ResourceMember.resource_id.in_(task_ids_for_members),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-                # Exclude share records (copied_resource_id > 0), only count actual group chat members
-                ResourceMember.copied_resource_id == 0,
-            )
-            .group_by(ResourceMember.resource_id)
-            .all()
-        )
-        member_counts = {row[0]: row[1] for row in member_count_results}
     related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
 
     result = []

@@ -503,6 +503,13 @@ def _migrate_kb_bindings() -> None:
             kb_refs = spec.get("knowledgeBaseRefs", []) or []
 
             for ref in kb_refs:
+                # Validate that ref is a dict
+                if not isinstance(ref, dict):
+                    logger.warning(
+                        f"Skipping invalid KB ref (not a dict) for task {task_id}: {type(ref)}"
+                    )
+                    continue
+
                 kb_id = ref.get("id")
 
                 # If no ID, try to resolve by name (legacy data)
@@ -528,6 +535,13 @@ def _migrate_kb_bindings() -> None:
 
                 bound_by = ref.get("boundBy", "migration")
                 bound_at_str = ref.get("boundAt")
+
+                # Validate and coerce bound_at_str to string
+                if bound_at_str is not None and not isinstance(bound_at_str, str):
+                    logger.warning(
+                        f"Invalid boundAt type for task {task_id}, expected str got {type(bound_at_str)}. Using current time."
+                    )
+                    bound_at_str = None
 
                 # Parse bound_at timestamp
                 if bound_at_str:

@@ -408,19 +408,22 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # Use optimized query to get recent subtasks efficiently
                 from app.services.subtask import subtask_service
 
+                # Fetch limit + 1 to determine if there are more messages
+                # This ensures has_more is based on the caller-scoped subset
                 subtasks = subtask_service.get_by_task(
                     db=db,
                     task_id=payload.task_id,
                     user_id=user_id,
                     from_latest=True,
-                    limit=limit,
+                    limit=limit + 1,
                 )
 
-                # Check if there are more messages
-                total_count = (
-                    db.query(Subtask).filter(Subtask.task_id == payload.task_id).count()
-                )
-                has_more = total_count > limit
+                # Check if there are more messages based on the fetched subset
+                has_more = len(subtasks) > limit
+
+                # Trim to limit if we fetched extra
+                if has_more:
+                    subtasks = subtasks[:limit]
 
                 # Convert to dict format
                 subtasks_dict = []
@@ -476,7 +479,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 logger.info(
                     f"[WS] task:join full sync with pagination: fetched {len(subtasks_dict)} "
-                    f"subtasks (total: {total_count}, has_more: {has_more}) for task_id={payload.task_id}"
+                    f"subtasks (has_more: {has_more}) for task_id={payload.task_id}"
                 )
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
