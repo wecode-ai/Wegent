@@ -13,7 +13,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { Tag } from '@/components/ui/tag'
-import { cn } from '@/lib/utils'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 
@@ -25,7 +24,6 @@ const CONTAINER_HEIGHT = 108
 const CARD_WIDTH = 154
 const CARD_GAP = 12
 const CARDS_PER_PAGE = 5
-const PAGE_SCROLL_AMOUNT = CARDS_PER_PAGE * CARD_WIDTH + (CARDS_PER_PAGE - 1) * CARD_GAP
 // Maximum number of team cards to display before showing "More" button
 const MAX_TEAM_CARDS = 4
 // Small button width (compact size for more/quick create buttons)
@@ -64,8 +62,6 @@ export function QuickAccessCards({
   const [morePopoverOpen, setMorePopoverOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const sharedBadgeStyle = getSharedBadgeStyle()
-  const [canScrollLeft, setCanScrollLeft] = useState(false)
-  const [canScrollRight, setCanScrollRight] = useState(false)
 
   type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' }
 
@@ -142,8 +138,6 @@ export function QuickAccessCards({
     setMorePopoverOpen(false)
     setSearchQuery('')
   }
-
-  const needsPagination = displayTeams.length > CARDS_PER_PAGE
 
   const handleTeamClick = useCallback(
     (team: DisplayTeam) => {

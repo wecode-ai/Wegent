@@ -98,7 +98,7 @@ export default function TeamSelectorButton({
     setWizardOpen(true)
   }
 
-  const handleWizardSuccess = async (teamId: number, teamName: string) => {
+  const handleWizardSuccess = async (teamId: number, _teamName: string) => {
     setWizardOpen(false)
     // Refresh teams list
     if (onTeamsRefresh) {
