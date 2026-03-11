@@ -537,15 +537,10 @@ def build_lite_task_list(
         List of task dictionaries with essential fields
     """
     if not tasks:
-        return []
+        if not tasks:
+            return []
 
-    # Get task member counts in batch for is_group_chat detection using ResourceMember
-    from app.models.resource_member import MemberStatus, ResourceMember
-    from app.models.share_link import ResourceType
-
-    task_ids_for_members = [t.id for t in tasks]
-    related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
-
+        related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
     result = []
     for task in tasks:
         task_crd = Task.model_validate(task.json)

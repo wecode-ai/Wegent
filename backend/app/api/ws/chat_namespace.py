@@ -302,7 +302,8 @@ class ChatNamespace(socketio.AsyncNamespace):
         payload = data  # Already validated by decorator
 
         # Validate and cap limit to prevent excessive data transfer
-        limit = min(payload.limit or 100, 500)
+        # Clamp value into inclusive range 1..500
+        limit = max(1, min(payload.limit or 100, 500))
 
         logger.info(
             f"[WS] task:join received: sid={sid}, task_id={payload.task_id}, "

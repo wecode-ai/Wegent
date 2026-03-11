@@ -159,18 +159,20 @@ def _upgrade_is_group_chat() -> None:
         # Update tasks with is_group_chat=true in Python for SQLite
         for row in result:
             task_id = row[0]
+            task_json = None
+            is_group_chat = False
             try:
                 task_json = json.loads(row[1]) if isinstance(row[1], str) else row[1]
                 is_group_chat = task_json.get("spec", {}).get("is_group_chat")
-                if is_group_chat is True:
-                    conn.execute(
-                        sa.text(
-                            "UPDATE tasks SET is_group_chat = 1 WHERE id = :task_id"
-                        ),
-                        {"task_id": task_id},
-                    )
-            except Exception as e:
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse JSON for task id={task_id}: {e}")
+                continue
+
+            if is_group_chat is True:
+                conn.execute(
+                    sa.text("UPDATE tasks SET is_group_chat = 1 WHERE id = :task_id"),
+                    {"task_id": task_id},
+                )
 
 
 def _upgrade_linked_group_id() -> None:
@@ -512,6 +514,25 @@ def _migrate_kb_bindings() -> None:
 
                 kb_id = ref.get("id")
 
+                # Validate kb_id: if not an int, try to coerce numeric string to int
+                if kb_id is not None:
+                    if isinstance(kb_id, int):
+                        pass  # Valid int, use as-is
+                    elif isinstance(kb_id, str):
+                        try:
+                            kb_id = int(kb_id)
+                        except ValueError:
+                            logger.warning(
+                                f"Invalid KB id (non-numeric string) for task {task_id}: {kb_id}"
+                            )
+                            kb_id = None
+                    else:
+                        # Malformed values like {}, [], ""
+                        logger.warning(
+                            f"Invalid KB id type for task {task_id}: {type(kb_id)}"
+                        )
+                        kb_id = None
+
                 # If no ID, try to resolve by name (legacy data)
                 if kb_id is None:
                     kb_name = ref.get("name") or ref.get("knowledgeBaseName")
@@ -597,10 +618,6 @@ def _migrate_kb_bindings() -> None:
                     total_migrated += 1
 
         offset += batch_size
-
-        # Safety check: if we've processed many batches without finding data, stop
-        if offset > 10000000:  # 10 million records safety limit
-            break
 
     print(
         f"Migrated {total_migrated} KB bindings to task_knowledge_base_bindings table"

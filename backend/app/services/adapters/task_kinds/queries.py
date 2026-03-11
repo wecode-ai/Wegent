@@ -298,6 +298,7 @@ class TaskQueryMixin:
         """
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
+        from app.schemas.namespace import GroupRole
 
         # Step 1: Get all task IDs with is_group_chat=true (no limit/skip)
         group_chat_tasks_sql = text(
@@ -319,9 +320,10 @@ class TaskQueryMixin:
         group_task_updated_at = {row[0]: row[1] for row in group_chat_tasks_result}
 
         # Step 2: Get tasks with linked_group where user is a member of the linked namespace
+        # Exclude RestrictedObserver role - they should not have task access via linked group
         user_namespace_ids_sql = text(
             """
-            SELECT DISTINCT rm.resource_id
+            SELECT DISTINCT rm.resource_id, rm.role
             FROM resource_members rm
             WHERE rm.resource_type = 'Namespace'
             AND rm.user_id = :user_id
@@ -331,7 +333,12 @@ class TaskQueryMixin:
         user_namespace_ids_result = db.execute(
             user_namespace_ids_sql, {"user_id": user_id}
         ).fetchall()
-        user_namespace_ids = {row[0] for row in user_namespace_ids_result}
+        # Filter out RestrictedObserver role
+        user_namespace_ids = {
+            row[0]
+            for row in user_namespace_ids_result
+            if row[1] != GroupRole.RestrictedObserver.value
+        }
 
         linked_group_ids = set()
         linked_group_updated_at = {}
@@ -383,8 +390,34 @@ class TaskQueryMixin:
         # Step 4: Combine all task IDs (union/deduplication)
         all_group_task_ids = group_task_ids | linked_group_ids | member_task_ids
 
-        # Step 5: Compute total from deduplicated set
-        total = len(all_group_task_ids)
+        if not all_group_task_ids:
+            return [], 0
+
+        # Step 5: Load TaskResource rows for all IDs to filter out DELETE tasks
+        all_tasks = (
+            db.query(TaskResource).filter(TaskResource.id.in_(all_group_task_ids)).all()
+        )
+
+        # Filter out tasks with status == "DELETE" and build non-deleted ID set
+        non_deleted_ids = []
+        non_deleted_updated_at = {}
+        for t in all_tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                non_deleted_ids.append(t.id)
+                # Get updated_at from the appropriate source
+                if t.id in group_task_updated_at:
+                    non_deleted_updated_at[t.id] = group_task_updated_at[t.id]
+                elif t.id in linked_group_updated_at:
+                    non_deleted_updated_at[t.id] = linked_group_updated_at[t.id]
+                elif t.id in member_task_updated_at:
+                    non_deleted_updated_at[t.id] = member_task_updated_at[t.id]
+                else:
+                    non_deleted_updated_at[t.id] = t.updated_at
+
+        # Step 6: Compute total from filtered non-deleted set
+        total = len(non_deleted_ids)
 
         logger.info(
             f"[get_user_group_tasks_lite] user_id={user_id}, "
@@ -394,20 +427,13 @@ class TaskQueryMixin:
             f"total={total}"
         )
 
-        if not all_group_task_ids:
+        if not non_deleted_ids:
             return [], 0
 
-        # Step 6: Sort by updated_at descending and apply pagination
-        # Merge updated_at from all sources
-        all_updated_at = {}
-        all_updated_at.update(group_task_updated_at)
-        all_updated_at.update(linked_group_updated_at)
-        all_updated_at.update(member_task_updated_at)
-
-        # Sort all IDs by updated_at descending
+        # Step 7: Sort by updated_at descending and apply pagination
         sorted_task_ids = sorted(
-            all_group_task_ids,
-            key=lambda tid: all_updated_at.get(tid, None) or datetime.min,
+            non_deleted_ids,
+            key=lambda tid: non_deleted_updated_at.get(tid, None) or datetime.min,
             reverse=True,
         )
 
@@ -417,19 +443,8 @@ class TaskQueryMixin:
         if not paginated_ids:
             return [], total
 
-        # Step 7: Load full task data for paginated IDs
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
-
-        # Filter out DELETE status tasks
-        valid_tasks = []
-        for t in tasks:
-            task_crd = Task.model_validate(t.json)
-            status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
-                valid_tasks.append(t)
-
-        # Maintain order from sorted_task_ids
-        id_to_task = {t.id: t for t in valid_tasks}
+        # Step 8: Load full task data for paginated IDs (or reuse already-loaded rows)
+        id_to_task = {t.id: t for t in all_tasks}
         ordered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
 
         # Build lightweight result
@@ -809,176 +824,6 @@ class TaskQueryMixin:
 
         return task_dict
 
-    def _get_bots_for_subtasks(
-        self, db: Session, all_bot_ids: set
-    ) -> Dict[int, Dict[str, Any]]:
-        """Get bot information for subtasks with optimized batch queries."""
-        from app.services.readers.kinds import KindType, kindReader
-
-        bots = {}
-        if not all_bot_ids:
-            return bots
-
-        bot_objects = kindReader.get_by_ids(db, KindType.BOT, list(all_bot_ids))
-
-        if not bot_objects:
-            return bots
-
-        # Collect all unique model and shell references for batch queries
-        model_refs = []
-        shell_refs = []
-        bot_id_to_refs = {}
-
-        for bot in bot_objects:
-            bot_crd = Bot.model_validate(bot.json)
-            bot_id_to_refs[bot.id] = {
-                "model_ref": bot_crd.spec.modelRef,
-                "shell_ref": bot_crd.spec.shellRef,
-                "bot": bot,
-                "bot_crd": bot_crd,
-            }
-            if bot_crd.spec.modelRef:
-                model_refs.append(
-                    (
-                        bot.user_id,
-                        bot_crd.spec.modelRef.namespace,
-                        bot_crd.spec.modelRef.name,
-                    )
-                )
-            if bot_crd.spec.shellRef:
-                shell_refs.append(
-                    (
-                        bot.user_id,
-                        bot_crd.spec.shellRef.namespace,
-                        bot_crd.spec.shellRef.name,
-                    )
-                )
-
-        # Batch query all models and shells
-        model_map = {}
-        shell_map = {}
-
-        # Query models in batch
-        if model_refs:
-            # Use a more efficient query approach
-            from sqlalchemy import or_
-
-            from app.models.kind import Kind
-
-            # Build conditions to match either owner or public (user_id=0) models
-            conditions = []
-            for user_id, namespace, name in model_refs:
-                # Match either the owner or public models
-                conditions.append(
-                    (
-                        (Kind.user_id.in_([user_id, 0]))
-                        & (Kind.kind == KindType.MODEL.value)
-                        & (Kind.namespace == namespace)
-                        & (Kind.name == name)
-                        & (Kind.is_active.is_(True))
-                    )
-                )
-
-            if conditions:
-                models = db.query(Kind).filter(or_(*conditions)).all()
-                for model in models:
-                    key = (model.user_id, model.namespace, model.name)
-                    model_map[key] = model
-
-        # Query shells in batch
-        if shell_refs:
-            from sqlalchemy import or_
-
-            from app.models.kind import Kind
-
-            # Build conditions to match either owner or public (user_id=0) shells
-            conditions = []
-            for user_id, namespace, name in shell_refs:
-                # Match either the owner or public shells
-                conditions.append(
-                    (
-                        (Kind.user_id.in_([user_id, 0]))
-                        & (Kind.kind == KindType.SHELL.value)
-                        & (Kind.namespace == namespace)
-                        & (Kind.name == name)
-                        & (Kind.is_active.is_(True))
-                    )
-                )
-
-            if conditions:
-                shells = db.query(Kind).filter(or_(*conditions)).all()
-                for shell in shells:
-                    key = (shell.user_id, shell.namespace, shell.name)
-                    shell_map[key] = shell
-
-        # Build bot dicts using cached model/shell data
-        for bot_id, refs in bot_id_to_refs.items():
-            bot = refs["bot"]
-            bot_crd = refs["bot_crd"]
-
-            # Initialize default values
-            shell_type = ""
-            agent_config = {}
-
-            # Get Model data from cache
-            if refs["model_ref"]:
-                model_key = (
-                    bot.user_id,
-                    refs["model_ref"].namespace,
-                    refs["model_ref"].name,
-                )
-                model = model_map.get(model_key)
-                # Try public fallback if owner lookup misses
-                if model is None:
-                    public_key = (
-                        0,
-                        refs["model_ref"].namespace,
-                        refs["model_ref"].name,
-                    )
-                    model = model_map.get(public_key)
-                model_type = "public" if model and model.user_id == 0 else "user"
-                agent_config = {
-                    "bind_model": refs["model_ref"].name,
-                    "bind_model_type": model_type,
-                }
-
-            # Get Shell data from cache
-            if refs["shell_ref"]:
-                shell_key = (
-                    bot.user_id,
-                    refs["shell_ref"].namespace,
-                    refs["shell_ref"].name,
-                )
-                shell = shell_map.get(shell_key)
-                # Try public fallback if owner lookup misses
-                if shell is None:
-                    public_key = (
-                        0,
-                        refs["shell_ref"].namespace,
-                        refs["shell_ref"].name,
-                    )
-                    shell = shell_map.get(public_key)
-                if shell and shell.json:
-                    shell_crd = Shell.model_validate(shell.json)
-                    shell_type = shell_crd.spec.shellType
-
-            # Note: system_prompt and mcp_servers from Ghost are intentionally excluded
-            # from the response to avoid sending sensitive data to the frontend
-            # via WebSocket task:join events
-            bot_dict = {
-                "id": bot.id,
-                "user_id": bot.user_id,
-                "name": bot.name,
-                "shell_type": shell_type,
-                "agent_config": agent_config,
-                "is_active": bot.is_active,
-                "created_at": (bot.created_at.isoformat() if bot.created_at else None),
-                "updated_at": (bot.updated_at.isoformat() if bot.updated_at else None),
-            }
-            bots[bot_id] = bot_dict
-
-        return bots
-
     def _convert_subtasks_to_dict(
         self, subtasks: List, bots: Dict[int, Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -1059,7 +904,7 @@ class TaskQueryMixin:
 
     def _add_group_chat_info_to_task(
         self, db: Session, task_id: int, task_dict: Dict[str, Any], user_id: int
-    ) -> None:
+    ) -> Dict[str, Any]:
         """Add group chat information to task dict using ResourceMember."""
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
@@ -1073,7 +918,8 @@ class TaskQueryMixin:
             )
             .all()
         )
-        return task_dict
+        # Delegate to the shared helper to populate group-chat metadata
+        return add_group_chat_info_to_task(task_dict, members, user_id)
 
     def get_task_skills(
         self, db: Session, *, task_id: int, user_id: int

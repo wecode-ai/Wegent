@@ -80,12 +80,16 @@ class TaskMemberService:
             return True
 
         # For linked group chats, check membership via the linked group
-        is_linked_member = self.is_member_via_linked_group(db, task_id, user_id)
+        # Get the role and check if it's not RestrictedObserver
+        linked_role = self.get_linked_group_role(db, task_id, user_id)
         logger.info(
-            f"[is_member] is_member_via_linked_group: task_id={task_id}, user_id={user_id}, result={is_linked_member}"
+            f"[is_member] get_linked_group_role: task_id={task_id}, user_id={user_id}, role={linked_role}"
         )
-        if is_linked_member:
-            return True
+        if linked_role is not None:
+            from app.schemas.namespace import GroupRole
+
+            if linked_role != GroupRole.RestrictedObserver:
+                return True
 
         # Check ResourceMember for approved status
         # Exclude share records (copied_resource_id > 0), only consider actual group chat members
@@ -517,6 +521,34 @@ class TaskMemberService:
         linked_group = self.get_linked_group(db, task_id)
         return bool(linked_group)
 
+    def get_linked_group_role(
+        self, db: Session, task_id: int, user_id: int
+    ) -> Optional[str]:
+        """Get the user's role in the linked group.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+
+        Returns:
+            GroupRole value if user is a member of the linked group, None otherwise
+        """
+        linked_group = self.get_linked_group(db, task_id)
+        logger.info(
+            f"[get_linked_group_role] task_id={task_id}, user_id={user_id}, linked_group={linked_group}"
+        )
+        if not linked_group:
+            return None
+
+        from app.services.group_permission import get_effective_role_in_group
+
+        role = get_effective_role_in_group(db, user_id, linked_group)
+        logger.info(
+            f"[get_linked_group_role] task_id={task_id}, user_id={user_id}, role={role}"
+        )
+        return role
+
     def is_member_via_linked_group(
         self, db: Session, task_id: int, user_id: int
     ) -> bool:
@@ -528,19 +560,12 @@ class TaskMemberService:
             user_id: User ID
 
         Returns:
-            True if user is a member of the linked group
+            True if user is a member of the linked group (and not RestrictedObserver)
         """
-        linked_group = self.get_linked_group(db, task_id)
-        logger.info(
-            f"[is_member_via_linked_group] task_id={task_id}, user_id={user_id}, linked_group={linked_group}"
-        )
-        if not linked_group:
-            return False
+        from app.schemas.namespace import GroupRole
 
-        from app.services.group_permission import get_effective_role_in_group
-
-        role = get_effective_role_in_group(db, user_id, linked_group)
-        result = role is not None
+        role = self.get_linked_group_role(db, task_id, user_id)
+        result = role is not None and role != GroupRole.RestrictedObserver
         logger.info(
             f"[is_member_via_linked_group] task_id={task_id}, user_id={user_id}, role={role}, result={result}"
         )

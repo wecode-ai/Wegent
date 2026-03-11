@@ -1481,7 +1481,6 @@ class KnowledgeService:
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.id.in_(bound_kb_ids),
-                    Kind.namespace == "default",
                     Kind.user_id
                     != user_id,  # Exclude user's own KBs (already included above)
                     Kind.is_active == True,
@@ -1675,10 +1674,9 @@ class KnowledgeService:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
         from app.models.task import TaskResource
-        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
         try:
-            # Optimization: Split into two separate queries to avoid OR condition
+            # Optimization: Split into separate queries to avoid OR condition
             # and expensive DISTINCT operation on large datasets
 
             # Query 1: Get KB IDs where user is the task owner
@@ -1717,6 +1715,26 @@ class KnowledgeService:
                 .all()
             )
 
+            # Query 3: Get KB IDs where user accesses group chats via linked namespace
+            # This handles users who are members of the linked group but not direct task members
+            linked_ns_kb_ids = (
+                db.query(TaskKnowledgeBaseBinding.knowledge_base_id)
+                .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
+                .join(
+                    ResourceMember,
+                    (ResourceMember.resource_id == TaskResource.linked_group_id)
+                    & (ResourceMember.resource_type == ResourceType.NAMESPACE.value)
+                    & (ResourceMember.user_id == user_id)
+                    & (ResourceMember.status == MemberStatus.APPROVED.value),
+                )
+                .filter(
+                    TaskResource.is_active == True,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_group_chat == True,
+                )
+                .all()
+            )
+
             # Merge results in Python using set for deduplication
             # This is much faster than SQL DISTINCT on large datasets with OR conditions
             kb_id_set = set()
@@ -1724,6 +1742,10 @@ class KnowledgeService:
                 kb_id_set.add(row[0])
             for row in member_kb_ids:
                 kb_id_set.add(row[0])
+            for row in linked_ns_kb_ids:
+                kb_id_set.add(row[0])
+
+            return list(kb_id_set)
 
             return list(kb_id_set)
         except ProgrammingError:

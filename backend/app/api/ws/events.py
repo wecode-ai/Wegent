@@ -594,6 +594,9 @@ class TaskJoinAck(BaseModel):
     subtasks: Optional[List[Dict[str, Any]]] = Field(
         None, description="Subtasks data for immediate message sync"
     )
+    has_more: Optional[bool] = Field(
+        None, description="Whether there are more subtasks available"
+    )
     error: Optional[str] = None
 
 
