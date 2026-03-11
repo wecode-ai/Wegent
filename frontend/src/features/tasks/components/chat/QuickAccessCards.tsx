@@ -4,11 +4,17 @@
 
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { ChevronLeftIcon, ChevronRightIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import { useEffect, useState, useCallback } from 'react'
+import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { Check, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import { QuickAccessTeam, Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Input } from '@/components/ui/input'
+import { Tag } from '@/components/ui/tag'
+import { cn } from '@/lib/utils'
+import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 
 // Container dimensions
@@ -20,6 +26,10 @@ const CARD_WIDTH = 154
 const CARD_GAP = 12
 const CARDS_PER_PAGE = 5
 const PAGE_SCROLL_AMOUNT = CARDS_PER_PAGE * CARD_WIDTH + (CARDS_PER_PAGE - 1) * CARD_GAP
+// Maximum number of team cards to display before showing "More" button
+const MAX_TEAM_CARDS = 4
+// Small button width (compact size for more/quick create buttons)
+const SMALL_BUTTON_WIDTH = 72
 
 interface QuickAccessCardsProps {
   teams: Team[]
@@ -51,7 +61,9 @@ export function QuickAccessCards({
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
   const [showWizard, setShowWizard] = useState(false)
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [morePopoverOpen, setMorePopoverOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const sharedBadgeStyle = getSharedBadgeStyle()
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
 
@@ -88,20 +100,20 @@ export function QuickAccessCards({
   const allDisplayTeams: DisplayTeam[] =
     quickAccessTeams.length > 0
       ? quickAccessTeams
-          .map(qa => {
-            const fullTeam = filteredTeams.find(t => t.id === qa.id)
-            if (fullTeam) {
-              return {
-                ...fullTeam,
-                is_system: qa.is_system,
-                recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
-              } as DisplayTeam
-            }
-            return null
-          })
-          .filter((t): t is DisplayTeam => t !== null)
+        .map(qa => {
+          const fullTeam = filteredTeams.find(t => t.id === qa.id)
+          if (fullTeam) {
+            return {
+              ...fullTeam,
+              is_system: qa.is_system,
+              recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
+            } as DisplayTeam
+          }
+          return null
+        })
+        .filter((t): t is DisplayTeam => t !== null)
       : // Fallback: show first teams from filtered list if no quick access configured
-        filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
+      filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
 
   // Filter out default team only (keep selected team visible with selection state)
   const displayTeams = allDisplayTeams.filter(t => {
@@ -109,41 +121,29 @@ export function QuickAccessCards({
     return true
   })
 
-  const needsPagination = displayTeams.length > CARDS_PER_PAGE
+  // Limit display teams to MAX_TEAM_CARDS (4 teams)
+  const teamCardsToShow = displayTeams.slice(0, MAX_TEAM_CARDS)
+  const hasMoreTeams = displayTeams.length > MAX_TEAM_CARDS
 
-  const checkScrollState = useCallback(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
+  // Filter teams by search query for the more popover
+  const filteredTeamsBySearch = displayTeams.filter(team =>
+    team.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
 
-    setCanScrollLeft(container.scrollLeft > 0)
-    setCanScrollRight(container.scrollLeft < container.scrollWidth - container.clientWidth - 1)
-  }, [])
-
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-
-    checkScrollState()
-    container.addEventListener('scroll', checkScrollState, { passive: true })
-    window.addEventListener('resize', checkScrollState)
-
-    return () => {
-      container.removeEventListener('scroll', checkScrollState)
-      window.removeEventListener('resize', checkScrollState)
+  const handleMorePopoverOpenChange = (newOpen: boolean) => {
+    setMorePopoverOpen(newOpen)
+    if (!newOpen) {
+      setSearchQuery('')
     }
-  }, [checkScrollState, displayTeams])
-
-  const scrollLeft = () => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    container.scrollBy({ left: -PAGE_SCROLL_AMOUNT, behavior: 'smooth' })
   }
 
-  const scrollRight = () => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    container.scrollBy({ left: PAGE_SCROLL_AMOUNT, behavior: 'smooth' })
+  const handleSelectTeamFromMore = (team: Team) => {
+    onTeamSelect(team)
+    setMorePopoverOpen(false)
+    setSearchQuery('')
   }
+
+  const needsPagination = displayTeams.length > CARDS_PER_PAGE
 
   const handleTeamClick = useCallback(
     (team: DisplayTeam) => {
@@ -230,10 +230,9 @@ export function QuickAccessCards({
         className={`
           group relative flex flex-col justify-center
           cursor-pointer transition-all duration-200
-          ${
-            isSelected
-              ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
-              : 'border border-border bg-base'
+          ${isSelected
+            ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
+            : 'border border-border bg-base'
           }
           ${isClicked ? 'clicking-card' : ''}
           ${isClicked ? 'pointer-events-none' : ''}
@@ -250,9 +249,8 @@ export function QuickAccessCards({
       >
         <div className="mb-1 w-full">
           <span
-            className={`block text-[15px] font-semibold leading-5 truncate ${
-              isSelected ? 'text-primary' : 'text-text-primary'
-            }`}
+            className={`block text-[15px] font-semibold leading-5 truncate ${isSelected ? 'text-primary' : 'text-text-primary'
+              }`}
           >
             {team.name}
           </span>
@@ -271,7 +269,7 @@ export function QuickAccessCards({
         onClick={() => setShowWizard(true)}
         className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-dashed border-border bg-base hover:border-primary hover:bg-primary/5 hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]"
         style={{
-          width: CARD_WIDTH,
+          width: SMALL_BUTTON_WIDTH,
           height: 78,
           padding: '8px 12px',
           borderRadius: 20,
@@ -279,11 +277,127 @@ export function QuickAccessCards({
           flexGrow: 0,
         }}
       >
-        <SparklesIcon className="w-6 h-6 text-primary mb-1 transition-colors" />
-        <span className="text-xs font-medium text-text-primary group-hover:text-primary transition-colors">
-          {t('wizard:quick_create_agent')}
+        <SparklesIcon className="w-4 h-4 text-primary mb-1 transition-colors" />
+        <span className="text-[10px] font-medium text-text-primary group-hover:text-primary transition-colors text-center leading-tight">
+          {t('wizard:wizard_button')}
         </span>
       </div>
+    )
+  }
+
+  const renderMoreButton = () => {
+    if (!hasMoreTeams) return null
+
+    return (
+      <Popover open={morePopoverOpen} onOpenChange={handleMorePopoverOpenChange}>
+        <PopoverTrigger asChild>
+          <div
+            className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-border bg-base hover:border-border-strong hover:bg-hover hover:shadow-sm"
+            style={{
+              width: SMALL_BUTTON_WIDTH,
+              height: 78,
+              padding: '8px 12px',
+              borderRadius: 20,
+              flexShrink: 0,
+              flexGrow: 0,
+            }}
+          >
+            <ChevronDownIcon className="w-4 h-4 text-text-muted group-hover:text-text-primary mb-1 transition-colors" />
+            <span className="text-[10px] font-medium text-text-muted group-hover:text-text-primary transition-colors text-center leading-tight">
+              {t('common:teams.more')}
+            </span>
+          </div>
+        </PopoverTrigger>
+
+        <PopoverContent
+          align="start"
+          side="top"
+          className="w-[280px] p-2 max-h-[320px] overflow-hidden flex flex-col"
+        >
+          <div className="px-2 pb-2 text-sm font-medium text-text-primary">
+            {t('common:teams.select_team')}
+          </div>
+
+          {/* Search input */}
+          <div className="px-2 pb-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+              <Input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder={t('common:teams.search_team')}
+                className="h-8 pl-7 text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Teams list */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {filteredTeamsBySearch.length === 0 ? (
+              <div className="py-4 text-center text-sm text-text-muted">
+                {searchQuery ? t('common:teams.no_match') : t('common:teams.no_match')}
+              </div>
+            ) : (
+              filteredTeamsBySearch.map(team => {
+                const isSelected = selectedTeam?.id === team.id
+                const isSharedTeam = team.share_status === 2 && team.user?.user_name
+                const isGroupTeam =
+                  team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
+
+                return (
+                  <div
+                    key={team.id}
+                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-primary/10' : 'hover:bg-hover'
+                      }`}
+                    onClick={() => handleSelectTeamFromMore(team)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        handleSelectTeamFromMore(team)
+                      }
+                    }}
+                  >
+                    <div
+                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${isSelected
+                        ? 'bg-primary border-primary text-white'
+                        : 'border-border bg-background'
+                        }`}
+                    >
+                      {isSelected && <Check className="h-3 w-3" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className="text-sm text-text-primary truncate flex-1 min-w-0"
+                          title={team.name}
+                        >
+                          {team.name}
+                        </span>
+                        {isGroupTeam && (
+                          <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
+                            {team.namespace}
+                          </Tag>
+                        )}
+                        {isSharedTeam && (
+                          <Tag
+                            className="text-xs !m-0 flex-shrink-0"
+                            variant="default"
+                            style={sharedBadgeStyle}
+                          >
+                            {t('common:teams.shared_by', { author: team.user?.user_name })}
+                          </Tag>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
     )
   }
 
@@ -319,68 +433,14 @@ export function QuickAccessCards({
             pulse-glow 0.3s ease-out,
             scale-bounce 0.3s ease-out;
         }
-
-        .hide-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-
-        .hide-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
       `}</style>
 
-      <div className="flex flex-col items-center mt-6" data-tour="quick-access-cards">
-        <div
-          className="relative flex items-center justify-center rounded-lg bg-base"
-          style={{
-            width: CONTAINER_WIDTH,
-            height: CONTAINER_HEIGHT,
-          }}
-        >
-          {needsPagination && canScrollLeft && (
-            <button
-              onClick={scrollLeft}
-              className="absolute left-0 z-10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity bg-gradient-to-r from-transparent via-base/80 to-base"
-              style={{
-                width: 36,
-                height: 86,
-                borderRadius: 10,
-              }}
-              aria-label="Scroll left"
-            >
-              <ChevronLeftIcon className="w-5 h-5 text-text-muted" />
-            </button>
-          )}
-
-          <div
-            ref={scrollContainerRef}
-            className="flex items-center gap-3 overflow-x-auto hide-scrollbar"
-            style={{
-              maxWidth: CARDS_PER_PAGE * CARD_WIDTH + (CARDS_PER_PAGE - 1) * CARD_GAP,
-            }}
-          >
-            {renderQuickCreateCard()}
-            {displayTeams.map(team => (
-              <div key={team.id}>{renderTeamCard(team)}</div>
-            ))}
-          </div>
-
-          {needsPagination && canScrollRight && (
-            <button
-              onClick={scrollRight}
-              className="absolute right-0 z-10 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity bg-gradient-to-l from-transparent via-base/80 to-base"
-              style={{
-                width: 36,
-                height: 86,
-                borderRadius: 10,
-              }}
-              aria-label="Scroll right"
-            >
-              <ChevronRightIcon className="w-5 h-5 text-text-muted" />
-            </button>
-          )}
-        </div>
+      <div className="w-full max-w-[820px] mx-auto flex flex-wrap items-center justify-start gap-3 mt-6" data-tour="quick-access-cards">
+        {teamCardsToShow.map(team => (
+          <div key={team.id}>{renderTeamCard(team)}</div>
+        ))}
+        {renderMoreButton()}
+        {renderQuickCreateCard()}
       </div>
 
       {/* Team Creation Wizard Dialog */}
