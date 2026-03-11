@@ -111,6 +111,15 @@ export function DeviceSelectorTab({
     }
   }
 
+  const isDeviceAtCapacity = (slotUsed: number, slotMax: number) => {
+    // `0` means unlimited capacity for local devices.
+    return slotMax > 0 && slotUsed >= slotMax
+  }
+
+  const formatSlotUsage = (slotUsed: number, slotMax: number) => {
+    return slotMax > 0 ? `${slotUsed}/${slotMax}` : `${slotUsed}/∞`
+  }
+
   // Handle tab switch - only updates device selection state, no page navigation
   const handleTabSwitch = (tab: DeviceTabType) => {
     if (disabled || hasMessages || isLoading) return
@@ -248,7 +257,7 @@ export function DeviceSelectorTab({
                   {t('local_devices_section')}
                 </div>
                 {localDevices.map(device => {
-                  const isFull = device.slot_used >= device.slot_max
+                  const isFull = isDeviceAtCapacity(device.slot_used, device.slot_max)
                   const isBusy = device.status === 'busy'
                   const isDisabled = isFull
                   const isSelected = selectedDeviceId === device.device_id
@@ -256,7 +265,7 @@ export function DeviceSelectorTab({
                   return (
                     <DropdownMenuItem
                       key={device.device_id}
-                      onClick={() => {
+                      onSelect={() => {
                         if (!isDisabled) {
                           handleDeviceSelect(device.device_id)
                           setActiveTab('device')
@@ -264,7 +273,7 @@ export function DeviceSelectorTab({
                       }}
                       disabled={isDisabled}
                       className={cn(
-                        'flex items-center gap-2 cursor-pointer',
+                        'group flex items-center gap-2 cursor-pointer',
                         isSelected && 'bg-accent',
                         isDisabled && 'opacity-50 cursor-not-allowed'
                       )}
@@ -279,7 +288,7 @@ export function DeviceSelectorTab({
                           isFull ? 'text-red-500' : 'text-text-muted'
                         )}
                       >
-                        {device.slot_used}/{device.slot_max}
+                        {formatSlotUsage(device.slot_used, device.slot_max)}
                       </span>
 
                       {/* Default indicator */}
@@ -287,6 +296,7 @@ export function DeviceSelectorTab({
                         <Star className="w-3 h-3 text-yellow-500 fill-yellow-500 flex-shrink-0" />
                       ) : (
                         <button
+                          type="button"
                           onClick={e => handleSetDefault(e, device.device_id)}
                           className="opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 p-1"
                           title={t('set_as_default')}
@@ -328,7 +338,7 @@ export function DeviceSelectorTab({
                   {t('cloud_devices_section')}
                 </div>
                 {cloudDevices.map(device => {
-                  const isFull = device.slot_used >= device.slot_max
+                  const isFull = isDeviceAtCapacity(device.slot_used, device.slot_max)
                   const isBusy = device.status === 'busy'
                   const isDisabled = isFull
                   const isSelected = selectedDeviceId === device.device_id
@@ -336,7 +346,7 @@ export function DeviceSelectorTab({
                   return (
                     <DropdownMenuItem
                       key={device.device_id}
-                      onClick={() => {
+                      onSelect={() => {
                         if (!isDisabled) {
                           handleDeviceSelect(device.device_id)
                           setActiveTab('device')
@@ -344,7 +354,7 @@ export function DeviceSelectorTab({
                       }}
                       disabled={isDisabled}
                       className={cn(
-                        'flex items-center gap-2 cursor-pointer',
+                        'group flex items-center gap-2 cursor-pointer',
                         isSelected && 'bg-accent',
                         isDisabled && 'opacity-50 cursor-not-allowed'
                       )}
@@ -359,7 +369,7 @@ export function DeviceSelectorTab({
                           isFull ? 'text-red-500' : 'text-text-muted'
                         )}
                       >
-                        {device.slot_used}/{device.slot_max}
+                        {formatSlotUsage(device.slot_used, device.slot_max)}
                       </span>
 
                       {/* Default indicator */}
@@ -367,6 +377,7 @@ export function DeviceSelectorTab({
                         <Star className="w-3 h-3 text-yellow-500 fill-yellow-500 flex-shrink-0" />
                       ) : (
                         <button
+                          type="button"
                           onClick={e => handleSetDefault(e, device.device_id)}
                           className="opacity-0 group-hover:opacity-100 hover:opacity-100 focus:opacity-100 p-1"
                           title={t('set_as_default')}
@@ -405,21 +416,6 @@ export function DeviceSelectorTab({
               <div className="px-3 py-2 text-sm text-text-muted text-center">
                 {t('no_devices_available')}
               </div>
-            )}
-
-            {/* Clear default option */}
-            {selectedDeviceId && devices.some(d => d.is_default) && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() =>
-                    handleSetDefault({ stopPropagation: () => {} } as React.MouseEvent, '')
-                  }
-                  className="text-xs text-text-muted"
-                >
-                  {t('clear_default') || '清除默认设备'}
-                </DropdownMenuItem>
-              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
