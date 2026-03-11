@@ -607,10 +607,14 @@ def _add_subscription_labels_to_task(
     task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
     task_crd.metadata.labels[LABEL_BACKGROUND_EXECUTION_ID] = str(execution_id)
     task.json = task_crd.model_dump(mode="json")
+
+    # Set is_active = 2 for subscription tasks
+    task.is_active = 2
+
     db.commit()
     logger.info(
         f"[_add_subscription_labels_to_task] After: task_id={task.id}, "
-        f"labels={task_crd.metadata.labels}"
+        f"labels={task_crd.metadata.labels}, is_active={task.is_active}"
     )
 
 
