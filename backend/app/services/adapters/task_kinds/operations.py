@@ -74,7 +74,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -393,7 +393,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -501,7 +501,7 @@ class TaskOperationsMixin:
                 TaskResource.kind == "Workspace",
                 TaskResource.name == task_crd.spec.workspaceRef.name,
                 TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -535,7 +535,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -608,7 +608,7 @@ class TaskOperationsMixin:
             task_crd.status.updatedAt = datetime.now()
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
         task.updated_at = datetime.now()
-        task.is_active = False
+        task.is_active = 0
         flag_modified(task, "json")
 
         # Clean up long-term memories associated with this task (fire-and-forget)
@@ -629,7 +629,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -714,7 +714,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -867,7 +867,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )
@@ -1197,7 +1197,7 @@ class TaskOperationsMixin:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
+                TaskResource.is_active == 1,
             )
             .first()
         )

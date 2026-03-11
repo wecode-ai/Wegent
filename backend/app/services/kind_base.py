@@ -503,7 +503,7 @@ class TaskResourceBaseService(KindBaseService):
                 )
                 raise NotFoundException(f"{self.kind} '{name}' not found")
 
-            db_resource.is_active = False
+            db_resource.is_active = 0
             db_resource.updated_at = datetime.now()
 
             # Perform pre-delete side effects
