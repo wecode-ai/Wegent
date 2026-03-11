@@ -48,6 +48,8 @@ export interface ChatInputControlsProps {
   /** Available teams for team selector */
   teams?: Team[]
   onTeamChange?: (team: Team) => void
+  /** Callback to refresh teams list after creation */
+  onTeamsRefresh?: () => Promise<void>
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
   forceOverride: boolean
@@ -174,6 +176,7 @@ export function ChatInputControls({
   selectedTeam,
   teams = [],
   onTeamChange: _onTeamChange,
+  onTeamsRefresh,
   selectedModel,
   setSelectedModel,
   forceOverride,
@@ -410,7 +413,7 @@ export function ChatInputControls({
                 selectedModel={selectedVideoModel ?? null}
                 setSelectedModel={model => model && onVideoModelChange(model)}
                 forceOverride={false}
-                setForceOverride={() => { }}
+                setForceOverride={() => {}}
                 selectedTeam={null}
                 disabled={isLoading || isStreaming}
                 isLoading={isVideoModelsLoading}
@@ -445,7 +448,7 @@ export function ChatInputControls({
                 selectedModel={selectedImageModel ?? null}
                 setSelectedModel={model => model && onImageModelChange(model)}
                 forceOverride={false}
-                setForceOverride={() => { }}
+                setForceOverride={() => {}}
                 selectedTeam={null}
                 disabled={isLoading || isStreaming}
                 isLoading={isImageModelsLoading}
@@ -466,7 +469,11 @@ export function ChatInputControls({
 
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
-          <div className={hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'}>
+          <div
+            className={
+              hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'
+            }
+          >
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
@@ -489,8 +496,9 @@ export function ChatInputControls({
                 teams={teams}
                 disabled={isLoading || isStreaming}
                 taskDetail={selectedTaskDetail}
-                hideSettingsLink={true}
+                hideSettingsLink={false}
                 currentMode={taskType}
+                onTeamsRefresh={onTeamsRefresh}
               />
             )}
 

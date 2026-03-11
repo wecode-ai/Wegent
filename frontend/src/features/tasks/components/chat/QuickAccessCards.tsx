@@ -9,6 +9,7 @@ import { ChevronLeftIcon, ChevronRightIcon, SparklesIcon } from '@heroicons/reac
 import { userApis } from '@/apis/user'
 import { QuickAccessTeam, Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 
 // Container dimensions
 const CONTAINER_WIDTH = 880
@@ -45,10 +46,11 @@ export function QuickAccessCards({
   showWizardButton: _showWizardButton = false,
   defaultTeam,
 }: QuickAccessCardsProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation(['common', 'wizard'])
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
+  const [showWizard, setShowWizard] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
@@ -158,6 +160,17 @@ export function QuickAccessCards({
     [onTeamSelect]
   )
 
+  const handleWizardSuccess = async (teamId: number, _teamName: string) => {
+    setShowWizard(false)
+    if (_onRefreshTeams) {
+      const refreshedTeams = await _onRefreshTeams()
+      const newTeam = refreshedTeams.find(t => t.id === teamId)
+      if (newTeam) {
+        onTeamSelect(newTeam)
+      }
+    }
+  }
+
   if (isLoading || isQuickAccessLoading) {
     return (
       <div className="flex flex-col items-center mt-6 w-full">
@@ -209,7 +222,7 @@ export function QuickAccessCards({
   const renderTeamCard = (team: DisplayTeam) => {
     const isSelected = selectedTeam?.id === team.id
     const isClicked = clickedTeamId === team.id
-    const description = team.description || t('teams.no_description')
+    const description = team.description || t('common:teams.no_description')
 
     return (
       <div
@@ -246,6 +259,30 @@ export function QuickAccessCards({
         </div>
 
         <p className="text-xs text-text-muted leading-[18px] line-clamp-1">{description}</p>
+      </div>
+    )
+  }
+
+  const renderQuickCreateCard = () => {
+    if (!_showWizardButton) return null
+
+    return (
+      <div
+        onClick={() => setShowWizard(true)}
+        className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-dashed border-border bg-base hover:border-primary hover:bg-primary/5 hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]"
+        style={{
+          width: CARD_WIDTH,
+          height: 78,
+          padding: '8px 12px',
+          borderRadius: 20,
+          flexShrink: 0,
+          flexGrow: 0,
+        }}
+      >
+        <SparklesIcon className="w-6 h-6 text-primary mb-1 transition-colors" />
+        <span className="text-xs font-medium text-text-primary group-hover:text-primary transition-colors">
+          {t('wizard:quick_create_agent')}
+        </span>
       </div>
     )
   }
@@ -323,6 +360,7 @@ export function QuickAccessCards({
               maxWidth: CARDS_PER_PAGE * CARD_WIDTH + (CARDS_PER_PAGE - 1) * CARD_GAP,
             }}
           >
+            {renderQuickCreateCard()}
             {displayTeams.map(team => (
               <div key={team.id}>{renderTeamCard(team)}</div>
             ))}
@@ -344,6 +382,14 @@ export function QuickAccessCards({
           )}
         </div>
       </div>
+
+      {/* Team Creation Wizard Dialog */}
+      <TeamCreationWizard
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+        onSuccess={handleWizardSuccess}
+        scope="personal"
+      />
     </>
   )
 }

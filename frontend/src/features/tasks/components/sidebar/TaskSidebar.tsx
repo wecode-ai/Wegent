@@ -92,7 +92,7 @@ export default function TaskSidebar({
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Use external state for search dialog (controlled by parent page)
-  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => { })
+  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {})
 
   // Group chats collapse/expand state
   const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false)
@@ -329,10 +329,11 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigationClick(btn.path, btn.isActive)}
-                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-all duration-200 ${btn.isActive
-                    ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
-                    : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
-                    }`}
+                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-all duration-200 ${
+                    btn.isActive
+                      ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
+                      : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
+                  }`}
                   size="sm"
                 >
                   <span className="flex items-center">
@@ -751,9 +752,9 @@ function TaskHistorySection({
                     {isGroupChatsExpanded
                       ? t('common:tasks.group_chats_collapse')
                       : t('common:tasks.group_chats_expand', {
-                        count: collapsedReadCount,
-                        suffix: '',
-                      })}
+                          count: collapsedReadCount,
+                          suffix: '',
+                        })}
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -769,7 +770,9 @@ function TaskHistorySection({
 
       {/* Projects Section - displayed between group chats and history */}
       {!isCollapsed && !isSearchResult && (
-        <div className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}>
+        <div
+          className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}
+        >
           <ProjectSection onTaskSelect={onTaskSelect} />
         </div>
       )}
@@ -827,8 +830,8 @@ function TaskHistorySection({
                       <p>
                         {shortcutDisplayText
                           ? t('common:tasks.search_hint_with_shortcut', {
-                            shortcut: shortcutDisplayText,
-                          })
+                              shortcut: shortcutDisplayText,
+                            })
                           : t('common:tasks.search_placeholder_chat')}
                       </p>
                     </TooltipContent>

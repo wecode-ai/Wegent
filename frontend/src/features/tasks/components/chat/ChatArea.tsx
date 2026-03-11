@@ -174,15 +174,15 @@ function ChatAreaContent({
   // Derive available options and defaults from selected video model's config
   const videoConfig = videoModelSelection.selectedModel?.config?.videoConfig as
     | {
-      resolution?: string
-      ratio?: string
-      duration?: number
-      capabilities?: {
-        aspect_ratios?: { value: string }[]
-        resolutions?: { label: string }[]
-        durations_sec?: number[]
+        resolution?: string
+        ratio?: string
+        duration?: number
+        capabilities?: {
+          aspect_ratios?: { value: string }[]
+          resolutions?: { label: string }[]
+          durations_sec?: number[]
+        }
       }
-    }
     | undefined
   const videoCapabilities = videoConfig?.capabilities
 
@@ -901,6 +901,11 @@ function ChatAreaContent({
     teams: teams,
     externalApiParams: chatState.externalApiParams,
     onTeamChange: chatState.handleTeamChange,
+    onTeamsRefresh: async () => {
+      if (onRefreshTeams) {
+        await onRefreshTeams()
+      }
+    },
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
     // Only enable restore when default team exists

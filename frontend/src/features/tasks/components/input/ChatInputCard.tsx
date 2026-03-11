@@ -228,15 +228,15 @@ export function ChatInputCard({
         onDrop={onDrop}
         style={{ minHeight: '146px' }}
       >
-          {isDragging && (
-            <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
-              <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
-                <Upload className="h-8 w-8 text-primary" />
-              </div>
-              <p className="text-lg font-medium text-primary">释放以上传文件</p>
-              <p className="text-sm text-text-muted mt-1">支持 PDF, Word, TXT, Markdown 等格式</p>
+        {isDragging && (
+          <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
+            <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
+              <Upload className="h-8 w-8 text-primary" />
             </div>
-          )}
+            <p className="text-lg font-medium text-primary">释放以上传文件</p>
+            <p className="text-sm text-text-muted mt-1">支持 PDF, Word, TXT, Markdown 等格式</p>
+          </div>
+        )}
 
         {/* Unified Badge Display - Knowledge bases and attachments */}
         <InputBadgeDisplay

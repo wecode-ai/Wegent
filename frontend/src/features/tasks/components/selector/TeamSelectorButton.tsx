@@ -7,6 +7,7 @@
  *
  * Simplified team selector for chat input controls.
  * Always displays "智能体" label with AgentIcon.
+ * Includes quick create functionality with integrated TeamCreationWizard.
  */
 
 'use client'
@@ -14,7 +15,7 @@
 import React, { useState } from 'react'
 import { Check, Search } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { SparklesIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -26,6 +27,7 @@ import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import type { Team, TaskDetail, TaskType } from '@/types/api'
+import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 
 interface TeamSelectorButtonProps {
   selectedTeam: Team | null
@@ -36,6 +38,8 @@ interface TeamSelectorButtonProps {
   hideSettingsLink?: boolean
   /** Current mode for filtering teams by bind_mode */
   currentMode?: TaskType
+  /** Callback to refresh teams list after creation */
+  onTeamsRefresh?: () => Promise<void>
 }
 
 export default function TeamSelectorButton({
@@ -45,11 +49,13 @@ export default function TeamSelectorButton({
   disabled,
   hideSettingsLink = false,
   currentMode = 'chat',
+  onTeamsRefresh,
 }: TeamSelectorButtonProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'wizard'])
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [wizardOpen, setWizardOpen] = useState(false)
   const sharedBadgeStyle = getSharedBadgeStyle()
 
   // Filter teams by bind_mode based on current mode
@@ -84,6 +90,24 @@ export default function TeamSelectorButton({
     setOpen(newOpen)
     if (!newOpen) {
       setSearchQuery('')
+    }
+  }
+
+  const handleCreateClick = () => {
+    setOpen(false)
+    setWizardOpen(true)
+  }
+
+  const handleWizardSuccess = async (teamId: number, teamName: string) => {
+    setWizardOpen(false)
+    // Refresh teams list
+    if (onTeamsRefresh) {
+      await onTeamsRefresh()
+    }
+    // Find and select the newly created team
+    const newTeam = teams.find(t => t.id === teamId)
+    if (newTeam) {
+      setSelectedTeam(newTeam)
     }
   }
 
@@ -200,38 +224,74 @@ export default function TeamSelectorButton({
             )}
           </div>
 
-          {/* Footer with settings link */}
+          {/* Footer with create and settings buttons */}
           {!hideSettingsLink && (
-            <div
-              className={cn(
-                'border-t border-primary/10 bg-base cursor-pointer group mt-2',
-                'flex items-center space-x-2 text-xs text-text-secondary',
-                'hover:bg-hover active:bg-hover transition-colors duration-150',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full',
-                'px-2.5 py-2'
-              )}
-              onClick={() => {
-                router.push(paths.settings.team.getHref())
-                setOpen(false)
-              }}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  router.push(paths.settings.team.getHref())
+            <div className="border-t border-primary/10 bg-base mt-2 flex items-center gap-1 p-1">
+              {/* Quick Create Button - Left */}
+              <div
+                className={cn(
+                  'cursor-pointer group flex-1',
+                  'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',
+                  'hover:bg-hover active:bg-hover transition-colors duration-150',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                  'px-2 py-2 rounded-md'
+                )}
+                onClick={handleCreateClick}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleCreateClick()
+                  }
+                }}
+              >
+                <SparklesIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('wizard:wizard_button')}
+                </span>
+              </div>
+
+              {/* Settings Button - Right */}
+              <div
+                className={cn(
+                  'cursor-pointer group flex-1',
+                  'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',
+                  'hover:bg-hover active:bg-hover transition-colors duration-150',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                  'px-2 py-2 rounded-md'
+                )}
+                onClick={() => {
                   setOpen(false)
-                }
-              }}
-            >
-              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-              <span className="font-medium group-hover:text-text-primary">
-                {t('common:teams.manage')}
-              </span>
+                  router.push(paths.settings.team.getHref())
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    setOpen(false)
+                    router.push(paths.settings.team.getHref())
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('common:teams.manage')}
+                </span>
+              </div>
             </div>
           )}
         </PopoverContent>
       </Popover>
+
+      {/* Team Creation Wizard Dialog */}
+      <TeamCreationWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSuccess={handleWizardSuccess}
+        scope="personal"
+      />
     </TooltipProvider>
   )
 }
