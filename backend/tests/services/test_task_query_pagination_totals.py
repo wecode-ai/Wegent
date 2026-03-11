@@ -57,16 +57,14 @@ class TestTaskQueryPaginationTotals:
     ):
         """Test that total count is preserved even when page is empty."""
         # Mock for get_accessible_task_ids_and_total (2 calls: count + ids)
-        # Mock for all_ids_sql (1 call)
-        # Total: 3 execute calls needed
+        # No more all_ids_sql call - optimized version only uses get_accessible_task_ids_and_total
         mock_db.execute.side_effect = [
             _mock_execute_result(
                 scalar_value=12
             ),  # 1. count in get_accessible_task_ids_and_total
             _mock_execute_result(
                 rows=[]
-            ),  # 2. ids in get_accessible_task_ids_and_total
-            _mock_execute_result(rows=[]),  # 3. all_ids_sql
+            ),  # 2. ids in get_accessible_task_ids_and_total (empty)
         ]
 
         items, total = task_service.get_user_tasks_with_pagination(
@@ -74,23 +72,19 @@ class TestTaskQueryPaginationTotals:
         )
 
         assert items == []
-        assert (
-            total == 0
-        )  # When no filtered tasks, total is recalculated from filtered results
+        assert total == 12  # Total from get_accessible_task_ids_and_total is preserved
 
     def test_get_user_tasks_lite_keeps_total_on_empty_page(self, task_service, mock_db):
         """Test that total count is preserved even when page is empty."""
         # Mock for get_accessible_task_ids_and_total (2 calls: count + ids)
-        # Mock for all_ids_sql (1 call)
-        # Total: 3 execute calls needed
+        # No more all_ids_sql call - optimized version only uses get_accessible_task_ids_and_total
         mock_db.execute.side_effect = [
             _mock_execute_result(
                 scalar_value=8
             ),  # 1. count in get_accessible_task_ids_and_total
             _mock_execute_result(
                 rows=[]
-            ),  # 2. ids in get_accessible_task_ids_and_total
-            _mock_execute_result(rows=[]),  # 3. all_ids_sql
+            ),  # 2. ids in get_accessible_task_ids_and_total (empty)
         ]
 
         items, total = task_service.get_user_tasks_lite(
@@ -98,9 +92,7 @@ class TestTaskQueryPaginationTotals:
         )
 
         assert items == []
-        assert (
-            total == 0
-        )  # When no filtered tasks, total is recalculated from filtered results
+        assert total == 8  # Total from get_accessible_task_ids_and_total is preserved
 
     def test_get_user_tasks_with_pagination_returns_tasks_with_total(
         self, task_service, mock_db
@@ -114,14 +106,13 @@ class TestTaskQueryPaginationTotals:
         mock_task.created_at = Mock()
         mock_task.updated_at = Mock()
 
-        # Mock execute results - need to provide enough results for all queries
+        # Mock execute results - only 2 calls needed now (count + ids)
         mock_db.execute.side_effect = [
             _mock_execute_result(scalar_value=5),  # 1. count
             _mock_execute_result(rows=[(1, Mock())]),  # 2. ids
-            _mock_execute_result(rows=[(1, task_json)]),  # 3. all_ids_sql
         ]
 
-        # Mock query for loading tasks
+        # Mock query for loading tasks via load_tasks_by_ids
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
 
         with patch(
@@ -143,7 +134,7 @@ class TestTaskQueryPaginationTotals:
             )
 
         assert len(items) == 1
-        assert total == 1  # Total is recalculated from filtered results
+        assert total == 5  # Total from get_accessible_task_ids_and_total
 
     def test_get_user_tasks_lite_returns_tasks_with_total(self, task_service, mock_db):
         """Test that lite tasks are returned with correct total."""
@@ -155,39 +146,14 @@ class TestTaskQueryPaginationTotals:
         mock_task.created_at = Mock()
         mock_task.updated_at = Mock()
 
-        # Mock execute results
+        # Mock execute results - only 2 calls needed now (count + ids)
         mock_db.execute.side_effect = [
             _mock_execute_result(scalar_value=5),  # 1. count
             _mock_execute_result(rows=[(1, Mock())]),  # 2. ids
-            _mock_execute_result(rows=[(1, task_json)]),  # 3. all_ids_sql
         ]
 
-        # Mock query for loading tasks
+        # Mock query for loading tasks via load_tasks_by_ids
         mock_db.query.return_value.filter.return_value.all.return_value = [mock_task]
-
-        # Mock the member count query (db.query().filter().group_by().all())
-        mock_member_query = Mock()
-        mock_member_query.filter.return_value = mock_member_query
-        mock_member_query.group_by.return_value = mock_member_query
-        mock_member_query.all.return_value = []  # No members
-
-        # We need to handle multiple query calls:
-        # 1. TaskResource query (returns [mock_task])
-        # 2. ResourceMember query (returns [])
-        call_count = [0]
-
-        def mock_query_side_effect(*args):
-            call_count[0] += 1
-            # First call is for TaskResource
-            if call_count[0] == 1:
-                mock_q = Mock()
-                mock_q.filter.return_value = mock_q
-                mock_q.all.return_value = [mock_task]
-                return mock_q
-            # Subsequent calls are for ResourceMember
-            return mock_member_query
-
-        mock_db.query.side_effect = mock_query_side_effect
 
         with patch(
             "app.services.adapters.task_kinds.queries.build_lite_task_list",
@@ -198,5 +164,5 @@ class TestTaskQueryPaginationTotals:
             )
 
         assert len(items) == 1
-        assert total == 1  # Total is recalculated from filtered results
+        assert total == 5  # Total from get_accessible_task_ids_and_total
         mock_build.assert_called_once()

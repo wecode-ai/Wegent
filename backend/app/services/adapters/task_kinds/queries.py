@@ -121,33 +121,23 @@ class TaskQueryMixin:
         DELETE status tasks are filtered in application layer.
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Get all task IDs where user is owner OR member (using resource_members)
-        # Exclude system namespace tasks (background tasks)
-        # First, get all candidate tasks without pagination
-        all_ids_sql = text(
-            """
-            SELECT k.id, k.json
-            FROM tasks k
-            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-            ORDER BY k.created_at DESC
-        """
-        )
-
+        # Step 1: Get paginated task IDs and total count
+        # get_accessible_task_ids_and_total returns IDs with extra_limit for filtering
         task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
-        all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
 
-        # Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
-        filtered_task_ids = []
-        for row in all_tasks_result:
-            task_id, task_json = row
+        if not task_ids:
+            return [], total
+
+        # Step 2: Load task data for the IDs (includes json for filtering)
+        tasks = load_tasks_by_ids(db, task_ids)
+
+        # Step 3: Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
+        filtered_tasks = []
+        for task in tasks:
             try:
-                task_crd = Task.model_validate(task_json)
+                task_crd = Task.model_validate(task.json)
             except Exception:
                 continue
 
@@ -159,30 +149,27 @@ class TaskQueryMixin:
             if is_non_interacted_subscription_task(task_crd):
                 continue
 
-            filtered_task_ids.append(task_id)
+            filtered_tasks.append(task)
 
-        # Calculate total from filtered results
-        total = len(filtered_task_ids)
+        # Step 4: Restore order and apply pagination
+        # task_ids is already ordered by created_at DESC from get_accessible_task_ids_and_total
+        id_to_task = {t.id: t for t in filtered_tasks}
+        ordered_tasks = restore_task_order(task_ids, id_to_task, limit=len(task_ids))
 
-        # Apply pagination to the filtered ID list
-        paginated_ids = filtered_task_ids[skip : skip + limit]
+        # Apply pagination to filtered results
+        paginated_tasks = (
+            ordered_tasks[skip : skip + limit]
+            if skip > 0 or len(ordered_tasks) > limit
+            else ordered_tasks
+        )
 
-        if not paginated_ids:
+        if not paginated_tasks:
             return [], total
 
-        # Load full task data for paginated IDs
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
-
-        # Maintain order
-        id_to_task = {t.id: t for t in tasks}
-        filtered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
-
-        if not filtered_tasks:
-            return [], total
-
-        related_data_batch = get_tasks_related_data_batch(db, filtered_tasks, user_id)
+        # Step 5: Build result with related data
+        related_data_batch = get_tasks_related_data_batch(db, paginated_tasks, user_id)
         result = []
-        for task in filtered_tasks:
+        for task in paginated_tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
             result.append(
@@ -200,32 +187,23 @@ class TaskQueryMixin:
         Only returns essential fields without JOIN queries for better performance.
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Get all task IDs where user is owner OR member (using resource_members)
-        # Exclude system namespace tasks (background tasks)
-        all_ids_sql = text(
-            """
-            SELECT k.id, k.json, k.created_at
-            FROM tasks k
-            LEFT JOIN resource_members tm ON k.id = tm.resource_id AND tm.resource_type = 'Task' AND tm.user_id = :user_id AND tm.status = 'approved'
-            WHERE k.kind = 'Task'
-            AND k.is_active = true
-            AND k.namespace != 'system'
-            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-            ORDER BY k.created_at DESC
-        """
-        )
-
+        # Step 1: Get paginated task IDs and total count
+        # get_accessible_task_ids_and_total returns IDs with extra_limit for filtering
         task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
-        all_tasks_result = db.execute(all_ids_sql, {"user_id": user_id}).fetchall()
 
-        # Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
-        filtered_task_ids = []
-        for row in all_tasks_result:
-            task_id, task_json, _created_at = row
+        if not task_ids:
+            return [], total
+
+        # Step 2: Load task data for the IDs (includes json for filtering)
+        tasks = load_tasks_by_ids(db, task_ids)
+
+        # Step 3: Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
+        filtered_tasks = []
+        for task in tasks:
             try:
-                task_crd = Task.model_validate(task_json)
+                task_crd = Task.model_validate(task.json)
             except Exception:
                 continue
 
@@ -237,48 +215,25 @@ class TaskQueryMixin:
             if is_non_interacted_subscription_task(task_crd):
                 continue
 
-            filtered_task_ids.append(task_id)
+            filtered_tasks.append(task)
 
-        # Calculate total from filtered results
-        total = len(filtered_task_ids)
+        # Step 4: Restore order and apply pagination
+        # task_ids is already ordered by created_at DESC from get_accessible_task_ids_and_total
+        id_to_task = {t.id: t for t in filtered_tasks}
+        ordered_tasks = restore_task_order(task_ids, id_to_task, limit=len(task_ids))
 
-        # Apply pagination to the filtered ID list
-        paginated_ids = filtered_task_ids[skip : skip + limit]
+        # Apply pagination to filtered results
+        paginated_tasks = (
+            ordered_tasks[skip : skip + limit]
+            if skip > 0 or len(ordered_tasks) > limit
+            else ordered_tasks
+        )
 
-        if not paginated_ids:
+        if not paginated_tasks:
             return [], total
 
-        # Load full task data for paginated IDs
-        tasks = db.query(TaskResource).filter(TaskResource.id.in_(paginated_ids)).all()
-
-        # Maintain order
-        id_to_task = {t.id: t for t in tasks}
-        filtered_tasks = [id_to_task[tid] for tid in paginated_ids if tid in id_to_task]
-
-        # Get task member counts in batch for is_group_chat detection using ResourceMember
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        task_ids_for_members = [t.id for t in filtered_tasks]
-        member_counts = {}
-        if task_ids_for_members:
-            member_count_results = (
-                db.query(
-                    ResourceMember.resource_id,
-                    func.count(ResourceMember.id).label("count"),
-                )
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TASK.value,
-                    ResourceMember.resource_id.in_(task_ids_for_members),
-                    ResourceMember.status == MemberStatus.APPROVED.value,
-                )
-                .group_by(ResourceMember.resource_id)
-                .all()
-            )
-            member_counts = {row[0]: row[1] for row in member_count_results}
-
         # Build lightweight result
-        result = build_lite_task_list(db, filtered_tasks, user_id)
+        result = build_lite_task_list(db, paginated_tasks, user_id)
 
         return result, total
 
