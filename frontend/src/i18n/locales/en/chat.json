@@ -600,5 +600,10 @@
     "generated_image": "Generated image",
     "lightbox": "Image preview",
     "no_models": "No image models available"
+  },
+  "new_conversation_notification": {
+    "title": "Download Weibo AI Toolbox to install and manage Wegent, Openclaw, WeiboAP, and other AI assistant apps.",
+    "action": "Download Weibo AI Toolbox",
+    "reopen": "Show download notice"
   }
 }

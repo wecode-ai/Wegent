@@ -578,5 +578,10 @@
     "generated_image": "生成的图片",
     "lightbox": "图片预览",
     "no_models": "暂无可用的图片模型"
+  },
+  "new_conversation_notification": {
+    "title": "欢迎下载Weibo AI Toolbox安装管理 Wegent、Openclaw、WeiboAP 等 AI 助手应用",
+    "action": "下载 Weibo AI Toolbox",
+    "reopen": "显示下载通知"
   }
 }
