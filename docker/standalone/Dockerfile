@@ -44,7 +44,7 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
-    && npm install -g @anthropic-ai/claude-code@2.1.33 \
+    && npm install -g @anthropic-ai/claude-code@2.1.71 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 
