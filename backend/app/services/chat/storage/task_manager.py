@@ -180,8 +180,10 @@ def get_task_with_access_check(
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
         linked_group = spec.get("linked_group")
+        is_group_chat = spec.get("is_group_chat")
 
-        if linked_group:
+        # Only honor linked_group for actual group chats
+        if is_group_chat and linked_group:
             # Check if user is a member of the linked group
             from app.services.group_permission import get_effective_role_in_group
 
@@ -330,7 +332,12 @@ def create_new_task(
             },
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
-            **({"linked_group": params.linked_group} if params.linked_group else {}),
+            # Only store linked_group for actual group chats
+            **(
+                {"linked_group": params.linked_group}
+                if params.is_group_chat and params.linked_group
+                else {}
+            ),
             **({"device_id": params.device_id} if params.device_id else {}),
             **(
                 {"knowledgeBaseRefs": knowledge_base_refs}
@@ -385,10 +392,10 @@ def create_new_task(
         "apiVersion": "agent.wecode.io/v1",
     }
 
-    # Lookup linked_group_id if linked_group is provided
+    # Lookup linked_group_id if linked_group is provided for group chats
     # This avoids slow JSON_EXTRACT queries by using indexed column
     linked_group_id = 0
-    if params.linked_group:
+    if params.is_group_chat and params.linked_group:
         from app.models.namespace import Namespace
 
         namespace = (

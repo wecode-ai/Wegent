@@ -151,9 +151,9 @@ def _upgrade_task_kb_bindings() -> None:
     # 1. Create the table
     op.create_table(
         "task_knowledge_base_bindings",
-        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
-        sa.Column("task_id", sa.BigInteger(), nullable=False),
-        sa.Column("knowledge_base_id", sa.BigInteger(), nullable=False),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("task_id", sa.Integer(), nullable=False),
+        sa.Column("knowledge_base_id", sa.Integer(), nullable=False),
         sa.Column("bound_by", sa.String(255), nullable=False),
         sa.Column("bound_at", sa.DateTime(), nullable=False),
         sa.Column(

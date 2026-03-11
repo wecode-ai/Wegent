@@ -157,12 +157,14 @@ const StreamingMessageBubble = React.memo(function StreamingMessageBubble({
 },
 // Custom comparison function to prevent unnecessary re-renders
 (prevProps, nextProps) => {
-  // Only re-render if message content or status changes
+  // Only re-render if message content, status, or result changes
   return (
     prevProps.message.content === nextProps.message.content &&
     prevProps.message.status === nextProps.message.status &&
     prevProps.message.subtaskId === nextProps.message.subtaskId &&
     prevProps.message.thinking === nextProps.message.thinking &&
+    // Include result comparison for streamed result block updates
+    JSON.stringify(prevProps.message.result) === JSON.stringify(nextProps.message.result) &&
     prevProps.selectedTaskDetail?.id === nextProps.selectedTaskDetail?.id &&
     prevProps.theme === nextProps.theme &&
     prevProps.isGroupChat === nextProps.isGroupChat &&

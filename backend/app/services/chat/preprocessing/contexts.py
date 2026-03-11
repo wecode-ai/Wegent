@@ -1132,24 +1132,20 @@ def _prepare_kb_tools_from_contexts(
     )
 
     # Check if user has RestrictedObserver role for any of the knowledge bases.
-    # If the user is RestrictedObserver for ALL KBs, use RestrictedObserver mode (restricted).
+    # If the user is RestrictedObserver for ANY KB, use RestrictedObserver mode (restricted).
     from app.models.resource_member import ResourceRole
     from app.services.share import knowledge_share_service
 
     is_restricted_observer_only = False
     if knowledge_base_ids:
-        restricted_observer_count = 0
         for kb_id in knowledge_base_ids:
             has_access, role, _, _ = knowledge_share_service.get_user_kb_permission(
                 db, kb_id, user_id
             )
             if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
-                restricted_observer_count += 1
-        # If all KBs are RestrictedObserver-only access, restrict tools
-        is_restricted_observer_only = (
-            restricted_observer_count == len(knowledge_base_ids)
-            and restricted_observer_count > 0
-        )
+                # If any KB is RestrictedObserver, restrict the entire request
+                is_restricted_observer_only = True
+                break
 
     # Import KnowledgeBaseTool
     from chat_shell.tools.builtin import KnowledgeBaseTool

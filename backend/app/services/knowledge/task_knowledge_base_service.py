@@ -140,7 +140,8 @@ class TaskKnowledgeBaseService:
         should have access to the knowledge base (reporter permission level).
 
         This method uses the task_knowledge_base_bindings table for efficient indexed
-        queries instead of scanning JSON data.
+        queries instead of scanning JSON data. It joins with TaskResource to ensure
+        only active group chat tasks are considered.
 
         Args:
             db: Database session
@@ -148,7 +149,7 @@ class TaskKnowledgeBaseService:
             user_id: User ID to check
 
         Returns:
-            True if KB is bound to at least one group chat where user is a member
+            True if KB is bound to at least one active group chat where user is a member
         """
         from sqlalchemy import or_, select
 
@@ -157,37 +158,40 @@ class TaskKnowledgeBaseService:
         from app.models.task import TaskResource
         from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
-        # Use EXISTS with the bindings table for efficient indexed query
+        # Build query that joins TaskKnowledgeBaseBinding with TaskResource
+        # to ensure only active group chat tasks are considered
         # Check if there's any binding where:
         # 1. The KB matches the given kb_id
-        # 2. The task is either owned by the user OR the user is an approved member
-        # Subquery: tasks owned by user
-        owned_task_subquery = (
-            select(TaskResource.id)
-            .where(
-                TaskResource.user_id == user_id,
-                TaskResource.is_active == True,
-                TaskResource.kind == "Task",
-            )
-            .correlate(TaskKnowledgeBaseBinding)
+        # 2. The task is an active "Task" kind (group chat)
+        # 3. The user is either the task owner OR an approved member
+        # Subquery: active tasks owned by user
+        owned_task_subquery = select(TaskResource.id).where(
+            TaskResource.user_id == user_id,
+            TaskResource.is_active == True,
+            TaskResource.kind == "Task",
         )
 
-        # Subquery: tasks where user is approved member
+        # Subquery: tasks where user is approved member (join with TaskResource for active check)
         member_task_subquery = (
             select(ResourceMember.resource_id)
+            .join(TaskResource, TaskResource.id == ResourceMember.resource_id)
             .where(
                 ResourceMember.user_id == user_id,
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.status == MemberStatus.APPROVED,
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
             )
-            .correlate(TaskKnowledgeBaseBinding)
         )
 
-        # Main query: check if any binding exists
+        # Main query: check if any binding exists with active group chat task
         exists_query = (
             db.query(TaskKnowledgeBaseBinding)
+            .join(TaskResource, TaskResource.id == TaskKnowledgeBaseBinding.task_id)
             .filter(
                 TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
                 or_(
                     TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
                     TaskKnowledgeBaseBinding.task_id.in_(member_task_subquery),

@@ -12,11 +12,11 @@ enabling efficient indexed queries instead of JSON parsing.
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger,
     Column,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
 )
@@ -37,15 +37,15 @@ class TaskKnowledgeBaseBinding(Base):
 
     __tablename__ = "task_knowledge_base_bindings"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True, comment="Primary key")
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
     task_id = Column(
-        BigInteger,
+        Integer,
         ForeignKey("tasks.id", ondelete="CASCADE"),
         nullable=False,
         comment="Task ID, references tasks.id",
     )
     knowledge_base_id = Column(
-        BigInteger,
+        Integer,
         ForeignKey("kinds.id", ondelete="CASCADE"),
         nullable=False,
         comment="Knowledge base ID, references kinds.id",

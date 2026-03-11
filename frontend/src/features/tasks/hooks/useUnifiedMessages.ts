@@ -234,6 +234,7 @@ export function useUnifiedMessages({
   // Ref to cache sorted messages for stable reference
   const sortedMessagesRef = useRef<DisplayMessage[]>([])
   const lastStateMessagesSize = useRef(0)
+  const lastMessagesSignature = useRef<string>('')
 
   // Build unified message list from state machine messages
   const result = useMemo<UseUnifiedMessagesResult>(() => {
@@ -286,16 +287,28 @@ export function useUnifiedMessages({
       }
     }
 
-    // Optimization: If message count hasn't changed and we have cached messages,
+    // Generate a signature for the current messages to detect content changes
+    // This ensures we invalidate cache when any message property changes
+    const messagesSignature = messages
+      .map(
+        (m) =>
+          `${m.id}:${m.status}:${m.timestamp}:${m.content?.length ?? 0}:${m.subtaskId ?? 'none'}`
+      )
+      .join('|')
+
+    // Optimization: If message signature hasn't changed and we have cached messages,
     // only re-sort if we have streaming messages (content changes)
     const hasStreamingMessages = streamingSubtaskIds.length > 0
     const stateSizeChanged = stateMessages.size !== lastStateMessagesSize.current
+    const signatureChanged = messagesSignature !== lastMessagesSignature.current
     lastStateMessagesSize.current = stateMessages.size
+    lastMessagesSignature.current = messagesSignature
 
-    // Use cached sorted messages if available and no new messages added
+    // Use cached sorted messages if available and no changes detected
     let sortedMessages: DisplayMessage[]
     if (
       !stateSizeChanged &&
+      !signatureChanged &&
       !hasStreamingMessages &&
       sortedMessagesRef.current.length === messages.length &&
       sortedMessagesRef.current.length > 0

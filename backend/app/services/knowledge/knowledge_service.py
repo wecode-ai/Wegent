@@ -316,17 +316,29 @@ class KnowledgeService:
             # Group KBs (namespace != "default") are excluded — they are
             # shown on the "Group" tab instead.
             # Personal: user_id matches and namespace is "default"
-            # Shared: id is in shared_kb_ids (only personal KBs)
-            # Bound: id is in bound_kb_ids (only personal KBs bound to group chats)
+            # Shared: id is in shared_kb_ids (any namespace)
+            # Bound: id is in bound_kb_ids (any namespace)
+            from sqlalchemy import or_
+
+            conditions = []
+
+            # Personal KBs: owned by user in default namespace
+            conditions.append((Kind.user_id == user_id) & (Kind.namespace == "default"))
+
+            # Shared KBs: any namespace
+            if shared_kb_ids:
+                conditions.append(Kind.id.in_(shared_kb_ids))
+
+            # Bound KBs: any namespace
+            if bound_kb_ids:
+                conditions.append(Kind.id.in_(bound_kb_ids))
+
             all_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.is_active == True,
-                    Kind.namespace == "default",
-                    (Kind.user_id == user_id)
-                    | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False)
-                    | (Kind.id.in_(bound_kb_ids) if bound_kb_ids else False),
+                    or_(*conditions),
                 )
                 .all()
             )
@@ -541,13 +553,16 @@ class KnowledgeService:
         if data.retrieval_config is not None:
             current_retrieval_config = spec.get("retrievalConfig", {}) or {}
 
-            # Update retriever_name and retriever_namespace if provided
+            # Update retriever_name if provided
             if data.retrieval_config.retriever_name:
                 current_retrieval_config["retriever_name"] = (
                     data.retrieval_config.retriever_name
                 )
+
+            # Update retriever_namespace only if explicitly provided (not None)
+            if data.retrieval_config.retriever_namespace is not None:
                 current_retrieval_config["retriever_namespace"] = (
-                    data.retrieval_config.retriever_namespace or "default"
+                    data.retrieval_config.retriever_namespace
                 )
 
             # Update embedding_config if provided
@@ -882,8 +897,7 @@ class KnowledgeService:
     ) -> dict[int, int]:
         """Batch get document counts for multiple knowledge bases.
 
-        This method performs a single database query to get document counts
-        for multiple knowledge bases, avoiding the N+1 query problem.
+        Delegates to knowledge_repository for the actual query.
 
         Args:
             db: Database session
@@ -892,22 +906,11 @@ class KnowledgeService:
         Returns:
             Dictionary mapping kb_id to document count
         """
-        if not kb_ids:
-            return {}
-
-        from sqlalchemy import func
-
-        results = (
-            db.query(
-                KnowledgeDocument.kind_id,
-                func.count(KnowledgeDocument.id).label("count"),
-            )
-            .filter(KnowledgeDocument.kind_id.in_(kb_ids))
-            .group_by(KnowledgeDocument.kind_id)
-            .all()
+        from app.services.knowledge.knowledge_repository import (
+            get_document_counts_batch,
         )
 
-        return {kind_id: count for kind_id, count in results}
+        return get_document_counts_batch(db, kb_ids)
 
     @staticmethod
     def get_active_document_counts_batch(
@@ -916,8 +919,7 @@ class KnowledgeService:
     ) -> dict[int, int]:
         """Batch get active document counts for multiple knowledge bases.
 
-        This method performs a single database query to get active document counts
-        for multiple knowledge bases, avoiding the N+1 query problem.
+        Delegates to knowledge_repository for the actual query.
 
         Args:
             db: Database session
@@ -926,25 +928,11 @@ class KnowledgeService:
         Returns:
             Dictionary mapping kb_id to active document count
         """
-        if not kb_ids:
-            return {}
-
-        from sqlalchemy import func
-
-        results = (
-            db.query(
-                KnowledgeDocument.kind_id,
-                func.count(KnowledgeDocument.id).label("count"),
-            )
-            .filter(
-                KnowledgeDocument.kind_id.in_(kb_ids),
-                KnowledgeDocument.is_active == True,
-            )
-            .group_by(KnowledgeDocument.kind_id)
-            .all()
+        from app.services.knowledge.knowledge_repository import (
+            get_active_document_counts_batch,
         )
 
-        return {kind_id: count for kind_id, count in results}
+        return get_active_document_counts_batch(db, kb_ids)
 
     # ============== Knowledge Document Operations ==============
 

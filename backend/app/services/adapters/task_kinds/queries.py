@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import func, text
+from sqlalchemy import bindparam, func, text
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -291,6 +291,7 @@ class TaskQueryMixin:
         linked_group_ids = set()
         if user_namespace_ids:
             # Query tasks using linked_group_id column (indexed) instead of JSON_EXTRACT
+            # Use bindparam with expanding=True for IN clause parameters
             linked_group_sql = text(
                 """
                 SELECT DISTINCT k.id
@@ -301,6 +302,9 @@ class TaskQueryMixin:
                 AND k.linked_group_id IN :namespace_ids
                 AND (k.user_id = :user_id OR k.id IN :member_task_ids)
             """
+            ).bindparams(
+                bindparam("namespace_ids", expanding=True),
+                bindparam("member_task_ids", expanding=True),
             )
             # Use a list for the IN clause
             namespace_ids_list = list(user_namespace_ids)
@@ -312,8 +316,8 @@ class TaskQueryMixin:
                 linked_group_sql,
                 {
                     "user_id": user_id,
-                    "namespace_ids": tuple(namespace_ids_list),
-                    "member_task_ids": tuple(member_task_ids_list),
+                    "namespace_ids": namespace_ids_list,
+                    "member_task_ids": member_task_ids_list,
                 },
             ).fetchall()
             linked_group_ids = {row[0] for row in linked_group_result}
