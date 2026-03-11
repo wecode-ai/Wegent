@@ -5,7 +5,7 @@
 'use client'
 
 import { memo, useState, useMemo } from 'react'
-import { ChevronDown, ChevronRight, Loader2, Pencil, FileText } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Pencil, FileText, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolBlockProps, ToolRendererProps } from '../types'
 import { GenericToolRenderer } from './tools/GenericToolRenderer'
@@ -166,9 +166,33 @@ export const ToolBlock = memo(function ToolBlock({
   // Get tool icon component
   const ToolIcon = getToolIcon(tool.toolName)
 
-  // Check if tool is running (for spinner animation)
-  const isRunning =
-    tool.status === 'invoking' || tool.status === 'streaming' || tool.status === 'pending'
+  // Check if any tool is running (for spinner animation)
+  // For merged tools, check if any of them is still running
+  const isRunning = useMemo(() => {
+    const checkRunning = (status: string | undefined) =>
+      status === 'invoking' || status === 'streaming' || status === 'pending'
+
+    if (count > 1 && mergedTools.length > 0) {
+      return mergedTools.some(item => checkRunning(item.status))
+    }
+    return checkRunning(tool.status)
+  }, [tool.status, count, mergedTools])
+
+  // Check if any tool has error status
+  const hasError = useMemo(() => {
+    if (count > 1 && mergedTools.length > 0) {
+      return mergedTools.some(item => item.status === 'error')
+    }
+    return tool.status === 'error'
+  }, [tool.status, count, mergedTools])
+
+  // Count completed tools for merged display
+  const completedCount = useMemo(() => {
+    if (count > 1 && mergedTools.length > 0) {
+      return mergedTools.filter(item => item.status === 'done').length
+    }
+    return tool.status === 'done' ? 1 : 0
+  }, [tool.status, count, mergedTools])
 
   // Get tool display name and input preview
   const toolDisplayName = getToolDisplayName(tool, t)
@@ -225,9 +249,15 @@ export const ToolBlock = memo(function ToolBlock({
           {displayText}
         </span>
 
-        {/* Count badge when merged (count > 1) */}
+        {/* Count badge when merged (count > 1) with status indicator */}
         {count > 1 && (
-          <span className="text-xs text-[#999] dark:text-[#777] flex-shrink-0">x {count}</span>
+          <span className="text-xs flex items-center gap-1 flex-shrink-0">
+            {/* Status indicator for merged tools - only show error icon */}
+            {hasError && <AlertCircle className="w-3 h-3 text-amber-500" />}
+            <span className="text-[#999] dark:text-[#777]">
+              {isRunning ? `${completedCount}/${count}` : `x ${count}`}
+            </span>
+          </span>
         )}
 
         {/* Expand/collapse indicator */}
@@ -245,12 +275,26 @@ export const ToolBlock = memo(function ToolBlock({
       {/* Expanded content - shows all merged tools or single tool */}
       {isExpanded && canExpand && (
         <div className="mt-1.5 ml-6 space-y-2">
-          {toolsToDisplay.map((t, idx) => {
-            const CurrentToolRenderer = getToolRenderer(t.toolName)
-            const preview = getToolInputPreview(t, 80)
+          {toolsToDisplay.map((toolItem, idx) => {
+            const CurrentToolRenderer = getToolRenderer(toolItem.toolName)
+            const preview = getToolInputPreview(toolItem, 80)
+            // Check if tool has content to render
+            const toolHasInput =
+              toolItem.toolUse?.details?.input &&
+              (typeof toolItem.toolUse.details.input === 'string'
+                ? toolItem.toolUse.details.input.length > 0
+                : Object.keys(toolItem.toolUse.details.input).length > 0)
+            const toolHasOutput =
+              toolItem.toolResult?.details?.output || toolItem.toolResult?.details?.content
+            const toolHasContent = toolHasInput || toolHasOutput
+            const toolIsRunning =
+              toolItem.status === 'invoking' ||
+              toolItem.status === 'streaming' ||
+              toolItem.status === 'pending'
+
             return (
               <div
-                key={t.toolUseId || idx}
+                key={toolItem.toolUseId || idx}
                 className="p-2.5 bg-[#f7f7f8] dark:bg-[#2a2a2a] rounded-xl border border-[#e5e5e5] dark:border-[#3a3a3a]"
               >
                 {/* Show preview header for merged tools */}
@@ -259,7 +303,20 @@ export const ToolBlock = memo(function ToolBlock({
                     {preview}
                   </div>
                 )}
-                <CurrentToolRenderer tool={t} />
+                {/* Show loading state if tool is running and has no content yet */}
+                {!toolHasContent && toolIsRunning ? (
+                  <div className="flex items-center gap-2 text-xs text-[#888] dark:text-[#777]">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>{t('thinking.tool_executing') || 'Executing...'}</span>
+                  </div>
+                ) : toolHasContent ? (
+                  <CurrentToolRenderer tool={toolItem} />
+                ) : (
+                  // Tool completed but no content (edge case)
+                  <div className="text-xs text-[#888] dark:text-[#777] italic">
+                    {t('thinking.no_output') || 'No output'}
+                  </div>
+                )}
               </div>
             )
           })}
