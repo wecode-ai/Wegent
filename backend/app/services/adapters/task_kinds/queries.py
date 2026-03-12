@@ -45,7 +45,7 @@ from .task_skills_resolver import resolve_task_skills
 logger = logging.getLogger(__name__)
 
 
-def parse_is_group_chat(task_id: int, task_json: Any) -> bool:
+def parse_is_group_chat(task_id: int, task_json: Any) -> Optional[bool]:
     """Parse is_group_chat field from task JSON.
 
     Args:
@@ -53,22 +53,24 @@ def parse_is_group_chat(task_id: int, task_json: Any) -> bool:
         task_json: Task JSON data (expected to be a dict)
 
     Returns:
-        True if is_group_chat is explicitly True, False otherwise
+        True if is_group_chat is explicitly True,
+        False if explicitly False,
+        None if task_json is malformed or parsing raises exceptions
     """
     try:
         if isinstance(task_json, dict):
             return task_json.get("spec", {}).get("is_group_chat") is True
-        # Non-dict task_json is malformed - log warning
+        # Non-dict task_json is malformed - log warning and return None
         logger.warning(
             f"[parse_is_group_chat] Malformed task_json for task_id={task_id}: "
             f"expected dict, got {type(task_json).__name__}"
         )
-        return False
+        return None
     except (KeyError, TypeError, ValueError) as e:
         logger.warning(
             f"[parse_is_group_chat] Failed to parse is_group_chat for task_id={task_id}: {e}"
         )
-        return False
+        return None
 
 
 def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
@@ -167,8 +169,8 @@ def _filter_and_paginate_tasks(
         ordered_task_ids, id_to_task, limit=len(ordered_task_ids)
     )
 
-    # Apply pagination to filtered results
-    return ordered_tasks[skip : skip + limit]
+    # Apply limit only - skip was already applied in get_accessible_task_ids_and_total
+    return ordered_tasks[:limit]
 
 
 class TaskQueryMixin:
@@ -362,7 +364,15 @@ class TaskQueryMixin:
         non_deleted_ids = []
         non_deleted_updated_at = {}
         for t in all_tasks:
-            task_crd = Task.model_validate(t.json)
+            try:
+                task_crd = Task.model_validate(t.json)
+            except Exception as e:
+                logger.warning(
+                    f"[get_user_group_tasks_lite] Failed to validate task {t.id}: {e}. "
+                    f"task_json={t.json}",
+                    exc_info=True,
+                )
+                continue
             status = task_crd.status.status if task_crd.status else "PENDING"
             if status != "DELETE":
                 non_deleted_ids.append(t.id)

@@ -35,7 +35,7 @@ def is_organization_namespace(db: Session, namespace_name: str) -> bool:
         db.query(Namespace)
         .filter(
             Namespace.name == namespace_name,
-            Namespace.is_active == True,
+            Namespace.is_active,
         )
         .first()
     )

@@ -165,16 +165,18 @@ class TaskKnowledgeBaseService:
         # to ensure only active group chat tasks are considered
         # Check if there's any binding where:
         # 1. The KB matches the given kb_id
-        # 2. The task is an active "Task" kind (group chat)
-        # 3. The user is either the task owner OR an approved member
-        # Subquery: active tasks owned by user
+        # 2. The task is an active "Task" kind AND is_group_chat=true (group chat)
+        # 3. The user is either the task owner OR an approved member OR a linked-group member
+        # Subquery: active group chat tasks owned by user
         owned_task_subquery = select(TaskResource.id).where(
             TaskResource.user_id == user_id,
             TaskResource.is_active == True,
             TaskResource.kind == "Task",
+            TaskResource.is_group_chat == True,
         )
 
         # Subquery: tasks where user is approved member (join with TaskResource for active check)
+        # Only consider group chat tasks (is_group_chat=true)
         member_task_subquery = (
             select(ResourceMember.resource_id)
             .join(TaskResource, TaskResource.id == ResourceMember.resource_id)
@@ -184,6 +186,26 @@ class TaskKnowledgeBaseService:
                 ResourceMember.status == MemberStatus.APPROVED.value,
                 TaskResource.is_active == True,
                 TaskResource.kind == "Task",
+                TaskResource.is_group_chat == True,
+            )
+        )
+
+        # Subquery: tasks where user is a member via linked namespace (linked-group chats)
+        # Join ResourceMember (namespace) -> TaskResource (linked_group_id)
+        # Only consider group chat tasks (is_group_chat=true)
+        linked_ns_task_subquery = (
+            select(TaskResource.id)
+            .join(
+                ResourceMember,
+                (ResourceMember.resource_id == TaskResource.linked_group_id)
+                & (ResourceMember.resource_type == "Namespace")
+                & (ResourceMember.user_id == user_id)
+                & (ResourceMember.status == MemberStatus.APPROVED.value),
+            )
+            .where(
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
+                TaskResource.is_group_chat == True,
             )
         )
 
@@ -195,9 +217,11 @@ class TaskKnowledgeBaseService:
                 TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
                 TaskResource.is_active == True,
                 TaskResource.kind == "Task",
+                TaskResource.is_group_chat == True,
                 or_(
                     TaskKnowledgeBaseBinding.task_id.in_(owned_task_subquery),
                     TaskKnowledgeBaseBinding.task_id.in_(member_task_subquery),
+                    TaskKnowledgeBaseBinding.task_id.in_(linked_ns_task_subquery),
                 ),
             )
             .exists()
@@ -207,7 +231,7 @@ class TaskKnowledgeBaseService:
         return bool(result)
 
     def get_knowledge_base_by_name(
-        self, db: Session, name: str, namespace: str
+        self, db: Session, name: str, namespace: str, user_id: int | None = None
     ) -> Kind | None:
         """Get a knowledge base by display name (spec.name) and namespace.
 
@@ -218,28 +242,42 @@ class TaskKnowledgeBaseService:
             db: Database session
             name: Knowledge base display name (spec.name)
             namespace: Knowledge base namespace
+            user_id: Optional user ID to filter by owner (recommended to avoid ambiguity)
 
         Returns:
-            Kind object if found, None otherwise
+            Kind object if found and unambiguous, None otherwise
         """
-        # Query all knowledge bases in the namespace and filter by spec.name
-        knowledge_bases = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "KnowledgeBase",
-                Kind.namespace == namespace,
-                Kind.is_active == True,
-            )
-            .all()
+        # Build base query for knowledge bases in the namespace
+        query = db.query(Kind).filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.namespace == namespace,
+            Kind.is_active == True,
         )
 
+        # If user_id provided, filter by owner to ensure unique lookup
+        if user_id is not None:
+            query = query.filter(Kind.user_id == user_id)
+
+        knowledge_bases = query.all()
+
         # Find the one with matching display name in spec
+        matching_kbs = []
         for kb in knowledge_bases:
             kb_spec = kb.json.get("spec", {})
             if kb_spec.get("name") == name:
-                return kb
+                matching_kbs.append(kb)
 
-        return None
+        # If no user_id provided and multiple matches found, log warning and return None
+        # to avoid ambiguous results
+        if user_id is None and len(matching_kbs) > 1:
+            logger.warning(
+                f"[get_knowledge_base_by_name] Ambiguous match: found {len(matching_kbs)} "
+                f"KBs with name '{name}' in namespace '{namespace}'. "
+                f"Provide user_id for accurate lookup."
+            )
+            return None
+
+        return matching_kbs[0] if matching_kbs else None
 
     def get_knowledge_base_by_id(self, db: Session, kb_id: int) -> Kind | None:
         """Get a knowledge base by Kind.id.

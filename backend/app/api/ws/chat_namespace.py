@@ -303,7 +303,9 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Validate and cap limit to prevent excessive data transfer
         # Clamp value into inclusive range 1..500
-        limit = max(1, min(payload.limit or 100, 500))
+        # Explicitly normalize None before clamping so 0 is treated as 0, not 100
+        requested_limit = 100 if payload.limit is None else payload.limit
+        limit = max(1, min(requested_limit, 500))
 
         logger.info(
             f"[WS] task:join received: sid={sid}, task_id={payload.task_id}, "
@@ -340,24 +342,24 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Get subtasks for immediate message sync
         # If after_message_id is provided, only fetch messages after that ID (incremental sync)
         # Otherwise, fetch recent messages with pagination (initial join)
-        subtasks_dict = None
+        subtasks_dict = []
         has_more = False
         db = SessionLocal()
         try:
             if payload.after_message_id is not None:
                 # Incremental sync: only fetch messages after the cursor
+                # Use subtask_service to enforce visibility/membership filters
                 from app.services.context import context_service
+                from app.services.subtask import subtask_service
 
                 # Fetch limit + 1 to determine if there are more messages
-                subtasks = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.task_id == payload.task_id,
-                        Subtask.message_id > payload.after_message_id,
-                    )
-                    .order_by(Subtask.message_id.asc())
-                    .limit(limit + 1)
-                    .all()
+                # subtask_service.get_by_task enforces visibility rules (membership/ownership)
+                subtasks = subtask_service.get_by_task(
+                    db=db,
+                    task_id=payload.task_id,
+                    user_id=user_id,
+                    after_message_id=payload.after_message_id,
+                    limit=limit + 1,
                 )
 
                 # Check if there are more messages based on the fetched subset
@@ -507,6 +509,8 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
             # Continue without subtasks - frontend can fall back to API call
+            # Ensure subtasks_dict is always a list
+            subtasks_dict = subtasks_dict or []
         finally:
             db.close()
 
@@ -1597,14 +1601,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         db = SessionLocal()
         try:
             # Get messages after the specified ID
-            subtasks = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == payload.task_id,
-                    Subtask.message_id > payload.after_message_id,
-                )
-                .order_by(Subtask.message_id.asc())
-                .all()
+            # Use subtask_service to enforce visibility/membership filters
+            from app.services.subtask import subtask_service
+
+            subtasks = subtask_service.get_by_task(
+                db=db,
+                task_id=payload.task_id,
+                user_id=user_id,
+                after_message_id=payload.after_message_id,
             )
 
             messages = []

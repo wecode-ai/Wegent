@@ -505,6 +505,13 @@ def _migrate_kb_bindings() -> None:
             except (json.JSONDecodeError, TypeError):
                 continue
 
+            # Ensure task_json is a dict before using .get()
+            if not isinstance(task_json, dict):
+                logger.warning(
+                    f"Skipping task {task_id}: task_json is not a dict, got {type(task_json).__name__}"
+                )
+                continue
+
             # Extract knowledgeBaseRefs
             spec = task_json.get("spec", {})
             kb_refs = spec.get("knowledgeBaseRefs", []) or []
@@ -526,8 +533,13 @@ def _migrate_kb_bindings() -> None:
 
                 kb_id = ref.get("id")
 
-                # Validate kb_id: if not an int, try to coerce numeric string to int
-                if kb_id is not None:
+                # Validate kb_id: explicitly reject booleans before int check
+                if isinstance(kb_id, bool):
+                    logger.warning(
+                        f"Invalid KB id (boolean) for task {task_id}: {kb_id}"
+                    )
+                    kb_id = None
+                elif kb_id is not None:
                     if isinstance(kb_id, int):
                         pass  # Valid int, use as-is
                     elif isinstance(kb_id, str):

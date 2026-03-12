@@ -398,11 +398,16 @@ class KnowledgeShareService(UnifiedShareService):
 
         # Main query: get bindings and join with member roles
         # First check for explicit member role via ResourceMember
+        # Join with TaskResource to enforce is_active, kind, and is_group_chat checks
         member_role_result = (
             db.query(ResourceMember.role)
             .join(
                 TaskKnowledgeBaseBinding,
                 ResourceMember.resource_id == TaskKnowledgeBaseBinding.task_id,
+            )
+            .join(
+                TaskResource,
+                TaskKnowledgeBaseBinding.task_id == TaskResource.id,
             )
             .filter(
                 TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
@@ -411,6 +416,10 @@ class KnowledgeShareService(UnifiedShareService):
                 ResourceMember.status.in_(
                     [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
                 ),
+                # Enforce active group chat task constraints (same as TaskMemberService.is_member)
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
+                TaskResource.is_group_chat == True,
             )
             .first()
         )
@@ -423,6 +432,7 @@ class KnowledgeShareService(UnifiedShareService):
             )
 
         # Check if user owns any task with this KB bound
+        # Enforce is_group_chat check to ensure only real group-chat bindings grant access
         owner_result = (
             db.query(TaskKnowledgeBaseBinding)
             .join(
@@ -434,6 +444,7 @@ class KnowledgeShareService(UnifiedShareService):
                 TaskResource.user_id == user_id,
                 TaskResource.is_active == True,
                 TaskResource.kind == "Task",
+                TaskResource.is_group_chat == True,
             )
             .first()
         )
@@ -445,6 +456,7 @@ class KnowledgeShareService(UnifiedShareService):
         # Check for namespace-derived membership (linked-group chats)
         # Join TaskKnowledgeBaseBinding -> TaskResource to get namespace_id,
         # then query NamespaceMember for membership
+        # Enforce is_group_chat check to ensure only real linked-group chats grant access
         namespace_member_result = (
             db.query(ResourceMember.role)
             .join(
@@ -462,6 +474,10 @@ class KnowledgeShareService(UnifiedShareService):
                 ResourceMember.status.in_(
                     [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
                 ),
+                # Enforce active group chat task constraints
+                TaskResource.is_active == True,
+                TaskResource.kind == "Task",
+                TaskResource.is_group_chat == True,
             )
             .first()
         )
@@ -478,6 +494,7 @@ class KnowledgeShareService(UnifiedShareService):
             }
             return role_mapping.get(namespace_role, ResourceRole.REPORTER.value)
 
+        return None
         return None
 
     def _is_kb_bound_to_user_group_chat(

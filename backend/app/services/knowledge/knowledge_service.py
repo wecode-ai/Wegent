@@ -39,6 +39,7 @@ from app.schemas.knowledge import (
     TeamKnowledgeGroup,
 )
 from app.schemas.namespace import GroupLevel, GroupRole
+from app.services.group_member_helper import NAMESPACE_RESOURCE_TYPE
 from app.services.group_permission import (
     check_group_permission,
     get_effective_role_in_group,
@@ -1647,7 +1648,7 @@ class KnowledgeService:
                 .join(
                     ResourceMember,
                     (ResourceMember.resource_id == TaskResource.linked_group_id)
-                    & (ResourceMember.resource_type == "Namespace")
+                    & (ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE)
                     & (ResourceMember.user_id == user_id)
                     & (ResourceMember.status == MemberStatus.APPROVED.value),
                 )

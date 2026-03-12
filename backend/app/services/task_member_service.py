@@ -80,16 +80,19 @@ class TaskMemberService:
             return True
 
         # For linked group chats, check membership via the linked group
-        # Get the role and check if it's not RestrictedObserver
-        linked_role = self.get_linked_group_role(db, task_id, user_id)
-        logger.info(
-            f"[is_member] get_linked_group_role: task_id={task_id}, user_id={user_id}, role={linked_role}"
-        )
-        if linked_role is not None:
-            from app.schemas.namespace import GroupRole
+        # Only check linked group role if this is actually a linked group chat
+        if self.is_linked_group_chat(db, task_id):
+            # Get the role and check if it's not RestrictedObserver
+            linked_role = self.get_linked_group_role(db, task_id, user_id)
+            logger.info(
+                f"[is_member] get_linked_group_role: task_id={task_id}, user_id={user_id}, role={linked_role}"
+            )
+            if linked_role is not None:
+                from app.schemas.namespace import GroupRole
 
-            if linked_role != GroupRole.RestrictedObserver:
-                return True
+                # Normalize comparison: linked_role is GroupRole enum, compare with enum
+                if linked_role != GroupRole.RestrictedObserver:
+                    return True
 
         # Check ResourceMember for approved status
         # Exclude share records (copied_resource_id > 0), only consider actual group chat members
@@ -578,6 +581,7 @@ class TaskMemberService:
         from app.schemas.namespace import GroupRole
 
         role = self.get_linked_group_role(db, task_id, user_id)
+        # Normalize comparison: role is GroupRole enum, compare with enum
         result = role is not None and role != GroupRole.RestrictedObserver
         logger.info(
             f"[is_member_via_linked_group] task_id={task_id}, user_id={user_id}, role={role}, result={result}"
