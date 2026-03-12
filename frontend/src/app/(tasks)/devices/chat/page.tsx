@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -26,7 +26,7 @@ import { useDevices } from '@/contexts/DeviceContext'
 import { teamService } from '@/features/tasks/service/teamService'
 import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
-import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
+import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 
 export default function DeviceChatPage() {
@@ -42,6 +42,10 @@ export default function DeviceChatPage() {
 
   // Device state
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
+
+  // Check if deviceId is specified in URL
+  const searchParams = useSearchParams()
+  const hasDeviceIdParam = !!(searchParams.get('deviceId') || searchParams.get('device_id'))
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -61,15 +65,16 @@ export default function DeviceChatPage() {
     saveLastTab('devices')
   }, [])
 
-  // Auto-select first online device if none selected
+  // Auto-select first online device if none selected and no URL param
   useEffect(() => {
+    if (hasDeviceIdParam) return
     if (!selectedDeviceId && devices.length > 0) {
       const onlineDevice = devices.find(d => d.status === 'online')
       if (onlineDevice) {
         setSelectedDeviceId(onlineDevice.device_id)
       }
     }
-  }, [devices, selectedDeviceId, setSelectedDeviceId])
+  }, [devices, selectedDeviceId, setSelectedDeviceId, hasDeviceIdParam])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
@@ -122,9 +127,10 @@ export default function DeviceChatPage() {
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* URL parameter sync for task selection */}
+      {/* URL parameter sync */}
       <TaskParamSync />
       <DeviceTaskSync />
+      <DeviceParamSync />
 
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && !isMobile && (
