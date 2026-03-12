@@ -517,7 +517,20 @@ class TaskMemberService:
         Returns:
             True if the task is a linked group chat
         """
-        # Check that get_linked_group returns a truthy valid string
+        # Require both that the task's spec indicates is_group_chat
+        # AND that get_linked_group returns a valid string
+        task = self.get_task(db, task_id)
+        if not task:
+            return False
+
+        # Check is_group_chat flag in spec
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        is_group_chat = spec.get("is_group_chat", False)
+        if not is_group_chat:
+            return False
+
+        # Check that get_linked_group returns a valid string
         linked_group = self.get_linked_group(db, task_id)
         return bool(linked_group)
 
@@ -614,13 +627,16 @@ class TaskMemberService:
         if not namespace:
             raise HTTPException(status_code=404, detail="Linked group not found")
 
-        # Get all approved members from the group
+        # Get all approved members from the group, excluding RestrictedObserver
+        from app.schemas.namespace import GroupRole
+
         group_members = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == "Namespace",
                 ResourceMember.resource_id == namespace.id,
                 ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.role != GroupRole.RestrictedObserver.value,
             )
             .all()
         )
@@ -734,18 +750,21 @@ class TaskMemberService:
 
         task_owner_id = task.user_id
 
-        # Count approved members in the group
+        # Count approved members in the group, excluding RestrictedObserver
+        from app.schemas.namespace import GroupRole
+
         group_member_count = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == "Namespace",
                 ResourceMember.resource_id == namespace.id,
                 ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.role != GroupRole.RestrictedObserver.value,
             )
             .count()
         )
 
-        # Check if task owner is already in the group
+        # Check if task owner is already in the group (and not RestrictedObserver)
         owner_in_group = (
             db.query(ResourceMember)
             .filter(
@@ -753,6 +772,7 @@ class TaskMemberService:
                 ResourceMember.resource_id == namespace.id,
                 ResourceMember.user_id == task_owner_id,
                 ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.role != GroupRole.RestrictedObserver.value,
             )
             .first()
             is not None

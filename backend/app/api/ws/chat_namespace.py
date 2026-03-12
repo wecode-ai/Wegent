@@ -348,6 +348,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # Incremental sync: only fetch messages after the cursor
                 from app.services.context import context_service
 
+                # Fetch limit + 1 to determine if there are more messages
                 subtasks = (
                     db.query(Subtask)
                     .filter(
@@ -355,8 +356,16 @@ class ChatNamespace(socketio.AsyncNamespace):
                         Subtask.message_id > payload.after_message_id,
                     )
                     .order_by(Subtask.message_id.asc())
+                    .limit(limit + 1)
                     .all()
                 )
+
+                # Check if there are more messages based on the fetched subset
+                has_more = len(subtasks) > limit
+
+                # Trim to limit if we fetched extra
+                if has_more:
+                    subtasks = subtasks[:limit]
 
                 # Convert to dict format matching task detail API
                 subtasks_dict = []
@@ -428,8 +437,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 has_more = len(subtasks) > limit
 
                 # Trim to limit if we fetched extra
+                # Note: get_by_task with from_latest=True returns in ascending order (oldest→newest)
+                # So we drop the first (oldest) element to keep the most recent `limit` items
                 if has_more:
-                    subtasks = subtasks[:limit]
+                    subtasks = subtasks[1:]
 
                 # Convert to dict format
                 subtasks_dict = []

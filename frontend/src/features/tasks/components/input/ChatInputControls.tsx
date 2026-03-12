@@ -531,15 +531,6 @@ export function ChatInputControls({
               />
             )}
 
-            {/* Context Selection - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
-              <ChatContextInput
-                selectedContexts={selectedContexts}
-                onContextsChange={setSelectedContexts}
-                excludeKnowledgeBaseId={knowledgeBaseId}
-              />
-            )}
-
             {/* Clarification Toggle Button - only show for chat shell */}
             {isChatShell(selectedTeam) && (
               <ClarificationToggle

@@ -838,6 +838,13 @@ class TaskKnowledgeBaseService:
         flag_modified(task, "json")
 
         # Also delete from bindings table
+        if found_kb_id is None:
+            # Resolve KB id by looking up the knowledge base by name and namespace
+            # (for legacy name-only refs)
+            kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
+            if kb:
+                found_kb_id = kb.id
+
         if found_kb_id is not None:
             from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 

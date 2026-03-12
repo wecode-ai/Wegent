@@ -324,9 +324,10 @@ export function useModelSelection({
         }
       }
 
-      // Priority 2: Use global preference (for new chat only, i.e. no taskId)
+      // Priority 2: Use global preference (for new chat or group chat)
+      // NOTE: For group chats, always use the current user's saved preference
       // NOTE: Must search in filteredModels to ensure model is compatible with current team's agent_type
-      if (!restoredModel && teamId && !taskId) {
+      if (!restoredModel && teamId && (!taskId || isGroupChat)) {
         const preference = getGlobalModelPreference(teamId)
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
           // Search in filteredModels (not models) to ensure compatibility with team's agent_type

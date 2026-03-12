@@ -265,7 +265,7 @@ def _create_standard_subtask(
 
 
 def get_tasks_related_data_batch(
-    db: Session, tasks: List[Kind], user_id: int
+    db: Session, tasks: List[TaskResource], user_id: int
 ) -> Dict[str, Dict[str, Any]]:
     """
     Batch get workspace and team data for multiple tasks to reduce database queries.

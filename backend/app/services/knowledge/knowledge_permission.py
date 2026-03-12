@@ -128,16 +128,14 @@ def check_kb_write_permission(
     # Check organization-level permission
     check_organization_kb_permission(db, namespace_name, user_id, action)
 
-    # Check team-level permission
-    if namespace_name != "default":
-        if not is_organization_namespace(db, namespace_name):
-            if not check_group_permission(
-                db, user_id, namespace_name, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    f"Only Owner or Maintainer can {action} knowledge base in this group"
-                )
-    else:
+    # Check team-level permission (non-organization, non-default namespaces)
+    if namespace_name != "default" and not is_organization_namespace(
+        db, namespace_name
+    ):
+        check_team_kb_permission(
+            db, namespace_name, user_id, GroupRole.Maintainer, action
+        )
+    elif namespace_name == "default":
         # Personal KB: only creator can modify
         if kb_creator_id != user_id:
             raise ValueError(f"Only the creator can {action} this knowledge base")

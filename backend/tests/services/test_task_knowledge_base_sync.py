@@ -259,6 +259,8 @@ class TestKBPriorityLogic:
                     call_args = mock_kb_tool.call_args
                     assert call_args[1]["knowledge_base_ids"] == [10]
                     assert len(kb_result.extra_tools) == 1
+                    # Verify the guard was consulted
+                    mock_restricted.assert_called_once()
 
     def test_fallback_to_task_kb_when_no_subtask_kb(self, mock_db):
         """Test that task-level KB is used when subtask has no KB"""
@@ -294,6 +296,8 @@ class TestKBPriorityLogic:
                     call_args = mock_kb_tool.call_args
                     assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
                     assert len(kb_result.extra_tools) == 1
+                    # Verify the guard was consulted
+                    mock_restricted.assert_called_once()
 
     def test_no_kb_when_both_empty(self, mock_db):
         """Test that no KB tool is created when both levels have no KB"""

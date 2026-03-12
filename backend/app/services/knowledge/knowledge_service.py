@@ -40,6 +40,7 @@ from app.schemas.knowledge import (
 )
 from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_permission import (
+    check_group_permission,
     get_effective_role_in_group,
     get_user_groups,
 )
@@ -119,12 +120,15 @@ class KnowledgeService:
 
         Raises:
             ValueError: If validation fails or permission denied
+
         """
         # Check permission for organization-level knowledge base (admin only)
         check_organization_kb_permission(db, data.namespace, user_id, "create")
 
-        # Check permission for team knowledge base
-        if data.namespace != "default":
+        # Check permission for team knowledge base (skip for organization namespaces)
+        if data.namespace != "default" and not is_organization_namespace(
+            db, data.namespace
+        ):
             role = get_effective_role_in_group(db, user_id, data.namespace)
             if role is None:
                 raise ValueError(
@@ -215,6 +219,8 @@ class KnowledgeService:
         )
 
         db.add(db_resource)
+        # Flush to get the auto-increment id populated
+        db.flush()
         # Note: Caller is responsible for commit
 
         return db_resource.id

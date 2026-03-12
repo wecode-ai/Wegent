@@ -119,13 +119,13 @@ class TestTaskQueryPaginationTotals:
             "app.services.adapters.task_kinds.queries.get_tasks_related_data_batch",
             return_value={
                 "1": {
-                    "bots": [],
-                    "skills": [],
                     "workspace_data": {},
                     "team_id": 1,
                     "user_name": "test",
                     "created_at": Mock(),
                     "updated_at": Mock(),
+                    "completed_at": None,
+                    "is_group_chat": False,
                 }
             },
         ):

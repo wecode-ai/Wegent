@@ -84,7 +84,9 @@ class KnowledgeShareService(UnifiedShareService):
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == resource_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(
+                    [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
+                ),
             )
             .first()
         )
@@ -201,7 +203,9 @@ class KnowledgeShareService(UnifiedShareService):
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == knowledge_base_id,
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(
+                    [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
+                ),
             )
             .first()
         )
@@ -326,7 +330,9 @@ class KnowledgeShareService(UnifiedShareService):
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id.in_(kb_ids_with_access),
                 ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(
+                    [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
+                ),
             )
             .all()
         )
@@ -402,7 +408,9 @@ class KnowledgeShareService(UnifiedShareService):
                 TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
                 ResourceMember.user_id == user_id,
                 ResourceMember.resource_type == ResourceType.TASK.value,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(
+                    [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
+                ),
             )
             .first()
         )
@@ -433,6 +441,42 @@ class KnowledgeShareService(UnifiedShareService):
         if owner_result:
             # Task owner gets REPORTER role by default for bound KBs
             return ResourceRole.REPORTER.value
+
+        # Check for namespace-derived membership (linked-group chats)
+        # Join TaskKnowledgeBaseBinding -> TaskResource to get namespace_id,
+        # then query NamespaceMember for membership
+        namespace_member_result = (
+            db.query(ResourceMember.role)
+            .join(
+                TaskResource,
+                ResourceMember.resource_id == TaskResource.linked_group_id,
+            )
+            .join(
+                TaskKnowledgeBaseBinding,
+                TaskKnowledgeBaseBinding.task_id == TaskResource.id,
+            )
+            .filter(
+                TaskKnowledgeBaseBinding.knowledge_base_id == kb_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.status.in_(
+                    [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
+                ),
+            )
+            .first()
+        )
+
+        if namespace_member_result:
+            # Map NamespaceMember role to ResourceRole
+            namespace_role = namespace_member_result[0]
+            role_mapping = {
+                "Owner": ResourceRole.MAINTAINER.value,
+                "Maintainer": ResourceRole.MAINTAINER.value,
+                "Developer": ResourceRole.DEVELOPER.value,
+                "Reporter": ResourceRole.REPORTER.value,
+                "RestrictedObserver": ResourceRole.RESTRICTED_OBSERVER.value,
+            }
+            return role_mapping.get(namespace_role, ResourceRole.REPORTER.value)
 
         return None
 

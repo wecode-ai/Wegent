@@ -4,6 +4,7 @@
 
 """Task query methods."""
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -87,9 +88,18 @@ def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
         False otherwise (including malformed data)
     """
     try:
+        # Handle both string (from raw SQL) and dict (from ORM)
+        if isinstance(task_json, str):
+            task_json = json.loads(task_json)
+
         if not isinstance(task_json, dict):
+            logger.warning(
+                f"[is_group_task_or_linked] Malformed task_json for task_id={task_id}: "
+                f"expected dict, got {type(task_json).__name__}"
+            )
             return False
 
+        spec = task_json.get("spec", {})
         spec = task_json.get("spec", {})
 
         # Check is_group_chat flag
@@ -101,7 +111,10 @@ def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
             return True
 
         return False
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as e:
+        logger.warning(
+            f"[is_group_task_or_linked] Failed to parse task_id={task_id}: {e}"
+        )
         return False
 
 
@@ -130,7 +143,12 @@ def _filter_and_paginate_tasks(
     for task in tasks:
         try:
             task_crd = Task.model_validate(task.json)
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                f"[_filter_and_paginate_tasks] Failed to validate task {task.id}: {e}. "
+                f"task_json={task.json}",
+                exc_info=True,
+            )
             continue
 
         status = task_crd.status.status if task_crd.status else "PENDING"
@@ -494,8 +512,16 @@ class TaskQueryMixin:
 
             # Parse task to check status and type
             try:
+                # Handle both string (from raw SQL) and dict (from ORM)
+                if isinstance(task_json, str):
+                    task_json = json.loads(task_json)
                 task_crd = Task.model_validate(task_json)
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    f"[get_user_personal_tasks_lite] Failed to validate task {task_id}: {e}. "
+                    f"task_json={task_json}",
+                    exc_info=True,
+                )
                 continue
 
             status = task_crd.status.status if task_crd.status else "PENDING"
@@ -569,8 +595,16 @@ class TaskQueryMixin:
         for row in all_tasks_result:
             task_id, task_json = row
             try:
+                # Handle both string (from raw SQL) and dict (from ORM)
+                if isinstance(task_json, str):
+                    task_json = json.loads(task_json)
                 task_crd = Task.model_validate(task_json)
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    f"[get_user_tasks_by_title_with_pagination] Failed to validate task {task_id}: {e}. "
+                    f"task_json={task_json}",
+                    exc_info=True,
+                )
                 continue
 
             status = task_crd.status.status if task_crd.status else "PENDING"
@@ -656,13 +690,13 @@ class TaskQueryMixin:
                 raise HTTPException(status_code=404, detail="Task not found")
         except HTTPException:
             raise
-        except ValidationError:
+        except ValidationError as err:
             # If validation fails, treat as not found
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail="Task not found") from err
         except (KeyError, TypeError, ValueError) as e:
             # Handle other parsing errors
             logger.warning(f"[get_task_by_id] Failed to parse task {task_id}: {e}")
-            raise HTTPException(status_code=404, detail="Task not found")
+            raise HTTPException(status_code=404, detail="Task not found") from e
 
         # Use task owner's user_id for conversion
         convert_user_id = task.user_id
