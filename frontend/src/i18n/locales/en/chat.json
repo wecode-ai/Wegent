@@ -5,7 +5,9 @@
     "empty": "No messages yet. Start a conversation!"
   },
   "input": {
-    "no_team_placeholder": "Please select or create an agent first"
+    "no_team_placeholder": "Please select or create an agent first",
+    "expand": "Expand input area",
+    "collapse": "Collapse input area"
   },
   "actions": {
     "send": "Send",
