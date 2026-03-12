@@ -302,18 +302,12 @@ class SubscriptionTaskCompletionHandler:
             if team_display_name:
                 subscription_info = f"{subscription_info} ({team_display_name})"
 
-            # Format result summary
-            # Format result summary
-            formatted_summary = self._format_result_summary(
-                execution.prompt, result_summary, execution.status
-            )
-
             # Dispatch follower notifications (via Messager channels)
             await subscription_notification_dispatcher.dispatch_execution_notifications(
                 db,
                 subscription_id=execution.subscription_id,
                 execution_id=execution.id,
-                subscription_display_name=subscription_info,
+                subscription_display_name=subscription_display_name,
                 result_summary=result_summary or "",
                 status=execution.status,
                 detail_url=None,  # Could be added if needed
