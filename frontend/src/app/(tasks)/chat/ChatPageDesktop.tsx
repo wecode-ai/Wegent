@@ -214,7 +214,7 @@ export function ChatPageDesktop() {
           {(selectedTask?.id || selectedTaskDetail?.id) && (
             <RemoteWorkspaceEntry
               taskId={selectedTask?.id || selectedTaskDetail?.id}
-              taskStatus={selectedTaskDetail.status}
+              taskStatus={selectedTaskDetail?.status}
             />
           )}
           {shareButton}

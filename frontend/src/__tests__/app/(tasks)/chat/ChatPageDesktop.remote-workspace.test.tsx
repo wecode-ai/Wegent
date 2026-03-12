@@ -49,6 +49,13 @@ jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({ user: null }),
 }))
 
+jest.mock('@/contexts/DeviceContext', () => ({
+  useDevices: () => ({
+    selectedDeviceId: null,
+    devices: [],
+  }),
+}))
+
 jest.mock('@/features/tasks/contexts/taskContext', () => ({
   useTaskContext: () => ({
     refreshTasks: jest.fn(),

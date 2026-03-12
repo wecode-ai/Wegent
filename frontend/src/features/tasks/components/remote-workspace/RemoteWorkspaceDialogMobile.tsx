@@ -12,6 +12,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
+import { TFunction } from 'i18next'
+
 import {
   formatModifiedAt,
   formatSize,
@@ -20,10 +22,8 @@ import {
   type SortOption,
 } from './remote-workspace-utils'
 
-type Translate = (key: string, defaultValue?: string) => string
-
 type RemoteWorkspaceDialogMobileProps = {
-  t: Translate
+  t: TFunction<'translation', undefined>
   currentPath: string
   isTreeLoading: boolean
   treeError: string | null
@@ -49,7 +49,10 @@ type RemoteWorkspaceDialogMobileProps = {
   onOpenEntry: (entry: RemoteWorkspaceTreeEntry) => void
 }
 
-function resolveTypeLabel(entry: RemoteWorkspaceTreeEntry, t: Translate): string {
+function resolveTypeLabel(
+  entry: RemoteWorkspaceTreeEntry,
+  t: TFunction<'translation', undefined>
+): string {
   if (entry.is_directory) {
     return t('remote_workspace.types.folder', 'Folder')
   }
