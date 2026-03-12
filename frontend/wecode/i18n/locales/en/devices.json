@@ -1,6 +1,12 @@
 {
   "device_setup_title": "Device Setup",
   "device_setup_description": "Connect your local device as an Executor to run tasks",
+  "toolbox_title": "Install Local Device with Weibo AI Toolbox",
+  "toolbox_description_macos": "Your macOS device can now install and manage local devices directly with Weibo AI Toolbox, without running manual commands.",
+  "toolbox_description_windows": "Your Windows device can now install and manage local devices directly with Weibo AI Toolbox, without running manual commands.",
+  "toolbox_hint": "Download and open Weibo AI Toolbox, then follow the in-app guide to complete local device setup.",
+  "toolbox_action": "Download Weibo AI Toolbox",
+  "toolbox_security_hint": "Use the official download link for the installer, then finish the remaining device setup steps inside the app.",
   "system_macos": "macOS",
   "system_linux": "Linux",
   "system_windows": "Windows",
