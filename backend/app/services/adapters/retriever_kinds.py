@@ -18,7 +18,7 @@ from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.base import BaseService
 from app.services.group_permission import check_group_permission, get_user_groups
-from app.services.knowledge.knowledge_service import _is_organization_namespace
+from app.services.knowledge.knowledge_permission import is_organization_namespace
 
 logger = logging.getLogger(__name__)
 

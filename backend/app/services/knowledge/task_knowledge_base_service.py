@@ -6,9 +6,11 @@
 Service for task knowledge base (group chat) binding management.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -19,11 +21,12 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import KnowledgeBaseTaskRef
 from app.services.group_permission import get_effective_role_in_group
-from app.services.knowledge.knowledge_service import (
-    KnowledgeService,
-    _is_organization_namespace,
-)
+from app.services.knowledge.knowledge_permission import is_organization_namespace
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.task_member_service import task_member_service
+
+if TYPE_CHECKING:
+    from sqlalchemy import Select
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ class BoundKnowledgeBaseDetail:
         name: str,
         namespace: str,
         display_name: str,
-        description: Optional[str],
+        description: str | None,
         document_count: int,
         bound_by: str,
         bound_at: str,
@@ -69,7 +72,7 @@ class TaskKnowledgeBaseService:
 
     MAX_BOUND_KNOWLEDGE_BASES = 10
 
-    def get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
+    def get_task(self, db: Session, task_id: int) -> TaskResource | None:
         """Get a task by ID"""
         return (
             db.query(TaskResource)
@@ -81,7 +84,7 @@ class TaskKnowledgeBaseService:
             .first()
         )
 
-    def get_user(self, db: Session, user_id: int) -> Optional[User]:
+    def get_user(self, db: Session, user_id: int) -> User | None:
         """Get a user by ID"""
         return db.query(User).filter(User.id == user_id, User.is_active == True).first()
 
@@ -124,7 +127,7 @@ class TaskKnowledgeBaseService:
             return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
 
         # For organization knowledge base, all authenticated users have access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             return True
 
         # For team knowledge base, check group membership
@@ -205,7 +208,7 @@ class TaskKnowledgeBaseService:
 
     def get_knowledge_base_by_name(
         self, db: Session, name: str, namespace: str
-    ) -> Optional[Kind]:
+    ) -> Kind | None:
         """Get a knowledge base by display name (spec.name) and namespace.
 
         Note: The 'name' parameter is the display name stored in spec.name,
@@ -238,7 +241,7 @@ class TaskKnowledgeBaseService:
 
         return None
 
-    def get_knowledge_base_by_id(self, db: Session, kb_id: int) -> Optional[Kind]:
+    def get_knowledge_base_by_id(self, db: Session, kb_id: int) -> Kind | None:
         """Get a knowledge base by Kind.id.
 
         Args:
@@ -259,7 +262,7 @@ class TaskKnowledgeBaseService:
         )
 
     def get_knowledge_bases_by_ids(
-        self, db: Session, kb_ids: List[int]
+        self, db: Session, kb_ids: list[int]
     ) -> dict[int, Kind]:
         """Batch get knowledge bases by Kind.ids.
 
@@ -290,7 +293,7 @@ class TaskKnowledgeBaseService:
 
     def get_knowledge_base_by_ref(
         self, db: Session, ref: dict
-    ) -> tuple[Optional[Kind], bool]:
+    ) -> tuple[Kind | None, bool]:
         """Get knowledge base by reference (ID or name).
 
         This method implements ID-priority lookup with name fallback for
@@ -317,40 +320,22 @@ class TaskKnowledgeBaseService:
         if kb_id is not None:
             kb = self.get_knowledge_base_by_id(db, kb_id)
             if kb:
-                logger.debug(
-                    f"[get_knowledge_base_by_ref] Found KB by ID: "
-                    f"id={kb_id}, name={kb_name}"
-                )
                 return kb, False
-            else:
-                # ID exists but KB not found (possibly deleted)
-                logger.warning(
-                    f"[get_knowledge_base_by_ref] KB not found by ID: "
-                    f"id={kb_id}, name={kb_name}, namespace={kb_namespace}"
-                )
-                return None, False
+            # ID exists but KB not found (possibly deleted)
+            return None, False
 
         # Priority 2: Fall back to name + namespace lookup (legacy data)
         if kb_name:
             kb = self.get_knowledge_base_by_name(db, kb_name, kb_namespace)
             if kb:
-                logger.info(
-                    f"[get_knowledge_base_by_ref] Found KB by name (legacy data): "
-                    f"name={kb_name}, namespace={kb_namespace}, id={kb.id}"
-                )
                 return kb, True  # needs_migration = True
-            else:
-                logger.warning(
-                    f"[get_knowledge_base_by_ref] KB not found by name: "
-                    f"name={kb_name}, namespace={kb_namespace}"
-                )
-                return None, False
+            return None, False
 
         return None, False
 
     def resolve_kb_refs_batch(
-        self, db: Session, kb_refs: List[dict]
-    ) -> tuple[List[tuple[int, Kind, bool]], List[tuple[int, str, str]]]:
+        self, db: Session, kb_refs: list[dict]
+    ) -> tuple[list[tuple[int, Kind, bool]], list[tuple[int, str, str]]]:
         """Batch resolve knowledge base references with optimized queries.
 
         This method performs batch queries to avoid N+1 query problem:
@@ -371,8 +356,8 @@ class TaskKnowledgeBaseService:
             return [], []
 
         # Separate refs by type: with-ID vs legacy (name-only)
-        refs_with_id: List[tuple[int, int, str, str]] = []  # (idx, id, name, namespace)
-        refs_legacy: List[tuple[int, str, str]] = []  # (idx, name, namespace)
+        refs_with_id: list[tuple[int, int, str, str]] = []  # (idx, id, name, namespace)
+        refs_legacy: list[tuple[int, str, str]] = []  # (idx, name, namespace)
 
         for idx, ref in enumerate(kb_refs):
             kb_id = ref.get("id")
@@ -384,8 +369,8 @@ class TaskKnowledgeBaseService:
             elif kb_name:
                 refs_legacy.append((idx, kb_name, kb_namespace))
 
-        found_kbs: List[tuple[int, Kind, bool]] = []  # (idx, kb, needs_migration)
-        not_found: List[tuple[int, str, str]] = []  # (idx, name, namespace)
+        found_kbs: list[tuple[int, Kind, bool]] = []  # (idx, kb, needs_migration)
+        not_found: list[tuple[int, str, str]] = []  # (idx, name, namespace)
 
         # Batch query 1: Get KBs by IDs
         if refs_with_id:
@@ -395,15 +380,8 @@ class TaskKnowledgeBaseService:
             for idx, kb_id, kb_name, kb_namespace in refs_with_id:
                 kb = kb_map.get(kb_id)
                 if kb:
-                    logger.debug(
-                        f"[resolve_kb_refs_batch] Found KB by ID: id={kb_id}, name={kb_name}"
-                    )
                     found_kbs.append((idx, kb, False))
                 else:
-                    logger.warning(
-                        f"[resolve_kb_refs_batch] KB not found by ID: "
-                        f"id={kb_id}, name={kb_name}, namespace={kb_namespace}"
-                    )
                     not_found.append((idx, kb_name, kb_namespace))
 
         # Batch query 2: Get KBs for legacy refs (by namespace, then filter by name)
@@ -439,16 +417,8 @@ class TaskKnowledgeBaseService:
                 for idx, name in name_refs:
                     kb = name_to_kb.get(name)
                     if kb:
-                        logger.info(
-                            f"[resolve_kb_refs_batch] Found KB by name (legacy): "
-                            f"name={name}, namespace={namespace}, id={kb.id}"
-                        )
                         found_kbs.append((idx, kb, True))  # needs_migration=True
                     else:
-                        logger.warning(
-                            f"[resolve_kb_refs_batch] KB not found by name: "
-                            f"name={name}, namespace={namespace}"
-                        )
                         not_found.append((idx, name, namespace))
 
         # Sort by original index to maintain order
@@ -473,29 +443,17 @@ class TaskKnowledgeBaseService:
             ref_index: Index of the ref in knowledgeBaseRefs list
             kb_id: Knowledge base Kind.id to add
         """
-        try:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        kb_refs = spec.get("knowledgeBaseRefs", []) or []
 
-            if 0 <= ref_index < len(kb_refs):
-                old_name = kb_refs[ref_index].get("name")
-                kb_refs[ref_index]["id"] = kb_id
-                spec["knowledgeBaseRefs"] = kb_refs
-                task_json["spec"] = spec
-                task.json = task_json
-                flag_modified(task, "json")
-                db.commit()
-                logger.info(
-                    f"Migrated KB reference from name to ID: "
-                    f"task_id={task.id}, kb_name={old_name}, kb_id={kb_id}"
-                )
-        except Exception as e:
-            logger.warning(
-                f"Failed to migrate KB ref to ID: task_id={task.id}, "
-                f"ref_index={ref_index}, kb_id={kb_id}, error={e}"
-            )
-            db.rollback()
+        if 0 <= ref_index < len(kb_refs):
+            kb_refs[ref_index]["id"] = kb_id
+            spec["knowledgeBaseRefs"] = kb_refs
+            task_json["spec"] = spec
+            task.json = task_json
+            flag_modified(task, "json")
+            # Note: Caller is responsible for commit
 
     def _batch_migrate_kb_refs(
         self,
@@ -516,38 +474,23 @@ class TaskKnowledgeBaseService:
         if not refs_to_migrate:
             return
 
-        try:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        kb_refs = spec.get("knowledgeBaseRefs", []) or []
 
-            migrated_names = []
-            for ref_index, kb_id in refs_to_migrate:
-                if 0 <= ref_index < len(kb_refs):
-                    old_name = kb_refs[ref_index].get("name")
-                    kb_refs[ref_index]["id"] = kb_id
-                    migrated_names.append(f"{old_name}->id={kb_id}")
+        for ref_index, kb_id in refs_to_migrate:
+            if 0 <= ref_index < len(kb_refs):
+                kb_refs[ref_index]["id"] = kb_id
 
-            spec["knowledgeBaseRefs"] = kb_refs
-            task_json["spec"] = spec
-            task.json = task_json
-            flag_modified(task, "json")
-            db.commit()
-
-            logger.info(
-                f"Batch migrated KB references from name to ID: "
-                f"task_id={task.id}, refs=[{', '.join(migrated_names)}]"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed to batch migrate KB refs: task_id={task.id}, "
-                f"refs_count={len(refs_to_migrate)}, error={e}"
-            )
-            db.rollback()
+        spec["knowledgeBaseRefs"] = kb_refs
+        task_json["spec"] = spec
+        task.json = task_json
+        flag_modified(task, "json")
+        # Note: Caller is responsible for commit
 
     def get_bound_knowledge_bases(
         self, db: Session, task_id: int, user_id: int
-    ) -> List[BoundKnowledgeBaseDetail]:
+    ) -> list[BoundKnowledgeBaseDetail]:
         """
         Get knowledge bases bound to a group chat task.
 
@@ -629,7 +572,7 @@ class TaskKnowledgeBaseService:
 
         return result
 
-    def get_bound_knowledge_base_ids(self, db: Session, task_id: int) -> List[int]:
+    def get_bound_knowledge_base_ids(self, db: Session, task_id: int) -> list[int]:
         """
         Get IDs of knowledge bases bound to a task.
         This method does not check permissions - used internally for AI integration.
@@ -824,7 +767,7 @@ class TaskKnowledgeBaseService:
         kb_name: str,
         kb_namespace: str,
         user_id: int,
-        kb_id: Optional[int] = None,
+        kb_id: int | None = None,
     ) -> bool:
         """
         Unbind a knowledge base from a group chat task.

@@ -9,8 +9,11 @@ Provides KnowledgeBase-specific implementation of the UnifiedShareService.
 Includes permission check methods previously in KnowledgePermissionService.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional, Tuple
+from datetime import datetime
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -29,7 +32,7 @@ from app.schemas.share import (
 )
 from app.schemas.share import PermissionLevel as SchemaPermissionLevel
 from app.services.group_permission import get_effective_role_in_group
-from app.services.knowledge.knowledge_service import _is_organization_namespace
+from app.services.knowledge.knowledge_permission import is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
@@ -47,9 +50,7 @@ class KnowledgeShareService(UnifiedShareService):
     def __init__(self) -> None:
         super().__init__(ResourceType.KNOWLEDGE_BASE)
 
-    def _get_resource(
-        self, db: Session, resource_id: int, user_id: int
-    ) -> Optional[Kind]:
+    def _get_resource(self, db: Session, resource_id: int, user_id: int) -> Kind | None:
         """
         Fetch KnowledgeBase resource.
 
@@ -59,10 +60,6 @@ class KnowledgeShareService(UnifiedShareService):
         3. Organization membership (for organization knowledge bases)
         4. Team membership (for team knowledge bases)
         """
-        logger.info(
-            f"[_get_resource] Fetching KnowledgeBase: resource_id={resource_id}, user_id={user_id}"
-        )
-
         kb = (
             db.query(Kind)
             .filter(
@@ -74,26 +71,11 @@ class KnowledgeShareService(UnifiedShareService):
         )
 
         if not kb:
-            logger.warning(
-                f"[_get_resource] KnowledgeBase not found: resource_id={resource_id}"
-            )
             return None
-
-        logger.info(
-            f"[_get_resource] KnowledgeBase found: id={kb.id}, "
-            f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
-        )
 
         # Check if user is creator
         if kb.user_id == user_id:
-            logger.info(
-                f"[_get_resource] User is creator: user_id={user_id} == kb.user_id={kb.user_id}"
-            )
             return kb
-
-        logger.warning(
-            f"[_get_resource] User is NOT creator: user_id={user_id} != kb.user_id={kb.user_id}"
-        )
 
         # Check if user has explicit shared access
         member = (
@@ -107,42 +89,18 @@ class KnowledgeShareService(UnifiedShareService):
             .first()
         )
         if member:
-            logger.info(
-                f"[_get_resource] User has explicit shared access: member_id={member.id}"
-            )
             return kb
 
-        logger.warning(f"[_get_resource] User has NO explicit shared access")
-
         # For organization knowledge bases, all authenticated users have access
-        if _is_organization_namespace(db, kb.namespace):
-            logger.info(
-                f"[_get_resource] Organization KB - granting access to user_id={user_id}"
-            )
+        if is_organization_namespace(db, kb.namespace):
             return kb
 
         # For team knowledge bases, check group permission
         if kb.namespace != "default":
-            logger.info(
-                f"[_get_resource] Checking team permission: namespace={kb.namespace}"
-            )
             role = get_effective_role_in_group(db, user_id, kb.namespace)
             if role is not None:
-                logger.info(f"[_get_resource] User has team role: role={role}")
                 return kb
-            logger.warning(
-                f"[_get_resource] User has NO team role in namespace={kb.namespace}"
-            )
-        else:
-            logger.info(
-                f"[_get_resource] KnowledgeBase is personal (namespace=default)"
-            )
 
-        logger.error(
-            f"[_get_resource] User has NO access to KnowledgeBase: "
-            f"resource_id={resource_id}, user_id={user_id}, "
-            f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
-        )
         return None  # Only return KB for authorized users
 
     def _get_resource_name(self, resource: Kind) -> str:
@@ -209,7 +167,7 @@ class KnowledgeShareService(UnifiedShareService):
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-    ) -> Tuple[bool, Optional[str], Optional[str], bool]:
+    ) -> tuple[bool, str | None, str | None, bool]:
         """
         Get user's permission for a knowledge base.
 
@@ -253,7 +211,7 @@ class KnowledgeShareService(UnifiedShareService):
             return True, effective_role, explicit_perm.permission_level, False
 
         # For organization knowledge bases, all authenticated users have VIEW access
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             return True, ResourceRole.REPORTER.value, PermissionLevel.VIEW.value, False
 
         # For team knowledge bases, check group permission
@@ -312,6 +270,18 @@ class KnowledgeShareService(UnifiedShareService):
 
         return False, None, None, False
 
+    # Role mapping for group roles to resource roles and permission levels
+    _GROUP_ROLE_MAPPING: dict[str, tuple[str, str]] = {
+        "Owner": (ResourceRole.MAINTAINER.value, PermissionLevel.MANAGE.value),
+        "Maintainer": (ResourceRole.MAINTAINER.value, PermissionLevel.MANAGE.value),
+        "Developer": (ResourceRole.DEVELOPER.value, PermissionLevel.EDIT.value),
+        "Reporter": (ResourceRole.REPORTER.value, PermissionLevel.VIEW.value),
+        "RestrictedObserver": (
+            ResourceRole.RESTRICTED_OBSERVER.value,
+            PermissionLevel.USE.value,
+        ),
+    }
+
     def is_user_restricted_observer_for_any_kb(
         self,
         db: Session,
@@ -335,10 +305,62 @@ class KnowledgeShareService(UnifiedShareService):
         if not knowledge_base_ids:
             return False
 
-        for kb_id in knowledge_base_ids:
-            has_access, role, _, _ = self.get_user_kb_permission(db, kb_id, user_id)
-            if has_access and role == ResourceRole.RESTRICTED_OBSERVER.value:
-                return True
+        # Batch query all KBs to avoid N+1 query problem
+        kbs = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(knowledge_base_ids),
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .all()
+        )
+
+        # Create a set of KB IDs where user has explicit access
+        kb_ids_with_access = {kb.id for kb in kbs}
+
+        # Check explicit permissions in batch
+        explicit_perms = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id.in_(kb_ids_with_access),
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+
+        # Create a map of KB ID to effective role
+        perm_map = {p.resource_id: p.get_effective_role() for p in explicit_perms}
+
+        for kb in kbs:
+            # Check if user is creator
+            if kb.user_id == user_id:
+                continue  # Creator is not restricted
+
+            # Check explicit permission
+            if kb.id in perm_map:
+                if perm_map[kb.id] == ResourceRole.RESTRICTED_OBSERVER.value:
+                    return True
+                continue  # Has explicit permission, not restricted
+
+            # For organization KBs, default role is REPORTER (not restricted)
+            if is_organization_namespace(db, kb.namespace):
+                continue
+
+            # For team KBs, check group role
+            if kb.namespace != "default":
+                group_role = get_effective_role_in_group(db, user_id, kb.namespace)
+                if group_role == "RestrictedObserver":
+                    return True
+                continue
+
+            # For personal KBs, check if bound to group chat
+            if kb.namespace == "default":
+                binding_role = self._get_kb_binding_member_role(db, kb.id, user_id)
+                if binding_role == ResourceRole.RESTRICTED_OBSERVER.value:
+                    return True
 
         return False
 
@@ -534,7 +556,7 @@ class KnowledgeShareService(UnifiedShareService):
         # Check group permission for team KB or organization KB
         group_role = None
         group_level = None
-        if _is_organization_namespace(db, kb.namespace):
+        if is_organization_namespace(db, kb.namespace):
             # Organization KB - all authenticated users have VIEW access
             group_role = SchemaMemberRole.REPORTER
             group_level = SchemaPermissionLevel.VIEW
@@ -756,8 +778,6 @@ class KnowledgeShareService(UnifiedShareService):
             raise ValueError("Share link not found or inactive")
 
         # Check expiration
-        from datetime import datetime
-
         is_expired = False
         if share_link.expires_at and datetime.utcnow() > share_link.expires_at:
             is_expired = True
@@ -855,6 +875,8 @@ class KnowledgeShareService(UnifiedShareService):
         """
         Delete all members for a knowledge base (called when KB is deleted).
 
+        Note: Caller is responsible for commit.
+
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
@@ -870,7 +892,7 @@ class KnowledgeShareService(UnifiedShareService):
             )
             .delete()
         )
-        db.flush()
+        # Note: Caller is responsible for commit
         return result
 
     def delete_members_for_user(
@@ -880,6 +902,8 @@ class KnowledgeShareService(UnifiedShareService):
     ) -> int:
         """
         Delete all KB members for a user (called when user is deleted).
+
+        Note: Caller is responsible for commit.
 
         Args:
             db: Database session
@@ -896,7 +920,7 @@ class KnowledgeShareService(UnifiedShareService):
             )
             .delete()
         )
-        db.flush()
+        # Note: Caller is responsible for commit
         return result
 
 

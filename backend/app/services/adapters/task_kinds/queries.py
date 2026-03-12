@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import bindparam, func, text
 from sqlalchemy.orm import Session
 
@@ -43,33 +44,30 @@ from .task_skills_resolver import resolve_task_skills
 logger = logging.getLogger(__name__)
 
 
-def parse_is_group_chat(task_id: int, task_json: Any) -> Optional[bool]:
-    """
-    Parse is_group_chat field from task JSON.
+def parse_is_group_chat(task_id: int, task_json: Any) -> bool:
+    """Parse is_group_chat field from task JSON.
 
     Args:
         task_id: Task ID for logging purposes
         task_json: Task JSON data (expected to be a dict)
 
     Returns:
-        True if is_group_chat is explicitly True
-        False if is_group_chat is explicitly False or not present
-        None if parsing failed (malformed data)
+        True if is_group_chat is explicitly True, False otherwise
     """
     try:
         if isinstance(task_json, dict):
             return task_json.get("spec", {}).get("is_group_chat") is True
-        # Non-dict task_json is malformed - log warning and return None
+        # Non-dict task_json is malformed - log warning
         logger.warning(
             f"[parse_is_group_chat] Malformed task_json for task_id={task_id}: "
             f"expected dict, got {type(task_json).__name__}"
         )
-        return None
+        return False
     except (KeyError, TypeError, ValueError) as e:
         logger.warning(
             f"[parse_is_group_chat] Failed to parse is_group_chat for task_id={task_id}: {e}"
         )
-        return None
+        return False
 
 
 def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
@@ -78,7 +76,7 @@ def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
     This helper determines if a task should be considered a "group task"
     based on either:
     1. is_group_chat flag in spec
-    2. linked_group_id being set (> 0)
+    2. linked_group being set in spec (indicates linked namespace)
 
     Args:
         task_id: Task ID for logging purposes
@@ -98,14 +96,61 @@ def is_group_task_or_linked(task_id: int, task_json: Any) -> bool:
         if spec.get("is_group_chat") is True:
             return True
 
-        # Check linked_group_id (could be in spec or as a column in the row)
-        # In JSON, it would be under spec.linked_group
+        # Check linked_group in spec (indicates linked namespace)
         if spec.get("linked_group"):
             return True
 
         return False
     except (KeyError, TypeError, ValueError):
         return False
+
+
+def _filter_and_paginate_tasks(
+    tasks: List[TaskResource],
+    ordered_task_ids: List[int],
+    skip: int,
+    limit: int,
+) -> List[TaskResource]:
+    """Filter tasks for display and apply pagination.
+
+    Filters out DELETE status tasks, background tasks, and non-interacted subscriptions.
+    Maintains the order from ordered_task_ids.
+
+    Args:
+        tasks: List of TaskResource objects to filter
+        ordered_task_ids: Original ordered task IDs for maintaining sort order
+        skip: Number of items to skip
+        limit: Maximum number of items to return
+
+    Returns:
+        Filtered and paginated list of TaskResource objects
+    """
+    # Filter tasks for display
+    filtered_tasks = []
+    for task in tasks:
+        try:
+            task_crd = Task.model_validate(task.json)
+        except Exception:
+            continue
+
+        status = task_crd.status.status if task_crd.status else "PENDING"
+        if status == "DELETE":
+            continue
+        if is_background_task(task_crd):
+            continue
+        if is_non_interacted_subscription_task(task_crd):
+            continue
+
+        filtered_tasks.append(task)
+
+    # Restore order and apply pagination
+    id_to_task = {t.id: t for t in filtered_tasks}
+    ordered_tasks = restore_task_order(
+        ordered_task_ids, id_to_task, limit=len(ordered_task_ids)
+    )
+
+    # Apply pagination to filtered results
+    return ordered_tasks[skip : skip + limit]
 
 
 class TaskQueryMixin:
@@ -122,7 +167,6 @@ class TaskQueryMixin:
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
         # Step 1: Get paginated task IDs and total count
-        # get_accessible_task_ids_and_total returns IDs with extra_limit for filtering
         task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
@@ -130,43 +174,16 @@ class TaskQueryMixin:
         if not task_ids:
             return [], total
 
-        # Step 2: Load task data for the IDs (includes json for filtering)
+        # Step 2: Load task data for the IDs
         tasks = load_tasks_by_ids(db, task_ids)
 
-        # Step 3: Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
-        filtered_tasks = []
-        for task in tasks:
-            try:
-                task_crd = Task.model_validate(task.json)
-            except Exception:
-                continue
-
-            status = task_crd.status.status if task_crd.status else "PENDING"
-            if status == "DELETE":
-                continue
-            if is_background_task(task_crd):
-                continue
-            if is_non_interacted_subscription_task(task_crd):
-                continue
-
-            filtered_tasks.append(task)
-
-        # Step 4: Restore order and apply pagination
-        # task_ids is already ordered by created_at DESC from get_accessible_task_ids_and_total
-        id_to_task = {t.id: t for t in filtered_tasks}
-        ordered_tasks = restore_task_order(task_ids, id_to_task, limit=len(task_ids))
-
-        # Apply pagination to filtered results
-        paginated_tasks = (
-            ordered_tasks[skip : skip + limit]
-            if skip > 0 or len(ordered_tasks) > limit
-            else ordered_tasks
-        )
+        # Step 3: Filter and paginate
+        paginated_tasks = _filter_and_paginate_tasks(tasks, task_ids, skip, limit)
 
         if not paginated_tasks:
             return [], total
 
-        # Step 5: Build result with related data
+        # Step 4: Build result with related data
         related_data_batch = get_tasks_related_data_batch(db, paginated_tasks, user_id)
         result = []
         for task in paginated_tasks:
@@ -188,7 +205,6 @@ class TaskQueryMixin:
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
         # Step 1: Get paginated task IDs and total count
-        # get_accessible_task_ids_and_total returns IDs with extra_limit for filtering
         task_ids, total = get_accessible_task_ids_and_total(
             db, user_id=user_id, skip=skip, limit=limit, extra_limit=50
         )
@@ -196,38 +212,11 @@ class TaskQueryMixin:
         if not task_ids:
             return [], total
 
-        # Step 2: Load task data for the IDs (includes json for filtering)
+        # Step 2: Load task data for the IDs
         tasks = load_tasks_by_ids(db, task_ids)
 
-        # Step 3: Filter tasks for display (DELETE status, background tasks, non-interacted subscriptions)
-        filtered_tasks = []
-        for task in tasks:
-            try:
-                task_crd = Task.model_validate(task.json)
-            except Exception:
-                continue
-
-            status = task_crd.status.status if task_crd.status else "PENDING"
-            if status == "DELETE":
-                continue
-            if is_background_task(task_crd):
-                continue
-            if is_non_interacted_subscription_task(task_crd):
-                continue
-
-            filtered_tasks.append(task)
-
-        # Step 4: Restore order and apply pagination
-        # task_ids is already ordered by created_at DESC from get_accessible_task_ids_and_total
-        id_to_task = {t.id: t for t in filtered_tasks}
-        ordered_tasks = restore_task_order(task_ids, id_to_task, limit=len(task_ids))
-
-        # Apply pagination to filtered results
-        paginated_tasks = (
-            ordered_tasks[skip : skip + limit]
-            if skip > 0 or len(ordered_tasks) > limit
-            else ordered_tasks
-        )
+        # Step 3: Filter and paginate
+        paginated_tasks = _filter_and_paginate_tasks(tasks, task_ids, skip, limit)
 
         if not paginated_tasks:
             return [], total
@@ -251,8 +240,6 @@ class TaskQueryMixin:
 
         Performance optimized: Uses is_group_chat column with index instead of JSON parsing.
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
         from app.schemas.namespace import GroupRole
 
         # Step 1: Get all task IDs with is_group_chat=true (no limit/skip)
@@ -414,7 +401,7 @@ class TaskQueryMixin:
         user_id: int,
         skip: int = 0,
         limit: int = 50,
-        types: List[str] = None,
+        types: Optional[List[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal (non-group-chat) task list with pagination.
@@ -427,9 +414,6 @@ class TaskQueryMixin:
         """
         if types is None:
             types = ["online", "offline"]
-
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
 
         # Get all task IDs that are group chats (have members) using resource_members
         # Note: copied_resource_id = 0 filters out share-copy records (where copied_resource_id > 0)
@@ -444,9 +428,12 @@ class TaskQueryMixin:
             AND k.is_active = true
             AND k.namespace != 'system'
             AND tm.copied_resource_id = 0
+            AND tm.user_id = :user_id
         """
         )
-        member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
+        member_task_ids_result = db.execute(
+            member_task_ids_sql, {"user_id": user_id}
+        ).fetchall()
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get task IDs where is_group_chat is explicitly set to true
@@ -554,46 +541,6 @@ class TaskQueryMixin:
         result = build_lite_task_list(db, ordered_tasks, user_id)
 
         return result, total
-
-    def _filter_personal_tasks(
-        self,
-        tasks: List[TaskResource],
-        all_group_task_ids: set,
-        types: List[str],
-    ) -> List[TaskResource]:
-        """Filter personal tasks based on type criteria."""
-        valid_tasks = []
-        include_online = "online" in types
-        include_offline = "offline" in types
-        include_subscription = "subscription" in types or "flow" in types
-
-        for task in tasks:
-            if task.id in all_group_task_ids:
-                continue
-
-            task_crd = Task.model_validate(task.json)
-            status = task_crd.status.status if task_crd.status else "PENDING"
-            if status == "DELETE":
-                continue
-
-            labels = task_crd.metadata.labels or {}
-            is_subscription = labels.get("type") == "subscription"
-            task_type_label = labels.get("taskType", "chat")
-            is_code = task_type_label == "code"
-
-            if is_subscription:
-                if not include_subscription:
-                    continue
-            elif is_code:
-                if not include_offline:
-                    continue
-            else:
-                if not include_online:
-                    continue
-
-            valid_tasks.append(task)
-
-        return valid_tasks
 
     def get_user_tasks_by_title_with_pagination(
         self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
@@ -709,8 +656,12 @@ class TaskQueryMixin:
                 raise HTTPException(status_code=404, detail="Task not found")
         except HTTPException:
             raise
-        except Exception:
+        except ValidationError:
             # If validation fails, treat as not found
+            raise HTTPException(status_code=404, detail="Task not found")
+        except (KeyError, TypeError, ValueError) as e:
+            # Handle other parsing errors
+            logger.warning(f"[get_task_by_id] Failed to parse task {task_id}: {e}")
             raise HTTPException(status_code=404, detail="Task not found")
 
         # Use task owner's user_id for conversion
@@ -778,84 +729,6 @@ class TaskQueryMixin:
         self._add_group_chat_info_to_task(db, task_id, task_dict, user_id)
 
         return task_dict
-
-    def _convert_subtasks_to_dict(
-        self, subtasks: List, bots: Dict[int, Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Convert subtasks to dictionary format."""
-        subtasks_dict = []
-        for subtask in subtasks:
-            # Convert contexts to dict format
-            contexts_list = []
-            if hasattr(subtask, "contexts") and subtask.contexts:
-                for ctx in subtask.contexts:
-                    ctx_dict = {
-                        "id": ctx.id,
-                        "context_type": ctx.context_type,
-                        "name": ctx.name,
-                        "status": (
-                            ctx.status.value
-                            if hasattr(ctx.status, "value")
-                            else ctx.status
-                        ),
-                    }
-                    # Add type-specific fields
-                    if ctx.context_type == "attachment":
-                        ctx_dict.update(
-                            {
-                                "file_extension": ctx.file_extension,
-                                "file_size": ctx.file_size,
-                                "mime_type": ctx.mime_type,
-                            }
-                        )
-                    elif ctx.context_type == "knowledge_base":
-                        ctx_dict.update({"document_count": ctx.document_count})
-                    elif ctx.context_type == "table":
-                        type_data = ctx.type_data or {}
-                        url = type_data.get("url")
-                        if url:
-                            ctx_dict["source_config"] = {"url": url}
-                    contexts_list.append(ctx_dict)
-
-            subtask_dict = {
-                "id": subtask.id,
-                "task_id": subtask.task_id,
-                "team_id": subtask.team_id,
-                "title": subtask.title,
-                "bot_ids": subtask.bot_ids,
-                "role": subtask.role,
-                "prompt": subtask.prompt,
-                "executor_namespace": subtask.executor_namespace,
-                "executor_name": subtask.executor_name,
-                "message_id": subtask.message_id,
-                "parent_id": subtask.parent_id,
-                "status": subtask.status,
-                "progress": subtask.progress,
-                "result": subtask.result,
-                "error_message": subtask.error_message,
-                "user_id": subtask.user_id,
-                "created_at": (
-                    subtask.created_at.isoformat() if subtask.created_at else None
-                ),
-                "updated_at": (
-                    subtask.updated_at.isoformat() if subtask.updated_at else None
-                ),
-                "completed_at": (
-                    subtask.completed_at.isoformat() if subtask.completed_at else None
-                ),
-                "bots": [
-                    bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots
-                ],
-                "contexts": contexts_list,
-                "attachments": [],
-                "sender_type": subtask.sender_type,
-                "sender_user_id": subtask.sender_user_id,
-                "sender_user_name": getattr(subtask, "sender_user_name", None),
-                "reply_to_subtask_id": subtask.reply_to_subtask_id,
-            }
-            subtasks_dict.append(subtask_dict)
-
-        return subtasks_dict
 
     def _add_group_chat_info_to_task(
         self, db: Session, task_id: int, task_dict: Dict[str, Any], user_id: int
