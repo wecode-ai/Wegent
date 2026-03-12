@@ -241,6 +241,7 @@ export function RemoteWorkspaceEntry({
               <Button
                 variant="outline"
                 size="sm"
+                className="h-8 pl-2 pr-3 rounded-[7px] text-sm"
                 onClick={() => {
                   void loadStatus({ silent: true })
                   setIsOpen(true)

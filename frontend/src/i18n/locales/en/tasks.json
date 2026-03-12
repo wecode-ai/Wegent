@@ -6,7 +6,7 @@
     "characters": "characters"
   },
   "remote_workspace": {
-    "button": "Remote Workspace",
+    "button": "View the task files",
     "unavailable": "Remote session unavailable",
     "reason_loading": "Checking remote workspace status...",
     "reason_status_check_failed": "Failed to check remote workspace status",
@@ -19,7 +19,7 @@
     "title": "Remote Workspace",
     "root": "Workspace",
     "parent": "Parent",
-    "search_placeholder": "Search files",
+    "search_placeholder": "Search for the current file list",
     "sort": {
       "label": "Sort",
       "options": {

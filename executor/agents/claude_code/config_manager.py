@@ -30,47 +30,6 @@ def generate_claude_code_user_id() -> str:
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=64))
 
 
-def build_task_workspace_dir(task_id: int) -> str:
-    """Build task-scoped workspace path."""
-    from executor.config import config
-
-    return os.path.join(config.get_workspace_root(), str(task_id))
-
-
-def normalize_workspace_root_cwd(cwd: Any, task_id: int) -> Any:
-    """Normalize legacy cwd=/workspace to task-scoped workspace directory.
-
-    Args:
-        cwd: Raw cwd value from configuration.
-        task_id: Task ID for task-scoped workspace path.
-
-    Returns:
-        Normalized cwd value.
-    """
-    if not isinstance(cwd, str):
-        return cwd
-
-    stripped_cwd = cwd.strip()
-    if not stripped_cwd:
-        return cwd
-
-    from executor.config import config
-
-    workspace_root = os.path.normpath(config.get_workspace_root())
-    normalized_cwd = os.path.normpath(stripped_cwd)
-    if normalized_cwd == workspace_root:
-        task_workspace = build_task_workspace_dir(task_id)
-        logger.info(
-            "Normalized legacy cwd '%s' to task workspace '%s' for task_id=%s",
-            cwd,
-            task_workspace,
-            task_id,
-        )
-        return task_workspace
-
-    return cwd
-
-
 class HookManager:
     """
     Manages hook functions for Claude Code configuration.
@@ -430,9 +389,6 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     else:
         logger.info("[MCP] No MCP servers in final options")
 
-    if "cwd" in options:
-        options["cwd"] = normalize_workspace_root_cwd(options["cwd"], task_data.task_id)
-
     return options
 
 
@@ -446,7 +402,8 @@ def get_claude_config_dir(task_id: int, cwd: Optional[str] = None) -> str:
     Returns:
         Path to .claude config directory
     """
-    normalized_cwd = normalize_workspace_root_cwd(cwd, task_id)
-    if normalized_cwd:
-        return os.path.join(normalized_cwd, ".claude")
-    return os.path.join(build_task_workspace_dir(task_id), ".claude")
+    from executor.config import config
+
+    if cwd:
+        return os.path.join(cwd, ".claude")
+    return os.path.join(config.get_workspace_root(), str(task_id), ".claude")

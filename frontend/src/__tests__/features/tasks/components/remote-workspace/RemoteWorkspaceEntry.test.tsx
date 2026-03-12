@@ -86,6 +86,26 @@ describe('RemoteWorkspaceEntry', () => {
     expect(button).toBeDisabled()
   })
 
+  test('uses compact header button size classes', async () => {
+    ;(remoteWorkspaceApis.getStatus as jest.Mock).mockResolvedValue({
+      connected: true,
+      available: true,
+      root_path: '/workspace',
+      reason: null,
+    })
+
+    render(<RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledWith(1)
+    })
+
+    const button = screen.getByRole('button', { name: 'Remote Workspace' })
+    expect(button).toHaveClass('h-8')
+    expect(button).toHaveClass('rounded-[7px]')
+    expect(button).toHaveClass('text-sm')
+  })
+
   test('keeps button visible and disabled when workspace is not connected', async () => {
     ;(remoteWorkspaceApis.getStatus as jest.Mock)
       .mockResolvedValueOnce({

@@ -6,7 +6,7 @@
     "characters": "字符"
   },
   "remote_workspace": {
-    "button": "远程工作区",
+    "button": "查看任务文件",
     "unavailable": "远程会话不可用",
     "reason_loading": "正在检查远程工作区状态...",
     "reason_status_check_failed": "远程工作区状态检查失败",
@@ -19,7 +19,7 @@
     "title": "远程工作区",
     "root": "工作区",
     "parent": "上级目录",
-    "search_placeholder": "搜索文件",
+    "search_placeholder": "搜索当前文件列表",
     "sort": {
       "label": "排序",
       "options": {
