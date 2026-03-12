@@ -118,6 +118,10 @@ class ResponseCreateInput(BaseModel):
     stream: bool = Field(
         default=False, description="Whether to enable streaming output"
     )
+    background: bool = Field(
+        default=False,
+        description="Run in background mode. When true, the request returns immediately with status 'in_progress' and the task runs asynchronously. Use GET /responses/{response_id} to poll for completion.",
+    )
     tools: Optional[List[WegentTool]] = Field(
         default=None,
         description="Wegent custom tools: [{'type': 'wegent_chat_bot'}] to enable all server-side capabilities",
