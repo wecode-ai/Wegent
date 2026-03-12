@@ -415,9 +415,12 @@ def get_mcp_system_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
     Returns:
         MCP server configuration dictionary
     """
+    # Use API_PREFIX to ensure correct path (e.g., /api/mcp/system)
+    api_prefix = settings.API_PREFIX or ""
+    mcp_path = f"{api_prefix}{SYSTEM_MCP_MOUNT_PATH}"
     return _build_streamable_http_config(
         name="wegent-system",
-        url=f"{backend_url}{SYSTEM_MCP_MOUNT_PATH}",
+        url=f"{backend_url}{mcp_path}",
         auth_token=auth_token,
         timeout=60,
     )
