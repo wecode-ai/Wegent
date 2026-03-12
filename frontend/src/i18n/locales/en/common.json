@@ -80,6 +80,8 @@
     "flow": "Feed",
     "settings": "Settings",
     "docs": "Docs",
+    "feature_docs": "Feature Docs",
+    "best_practices": "Best Practices",
     "feedback": "Feedback",
     "admin": "Admin",
     "evaluation": "AI Evaluation"

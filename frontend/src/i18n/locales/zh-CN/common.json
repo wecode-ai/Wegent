@@ -80,6 +80,8 @@
     "flow": "关注",
     "settings": "设置",
     "docs": "文档",
+    "feature_docs": "功能文档",
+    "best_practices": "最佳实践",
     "feedback": "问题反馈",
     "admin": "系统管理",
     "evaluation": "AI 考评"

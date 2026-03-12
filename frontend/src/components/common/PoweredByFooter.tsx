@@ -5,14 +5,14 @@
 'use client'
 
 import { useTranslation } from '@/hooks/useTranslation'
-import { MessageSquare, FileText } from 'lucide-react'
+import { MessageSquare, FileText, Lightbulb } from 'lucide-react'
 
 interface PoweredByFooterProps {
   className?: string
 }
 
 /**
- * Footer component that displays docs link, feedback link and "Powered by AI应用平台" branding
+ * Footer component that displays docs link, best practices link, feedback link and "Powered by AI应用平台" branding
  * Used on home page and task pages (when no task is selected)
  */
 export default function PoweredByFooter({ className = '' }: PoweredByFooterProps) {
@@ -21,6 +21,12 @@ export default function PoweredByFooter({ className = '' }: PoweredByFooterProps
   const handleDocsClick = () => {
     const docsUrl = process.env.NEXT_PUBLIC_DOCS_URL || 'https://wecode-ai.github.io/wegent-docs'
     window.open(docsUrl, '_blank')
+  }
+
+  const handleBestPracticesClick = () => {
+    const bestPracticesUrl =
+      'https://alidocs.dingtalk.com/i/nodes/1zknDm0WRLPG5lzGu2NjYLbpJBQEx5rG?utm_scene=person_space'
+    window.open(bestPracticesUrl, '_blank')
   }
 
   const handleFeedbackClick = () => {
@@ -39,7 +45,16 @@ export default function PoweredByFooter({ className = '' }: PoweredByFooterProps
         className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors pointer-events-auto"
       >
         <FileText className="h-3 w-3" />
-        <span>{t('navigation.docs')}</span>
+        <span>{t('navigation.feature_docs')}</span>
+      </button>
+      <span className="text-xs text-text-muted">·</span>
+      <button
+        type="button"
+        onClick={handleBestPracticesClick}
+        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors pointer-events-auto"
+      >
+        <Lightbulb className="h-3 w-3" />
+        <span>{t('navigation.best_practices')}</span>
       </button>
       <span className="text-xs text-text-muted">·</span>
       <button
