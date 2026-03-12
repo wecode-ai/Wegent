@@ -3,6 +3,7 @@
     "title": "群组",
     "create": "创建群组",
     "name": "名称",
+    "groupId": "组ID",
     "displayName": "显示名称",
     "visibility": "可见性",
     "description": "描述",
@@ -68,7 +69,8 @@
     "noGroups": "暂无群组",
     "editGroup": "编辑群组",
     "manageMembers": "管理成员",
-    "deleteGroup": "删除群组"
+    "deleteGroup": "删除群组",
+    "enterGroup": "进入群组"
   },
   "groupCreate": {
     "nameImmutable": "创建后不可修改。仅使用字母、数字、短横线和下划线。",

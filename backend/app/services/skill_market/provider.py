@@ -123,7 +123,9 @@ class ISkillMarketProvider(ABC):
         pass
 
     @abstractmethod
-    async def download(self, skill_key: str, user: Optional[str] = None) -> DownloadResult:
+    async def download(
+        self, skill_key: str, user: Optional[str] = None
+    ) -> DownloadResult:
         """
         Download a skill from the market
 

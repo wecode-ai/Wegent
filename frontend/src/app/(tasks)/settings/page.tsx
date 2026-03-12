@@ -72,6 +72,19 @@ function SettingsContent() {
     return searchParams.get('group') || null
   })
 
+  // Sync state with URL parameters when they change (e.g., from GroupManager navigation)
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    const group = searchParams.get('group')
+
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab as SettingsTabId)
+    }
+    if (group !== selectedGroup) {
+      setSelectedGroup(group)
+    }
+  }, [searchParams])
+
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
