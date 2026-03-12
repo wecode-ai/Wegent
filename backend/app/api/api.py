@@ -20,6 +20,7 @@ from app.api.endpoints import (
     quota,
     repository,
     share,
+    skill_market,
     subtasks,
     tables,
     users,
@@ -156,6 +157,10 @@ api_router.include_router(
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
     web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
+)
+# Skill market endpoints (external skill market integration)
+api_router.include_router(
+    skill_market.router, prefix="/skill-market", tags=["skill-market"]
 )
 api_router.include_router(k_router)
 
