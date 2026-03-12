@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Maximize2, Minimize2 } from 'lucide-react'
 import type { ChatTipItem, Team, TaskType } from '@/types/api'
 import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
@@ -50,6 +51,12 @@ interface ChatInputProps {
   skillSelectorReadOnly?: boolean
   /** Ref to the skill button element for fly animation target */
   skillButtonRef?: React.RefObject<HTMLElement | null>
+
+  // Expand/collapse control for input height
+  /** Whether the input is currently expanded (2x height) */
+  isExpanded?: boolean
+  /** Callback when expand/collapse button is clicked */
+  onExpandToggle?: () => void
 }
 
 export default function ChatInput({
@@ -76,6 +83,8 @@ export default function ChatInput({
   isChatShell = false,
   skillSelectorReadOnly = false,
   skillButtonRef,
+  isExpanded = false,
+  onExpandToggle,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -625,8 +634,15 @@ export default function ChatInput({
   // Calculate min height based on device
   // Figma design shows input card ~140px total, text area takes most of it
   // Text area should be ~60-70px minimum (about 2-3 lines with 26px line-height)
-  const minHeight = isMobile ? '3.5rem' : '4rem'
-  const maxHeight = isMobile ? '9rem' : '10rem'
+  const baseMinHeight = isMobile ? '3.5rem' : '4rem'
+  // When expanded, increase min height to show the expanded state visually
+  const expandedMinHeight = isMobile ? '9rem' : '10rem'
+  const minHeight = !isMobile && isExpanded ? expandedMinHeight : baseMinHeight
+  // When expanded, double the max height for easier editing of large text
+  // Only apply expansion on desktop - mobile has no toggle button to collapse
+  const baseMaxHeight = isMobile ? '9rem' : '10rem'
+  const expandedMaxHeight = isMobile ? '18rem' : '20rem'
+  const maxHeight = !isMobile && isExpanded ? expandedMaxHeight : baseMaxHeight
 
   // Get tooltip text based on send key preference and platform
   const tooltipText = useMemo(() => {
@@ -699,61 +715,90 @@ export default function ChatInput({
         }
       />
       {/* Scrollable container that includes both badge and editable content */}
-      <div
-        className="w-full custom-scrollbar"
-        style={{
-          minHeight,
-          maxHeight,
-          overflowY: 'auto',
-        }}
-      >
-        {/* Inner content wrapper with badge and text */}
-        <div className="relative">
-          {/* Badge - positioned absolutely so it doesn't affect text flow */}
-          {badge && (
-            <span
-              ref={badgeRef}
-              className="absolute left-0 top-0.5 pointer-events-auto z-10"
-              style={{ userSelect: 'none' }}
-            >
-              {badge}
-            </span>
-          )}
+      <div className="relative">
+        <div
+          className="w-full custom-scrollbar transition-all duration-300 ease-in-out"
+          style={{
+            minHeight,
+            maxHeight,
+            overflowY: 'auto',
+          }}
+        >
+          {/* Inner content wrapper with badge and text */}
+          <div className="relative">
+            {/* Badge - positioned absolutely so it doesn't affect text flow */}
+            {badge && (
+              <span
+                ref={badgeRef}
+                className="absolute left-0 top-0.5 pointer-events-auto z-10"
+                style={{ userSelect: 'none' }}
+              >
+                {badge}
+              </span>
+            )}
 
-          {/* Editable content area - wrapped in Tooltip for send shortcut hint */}
+            {/* Editable content area - wrapped in Tooltip for send shortcut hint */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    ref={editableRef}
+                    contentEditable={!isInputDisabled}
+                    onInput={handleInput}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
+                    onFocus={handleFocus}
+                    data-testid="message-input"
+                    className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none transition-all duration-300 ease-in-out ${isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    style={{
+                      minHeight,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      // Use text-indent for first line only to leave space for badge
+                      // By using insertLineBreak in keydown handler, we ensure Shift+Enter
+                      // only inserts <br> tags (not new <div> blocks), so text-indent
+                      // correctly affects only the first line and subsequent lines start from left edge
+                      textIndent: badge ? `${badgeWidth}px` : 0,
+                      // Add padding at top right to prevent text overlapping with expand button
+                      paddingRight: onExpandToggle && !isMobile ? '2rem' : undefined,
+                    }}
+                    suppressContentEditableWarning
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  <p>{tooltipText}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        </div>
+
+        {/* Expand/Collapse button - positioned at top-right corner */}
+        {onExpandToggle && !isMobile && (
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <div
-                  ref={editableRef}
-                  contentEditable={!isInputDisabled}
-                  onInput={handleInput}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                  onCompositionStart={handleCompositionStart}
-                  onCompositionEnd={handleCompositionEnd}
-                  onFocus={handleFocus}
-                  data-testid="message-input"
-                  className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none ${isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  style={{
-                    minHeight,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    // Use text-indent for first line only to leave space for badge
-                    // By using insertLineBreak in keydown handler, we ensure Shift+Enter
-                    // only inserts <br> tags (not new <div> blocks), so text-indent
-                    // correctly affects only the first line and subsequent lines start from left edge
-                    textIndent: badge ? `${badgeWidth}px` : 0,
-                  }}
-                  suppressContentEditableWarning
-                />
+                <button
+                  type="button"
+                  onClick={onExpandToggle}
+                  className="absolute top-1 right-0 p-1 rounded hover:bg-surface-hover text-text-muted hover:text-text-secondary transition-colors z-10"
+                  aria-label={isExpanded ? t('chat:input.collapse') : t('chat:input.expand')}
+                >
+                  {isExpanded ? (
+                    <Minimize2 className="h-4 w-4" />
+                  ) : (
+                    <Maximize2 className="h-4 w-4" />
+                  )}
+                </button>
               </TooltipTrigger>
               <TooltipContent side="top" className="text-xs">
-                <p>{tooltipText}</p>
+                <p>{isExpanded ? t('chat:input.collapse') : t('chat:input.expand')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-        </div>
+        )}
       </div>
     </div>
   )
