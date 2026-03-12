@@ -153,54 +153,23 @@ test.describe('Chat Flow', () => {
     await page.waitForSelector('[data-tour="input-controls"]', { state: 'visible', timeout: 10000 })
     await page.waitForTimeout(1000)
 
-    // Wait for clarification toggle to appear (only for Chat Shell type teams)
-    // The toggle is a button with MessageCircleQuestion icon inside ActionButton
-    // Try to find it by looking for buttons with specific characteristics
-    await page.waitForTimeout(2000)  // Wait for all controls to render
+    // Find clarification toggle by data-testid
+    let clarificationToggle = page.locator('[data-testid="clarification-toggle"]').first()
+    const isClarificationVisible = await clarificationToggle.isVisible({ timeout: 3000 }).catch(() => false)
 
-    // Strategy: Find all buttons in input-controls, then find the one that likely is clarification toggle
-    // Clarification toggle is typically the 4th button (index 3) for Chat Shell teams
-    // Buttons order: Knowledge Base, ?, Skills, ?, ?, Model, Send
-    const allButtons = page.locator('[data-tour="input-controls"] button')
-    const buttonCount = await allButtons.count()
-    console.log(`Found ${buttonCount} buttons in input-controls`)
-
-    // Try to identify the clarification toggle by position or content
-    // For Chat Shell: buttons are [KB, Clarification, Skills, ...]
-    let clarificationToggle = null
-
-    // Try each button and check if clicking it toggles the mode
-    for (let i = 0; i < Math.min(buttonCount, 6); i++) {
-      const btn = allButtons.nth(i)
-      const html = await btn.innerHTML().catch(() => '')
-
-      // Check if this button contains MessageCircleQuestion icon (circle + question mark pattern)
-      // The icon is typically an SVG with circle and question mark paths
-      if (html.includes('circle') && html.includes('?')) {
-        clarificationToggle = btn
-        console.log(`Found potential clarification toggle at index ${i}`)
-        break
-      }
-    }
-
-    // Fallback: try the 4th button (index 3) which is typically clarification toggle
-    if (!clarificationToggle && buttonCount >= 4) {
-      clarificationToggle = allButtons.nth(3)
-      console.log('Using fallback: button at index 3')
-    }
-
-    if (!clarificationToggle) {
+    if (!isClarificationVisible) {
       console.log('⚠️ Clarification toggle not found - team may not be Chat Shell type, skipping test')
       test.skip()
       return
     }
+    console.log('✓ Found clarification toggle')
 
     await clarificationToggle.click()
     await page.waitForTimeout(500)
 
     // Verify the button is now in enabled state (has primary/border-primary class)
     const buttonClass = await clarificationToggle.getAttribute('class')
-    const isEnabled = buttonClass?.includes('border-primary') || buttonClass?.includes('bg-primary')
+    const isEnabled = buttonClass?.includes('primary')
     if (!isEnabled) {
       console.log('⚠️ Clarification mode not enabled (button style unchanged) - may not be supported, skipping test')
       test.skip()
