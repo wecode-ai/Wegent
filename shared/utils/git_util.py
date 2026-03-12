@@ -72,9 +72,19 @@ def clone_repo(project_url, branch, project_path, user_name=None, token=None):
         f"get git token from url: {project_url}, branch:{branch}, project:{project_path}"
     )
     if token:
-        return clone_repo_with_token(
+        success, error = clone_repo_with_token(
             project_url, branch, project_path, user_name, token
         )
+        # If http:// clone failed, retry with https:// in case the server enforces HTTPS
+        if not success and project_url.startswith("http://"):
+            https_url = "https://" + project_url[7:]
+            logger.info(
+                f"http clone failed, retrying with https: {https_url}"
+            )
+            success, error = clone_repo_with_token(
+                https_url, branch, project_path, user_name, token
+            )
+        return success, error
     return False, "Token is not provided"
 
 
