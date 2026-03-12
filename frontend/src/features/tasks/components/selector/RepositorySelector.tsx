@@ -184,6 +184,7 @@ export default function RepositorySelector({
                             'aria-selected:bg-hover',
                             '!flex !flex-row !items-start !gap-3'
                           )}
+                          data-testid={`repo-option-${item.label.replace(/\//g, '-')}`}
                         >
                           <Check
                             className={cn(

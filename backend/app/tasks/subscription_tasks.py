@@ -281,7 +281,7 @@ def _load_workspace_info(db: Session, workspace_id: Optional[int]) -> WorkspaceI
         .filter(
             TaskResource.id == workspace_id,
             TaskResource.kind == KIND_WORKSPACE,
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -492,7 +492,7 @@ async def _create_subscription_task(
             .filter(
                 TaskResource.id == ctx.bound_task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .first()
         )
@@ -585,6 +585,7 @@ def _add_subscription_labels_to_task(
         LABEL_EXECUTION_ID,
         LABEL_SUBSCRIPTION_ID,
     )
+    from app.models.task import TaskResource
     from app.schemas.kind import Task
 
     task_crd = Task.model_validate(task.json)
@@ -607,10 +608,14 @@ def _add_subscription_labels_to_task(
     task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
     task_crd.metadata.labels[LABEL_BACKGROUND_EXECUTION_ID] = str(execution_id)
     task.json = task_crd.model_dump(mode="json")
+
+    # Set is_active = STATE_SUBSCRIPTION for subscription tasks
+    task.is_active = TaskResource.STATE_SUBSCRIPTION
+
     db.commit()
     logger.info(
         f"[_add_subscription_labels_to_task] After: task_id={task.id}, "
-        f"labels={task_crd.metadata.labels}"
+        f"labels={task_crd.metadata.labels}, is_active={task.is_active}"
     )
 
 

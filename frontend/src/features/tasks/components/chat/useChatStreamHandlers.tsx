@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
@@ -199,6 +199,7 @@ export function useChatStreamHandlers({
   const { traceAction } = useTraceAction()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const pathname = usePathname()
 
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, markTaskAsViewed } =
     useTaskContext()
@@ -213,6 +214,16 @@ export function useChatStreamHandlers({
 
   // Get selected device ID for executor-based tasks
   const { selectedDeviceId } = useDevices()
+
+  // Determine if we're on the devices page - only devices page should send device_id
+  // This prevents coding tasks from accidentally inheriting a device_id from a previous device task
+  const isDevicesPage = pathname?.startsWith('/devices')
+
+  // Determine effective device_id to send:
+  // - Only send device_id if we're on the devices page AND team is not Chat Shell
+  // - This ensures coding tasks (on /code or /chat pages) don't get routed to devices
+  const effectiveDeviceId =
+    isDevicesPage && !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined
 
   // Local state
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
@@ -560,8 +571,9 @@ export function useChatStreamHandlers({
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
-            // Device ID for local device execution (only for executor-based teams, not Chat Shell)
-            device_id: !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined,
+            // Device ID for local device execution
+            // Only send device_id when on devices page to prevent coding tasks from being routed to devices
+            device_id: effectiveDeviceId,
             // Skill selection - backend determines preload vs download based on executor type
             additional_skills:
               additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
@@ -655,7 +667,7 @@ export function useChatStreamHandlers({
       externalApiParams,
       onTaskCreated,
       selectedDocumentIds,
-      selectedDeviceId,
+      effectiveDeviceId,
       effectiveRequiresWorkspace,
       additionalSkills,
       generateParams,

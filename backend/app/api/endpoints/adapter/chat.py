@@ -213,7 +213,7 @@ async def correct_response(
             TaskResource.id == request.task_id,
             TaskResource.user_id == current_user.id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -413,7 +413,7 @@ async def delete_correction(
             TaskResource.id == subtask.task_id,
             TaskResource.user_id == current_user.id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )
@@ -487,7 +487,7 @@ async def apply_correction(
             TaskResource.id == subtask.task_id,
             TaskResource.user_id == current_user.id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
         .first()
     )

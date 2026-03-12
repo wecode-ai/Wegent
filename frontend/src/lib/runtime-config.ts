@@ -37,6 +37,10 @@ export interface RuntimeConfig {
   feedbackUrl: string
   /** Documentation URL */
   docsUrl: string
+  /** macOS download URL for Weibo AI Toolbox */
+  weiboAiToolboxMacDownloadUrl: string
+  /** Windows download URL for Weibo AI Toolbox */
+  weiboAiToolboxWindowsDownloadUrl: string
   /** Enable OpenTelemetry tracing */
   otelEnabled: boolean
   /** OpenTelemetry service name */
@@ -93,6 +97,10 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         feedbackUrl:
           process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
         docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://wecode-ai.github.io/wegent-docs',
+        weiboAiToolboxMacDownloadUrl:
+          process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL || '',
+        weiboAiToolboxWindowsDownloadUrl:
+          process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL || '',
         otelEnabled: process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true',
         otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
         otelCollectorEndpoint:
@@ -130,6 +138,9 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     feedbackUrl:
       process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
     docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://wecode-ai.github.io/wegent-docs',
+    weiboAiToolboxMacDownloadUrl: process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL || '',
+    weiboAiToolboxWindowsDownloadUrl:
+      process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL || '',
     otelEnabled: process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true',
     otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
     otelCollectorEndpoint:

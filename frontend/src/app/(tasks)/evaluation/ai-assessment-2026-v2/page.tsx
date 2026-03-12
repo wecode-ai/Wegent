@@ -517,7 +517,7 @@ export default function AIAssessment2026V2Page() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-10 space-y-10">
         <ExamInfoSection
-          title={`微博高层管理人员 AI 应用能力考核（二）`}
+          title={`微博高层管理人员 AI 应用能力考核（第二场）`}
           year={EXAM_DATA_V2.year}
           rules={EXAM_DATA_V2.rules}
           examMethod={EXAM_DATA_V2.examMethod}

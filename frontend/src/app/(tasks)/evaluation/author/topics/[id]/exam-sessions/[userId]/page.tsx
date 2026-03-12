@@ -234,21 +234,6 @@ function QuestionAnswerCard({
               </div>
             )}
 
-            {/* Main Deliverables */}
-            {hasMainFiles && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
-                  <Paperclip className="w-4 h-4" />
-                  主要交付物
-                </h4>
-                <div className="space-y-2">
-                  {attachments!.main!.map((file, idx) => (
-                    <AttachmentItem key={idx} file={file} onDownload={onDownload} />
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Interaction Records */}
             {hasInteractionFiles && (
               <div>
@@ -258,6 +243,21 @@ function QuestionAnswerCard({
                 </h4>
                 <div className="space-y-2">
                   {attachments!.interaction!.map((file, idx) => (
+                    <AttachmentItem key={idx} file={file} onDownload={onDownload} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Main Deliverables */}
+            {hasMainFiles && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+                  <Paperclip className="w-4 h-4" />
+                  主要交付物
+                </h4>
+                <div className="space-y-2">
+                  {attachments!.main!.map((file, idx) => (
                     <AttachmentItem key={idx} file={file} onDownload={onDownload} />
                   ))}
                 </div>

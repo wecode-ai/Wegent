@@ -34,13 +34,15 @@ class TaskMemberService:
     """Service for managing group chat members using ResourceMember."""
 
     def get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
-        """Get a task by ID"""
+        """Get a task by ID (including subscription tasks)"""
         return (
             db.query(TaskResource)
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.in_(
+                    [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
+                ),
             )
             .first()
         )
