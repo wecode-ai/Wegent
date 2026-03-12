@@ -52,6 +52,7 @@ async def trigger_ai_response_unified(
     is_subscription: bool = False,
     enable_tools: bool = True,
     enable_deep_thinking: bool = True,
+    previous_bot_id: Optional[int] = None,
 ) -> None:
     """Trigger AI response using unified execution architecture.
 
@@ -105,6 +106,7 @@ async def trigger_ai_response_unified(
         is_subscription=is_subscription,
         enable_tools=enable_tools,
         enable_deep_thinking=enable_deep_thinking,
+        previous_bot_id=previous_bot_id,
     )
 
     # 2. Dispatch task
@@ -139,6 +141,7 @@ async def build_execution_request(
     enable_web_search: bool = False,
     enable_clarification: bool = False,
     preload_skills: Optional[list] = None,
+    previous_bot_id: Optional[int] = None,
 ):
     """Build ExecutionRequest without dispatching.
 
@@ -220,6 +223,7 @@ async def build_execution_request(
             is_subscription=is_subscription,
             override_model_name=override_model_name,
             force_override=force_override,
+            previous_bot_id=previous_bot_id,
         )
 
         # Merge user-selected generate_params into videoConfig for video models

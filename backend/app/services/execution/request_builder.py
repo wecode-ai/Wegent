@@ -81,6 +81,7 @@ class TaskRequestBuilder:
         # Session
         history_limit: Optional[int] = None,
         new_session: bool = False,
+        previous_bot_id: Optional[int] = None,
         attachments: Optional[List[dict]] = None,
         # Subscription
         is_subscription: bool = False,
@@ -228,6 +229,20 @@ class TaskRequestBuilder:
 
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)
+
+        # Auto-determine new_session for pipeline mode
+        # In pipeline mode, new_session should be True when stage changes (different bot)
+        # This ensures each pipeline stage has independent context
+        if collaboration_model == "pipeline" and previous_bot_id is not None:
+            current_bot_id = bot.id if bot else None
+            if previous_bot_id != current_bot_id:
+                new_session = True
+                logger.info(
+                    "[TaskRequestBuilder] Pipeline: stage changed "
+                    "(previous_bot_id=%s, current_bot_id=%s), using new session",
+                    previous_bot_id,
+                    current_bot_id,
+                )
 
         return ExecutionRequest(
             task_id=task.id,
@@ -561,9 +576,30 @@ class TaskRequestBuilder:
         """
         from app.services.chat.config.model_resolver import get_bot_system_prompt
 
-        # Get team member prompt from first member if not provided
+        # Get team member prompt from matching member if not provided
+        # In pipeline mode, each bot has its own member with a specific prompt
         if team_member_prompt is None and team_crd.spec.members:
-            team_member_prompt = team_crd.spec.members[0].prompt
+            # Find the member that matches the current bot
+            for member in team_crd.spec.members:
+                if (
+                    member.botRef.name == bot.name
+                    and member.botRef.namespace == bot.namespace
+                ):
+                    team_member_prompt = member.prompt
+                    logger.debug(
+                        "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
+                        bot.name,
+                        team_member_prompt[:50] if team_member_prompt else None,
+                    )
+                    break
+            # Fallback to first member if no match found (for backward compatibility)
+            if team_member_prompt is None:
+                team_member_prompt = team_crd.spec.members[0].prompt
+                logger.debug(
+                    "[TaskRequestBuilder] No matching member found for bot=%s, "
+                    "using first member prompt",
+                    bot.name,
+                )
 
         # Get base system prompt (no enhancements applied here)
         return get_bot_system_prompt(

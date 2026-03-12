@@ -1267,6 +1267,7 @@ const MessageBubble = memo(
               taskId={selectedTaskDetail?.id}
               isPendingConfirmation={isPendingConfirmation}
               onStageConfirmed={onPipelineStageConfirmed}
+              isMessageStreaming={isStreaming || message.status === 'streaming'}
             />
           )
         }

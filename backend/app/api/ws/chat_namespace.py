@@ -517,50 +517,8 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error("[WS] chat:send error: Not authenticated")
             return {"error": "Not authenticated"}
 
-        # Handle pipeline stage confirmation action
-        # Pipeline confirm is essentially "user sends message, AI responds"
-        # So we use prepare_pipeline_confirm for preprocessing, then continue with normal flow
-        pipeline_info = None
-        if payload.action == "pipeline:confirm":
-            from app.services.adapters.pipeline_stage import pipeline_stage_service
-
-            db_for_pipeline = SessionLocal()
-            try:
-                pipeline_info = pipeline_stage_service.pipeline_confirm(
-                    db=db_for_pipeline,
-                    task_id=payload.task_id,
-                    user_id=user_id,
-                )
-
-                if not pipeline_info.get("success"):
-                    logger.error(
-                        f"[WS] pipeline:confirm preparation failed: {pipeline_info.get('error')}"
-                    )
-                    return {
-                        "error": pipeline_info.get("error", "Pipeline confirm failed")
-                    }
-
-                # If pipeline is complete, return immediately
-                if pipeline_info.get("is_pipeline_complete"):
-                    logger.info(
-                        f"[WS] pipeline:confirm: Pipeline completed for task {payload.task_id}"
-                    )
-                    return {
-                        "task_id": payload.task_id,
-                        "current_stage": pipeline_info.get("total_stages", 0) - 1,
-                        "total_stages": pipeline_info.get("total_stages", 0),
-                        "next_stage_name": None,
-                        "pipeline_completed": True,
-                    }
-
-                logger.info(
-                    f"[WS] pipeline:confirm: Prepared for next stage {pipeline_info.get('next_stage_index')} "
-                    f"(bot_id={pipeline_info.get('next_stage_bot_id')}) for task {payload.task_id}"
-                )
-            finally:
-                db_for_pipeline.close()
-
         db = SessionLocal()
+        pipeline_info = None
         try:
             # Get user
             user = db.query(User).filter(User.id == user_id).first()
@@ -586,6 +544,68 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 return {"error": "Team not found"}
             logger.info(f"[WS] chat:send team found: {team.name} (id={team.id})")
+
+            # Handle pipeline mode
+            team_crd = Team.model_validate(team.json)
+            if team_crd.spec.collaborationModel == "pipeline":
+                from app.services.adapters.pipeline_stage import pipeline_stage_service
+
+                # pipeline:confirm only updates currentStage (+1)
+                if payload.action == "pipeline:confirm":
+                    confirm_result = pipeline_stage_service.pipeline_confirm(
+                        db=db,
+                        task_id=payload.task_id,
+                        user_id=user_id,
+                    )
+
+                    if not confirm_result.get("success"):
+                        logger.error(
+                            f"[WS] pipeline:confirm failed: {confirm_result.get('error')}"
+                        )
+                        return {
+                            "error": confirm_result.get(
+                                "error", "Pipeline confirm failed"
+                            )
+                        }
+
+                    # Emit task:status event to notify frontend that task status changed
+                    # This triggers PipelineStageIndicator to re-fetch pipeline stage info
+                    task_room = f"task:{payload.task_id}"
+                    await self.emit(
+                        ServerEvents.TASK_STATUS,
+                        {
+                            "task_id": payload.task_id,
+                            "status": "RUNNING",
+                            "progress": 0,
+                        },
+                        room=task_room,
+                    )
+                    logger.info(
+                        f"[WS] pipeline:confirm emitted task:status PENDING for task {payload.task_id}"
+                    )
+
+                # Get pipeline info (unified logic for all pipeline operations)
+                pipeline_info = pipeline_stage_service.get_pipeline_info(
+                    db=db,
+                    team=team,
+                    task_id=payload.task_id,
+                )
+                if pipeline_info:
+                    # Check if pipeline is complete
+                    if pipeline_info.get("is_pipeline_complete"):
+                        logger.info(
+                            f"[WS] chat:send: Pipeline completed for task {payload.task_id}"
+                        )
+                        return {
+                            "task_id": payload.task_id,
+                            "current_stage": pipeline_info.get("current_stage"),
+                            "total_stages": pipeline_info.get("total_stages"),
+                            "pipeline_completed": True,
+                        }
+                    logger.info(
+                        f"[WS] chat:send pipeline info: bot_ids={pipeline_info.get('bot_ids')}, "
+                        f"current_stage={pipeline_info.get('current_stage')}"
+                    )
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
@@ -662,12 +682,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                     for s in payload.additional_skills
                 ]
 
-            # For pipeline confirm, use the next stage bot_id from pipeline_info
+            # For pipeline mode, use the bot_ids from pipeline_info
             pipeline_bot_ids = None
-            if pipeline_info and pipeline_info.get("next_stage_bot_id"):
-                pipeline_bot_ids = [pipeline_info["next_stage_bot_id"]]
+            if pipeline_info and pipeline_info.get("bot_ids"):
+                pipeline_bot_ids = pipeline_info["bot_ids"]
                 logger.info(
-                    f"[WS] chat:send pipeline:confirm using pipeline_bot_ids={pipeline_bot_ids}"
+                    f"[WS] chat:send pipeline mode using pipeline_bot_ids={pipeline_bot_ids}"
                 )
 
             # Convert generate_params to dict if present
@@ -678,6 +698,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "ratio": payload.generate_params.ratio,
                     "duration": payload.generate_params.duration,
                 }
+
+            # For pipeline confirm, get the previous stage's bot_id for session management
+            previous_bot_id = None
+            if pipeline_info:
+                previous_bot_id = pipeline_info.get("current_stage_bot_id")
 
             params = TaskCreationParams(
                 message=payload.message,
@@ -695,6 +720,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 knowledge_base_id=payload.knowledge_base_id,
                 additional_skills=additional_skills_dicts,
                 pipeline_bot_ids=pipeline_bot_ids,
+                # Pipeline mode: pass previous stage's bot_id for session management
+                # TaskRequestBuilder will compare this with current bot_id to determine
+                # if a new session is needed (different bot = new session)
+                previous_bot_id=previous_bot_id,
                 device_id=payload.device_id,
                 generate_params=generate_params_dict,
             )
@@ -859,6 +888,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             namespace=self,
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
+                            previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
                         )
                     except Exception as e:
                         logger.exception(
