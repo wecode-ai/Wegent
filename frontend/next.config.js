@@ -5,16 +5,13 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require('path')
 
-// Check if running with Turbopack (development mode with --turbopack flag)
-const isTurbopack = process.env.TURBOPACK === '1'
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
-  allowedDevOrigins: ['localhost:3000'],
+  allowedDevOrigins: ['localhost', '127.0.0.1'],
   // Transpile node_modules that ship modern JS syntax for iOS 16 Safari compatibility
   transpilePackages: [
     'mermaid',
@@ -30,60 +27,60 @@ const nextConfig = {
     '@replit/codemirror-vim',
     'katex',
   ],
-  // Webpack configuration for production builds
-  // Note: In development mode with Turbopack, this is not used
-  // The warning "Webpack is configured while Turbopack is not" can be safely ignored
-  // as these optimizations are primarily for production builds which use webpack
-  ...(isTurbopack
-    ? {}
-    : {
-        webpack: (config, { isServer, _dev }) => {
-          // Force replace remark-gfm with our iOS 16 compatible version
-          // This is needed because @uiw/react-md-editor depends on remark-gfm
-          // which uses lookbehind regex not supported by iOS 16
-          config.resolve.alias = {
-            ...config.resolve.alias,
-            'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
-          }
+  // Turbopack configuration (development mode)
+  // Mirrors the remark-gfm alias from webpack config for iOS 16 Safari compatibility
+  turbopack: {
+    resolveAlias: {
+      'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
+    },
+  },
+  // Webpack configuration (production builds)
+  webpack: (config, { isServer, _dev }) => {
+    // Force replace remark-gfm with our iOS 16 compatible version
+    // This is needed because @uiw/react-md-editor depends on remark-gfm
+    // which uses lookbehind regex not supported by iOS 16
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
+    }
 
-          // Handle chunk loading issues
-          config.optimization = {
-            ...config.optimization,
-            // Prevent over-aggressive code splitting that can cause chunk loading errors
-            splitChunks: {
-              ...config.optimization?.splitChunks,
-              chunks: 'all',
-              cacheGroups: {
-                vendor: {
-                  test: /[\\/]node_modules[\\/]/,
-                  name: 'vendors',
-                  chunks: 'all',
-                  priority: 10,
-                },
-                common: {
-                  name: 'common',
-                  minChunks: 2,
-                  chunks: 'all',
-                  priority: 5,
-                },
-              },
-            },
-            // Enable module concatenation to reduce bundle size
-            concatenateModules: true,
-          }
-
-          // Handle dynamic imports more gracefully
-          if (!isServer) {
-            config.resolve.fallback = {
-              ...config.resolve.fallback,
-              fs: false,
-              path: false,
-            }
-          }
-
-          return config
+    // Handle chunk loading issues
+    config.optimization = {
+      ...config.optimization,
+      // Prevent over-aggressive code splitting that can cause chunk loading errors
+      splitChunks: {
+        ...config.optimization?.splitChunks,
+        chunks: 'all',
+        cacheGroups: {
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            chunks: 'all',
+            priority: 10,
+          },
+          common: {
+            name: 'common',
+            minChunks: 2,
+            chunks: 'all',
+            priority: 5,
+          },
         },
-      }),
+      },
+      // Enable module concatenation to reduce bundle size
+      concatenateModules: true,
+    }
+
+    // Handle dynamic imports more gracefully
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+      }
+    }
+
+    return config
+  },
   // Experimental features to improve stability
   experimental: {
     // Disable CSS chunking to fix Safari/iOS bug where CSS files
