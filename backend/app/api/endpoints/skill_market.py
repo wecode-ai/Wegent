@@ -147,9 +147,7 @@ async def search_skills(
             total=result.total,
             page=result.page,
             pageSize=result.pageSize,
-            skills=[
-                MarketSkillResponse(**asdict(skill)) for skill in result.skills
-            ],
+            skills=[MarketSkillResponse(**asdict(skill)) for skill in result.skills],
         )
     except Exception as e:
         error_message = str(e)
@@ -207,15 +205,13 @@ async def download_skill(
 
         if has_non_ascii:
             # Create ASCII-safe version
-            ascii_safe = "".join(
-                c if ord(c) < 128 else "_" for c in filename
-            )
+            ascii_safe = "".join(c if ord(c) < 128 else "_" for c in filename)
             # RFC5987 percent-encode the original filename
             from urllib.parse import quote
 
             encoded = quote(filename, safe="")
             content_disposition = (
-                f'attachment; filename="{ascii_safe}"; filename*=UTF-8\'\'{encoded}'
+                f"attachment; filename=\"{ascii_safe}\"; filename*=UTF-8''{encoded}"
             )
         else:
             content_disposition = f'attachment; filename="{filename}"'
