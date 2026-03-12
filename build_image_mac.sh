@@ -83,8 +83,8 @@ docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-backend:${V
 # Build frontend image
 docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-web:${VERSION} -f docker/frontend/Dockerfile .
 
-# Build executor image
-docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-executor:${VERSION} -f docker/executor/Dockerfile .
+# Build executor image (default target: binary)
+docker build --network=host ${PUSH_FLAG} --target binary -t ghcr.io/wecode-ai/wegent-executor:${VERSION} -f docker/executor/Dockerfile .
 
 # Build executor manager image
 docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-executor-manager:${VERSION} -f docker/executor_manager/Dockerfile .
