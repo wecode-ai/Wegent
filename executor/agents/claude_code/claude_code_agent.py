@@ -25,6 +25,7 @@ from executor.agents.claude_code.config_manager import (
     create_claude_model_config,
     extract_claude_options,
     get_claude_config_dir,
+    normalize_workspace_root_cwd,
 )
 from executor.agents.claude_code.git_operations import (
     add_to_git_exclude,
@@ -816,6 +817,10 @@ class ClaudeCodeAgent(Agent):
         automatically retries with a fresh session.
         """
         logger.info(f"Creating new Claude client for session_id: {self.session_id}")
+
+        self.options["cwd"] = normalize_workspace_root_cwd(
+            self.options.get("cwd"), self.task_id
+        )
 
         # Ensure working directory exists
         if self.options.get("cwd") is None or self.options.get("cwd") == "":

@@ -72,3 +72,48 @@ class TestExtractClaudeOptionsWithMcp:
         task_data = ExecutionRequest(task_id=1, bot=[])
         options = extract_claude_options(task_data)
         assert "mcp_servers" not in options
+
+    def test_workspace_root_cwd_is_normalized_to_task_workspace(self):
+        """Legacy cwd=/workspace should be normalized to /workspace/{task_id}."""
+        task_data = ExecutionRequest(
+            task_id=123,
+            bot=[
+                {
+                    "cwd": "/workspace",
+                }
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["cwd"] == "/workspace/123"
+
+    def test_workspace_root_cwd_with_trailing_slash_is_normalized(self):
+        """Legacy cwd=/workspace/ should be normalized to /workspace/{task_id}."""
+        task_data = ExecutionRequest(
+            task_id=456,
+            bot=[
+                {
+                    "cwd": "/workspace/",
+                }
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["cwd"] == "/workspace/456"
+
+    def test_custom_cwd_is_preserved(self):
+        """Custom cwd should not be overridden."""
+        task_data = ExecutionRequest(
+            task_id=789,
+            bot=[
+                {
+                    "cwd": "/workspace/789/repo-a",
+                }
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["cwd"] == "/workspace/789/repo-a"

@@ -1,0 +1,262 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import '@testing-library/jest-dom'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { remoteWorkspaceApis } from '@/apis/remoteWorkspace'
+import { RemoteWorkspaceDialog } from '@/features/tasks/components/remote-workspace/RemoteWorkspaceDialog'
+
+jest.mock('@/apis/remoteWorkspace', () => ({
+  remoteWorkspaceApis: {
+    getTree: jest.fn(),
+    getFileUrl: jest.fn(),
+  },
+}))
+
+jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
+  useIsMobile: jest.fn(() => false),
+}))
+
+const translations: Record<string, string> = {
+  'remote_workspace.title': 'Remote Workspace',
+  'remote_workspace.root': 'Workspace',
+  'remote_workspace.parent': 'Parent',
+  'remote_workspace.search_placeholder': 'Search files',
+  'remote_workspace.sort.label': 'Sort',
+  'remote_workspace.sort.options.name_asc': 'Name (A-Z)',
+  'remote_workspace.sort.options.name_desc': 'Name (Z-A)',
+  'remote_workspace.sort.options.size_desc': 'Size (Large first)',
+  'remote_workspace.sort.options.modified_desc': 'Recently modified',
+  'remote_workspace.actions.download': 'Download',
+  'remote_workspace.actions.refresh': 'Refresh',
+  'remote_workspace.columns.select_all': 'Select all files',
+  'remote_workspace.columns.name': 'Name',
+  'remote_workspace.columns.size': 'Size',
+  'remote_workspace.columns.modified': 'Modified',
+  'remote_workspace.columns.type': 'Type',
+  'remote_workspace.status.path': 'Path',
+  'remote_workspace.status.selected': 'selected',
+  'remote_workspace.status.items': 'items',
+  'remote_workspace.detail.title': 'Details',
+  'remote_workspace.detail.no_file_selected': 'Select one file to view details',
+  'remote_workspace.detail.multiple_selected': 'Multiple items selected',
+  'remote_workspace.detail.metadata': 'Metadata',
+  'remote_workspace.detail.metadata_path': 'Path',
+  'remote_workspace.detail.metadata_size': 'Size',
+  'remote_workspace.detail.metadata_modified': 'Modified',
+  'remote_workspace.detail.metadata_type': 'Type',
+  'remote_workspace.preview.empty': 'Select a file to preview',
+  'remote_workspace.preview.loading': 'Loading preview...',
+  'remote_workspace.preview.load_failed': 'Failed to load preview',
+  'remote_workspace.preview.unsupported':
+    'This file type is not supported for preview. Please download.',
+  'tasks:remote_workspace.title': 'Remote Workspace',
+  'tasks:remote_workspace.root': 'Workspace',
+  'tasks:remote_workspace.preview.empty': 'Select a file to preview',
+  'tasks:remote_workspace.preview.unsupported':
+    'This file type is not supported for preview. Please download.',
+  'tasks:remote_workspace.actions.download': 'Download',
+}
+
+const translationMock = (key: string) => translations[key] || key
+
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: translationMock,
+  }),
+}))
+
+describe('RemoteWorkspaceDialog', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  function mockRootEntries() {
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [
+        {
+          name: 'src',
+          path: '/workspace/src',
+          is_directory: true,
+          size: 0,
+          modified_at: '2026-03-12T10:01:00Z',
+        },
+        {
+          name: 'diagram.png',
+          path: '/workspace/diagram.png',
+          is_directory: false,
+          size: 1024,
+          modified_at: '2026-03-12T10:02:00Z',
+        },
+        {
+          name: 'notes.txt',
+          path: '/workspace/notes.txt',
+          is_directory: false,
+          size: 32,
+          modified_at: '2026-03-12T10:03:00Z',
+        },
+      ],
+    })
+  }
+
+  test('renders cloud-drive table layout and file detail actions', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    expect(screen.getByPlaceholderText('Search files')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument()
+    expect(screen.getByText('Name')).toBeInTheDocument()
+    expect(screen.getByText('Size')).toBeInTheDocument()
+    expect(screen.getByText('Modified')).toBeInTheDocument()
+    expect(screen.getByText('Type')).toBeInTheDocument()
+
+    const fileNode = await screen.findByRole('button', { name: /diagram\.png/i })
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(fileNode)
+
+    expect(remoteWorkspaceApis.getFileUrl).toHaveBeenCalledWith(
+      1,
+      '/workspace/diagram.png',
+      'inline'
+    )
+    expect(screen.getByText('Details')).toBeInTheDocument()
+    expect(screen.getByText(/\/workspace\/diagram\.png/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Download' })).toBeInTheDocument()
+  })
+
+  test('filters current directory by search keyword', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalled()
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.type(screen.getByPlaceholderText('Search files'), 'diagram')
+
+    expect(screen.getByRole('button', { name: /diagram\.png/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /notes\.txt/i })).not.toBeInTheDocument()
+  })
+
+  test('supports sorting by name descending', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalled()
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.selectOptions(screen.getByLabelText('Sort'), 'name_desc')
+
+    const rows = screen.getAllByRole('button', { name: /(diagram\.png|notes\.txt|src)/i })
+    expect(rows[0]).toHaveTextContent('src')
+    expect(rows[1]).toHaveTextContent('notes.txt')
+    expect(rows[2]).toHaveTextContent('diagram.png')
+  })
+
+  test('navigates directory from row click', async () => {
+    ;(remoteWorkspaceApis.getTree as jest.Mock)
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [
+          {
+            name: 'src',
+            path: '/workspace/src',
+            is_directory: true,
+            size: 0,
+            modified_at: null,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace/src',
+        entries: [
+          {
+            name: 'index.ts',
+            path: '/workspace/src/index.ts',
+            is_directory: false,
+            size: 200,
+            modified_at: null,
+          },
+        ],
+      })
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(await screen.findByRole('button', { name: /src/i }))
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
+    })
+    expect(screen.getByText(/\/workspace\/src/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /index\.ts/i })).toBeInTheDocument()
+  })
+
+  test('tracks multi-selection count from row checkboxes', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalled()
+    })
+
+    await screen.findByRole('button', { name: /diagram\.png/i })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(screen.getByRole('checkbox', { name: 'select-diagram.png' }))
+    await user.click(screen.getByRole('checkbox', { name: 'select-notes.txt' }))
+
+    expect(screen.getByText(/^2\s+selected$/i)).toBeInTheDocument()
+    expect(screen.getByText('Multiple items selected')).toBeInTheDocument()
+  })
+
+  test('keeps file list scroll inside dialog content area', async () => {
+    mockRootEntries()
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalled()
+    })
+
+    const table = await screen.findByRole('table')
+    const scrollContainer = table.parentElement
+    const mainSection = table.closest('section')
+
+    expect(scrollContainer).toHaveClass('overflow-auto')
+    expect(mainSection).toHaveClass('overflow-hidden')
+  })
+})
