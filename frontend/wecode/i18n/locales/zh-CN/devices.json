@@ -1,6 +1,12 @@
 {
   "device_setup_title": "设备配置",
   "device_setup_description": "连接您的本地设备作为 Executor 运行任务",
+  "toolbox_title": "使用 Weibo AI Toolbox 安装本地设备",
+  "toolbox_description_macos": "当前 macOS 系统已支持通过 Weibo AI Toolbox 下载安装和管理本地设备，无需再手动执行命令。",
+  "toolbox_description_windows": "当前 Windows 系统已支持通过 Weibo AI Toolbox 下载安装和管理本地设备，无需再手动执行命令。",
+  "toolbox_hint": "下载安装并打开 Weibo AI Toolbox 后，按应用内指引完成本地设备安装。",
+  "toolbox_action": "下载 Weibo AI Toolbox",
+  "toolbox_security_hint": "请从官方提供的下载链接获取安装包，安装完成后再按应用内提示完成设备配置。",
   "system_macos": "macOS",
   "system_linux": "Linux",
   "system_windows": "Windows",
