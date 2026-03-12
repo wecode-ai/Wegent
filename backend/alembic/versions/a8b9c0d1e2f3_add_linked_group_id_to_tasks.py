@@ -164,7 +164,7 @@ def _upgrade_is_group_chat() -> None:
             try:
                 task_json = json.loads(row[1]) if isinstance(row[1], str) else row[1]
                 is_group_chat = task_json.get("spec", {}).get("is_group_chat")
-            except (json.JSONDecodeError, ValueError, TypeError) as e:
+            except (json.JSONDecodeError, ValueError, TypeError, AttributeError) as e:
                 logger.warning(f"Failed to parse JSON for task id={task_id}: {e}")
                 continue
 
@@ -248,9 +248,14 @@ def _upgrade_linked_group_id() -> None:
                 linked_group = task_json.get("spec", {}).get("linked_group")
                 is_group_chat = task_json.get("spec", {}).get("is_group_chat")
                 # Only include tasks with both linked_group and is_group_chat=true
-                if linked_group and is_group_chat is True:
+                # Ensure linked_group is a non-empty string
+                if (
+                    isinstance(linked_group, str)
+                    and linked_group.strip()
+                    and is_group_chat is True
+                ):
                     filtered_result.append((task_id, linked_group))
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, AttributeError) as e:
                 # Log warning with task ID for malformed JSON
                 logger.warning(f"Failed to parse JSON for task id={task_id}: {e}")
         result = filtered_result
@@ -504,6 +509,13 @@ def _migrate_kb_bindings() -> None:
             spec = task_json.get("spec", {})
             kb_refs = spec.get("knowledgeBaseRefs", []) or []
 
+            # Ensure kb_refs is a list
+            if not isinstance(kb_refs, list):
+                logger.warning(
+                    f"Invalid knowledgeBaseRefs type for task {task_id}: {type(kb_refs)}. Expected list."
+                )
+                continue
+
             for ref in kb_refs:
                 # Validate that ref is a dict
                 if not isinstance(ref, dict):
@@ -538,6 +550,18 @@ def _migrate_kb_bindings() -> None:
                     kb_name = ref.get("name") or ref.get("knowledgeBaseName")
                     kb_namespace = ref.get("namespace", "default")
 
+                    # Normalize kb_name: ensure it's a non-empty string
+                    if not isinstance(kb_name, str):
+                        kb_name = None
+                    elif not kb_name.strip():
+                        kb_name = None
+
+                    # Normalize kb_namespace: ensure it's a non-empty string
+                    if not isinstance(kb_namespace, str):
+                        kb_namespace = "default"
+                    elif not kb_namespace.strip():
+                        kb_namespace = "default"
+
                     if not kb_name:
                         # Skip if no name available to resolve
                         logger.warning(
@@ -554,7 +578,11 @@ def _migrate_kb_bindings() -> None:
                         # Could not resolve - skip this binding
                         continue
 
-                bound_by = ref.get("boundBy", "migration")
+                # Normalize bound_by: ensure it's a non-empty string
+                bound_by = ref.get("boundBy")
+                if not isinstance(bound_by, str) or not bound_by.strip():
+                    bound_by = "migration"
+
                 bound_at_str = ref.get("boundAt")
 
                 # Validate and coerce bound_at_str to string

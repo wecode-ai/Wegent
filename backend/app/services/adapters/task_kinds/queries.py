@@ -482,7 +482,7 @@ class TaskQueryMixin:
         # Filter tasks: exclude group tasks, deleted tasks, and apply type filters
         include_online = "online" in types
         include_offline = "offline" in types
-        include_subscription = "subscription" in types
+        include_subscription = "subscription" in types or "flow" in types
 
         filtered_task_ids = []
         for row in all_tasks_result:

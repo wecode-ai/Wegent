@@ -690,7 +690,7 @@ class TaskMemberService:
                 )
 
         # Sort: owner first, then by username
-        members.sort(key=lambda m: (not m.is_owner, m.username.lower()))
+        members.sort(key=lambda m: (not m.is_owner, (m.username or "").lower()))
 
         logger.info(
             f"[get_linked_group_members] Returning {len(members)} members for task_id={task_id}"
