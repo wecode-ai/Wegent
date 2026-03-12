@@ -1887,7 +1887,12 @@ export function SubscriptionForm({
           >
             {t('common:actions.cancel')}
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting} className="min-w-[100px]">
+          <Button
+            variant="primary"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="min-w-[100px]"
+          >
             {submitting
               ? t('common:actions.saving')
               : isEditing
