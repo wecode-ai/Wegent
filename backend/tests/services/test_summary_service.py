@@ -363,6 +363,9 @@ class TestKnowledgeServiceDeleteDocument:
             user_id=test_user.id,
         )
 
+        # Commit the deletion (caller is responsible for commit)
+        test_db.commit()
+
         assert result.success is True
         assert result.kb_id == expected_kb_id
 

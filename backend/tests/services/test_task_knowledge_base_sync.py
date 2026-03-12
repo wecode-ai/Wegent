@@ -23,6 +23,7 @@ from app.models.kind import Kind
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.services.knowledge import TaskKnowledgeBaseService
+from app.services.share import knowledge_share_service
 
 
 @pytest.mark.unit
@@ -228,6 +229,7 @@ class TestKBPriorityLogic:
         # Create subtask KB contexts
         kb_context = Mock(spec=SubtaskContext)
         kb_context.knowledge_id = 10
+        kb_context.type_data = {}
 
         # Mock task-level KB (should be ignored when subtask has KB)
         with patch(
@@ -238,20 +240,25 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                kb_result = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[kb_context],
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
+                with patch.object(
+                    knowledge_share_service,
+                    "is_user_restricted_observer_for_any_kb",
+                    return_value=False,
+                ) as mock_restricted:
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[kb_context],
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
 
-                # Should use only subtask KB (10), not task-level (20, 30)
-                mock_kb_tool.assert_called_once()
-                call_args = mock_kb_tool.call_args
-                assert call_args[1]["knowledge_base_ids"] == [10]
-                assert len(kb_result.extra_tools) == 1
+                    # Should use only subtask KB (10), not task-level (20, 30)
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert call_args[1]["knowledge_base_ids"] == [10]
+                    assert len(kb_result.extra_tools) == 1
 
     def test_fallback_to_task_kb_when_no_subtask_kb(self, mock_db):
         """Test that task-level KB is used when subtask has no KB"""
@@ -268,20 +275,25 @@ class TestKBPriorityLogic:
             with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
-                kb_result = _prepare_kb_tools_from_contexts(
-                    kb_contexts=[],  # No subtask KB
-                    user_id=1,
-                    db=mock_db,
-                    base_system_prompt="Base prompt",
-                    task_id=100,
-                    user_subtask_id=1,
-                )
+                with patch.object(
+                    knowledge_share_service,
+                    "is_user_restricted_observer_for_any_kb",
+                    return_value=False,
+                ) as mock_restricted:
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[],  # No subtask KB
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
 
-                # Should use task-level KBs (20, 30)
-                mock_kb_tool.assert_called_once()
-                call_args = mock_kb_tool.call_args
-                assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
-                assert len(kb_result.extra_tools) == 1
+                    # Should use task-level KBs (20, 30)
+                    mock_kb_tool.assert_called_once()
+                    call_args = mock_kb_tool.call_args
+                    assert set(call_args[1]["knowledge_base_ids"]) == {20, 30}
+                    assert len(kb_result.extra_tools) == 1
 
     def test_no_kb_when_both_empty(self, mock_db):
         """Test that no KB tool is created when both levels have no KB"""
@@ -328,32 +340,18 @@ class TestGetBoundKnowledgeBaseIds:
             _get_bound_knowledge_base_ids,
         )
 
-        # Create mock task (non-group chat) with KB refs
-        mock_task = Mock(spec=TaskResource)
-        mock_task.json = {
-            "spec": {
-                "is_group_chat": False,
-                "knowledgeBaseRefs": [
-                    {"name": "Test KB", "namespace": "default"},
-                ],
-            }
-        }
+        # The function now delegates to task_knowledge_base_service
+        # Patch the import inside the function
+        with patch(
+            "app.services.knowledge.task_knowledge_base_service.TaskKnowledgeBaseService.get_bound_knowledge_base_ids"
+        ) as mock_get_bound:
+            mock_get_bound.return_value = [10]
 
-        # Create mock KB
-        mock_kb = Mock(spec=Kind)
-        mock_kb.id = 10
-        mock_kb.json = {"spec": {"name": "Test KB"}}
+            result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
 
-        mock_query = MagicMock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = mock_task
-        mock_query.all.return_value = [mock_kb]
-
-        result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
-
-        # Should return the KB ID even for non-group chat
-        assert result == [10]
+            # Should delegate to service layer and return the KB ID
+            mock_get_bound.assert_called_once_with(mock_db, 100)
+            assert result == [10]
 
     def test_get_bound_kb_ids_empty_refs(self, mock_db):
         """Test that empty list is returned when no KB refs"""
@@ -750,8 +748,8 @@ class TestKBRefAutoMigration:
             assert kb_refs[1]["id"] == 20
             # Verify flag_modified was called
             mock_flag.assert_called_once_with(mock_task, "json")
-            # Verify commit was called
-            mock_db.commit.assert_called_once()
+            # Note: _batch_migrate_kb_refs does NOT call commit - caller is responsible
+            mock_db.commit.assert_not_called()
 
 
 @pytest.mark.unit
