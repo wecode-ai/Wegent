@@ -38,32 +38,54 @@ async function setupChatPage(page: any) {
   // Select "wegent-chat" agent from QuickAccessCards if available
   const quickAccessCards = page.locator('[data-tour="quick-access-cards"]')
   if (await quickAccessCards.isVisible({ timeout: 3000 }).catch(() => false)) {
-    // Get all available cards first
-    const allCards = quickAccessCards.locator('div.rounded-full.border')
-    const cardCount = await allCards.count()
-
-    if (cardCount > 0) {
-      // Try to find wegent-chat card among all cards
-      let wegentChatIndex = -1
-      for (let i = 0; i < cardCount; i++) {
-        const cardText = await allCards.nth(i).textContent().catch(() => '')
-        if (cardText?.includes('wegent-chat')) {
-          wegentChatIndex = i
-          break
-        }
+    // Try to find wegent-chat card by data-testid
+    const wegentChatCard = page.locator('[data-testid="quick-access-team-wegent-chat"]').first()
+    if (await wegentChatCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await wegentChatCard.click()
+    } else {
+      // Fallback: click the first team card
+      const firstCard = quickAccessCards.locator('[data-testid^="quick-access-team-"]').first()
+      if (await firstCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await firstCard.click()
       }
+    }
+    await page.waitForTimeout(1000)
+  }
 
-      // Click wegent-chat if found, otherwise click the first card
-      const cardToClick = wegentChatIndex >= 0 ? allCards.nth(wegentChatIndex) : allCards.first()
-      await cardToClick.click()
-      await page.waitForTimeout(1000)
+  // Select model 公网:GLM-5
+  console.log('Selecting model...')
+  const modelSelector = page.locator('[data-testid="model-selector"]').first()
+  await expect(modelSelector).toBeVisible({ timeout: 10000 })
+
+  // Click to open model selector
+  await modelSelector.click()
+  await page.waitForTimeout(500)
+
+  // Search for model
+  const modelSearchInput = page.locator('input[placeholder*="搜索"], input[placeholder*="Search"]').first()
+  if (await modelSearchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await modelSearchInput.fill('GLM-5')
+    await page.waitForTimeout(500)
+  }
+
+  // Select 公网:GLM-5 model
+  const modelOption = page.locator('[data-testid="model-option-公网-GLM-5"]').first()
+  if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await modelOption.click()
+  } else {
+    // Try to find by text content
+    const modelOptions = page.locator('[data-testid^="model-option-"]').filter({ hasText: /GLM-5/i })
+    if (await modelOptions.count() > 0) {
+      await modelOptions.first().click()
     }
   }
+  await page.waitForTimeout(500)
 
   // Wait for input to be enabled
   const chatInput = page.locator('[data-testid="message-input"]').first()
   await expect(chatInput).toHaveAttribute('contenteditable', 'true', { timeout: 10000 })
 
+  console.log('Chat page setup completed')
   return chatInput
 }
 
@@ -76,11 +98,8 @@ test.describe('Chat Flow', () => {
     await chatInput.fill(testMessage)
 
     // Find and click send button
-    // Send button typically has an icon or text, look for common patterns
-    const sendButton = page.locator(
-      'button[type="submit"], button:has(svg[class*="send" i]), [data-testid="send-button"]'
-    ).first()
-
+    const sendButton = page.locator('[data-testid="send-button"]').first()
+    await expect(sendButton).toBeEnabled({ timeout: 5000 })
     await sendButton.click()
 
     // Wait for AI response
@@ -194,9 +213,8 @@ test.describe('Chat Flow', () => {
     await chatInput.fill(vagueMessage)
 
     // Step 3: Send the message
-    const sendButton = page.locator(
-      'button[type="submit"], button:has(svg[class*="send" i]), [data-testid="send-button"]'
-    ).first()
+    const sendButton = page.locator('[data-testid="send-button"]').first()
+    await expect(sendButton).toBeEnabled({ timeout: 5000 })
     await sendButton.click()
 
     // Step 4: Wait for AI response container

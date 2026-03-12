@@ -219,6 +219,7 @@ export function QuickAccessCards({
     return (
       <div
         onClick={() => !isClicked && handleTeamClick(team)}
+        data-testid={`quick-access-team-${team.name}`}
         className={`
           group relative flex flex-col justify-center
           cursor-pointer transition-all duration-200
