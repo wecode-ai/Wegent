@@ -60,7 +60,7 @@ export function useDeviceHandlers(): DeviceHandlers {
       setSelectedDeviceId(deviceId)
       setSelectedTask(null)
       clearAllStreams()
-      router.push('/devices/chat')
+      router.push(`/devices/chat?deviceId=${deviceId}`)
     },
     [setSelectedDeviceId, setSelectedTask, clearAllStreams, router]
   )

@@ -176,15 +176,15 @@ class SubscriptionNotificationDispatcher:
             db, user_id=user_id
         )
 
-        # Format the notification message
-        logger.info(
-            f"[_send_messager_notifications] Formatting message with detail_url: {detail_url}"
-        )
-        message = self._format_notification_message(
+        # Format the notification message based on status
+        formatted_message = self._format_notification_message(
             subscription_display_name=subscription_display_name,
             status=status,
             result_summary=result_summary,
             detail_url=detail_url,
+        )
+        logger.info(
+            f"[_send_messager_notifications] Formatted message with detail_url: {detail_url}, status: {status}"
         )
 
         # Send to each configured channel
@@ -230,9 +230,10 @@ class SubscriptionNotificationDispatcher:
                         channel=channel,
                         binding=binding,
                         user_id=user_id,
-                        message=message,
+                        message=formatted_message,
                         subscription_id=subscription_id,
                         execution_id=execution_id,
+                        subscription_display_name=subscription_display_name,
                     )
                 )
             elif channel_type == "telegram":
@@ -242,9 +243,10 @@ class SubscriptionNotificationDispatcher:
                         channel=channel,
                         binding=binding,
                         user_id=user_id,
-                        message=message,
+                        message=formatted_message,
                         subscription_id=subscription_id,
                         execution_id=execution_id,
+                        subscription_display_name=subscription_display_name,
                     )
                 )
             else:
@@ -266,6 +268,7 @@ class SubscriptionNotificationDispatcher:
         message: str,
         subscription_id: int,
         execution_id: int,
+        subscription_display_name: str,
     ) -> None:
         """
         Send notification via DingTalk.
@@ -278,6 +281,7 @@ class SubscriptionNotificationDispatcher:
             message: Notification message
             subscription_id: Subscription ID
             execution_id: Background execution ID
+            subscription_display_name: Display name of the subscription
         """
         try:
             # Get DingTalk user ID from binding
@@ -316,14 +320,22 @@ class SubscriptionNotificationDispatcher:
                 client_secret=client_secret,
             )
 
+            # Format message with subscription name as header (same as webhook)
+            # - title: Shows in contact list preview, use content preview
+            # - text: The actual message content with subscription name as header
+            title_preview = message[:20] + "..." if len(message) > 20 else message
+            # Remove newlines from title preview for cleaner display
+            title_preview = title_preview.replace("\n", " ").strip()
+            text_with_title = f"### {subscription_display_name}\n\n{message}"
+
             # Send markdown message for better formatting
             logger.info(
                 f"[_send_dingtalk_notification] Sending message with length: {len(message)}, contains detail_url: {'[查看详情]' in message}"
             )
             result = await sender.send_markdown_message(
                 user_ids=[dingtalk_user_id],
-                title="订阅通知",
-                text=message,
+                title=title_preview,
+                text=text_with_title,
             )
 
             if result.get("success"):
@@ -354,6 +366,7 @@ class SubscriptionNotificationDispatcher:
         message: str,
         subscription_id: int,
         execution_id: int,
+        subscription_display_name: str,
     ) -> None:
         """
         Send notification via Telegram.
@@ -366,6 +379,7 @@ class SubscriptionNotificationDispatcher:
             message: Notification message
             subscription_id: Subscription ID
             execution_id: Background execution ID
+            subscription_display_name: Display name of the subscription
         """
         try:
             # Get Telegram chat ID from binding
@@ -400,6 +414,9 @@ class SubscriptionNotificationDispatcher:
 
             sender = TelegramBotSender(bot_token=bot_token)
 
+            # Format message with subscription name as header (same as webhook)
+            text_with_title = f"*{subscription_display_name}*\n\n{message}"
+
             # Send markdown message for better formatting
             logger.info(
                 f"[_send_telegram_notification] Sending message with length: {len(message)}, "
@@ -407,7 +424,7 @@ class SubscriptionNotificationDispatcher:
             )
             result = await sender.send_markdown_message(
                 chat_id=int(telegram_chat_id),
-                text=message,
+                text=text_with_title,
             )
 
             if result.get("success"):
@@ -439,6 +456,9 @@ class SubscriptionNotificationDispatcher:
         """
         Format the notification message.
 
+        If execution succeeded (COMPLETED), return the original result_summary.
+        If execution failed, return a formatted failure notification.
+
         Args:
             subscription_display_name: Display name of the subscription
             status: Execution status
@@ -448,9 +468,11 @@ class SubscriptionNotificationDispatcher:
         Returns:
             Formatted notification message
         """
-        status_emoji = "✅" if status == "COMPLETED" else "❌"
-        status_text = "执行成功" if status == "COMPLETED" else "执行失败"
+        # If execution succeeded, return original content
+        if status == "COMPLETED":
+            return result_summary
 
+        # If execution failed, format a failure notification
         # Truncate summary to 300 characters for better readability
         truncated_summary = (
             result_summary[:300] + "..."
@@ -464,9 +486,9 @@ class SubscriptionNotificationDispatcher:
             "",
             f"**订阅**: {subscription_display_name}",
             "",
-            f"**状态**: {status_emoji} {status_text}",
+            f"**状态**: ❌ 执行失败",
             "",
-            "**执行结果**:",
+            "**错误信息**:",
             f"\n\n{truncated_summary}",
         ]
 
@@ -613,13 +635,21 @@ class SubscriptionNotificationDispatcher:
         # Decrypt secret if encrypted
         decrypted_secret = self._decrypt_webhook_secret(webhook.secret)
 
+        # Format the notification message based on status
+        formatted_message = self._format_notification_message(
+            subscription_display_name=subscription_display_name,
+            status=status,
+            result_summary=result_summary,
+            detail_url=detail_url,
+        )
+
         try:
             if webhook.type == NotificationWebhookType.DINGTALK:
                 return await self._send_dingtalk_webhook(
                     url=webhook.url,
                     secret=decrypted_secret,
                     subscription_display_name=subscription_display_name,
-                    result_summary=result_summary,
+                    result_summary=formatted_message,
                     status=status,
                     detail_url=detail_url,
                 )
@@ -628,7 +658,7 @@ class SubscriptionNotificationDispatcher:
                     url=webhook.url,
                     secret=decrypted_secret,
                     subscription_display_name=subscription_display_name,
-                    result_summary=result_summary,
+                    result_summary=formatted_message,
                     status=status,
                     detail_url=detail_url,
                 )
@@ -637,7 +667,7 @@ class SubscriptionNotificationDispatcher:
                     url=webhook.url,
                     secret=decrypted_secret,
                     subscription_display_name=subscription_display_name,
-                    result_summary=result_summary,
+                    result_summary=formatted_message,
                     status=status,
                     execution_id=execution_id,
                     detail_url=detail_url,
