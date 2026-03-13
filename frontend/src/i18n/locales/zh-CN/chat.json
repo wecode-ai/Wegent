@@ -580,7 +580,10 @@
     "no_models": "暂无可用的图片模型"
   },
   "new_conversation_notification": {
-    "title": "欢迎下载Weibo AI Toolbox安装管理 Wegent、Openclaw、WeiboAP 等 AI 助手应用.",
+    "items": [
+      "Wegent 已与 OpenClaw 及 Claude 打通，上述工具可使用 Wegent 统一IM通道及模型",
+      "下载 Weibo AI Toolbox，快速安装和配置本机 Claude、OpenClaw、WeiboAP 等 AI 助手应用"
+    ],
     "action": "下载 Weibo AI Toolbox",
     "reopen": "显示下载通知"
   }

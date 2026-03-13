@@ -602,7 +602,10 @@
     "no_models": "No image models available"
   },
   "new_conversation_notification": {
-    "title": "Download Weibo AI Toolbox to install and manage Wegent, Openclaw, WeiboAP, and other AI assistant apps.",
+    "items": [
+      "Wegent is now integrated with OpenClaw and Claude. These tools can use Wegent's unified IM channel and models",
+      "Download Weibo AI Toolbox to quickly install and configure local Claude, OpenClaw, WeiboAP and other AI assistant apps"
+    ],
     "action": "Download Weibo AI Toolbox",
     "reopen": "Show download notice"
   }

@@ -15,7 +15,8 @@ type NotificationBannerVariant = 'warning' | 'info'
 interface NotificationBannerProps {
   className?: string
   storageKey: string
-  title: string
+  title?: string
+  items?: string[]
   badgeText?: string
   actionLabel?: string
   actionHref?: string
@@ -40,6 +41,7 @@ export default function NotificationBanner({
   className,
   storageKey,
   title,
+  items,
   badgeText,
   actionLabel,
   actionHref,
@@ -103,17 +105,31 @@ export default function NotificationBanner({
         >
           <XMarkIcon className="h-4 w-4" />
         </Button>
-
         <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-center">
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium leading-6 text-text-primary">{title}</span>
-              {badgeText && (
-                <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold text-text-primary dark:bg-white/10">
-                  {badgeText}
-                </span>
-              )}
-            </div>
+            {title && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium leading-5 text-text-primary">{title}</span>
+                {badgeText && (
+                  <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold text-text-primary dark:bg-white/10">
+                    {badgeText}
+                  </span>
+                )}
+              </div>
+            )}
+            {items && items.length > 0 && (
+              <ul className={cn('space-y-0.5', title && 'mt-1')}>
+                {items.map((item, index) => (
+                  <li
+                    key={index}
+                    className="flex items-baseline gap-2 text-sm leading-5 text-text-primary"
+                  >
+                    <span className="h-1 w-1 shrink-0 rounded-full bg-primary/70" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {actionLabel && actionHref && (

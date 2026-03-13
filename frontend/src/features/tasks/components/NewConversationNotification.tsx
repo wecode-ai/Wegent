@@ -22,20 +22,20 @@ export default function NewConversationNotification({
 
   const downloadUrl = useMemo(() => {
     return getWeiboAiToolboxDownloadUrl(runtimeConfig)
-  }, [
-    runtimeConfig.weiboAiToolboxMacDownloadUrl,
-    runtimeConfig.weiboAiToolboxWindowsDownloadUrl,
-  ])
+  }, [runtimeConfig.weiboAiToolboxMacDownloadUrl, runtimeConfig.weiboAiToolboxWindowsDownloadUrl])
 
   if (!downloadUrl) {
     return null
   }
 
+  // Get items array from i18n - use returnObjects to get the array directly
+  const items = t('new_conversation_notification.items', { returnObjects: true }) as string[]
+
   return (
     <NotificationBanner
       className={className}
       storageKey="newConversationNotificationClosed"
-      title={t('new_conversation_notification.title')}
+      items={items}
       actionLabel={t('new_conversation_notification.action')}
       actionHref={downloadUrl}
       reopenLabel={t('new_conversation_notification.reopen')}
