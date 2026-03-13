@@ -20,6 +20,7 @@ const https = require('https')
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const { execFile } = require('child_process')
 
 /* Environment switches */
 if (process.env.SKIP_FONT_DOWNLOAD === '1') {
@@ -54,6 +55,15 @@ const PDF_FONTS = [
 ]
 
 /* Google Sans configuration */
+const GOOGLE_SANS_BUNDLE_URLS = (process.env.GOOGLE_SANS_BUNDLE_URLS || '')
+  .split(',')
+  .map(url => url.trim())
+  .filter(Boolean)
+
+// Internal Nexus bundle URL (gz archive containing woff2 files + google-sans-local.css)
+const DEFAULT_GOOGLE_SANS_BUNDLE_URL =
+  'http://maven.intra.weibo.com/nexus/service/local/repositories/releases/content/google-fonts/google-sans/1.0/google-sans-1.0.gz'
+
 const defaultGoogleSansCssUrls = [
   'https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Flex:wght@400;500;700&display=swap',
 ]
@@ -292,9 +302,89 @@ async function downloadPdfFonts() {
   return !hasErrors
 }
 
+function tarExtract(archivePath, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile('tar', ['-xzf', archivePath, '-C', cwd], (err, _stdout, stderr) => {
+      if (err) reject(new Error(stderr || err.message))
+      else resolve()
+    })
+  })
+}
+
+async function downloadGoogleSansBundleFromUrl(url) {
+  const tempGzPath = path.join(GOOGLE_SANS_DIR, '_bundle.tar.gz')
+  await downloadFile(url, tempGzPath)
+
+  // Extract into a temp directory to avoid partial state
+  const extractDir = path.join(GOOGLE_SANS_DIR, '_extract_tmp')
+  ensureDirectory(extractDir)
+
+  try {
+    await tarExtract(tempGzPath, extractDir)
+    fs.unlinkSync(tempGzPath)
+
+    // Bundle layout expected:
+    //   google-sans/*.woff2
+    //   google-sans-local.css  (URLs use relative path "google-sans/<file>.woff2")
+    const extractedFontsDir = path.join(extractDir, 'google-sans')
+    const extractedCss = path.join(extractDir, 'google-sans-local.css')
+
+    if (!fs.existsSync(extractedFontsDir)) {
+      throw new Error('google-sans/ directory not found in bundle')
+    }
+    if (!fs.existsSync(extractedCss)) {
+      throw new Error('google-sans-local.css not found in bundle')
+    }
+
+    // Move font files to GOOGLE_SANS_DIR
+    for (const file of fs.readdirSync(extractedFontsDir)) {
+      fs.renameSync(path.join(extractedFontsDir, file), path.join(GOOGLE_SANS_DIR, file))
+    }
+
+    // Rewrite relative CSS URLs to absolute public paths, then write to output
+    let cssText = fs.readFileSync(extractedCss, 'utf8')
+    cssText = cssText.replace(/url\(['"]?google-sans\/([^)'"]+)['"]?\)/g, (_, filename) => {
+      return `url('/fonts/google-sans/${filename}')`
+    })
+
+    ensureDirectory(path.dirname(GOOGLE_SANS_CSS_OUTPUT))
+    fs.writeFileSync(GOOGLE_SANS_CSS_OUTPUT, cssText, 'utf8')
+    console.log(`✓ Generated ${path.relative(process.cwd(), GOOGLE_SANS_CSS_OUTPUT)}\n`)
+  } finally {
+    // Clean up temp extraction directory
+    fs.rmSync(extractDir, { recursive: true, force: true })
+  }
+}
+
+async function downloadGoogleSansFromBundle(bundleUrls) {
+  ensureDirectory(GOOGLE_SANS_DIR)
+
+  for (const url of bundleUrls) {
+    try {
+      console.log(`  🌐 Try bundle: ${url}`)
+      await downloadGoogleSansBundleFromUrl(url)
+      return true
+    } catch (err) {
+      console.warn(`  ⚠ Bundle download failed: ${err.message}`)
+    }
+  }
+  return false
+}
+
 async function downloadGoogleSansAssets() {
   try {
     console.log('⬇ Downloading local Google Sans assets')
+
+    // Prefer bundle download (internal Nexus or env override) over per-file CSS approach
+    const bundleUrls = GOOGLE_SANS_BUNDLE_URLS.length
+      ? GOOGLE_SANS_BUNDLE_URLS
+      : [DEFAULT_GOOGLE_SANS_BUNDLE_URL]
+
+    const bundleSuccess = await downloadGoogleSansFromBundle(bundleUrls)
+    if (bundleSuccess) return true
+
+    // Fallback: fetch CSS from Google Fonts and download individual woff2 files
+    console.log('  ↪ Falling back to Google Fonts CSS download...')
     console.log(`  CSS source candidates: ${googleSansCssUrls.join(', ')}`)
 
     const { result: cssText } = await downloadWithFallback(googleSansCssUrls, url =>
