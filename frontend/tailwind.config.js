@@ -20,9 +20,9 @@ export default {
     extend: {
       fontFamily: {
         sans: [
-          '"Google Sans Flex"',
-          '"Google Sans"',
-          '-apple-system',
+          '"Google Sans Flex"', // English and Latin scripts
+          '"Google Sans"', // English and Latin scripts
+          '-apple-system', // System font (PingFang SC on macOS)
           'BlinkMacSystemFont',
           '"Segoe UI"',
           'Roboto',
