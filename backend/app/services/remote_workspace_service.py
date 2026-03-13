@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import logging
 import posixpath
 from typing import Any, Optional
@@ -107,6 +108,7 @@ class RemoteWorkspaceService:
         normalized_path = self.normalize_and_validate_workspace_path(
             path, root_path=root_path
         )
+        self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
         logger.info(
             "[remote_workspace] list_tree start task_id=%s user_id=%s path=%s normalized_path=%s root_path=%s",
             task_id,
@@ -115,16 +117,23 @@ class RemoteWorkspaceService:
             normalized_path,
             root_path,
         )
-        executor_name = self._ensure_sandbox_available(
-            db=db,
-            task_id=task_id,
-            user_id=user_id,
-        )
-        entries_payload = self._list_directory(
-            task_id=task_id,
-            executor_name=executor_name,
-            path=normalized_path,
-        )
+        if self._is_sandbox_available(sandbox_payload):
+            sandbox_base_url = str(sandbox_payload.get("base_url", "")).rstrip("/")
+            entries_payload = self._list_directory_via_sandbox(
+                base_url=sandbox_base_url,
+                path=normalized_path,
+            )
+        else:
+            executor_name = self._ensure_sandbox_available(
+                db=db,
+                task_id=task_id,
+                user_id=user_id,
+            )
+            entries_payload = self._list_directory(
+                task_id=task_id,
+                executor_name=executor_name,
+                path=normalized_path,
+            )
 
         entries: list[RemoteWorkspaceTreeEntry] = []
         for item in entries_payload:
@@ -144,7 +153,7 @@ class RemoteWorkspaceService:
             user_id,
             normalized_path,
             len(entries),
-            executor_name,
+            sandbox_payload.get("base_url") if sandbox_payload else None,
         )
         return RemoteWorkspaceTreeResponse(path=normalized_path, entries=entries)
 
@@ -166,6 +175,7 @@ class RemoteWorkspaceService:
         normalized_path = self.normalize_and_validate_workspace_path(
             path, root_path=root_path
         )
+        self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
         logger.info(
             "[remote_workspace] stream_file start task_id=%s user_id=%s path=%s normalized_path=%s disposition=%s root_path=%s",
             task_id,
@@ -175,16 +185,23 @@ class RemoteWorkspaceService:
             disposition,
             root_path,
         )
-        executor_name = self._ensure_sandbox_available(
-            db=db,
-            task_id=task_id,
-            user_id=user_id,
-        )
-        content, content_type = self._download_file(
-            task_id=task_id,
-            executor_name=executor_name,
-            path=normalized_path,
-        )
+        if self._is_sandbox_available(sandbox_payload):
+            sandbox_base_url = str(sandbox_payload.get("base_url", "")).rstrip("/")
+            content, content_type = self._download_file_via_sandbox(
+                base_url=sandbox_base_url,
+                path=normalized_path,
+            )
+        else:
+            executor_name = self._ensure_sandbox_available(
+                db=db,
+                task_id=task_id,
+                user_id=user_id,
+            )
+            content, content_type = self._download_file(
+                task_id=task_id,
+                executor_name=executor_name,
+                path=normalized_path,
+            )
 
         filename = posixpath.basename(normalized_path) or "download"
         response = StreamingResponse(
@@ -202,7 +219,7 @@ class RemoteWorkspaceService:
             normalized_path,
             content_type,
             len(content),
-            executor_name,
+            sandbox_payload.get("base_url") if sandbox_payload else None,
         )
         return response
 
@@ -464,6 +481,142 @@ class RemoteWorkspaceService:
                 base_url,
             )
         return executor_name
+
+    def _list_directory_via_sandbox(
+        self,
+        base_url: str,
+        path: str,
+    ) -> list[dict[str, Any]]:
+        list_dir_url = f"{base_url}/filesystem.Filesystem/ListDir"
+        logger.info(
+            "[remote_workspace] list_dir request via sandbox url=%s path=%s",
+            list_dir_url,
+            path,
+        )
+
+        try:
+            with httpx.Client(timeout=self.request_timeout) as client:
+                response = client.post(
+                    list_dir_url,
+                    content=json.dumps({"path": path, "depth": 1}),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Connect-Protocol-Version": "1",
+                    },
+                )
+        except Exception as exc:
+            logger.warning(
+                "[remote_workspace] sandbox list_dir request failed url=%s path=%s error=%s",
+                list_dir_url,
+                path,
+                exc,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to query remote workspace",
+            ) from exc
+
+        if response.status_code == 404:
+            logger.info(
+                "[remote_workspace] sandbox list_dir path not found url=%s path=%s",
+                list_dir_url,
+                path,
+            )
+            raise HTTPException(status_code=404, detail="Path not found")
+        if response.status_code >= 400:
+            logger.warning(
+                "[remote_workspace] sandbox list_dir upstream error url=%s path=%s status_code=%s body_preview=%s",
+                list_dir_url,
+                path,
+                response.status_code,
+                self._to_log_preview(response.text),
+            )
+            raise HTTPException(status_code=502, detail="Remote workspace list failed")
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            logger.warning(
+                "[remote_workspace] sandbox list_dir invalid json url=%s path=%s error=%s body_preview=%s",
+                list_dir_url,
+                path,
+                exc,
+                self._to_log_preview(response.text),
+            )
+            raise HTTPException(
+                status_code=502, detail="Invalid remote workspace response"
+            ) from exc
+
+        raw_entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(raw_entries, list):
+            return []
+
+        entries: list[dict[str, Any]] = []
+        for item in raw_entries:
+            if not isinstance(item, dict):
+                continue
+            entry_path = str(item.get("path", path))
+            entry_type = str(item.get("type", ""))
+            entries.append(
+                {
+                    "name": str(item.get("name") or posixpath.basename(entry_path)),
+                    "path": entry_path,
+                    "is_directory": entry_type == "FILE_TYPE_DIRECTORY",
+                    "size": item.get("size", 0),
+                    "modified_at": item.get("modified_time"),
+                }
+            )
+
+        return entries
+
+    def _download_file_via_sandbox(
+        self,
+        base_url: str,
+        path: str,
+    ) -> tuple[bytes, Optional[str]]:
+        file_url = f"{base_url}/files"
+        logger.info(
+            "[remote_workspace] file request via sandbox url=%s path=%s",
+            file_url,
+            path,
+        )
+
+        try:
+            with httpx.Client(timeout=self.request_timeout) as client:
+                response = client.get(
+                    file_url,
+                    params={"path": path},
+                )
+        except Exception as exc:
+            logger.warning(
+                "[remote_workspace] sandbox file request failed url=%s path=%s error=%s",
+                file_url,
+                path,
+                exc,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to fetch remote file",
+            ) from exc
+
+        if response.status_code == 404:
+            logger.info(
+                "[remote_workspace] sandbox file path not found url=%s path=%s",
+                file_url,
+                path,
+            )
+            raise HTTPException(status_code=404, detail="File not found")
+        if response.status_code >= 400:
+            logger.warning(
+                "[remote_workspace] sandbox file upstream error url=%s path=%s status_code=%s body_preview=%s",
+                file_url,
+                path,
+                response.status_code,
+                self._to_log_preview(response.text),
+            )
+            raise HTTPException(status_code=502, detail="Remote file request failed")
+
+        return response.content, response.headers.get("content-type")
 
     def _list_directory(
         self,
