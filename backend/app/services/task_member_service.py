@@ -106,15 +106,9 @@ class TaskMemberService:
             logger.warning(f"[is_group_chat] Task {task_id} not found")
             return False
 
-        task_json = task.json if isinstance(task.json, dict) else {}
-        logger.info(
-            f"[is_group_chat] task_id={task_id}, task_json type={type(task.json)}, is_dict={isinstance(task.json, dict)}"
-        )
-        spec = task_json.get("spec", {})
-        is_group_chat = spec.get("is_group_chat", False)
-        logger.info(
-            f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}, spec={spec}"
-        )
+        # Use the indexed is_group_chat column instead of parsing JSON
+        is_group_chat = task.is_group_chat
+        logger.info(f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}")
         return is_group_chat
 
     def convert_to_group_chat(self, db: Session, task_id: int) -> bool:
@@ -123,21 +117,24 @@ class TaskMemberService:
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
+        # Check if already a group chat using the indexed column
+        if task.is_group_chat:
+            return False  # Already a group chat
+
         # Get current task JSON
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
 
-        # Check if already a group chat
-        if spec.get("is_group_chat", False):
-            return False  # Already a group chat
-
-        # Set is_group_chat flag
+        # Set is_group_chat flag in JSON (for backward compatibility)
         spec["is_group_chat"] = True
         task_json["spec"] = spec
 
         # IMPORTANT: Mark the json field as modified so SQLAlchemy detects the change
         task.json = task_json
         flag_modified(task, "json")
+
+        # Also update the indexed column for efficient queries
+        task.is_group_chat = True
 
         task.updated_at = datetime.utcnow()
 
@@ -498,17 +495,14 @@ class TaskMemberService:
         Returns:
             True if the task is a linked group chat
         """
-        # Require both that the task's spec indicates is_group_chat
+        # Require both that the task is a group chat (using indexed column)
         # AND that get_linked_group returns a valid string
         task = self.get_task(db, task_id)
         if not task:
             return False
 
-        # Check is_group_chat flag in spec
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
-        is_group_chat = spec.get("is_group_chat", False)
-        if not is_group_chat:
+        # Check is_group_chat flag using the indexed column (not JSON)
+        if not task.is_group_chat:
             return False
 
         # Check that get_linked_group returns a valid string

@@ -220,6 +220,14 @@ def _upgrade_task_kb_bindings() -> None:
         ["linked_group_id", "task_id"],
     )
 
+    # Index for knowledge_base_id lookups
+    # Optimizes: SELECT * FROM task_knowledge_base_bindings WHERE knowledge_base_id = ?
+    op.create_index(
+        "idx_tkb_kb_id",
+        "task_knowledge_base_bindings",
+        ["knowledge_base_id"],
+    )
+
     # 3. Create unique constraint to prevent duplicate bindings
     op.create_unique_constraint(
         "uk_task_kb",
@@ -296,11 +304,19 @@ def _resolve_kb_by_name(
             else:
                 continue
 
+            # Ensure kb_json is a dict before using .get()
+            if not isinstance(kb_json, dict):
+                continue
+
             kb_spec = kb_json.get("spec", {})
+            # Ensure kb_spec is a dict before using .get()
+            if not isinstance(kb_spec, dict):
+                continue
+
             display_name = kb_spec.get("name")
             if display_name == kb_name:
                 matching_kbs.append(kb_id)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, AttributeError):
             continue
 
     if len(matching_kbs) == 1:
@@ -602,6 +618,7 @@ def downgrade() -> None:
     op.drop_index(
         "idx_tkb_linked_group_task", table_name="task_knowledge_base_bindings"
     )
+    op.drop_index("idx_tkb_kb_id", table_name="task_knowledge_base_bindings")
     op.drop_table("task_knowledge_base_bindings")
 
     # Part 3: Drop is_group_chat column and indexes

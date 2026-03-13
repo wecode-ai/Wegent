@@ -188,11 +188,13 @@ def get_task_with_access_check(
         # Only honor linked_group for actual group chats
         if is_group_chat and linked_group:
             # Check if user is a member of the linked group
+            from app.schemas.namespace import GroupRole
             from app.services.group_permission import get_effective_role_in_group
 
             role = get_effective_role_in_group(db, user_id, linked_group)
-            if role is not None:
-                # User is a member of the linked group
+            # RestrictedObserver should not have access to linked group chats
+            if role is not None and role != GroupRole.RestrictedObserver.value:
+                # User is a member of the linked group with appropriate role
                 logger.info(
                     f"[get_task_with_access_check] User {user_id} has access via linked group '{linked_group}' with role '{role}'"
                 )

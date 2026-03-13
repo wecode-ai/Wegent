@@ -409,7 +409,7 @@ class TaskKnowledgeBaseService:
         # Batch query 2: Get KBs for legacy refs (by namespace, then filter by name)
         if refs_legacy:
             # Group legacy refs by namespace for efficient querying
-            namespace_groups: dict[str, List[tuple[int, str]]] = {}
+            namespace_groups: dict[str, list[tuple[int, str]]] = {}
             for idx, name, namespace in refs_legacy:
                 if namespace not in namespace_groups:
                     namespace_groups[namespace] = []
@@ -509,6 +509,66 @@ class TaskKnowledgeBaseService:
         task.json = task_json
         flag_modified(task, "json")
         # Note: Caller is responsible for commit
+
+    def _create_kb_binding(
+        self,
+        db: Session,
+        task: TaskResource,
+        kb_id: int,
+        bound_by: str,
+        bound_at: datetime,
+        linked_group: str | None = None,
+    ) -> None:
+        """Create a KB binding record in the database.
+
+        This helper method creates a TaskKnowledgeBaseBinding record with proper
+        linked_group_id resolution and handles IntegrityError for duplicate bindings.
+
+        Args:
+            db: Database session
+            task: TaskResource object
+            kb_id: Knowledge base ID
+            bound_by: User name who bound the KB
+            bound_at: Timestamp when the KB was bound
+            linked_group: Optional linked group name to resolve to namespace_id
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models.namespace import Namespace
+        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
+
+        # Resolve linked_group_id from linked_group name if provided
+        linked_group_id = 0
+        if linked_group and linked_group.strip():
+            namespace = (
+                db.query(Namespace)
+                .filter(Namespace.name == linked_group, Namespace.is_active == True)
+                .first()
+            )
+            if namespace:
+                linked_group_id = namespace.id
+
+        binding = TaskKnowledgeBaseBinding(
+            task_id=task.id,
+            knowledge_base_id=kb_id,
+            linked_group_id=linked_group_id,
+            bound_by=bound_by,
+            bound_at=bound_at,
+        )
+
+        # Use nested transaction (savepoint) to handle IntegrityError
+        # without rolling back the outer transaction (which would undo JSON updates)
+        nested = db.begin_nested()
+        try:
+            db.add(binding)
+            db.flush()
+            nested.commit()
+        except IntegrityError:
+            # Binding already exists, rollback only the nested transaction
+            nested.rollback()
+            logger.info(
+                f"[_create_kb_binding] Binding already exists for task {task.id} and KB {kb_id}"
+            )
 
     def get_bound_knowledge_bases(
         self, db: Session, task_id: int, user_id: int
@@ -734,48 +794,16 @@ class TaskKnowledgeBaseService:
         flag_modified(task, "json")
 
         # Also write to bindings table for efficient queries
-        from sqlalchemy.exc import IntegrityError
-
-        from app.models.task_kb_binding import TaskKnowledgeBaseBinding
-
-        # Get linked_group_id from task
-        linked_group_id = 0
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
+        # Use the already-parsed spec from earlier in this function
         linked_group = spec.get("linked_group")
-        if isinstance(linked_group, str) and linked_group.strip():
-            # Resolve namespace_id by name
-            from app.models.namespace import Namespace
-
-            namespace = (
-                db.query(Namespace)
-                .filter(Namespace.name == linked_group, Namespace.is_active == True)
-                .first()
-            )
-            if namespace:
-                linked_group_id = namespace.id
-
-        binding = TaskKnowledgeBaseBinding(
-            task_id=task_id,
-            knowledge_base_id=kb.id,
-            linked_group_id=linked_group_id,
+        self._create_kb_binding(
+            db=db,
+            task=task,
+            kb_id=kb.id,
             bound_by=user_name,
             bound_at=datetime.utcnow(),
+            linked_group=linked_group if isinstance(linked_group, str) else None,
         )
-
-        # Use nested transaction (savepoint) to handle IntegrityError
-        # without rolling back the outer transaction (which would undo JSON updates)
-        nested = db.begin_nested()
-        try:
-            db.add(binding)
-            db.flush()
-            nested.commit()
-        except IntegrityError:
-            # Binding already exists, rollback only the nested transaction
-            nested.rollback()
-            logger.info(
-                f"[bind_knowledge_base] Binding already exists for task {task_id} and KB {kb.id}"
-            )
 
         task.updated_at = datetime.utcnow()
         db.commit()
@@ -1012,48 +1040,16 @@ class TaskKnowledgeBaseService:
             flag_modified(task, "json")
 
             # Also write to bindings table for efficient queries
-            from sqlalchemy.exc import IntegrityError
-
-            from app.models.task_kb_binding import TaskKnowledgeBaseBinding
-
-            # Get linked_group_id from task
-            linked_group_id = 0
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
+            # Use the already-parsed spec from earlier in this function
             linked_group = spec.get("linked_group")
-            if isinstance(linked_group, str) and linked_group.strip():
-                # Resolve namespace_id by name
-                from app.models.namespace import Namespace
-
-                namespace = (
-                    db.query(Namespace)
-                    .filter(Namespace.name == linked_group, Namespace.is_active == True)
-                    .first()
-                )
-                if namespace:
-                    linked_group_id = namespace.id
-
-            binding = TaskKnowledgeBaseBinding(
-                task_id=task.id,
-                knowledge_base_id=kb.id,
-                linked_group_id=linked_group_id,
+            self._create_kb_binding(
+                db=db,
+                task=task,
+                kb_id=kb.id,
                 bound_by=user_name,
                 bound_at=bound_at,
+                linked_group=linked_group if isinstance(linked_group, str) else None,
             )
-
-            # Use nested transaction (savepoint) to handle IntegrityError
-            # without rolling back the outer transaction (which would undo JSON updates)
-            nested = db.begin_nested()
-            try:
-                db.add(binding)
-                db.flush()
-                nested.commit()
-            except IntegrityError:
-                # Binding already exists, rollback only the nested transaction
-                nested.rollback()
-                logger.info(
-                    f"[sync_subtask_kb_to_task] Binding already exists for task {task.id} and KB {kb.id}"
-                )
 
             task.updated_at = datetime.utcnow()
             db.commit()

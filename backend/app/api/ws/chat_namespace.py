@@ -369,14 +369,51 @@ class ChatNamespace(socketio.AsyncNamespace):
                 if has_more:
                     subtasks = subtasks[:limit]
 
+                # Batch fetch contexts for all subtasks to avoid N+1 queries
+                subtask_ids = [st.id for st in subtasks]
+                contexts_map = {}
+                if subtask_ids:
+                    # Fetch all contexts for the subtasks in batch
+                    from app.models.subtask_context import SubtaskContext
+
+                    all_contexts = (
+                        db.query(SubtaskContext)
+                        .filter(SubtaskContext.subtask_id.in_(subtask_ids))
+                        .all()
+                    )
+                    # Group contexts by subtask_id
+                    for ctx in all_contexts:
+                        if ctx.subtask_id not in contexts_map:
+                            contexts_map[ctx.subtask_id] = []
+                        contexts_map[ctx.subtask_id].append(ctx)
+
+                # Batch fetch users for all user subtasks to avoid N+1 queries
+                user_ids = [
+                    st.user_id
+                    for st in subtasks
+                    if st.role == SubtaskRole.USER and st.user_id
+                ]
+                users_map = {}
+                if user_ids:
+                    users = db.query(User).filter(User.id.in_(user_ids)).all()
+                    users_map = {u.id: u for u in users}
+
                 # Convert to dict format matching task detail API
                 subtasks_dict = []
                 for st in subtasks:
-                    # Get contexts for this subtask
-                    contexts_briefs = context_service.get_briefs_by_subtask(db, st.id)
-                    contexts_list = [
-                        ctx.model_dump(mode="json") for ctx in contexts_briefs
-                    ]
+                    # Get contexts from preloaded map
+                    contexts_briefs = contexts_map.get(st.id, [])
+                    contexts_list = []
+                    for ctx in contexts_briefs:
+                        if hasattr(ctx, "model_dump"):
+                            contexts_list.append(ctx.model_dump(mode="json"))
+                        else:
+                            from app.schemas.subtask_context import (
+                                SubtaskContextBrief as ContextBrief,
+                            )
+
+                            brief = ContextBrief.from_model(ctx)
+                            contexts_list.append(brief.model_dump(mode="json"))
 
                     subtask_dict = {
                         "id": st.id,
@@ -401,9 +438,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                         "sender_user_name": None,
                     }
 
-                    # Add sender info for user messages
+                    # Add sender info for user messages from preloaded users map
                     if st.role == SubtaskRole.USER and st.user_id:
-                        user = db.query(User).filter(User.id == st.user_id).first()
+                        user = users_map.get(st.user_id)
                         if user:
                             subtask_dict["sender"] = {
                                 "user_id": user.id,

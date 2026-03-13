@@ -148,7 +148,7 @@ def _filter_and_paginate_tasks(
         except Exception as e:
             logger.warning(
                 f"[_filter_and_paginate_tasks] Failed to validate task {task.id}: {e}. "
-                f"task_json={task.json}",
+                f"task_json_type={type(task.json).__name__}, task_json_len={len(str(task.json)) if task.json else 0}",
                 exc_info=True,
             )
             continue
@@ -308,8 +308,10 @@ class TaskQueryMixin:
             types = ["online", "offline"]
 
         # Get all owned task IDs using existing helper
+        # Use a high limit to get all tasks for filtering, but not unlimited to prevent memory issues
+        # The filtering (type, DELETE status) is applied after loading tasks
         owned_task_ids, _ = get_owned_task_ids_and_total(
-            db, user_id=user_id, skip=0, limit=10000, extra_limit=0
+            db, user_id=user_id, skip=0, limit=50000, extra_limit=0
         )
         if not owned_task_ids:
             return [], 0
@@ -345,7 +347,7 @@ class TaskQueryMixin:
             except Exception as e:
                 logger.warning(
                     f"[get_user_personal_tasks_lite] Failed to validate task {task.id}: {e}. "
-                    f"task_json={task.json}",
+                    f"task_json_type={type(task.json).__name__}, task_json_len={len(str(task.json)) if task.json else 0}",
                     exc_info=True,
                 )
                 continue
@@ -419,7 +421,7 @@ class TaskQueryMixin:
             except Exception as e:
                 logger.warning(
                     f"[get_user_tasks_by_title_with_pagination] Failed to validate task {task_id}: {e}. "
-                    f"task_json={task_json}",
+                    f"task_json_type={type(task_json).__name__}, task_json_len={len(str(task_json)) if task_json else 0}",
                     exc_info=True,
                 )
                 continue

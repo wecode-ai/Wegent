@@ -396,10 +396,14 @@ class KnowledgeShareService(UnifiedShareService):
         from app.models.task import TaskResource
         from app.models.task_kb_binding import TaskKnowledgeBaseBinding
 
+        # Collect all roles from different sources and return the highest priority one
+        all_roles: list[str] = []
+
         # Main query: get bindings and join with member roles
         # First check for explicit member role via ResourceMember
         # Join with TaskResource to enforce is_active, kind, and is_group_chat checks
-        member_role_result = (
+        # Exclude copied/share link rows (copied_resource_id > 0)
+        member_roles = (
             db.query(ResourceMember.role)
             .join(
                 TaskKnowledgeBaseBinding,
@@ -416,20 +420,18 @@ class KnowledgeShareService(UnifiedShareService):
                 ResourceMember.status.in_(
                     [MemberStatus.APPROVED.value, MemberStatus.APPROVED.value.upper()]
                 ),
+                ResourceMember.copied_resource_id == 0,
                 # Enforce active group chat task constraints (same as TaskMemberService.is_member)
                 TaskResource.is_active == True,
                 TaskResource.kind == "Task",
                 TaskResource.is_group_chat == True,
             )
-            .first()
+            .all()
         )
 
-        if member_role_result:
-            return (
-                member_role_result[0]
-                if member_role_result[0]
-                else ResourceRole.REPORTER.value
-            )
+        for role_row in member_roles:
+            if role_row[0]:
+                all_roles.append(role_row[0])
 
         # Check if user owns any task with this KB bound
         # Enforce is_group_chat check to ensure only real group-chat bindings grant access
@@ -451,13 +453,13 @@ class KnowledgeShareService(UnifiedShareService):
 
         if owner_result:
             # Task owner gets REPORTER role by default for bound KBs
-            return ResourceRole.REPORTER.value
+            all_roles.append(ResourceRole.REPORTER.value)
 
         # Check for namespace-derived membership (linked-group chats)
         # Join TaskKnowledgeBaseBinding to get linked_group_id,
         # then query ResourceMember for namespace membership
         # Enforce is_group_chat check to ensure only real linked-group chats grant access
-        namespace_member_result = (
+        namespace_roles = (
             db.query(ResourceMember.role)
             .join(
                 TaskKnowledgeBaseBinding,
@@ -479,12 +481,11 @@ class KnowledgeShareService(UnifiedShareService):
                 TaskResource.kind == "Task",
                 TaskResource.is_group_chat == True,
             )
-            .first()
+            .all()
         )
 
-        if namespace_member_result:
-            # Map NamespaceMember role to ResourceRole
-            namespace_role = namespace_member_result[0]
+        for role_row in namespace_roles:
+            namespace_role = role_row[0]
             role_mapping = {
                 "Owner": ResourceRole.MAINTAINER.value,
                 "Maintainer": ResourceRole.MAINTAINER.value,
@@ -492,10 +493,21 @@ class KnowledgeShareService(UnifiedShareService):
                 "Reporter": ResourceRole.REPORTER.value,
                 "RestrictedObserver": ResourceRole.RESTRICTED_OBSERVER.value,
             }
-            return role_mapping.get(namespace_role, ResourceRole.REPORTER.value)
+            mapped_role = role_mapping.get(namespace_role, ResourceRole.REPORTER.value)
+            all_roles.append(mapped_role)
 
-        return None
-        return None
+        if not all_roles:
+            return None
+
+        # Return the highest priority role
+        # Priority order: MAINTAINER > DEVELOPER > REPORTER > RESTRICTED_OBSERVER
+        role_priority = {
+            ResourceRole.MAINTAINER.value: 4,
+            ResourceRole.DEVELOPER.value: 3,
+            ResourceRole.REPORTER.value: 2,
+            ResourceRole.RESTRICTED_OBSERVER.value: 1,
+        }
+        return max(all_roles, key=lambda r: role_priority.get(r, 0))
 
     def _is_kb_bound_to_user_group_chat(
         self, db: Session, kb_id: int, user_id: int
