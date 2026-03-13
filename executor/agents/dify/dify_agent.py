@@ -8,7 +8,7 @@
 
 import json
 import time
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import requests
 
@@ -682,20 +682,22 @@ class DifyAgent(Agent):
             logger.error(error_msg)
             raise Exception(error_msg)
 
-    async def pre_execute(self) -> TaskStatus:
+    async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         """
         For external API agents, pre_execute is minimal.
         No need to download code or setup local environment since
         all execution happens on Dify's cloud service.
 
         Returns:
-            TaskStatus: Pre-execution status
+            Tuple[TaskStatus, Optional[str]]: A tuple containing:
+                - TaskStatus: Pre-execution status
+                - Optional[str]: Error message if failed, None if successful
         """
         logger.info(
             f"DifyAgent[{self.task_id}] is an external API type, "
             "skipping code download and environment setup"
         )
-        return TaskStatus.SUCCESS
+        return TaskStatus.SUCCESS, None
 
     def execute(self) -> TaskStatus:
         """
