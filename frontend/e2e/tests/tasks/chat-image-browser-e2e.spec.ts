@@ -265,11 +265,12 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
   /**
    * Helper function to select the test team in the UI
    * Updated to work with the new QuickAccessCards pagination design (removed "More" button)
+   * Note: TeamSelectorButton only renders when selectedTeam exists and teams.length > 0
    */
   async function selectTestTeam(page: Page): Promise<boolean> {
     try {
       // Wait for page to fully load
-      await page.waitForTimeout(2000)
+      await page.waitForTimeout(3000)
 
       // First, dismiss any onboarding tour that might be blocking
       await dismissOnboardingTour(page)
@@ -282,7 +283,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       // Strategy 1: Look for team card directly in QuickAccessCards
       // Note: Team cards are now div elements, not buttons
       const quickAccessCards = page.locator('[data-tour="quick-access-cards"]')
-      if (await quickAccessCards.isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (await quickAccessCards.isVisible({ timeout: 5000 }).catch(() => false)) {
         console.log('Found QuickAccessCards container')
 
         // Try to find the team card by text (cards are divs with team.name)
@@ -328,19 +329,45 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       }
 
       // Strategy 2: Try TeamSelectorButton in ChatInputControls (for new chat sessions)
-      // This button shows "智能体" or "Agent" with AgentIcon
-      const teamSelectorButton = page
-        .locator('button:has-text("智能体"), button:has-text("Agent")')
-        .first()
-      if (await teamSelectorButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        console.log('Found TeamSelectorButton, clicking...')
+      // Note: TeamSelectorButton only renders when selectedTeam exists and teams.length > 0
+      // It uses data-testid="team-selector" and shows "智能体" label
+      const teamSelectorButton = page.locator('[data-testid="team-selector"]')
+      if (await teamSelectorButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        console.log('Found TeamSelectorButton with data-testid, clicking...')
         await teamSelectorButton.click()
         await page.waitForTimeout(500)
 
-        // Look for the test team in the popover (uses role="button" instead of role="option")
-        const teamOption = page.locator(`[role="button"]:has-text("${TEST_TEAM_NAME}")`).first()
+        // Look for the test team in the popover (uses role="button" with data-testid)
+        const teamOption = page
+          .locator(
+            `[data-testid="team-option-${TEST_TEAM_NAME}"], [role="button"]:has-text("${TEST_TEAM_NAME}")`
+          )
+          .first()
         if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
           console.log('Found team in TeamSelectorButton popover, selecting...')
+          await teamOption.click()
+          await page.waitForTimeout(1000)
+          return true
+        }
+      }
+
+      // Strategy 2b: Fallback - try button with text "智能体" or "Agent"
+      const teamSelectorByText = page
+        .locator('button:has-text("智能体"), button:has-text("Agent")')
+        .first()
+      if (await teamSelectorByText.isVisible({ timeout: 3000 }).catch(() => false)) {
+        console.log('Found TeamSelectorButton by text, clicking...')
+        await teamSelectorByText.click()
+        await page.waitForTimeout(500)
+
+        // Look for the test team in the popover
+        const teamOption = page
+          .locator(
+            `[data-testid="team-option-${TEST_TEAM_NAME}"], [role="button"]:has-text("${TEST_TEAM_NAME}")`
+          )
+          .first()
+        if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+          console.log('Found team in popover, selecting...')
           await teamOption.click()
           await page.waitForTimeout(1000)
           return true
@@ -355,7 +382,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         await page.waitForTimeout(1000)
 
         // Look for the test team option in the dropdown
-        const teamOption = page.locator(`[role="option"]:has-text("${TEST_TEAM_NAME}")`).first()
+        const teamOption = page
+          .locator(
+            `[data-testid="team-option-${TEST_TEAM_NAME}"], [role="option"]:has-text("${TEST_TEAM_NAME}")`
+          )
+          .first()
         if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
           await teamOption.click()
           await page.waitForTimeout(500)

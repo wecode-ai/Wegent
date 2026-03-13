@@ -2,12 +2,15 @@ import { test, expect, TestData } from '../fixtures/test-fixtures'
 
 test.describe('Settings - Model Management', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/settings?tab=models')
+    // Use the correct tab parameter format: personal-models
+    await page.goto('/settings?tab=personal-models')
     await page.waitForLoadState('domcontentloaded')
+    // Wait for page to fully load
+    await page.waitForTimeout(1000)
   })
 
   test('should access model management page', async ({ page }) => {
-    // Verify we're on settings page (models is the default tab)
+    // Verify we're on settings page
     await expect(page).toHaveURL(/\/settings/)
 
     // Wait for model management title to load using data-testid for reliability
@@ -95,10 +98,8 @@ test.describe('Settings - Model Management', () => {
     if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       await submitButton.click()
 
-      // Wait for navigation back to list or validation error
-      await page.waitForURL(/\/settings/, { timeout: 10000 }).catch(() => {
-        // May stay on form with validation errors
-      })
+      // Wait for dialog to close or validation error
+      await page.waitForTimeout(2000)
     }
   })
 
@@ -110,7 +111,10 @@ test.describe('Settings - Model Management', () => {
 
     // Test connection button only appears for user models (not public)
     // Check if there are any user model cards with test button
-    const testButton = page.locator('button[title*="Test"], button:has-text("Test")').first()
+    // The button uses BeakerIcon and has title t('common:models.test_connection')
+    const testButton = page
+      .locator('button[title*="Test"], button[title*="测试"], button:has(svg.lucide-beaker)')
+      .first()
 
     // If button visible, click it to test
     if (await testButton.isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -128,7 +132,10 @@ test.describe('Settings - Model Management', () => {
     })
 
     // Delete button only appears for user models (not public)
-    const deleteButton = page.locator('button[title*="Delete"], button:has-text("Delete")').first()
+    // The button uses TrashIcon and has title t('common:models.delete')
+    const deleteButton = page
+      .locator('button[title*="Delete"], button[title*="删除"], button:has(svg.lucide-trash)')
+      .first()
 
     // If button visible, it should be clickable (but don't actually delete)
     if (await deleteButton.isVisible({ timeout: 3000 }).catch(() => false)) {

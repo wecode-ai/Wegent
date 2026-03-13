@@ -83,11 +83,17 @@ export interface NotificationWebhook {
   secret?: string // Optional signing secret for webhook verification
   enabled: boolean
 }
-
 // Knowledge base reference for Subscription
 export interface SubscriptionKnowledgeBaseRef {
   name: string
   namespace: string
+}
+
+// Skill reference for Subscription
+export interface SubscriptionSkillRef {
+  name: string
+  namespace: string
+  is_public?: boolean // Whether this is a public skill (user_id=0)
 }
 
 // Subscription configuration
@@ -126,6 +132,8 @@ export interface Subscription {
   last_execution_status?: string
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Skill references
+  skill_refs?: SubscriptionSkillRef[]
   // Notification webhooks (dingtalk, feishu, custom)
   notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
@@ -175,10 +183,11 @@ export interface SubscriptionCreateRequest {
   enabled?: boolean
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings
-  // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Skill references
+  skill_refs?: SubscriptionSkillRef[]
   // Notification webhooks (dingtalk, feishu, custom)
   notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
@@ -212,11 +221,14 @@ export interface SubscriptionUpdateRequest {
   preserve_history?: boolean // Whether to preserve conversation history across executions
   // Knowledge base references
   knowledge_base_refs?: SubscriptionKnowledgeBaseRef[]
+  // Skill references
+  skill_refs?: SubscriptionSkillRef[]
   // Notification webhooks (dingtalk, feishu, custom)
   notification_webhooks?: NotificationWebhook[]
   // Market whitelist (empty means visible to all market users)
   market_whitelist_user_ids?: number[]
 }
+
 // Subscription list response
 export interface SubscriptionListResponse {
   total: number

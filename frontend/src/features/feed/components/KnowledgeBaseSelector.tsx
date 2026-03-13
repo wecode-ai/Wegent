@@ -30,6 +30,10 @@ interface KnowledgeBaseSelectorProps {
   selectedKnowledgeBases: SubscriptionKnowledgeBaseRef[]
   onChange: (knowledgeBases: SubscriptionKnowledgeBaseRef[]) => void
   disabled?: boolean
+  /** Compact mode - only show trigger button, selected items displayed externally */
+  compact?: boolean
+  /** Selector only mode - only show the add button, no selected items display (for external display) */
+  selectorOnly?: boolean
 }
 
 interface KnowledgeBaseSelectorDialogProps {
@@ -215,6 +219,8 @@ export function KnowledgeBaseSelector({
   selectedKnowledgeBases,
   onChange,
   disabled = false,
+  compact = false,
+  selectorOnly = false,
 }: KnowledgeBaseSelectorProps) {
   const { t } = useTranslation('feed')
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -227,6 +233,57 @@ export function KnowledgeBaseSelector({
     const newKbs = [...selectedKnowledgeBases]
     newKbs.splice(index, 1)
     onChange(newKbs)
+  }
+
+  // Compact mode - only show trigger button (inline)
+  if (compact) {
+    return (
+      <>
+        {!disabled && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-sm"
+            onClick={() => setDialogOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            {t('add_knowledge_base')}
+          </Button>
+        )}
+        <KnowledgeBaseSelectorDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          selectedKnowledgeBases={selectedKnowledgeBases}
+          onSelect={handleAdd}
+        />
+      </>
+    )
+  }
+
+  // Selector only mode - only show the add button, no selected items display
+  // Style matches RichSkillSelector for consistency
+  if (selectorOnly) {
+    return (
+      <>
+        {!disabled && (
+          <button
+            type="button"
+            className="flex w-full h-9 items-center justify-between rounded-md border border-border/50 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => setDialogOpen(true)}
+          >
+            <span className="text-text-muted">{t('add_knowledge_base')}</span>
+            <Plus className="h-4 w-4 opacity-50" />
+          </button>
+        )}
+        <KnowledgeBaseSelectorDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          selectedKnowledgeBases={selectedKnowledgeBases}
+          onSelect={handleAdd}
+        />
+      </>
+    )
   }
 
   return (

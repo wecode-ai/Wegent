@@ -11,16 +11,17 @@ checking if a stage requires confirmation, and managing stage transitions.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team
+from app.services.readers.kinds import KindType, kindReader
+from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,84 +38,72 @@ class PipelineStageService:
     - Getting stage information for display
     """
 
-    def get_current_stage_index(
-        self, existing_subtasks: List[Subtask], team_crd: Team, db: Session = None
-    ) -> Optional[int]:
-        """
-        Get the current pipeline stage index based on existing subtasks.
+    def _get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
+        """Get task using unified task_member_service."""
+        return task_member_service.get_task(db, task_id)
 
-        In pipeline mode, the current stage is determined by the most recent
-        assistant subtask's bot. This method finds the last assistant subtask
-        and maps its bot_id to the corresponding stage index in team members.
+    def _get_task_crd(self, task: TaskResource) -> Task:
+        """Parse task JSON to Task CRD."""
+        return Task.model_validate(task.json)
+
+    def _get_bot_by_ref(
+        self, db: Session, user_id: int, namespace: str, name: str
+    ) -> Optional[Kind]:
+        """Get bot using unified kindReader."""
+        return kindReader.get_by_name_and_namespace(
+            db, user_id, KindType.BOT, namespace, name
+        )
+
+    def _get_bot_by_id(self, db: Session, bot_id: int) -> Optional[Kind]:
+        """Get bot by ID using unified kindReader."""
+        return kindReader.get_by_id(db, KindType.BOT, bot_id)
+
+    def get_current_stage_index(self, db: Session, task_id: int, team_crd: Team) -> int:
+        """
+        Get the current pipeline stage index from task.spec.currentStage.
+
+        In pipeline mode, the current stage is stored in task.spec.currentStage.
+        This is the single source of truth for pipeline stage tracking.
 
         Args:
-            existing_subtasks: List of existing subtasks, ordered by message_id desc
+            db: Database session
+            task_id: Task ID
             team_crd: Team CRD object containing member configuration
-            db: Optional database session for bot lookup (required for accurate stage detection)
 
         Returns:
-            The index of the current stage (0-based), or None if no existing subtasks
+            The index of the current stage (0-based), defaults to 0 if not set
         """
-        if not existing_subtasks:
-            return None
-
         total_stages = len(team_crd.spec.members)
         if total_stages == 0:
-            return None
+            return 0
 
-        # Find the most recent assistant subtask (existing_subtasks is ordered by message_id desc)
-        last_assistant = None
-        for s in existing_subtasks:
-            if s.role == SubtaskRole.ASSISTANT:
-                last_assistant = s
-                break
+        task = self._get_task(db, task_id)
+        if not task:
+            logger.warning(
+                f"Pipeline get_current_stage_index: Task not found id={task_id}, "
+                f"returning 0"
+            )
+            return 0
 
-        if not last_assistant:
-            return None
+        task_crd = self._get_task_crd(task)
+        current_stage = task_crd.spec.currentStage or 0
+
+        # Ensure current_stage doesn't exceed total_stages
+        current_stage = min(current_stage, total_stages - 1)
 
         logger.info(
-            f"Pipeline get_current_stage_index: last_assistant={last_assistant.id}, "
-            f"status={last_assistant.status.value}, bot_ids={last_assistant.bot_ids}"
+            f"Pipeline get_current_stage_index: task_id={task_id}, "
+            f"currentStage={current_stage} (from task.spec)"
         )
 
-        # Determine stage index from bot_id
-        if last_assistant.bot_ids and db:
-            bot_id = last_assistant.bot_ids[0]
-            # Find the bot and match it to team members
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == bot_id,
-                    Kind.kind == "Bot",
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-            if bot:
-                for i, member in enumerate(team_crd.spec.members):
-                    if (
-                        member.botRef.name == bot.name
-                        and member.botRef.namespace == bot.namespace
-                    ):
-                        logger.info(
-                            f"Pipeline get_current_stage_index: determined stage_index={i} "
-                            f"from bot {bot.name}"
-                        )
-                        return i
-
-        # Fallback: return 0 if we can't determine the stage
-        logger.warning(
-            f"Pipeline get_current_stage_index: could not determine stage from bot_id, "
-            f"falling back to 0"
-        )
-        return 0
+        return current_stage
 
     def should_stay_at_current_stage(
         self,
-        existing_subtasks: List[Subtask],
+        db: Session,
+        task_id: int,
         team_crd: Team,
-        db: Session = None,
-    ) -> tuple[bool, Optional[int]]:
+    ) -> tuple[bool, int]:
         """
         Determine if we should stay at the current stage when creating new subtasks.
 
@@ -122,20 +111,16 @@ class PipelineStageService:
         only create a subtask for the current bot instead of all bots.
 
         Args:
-            existing_subtasks: List of existing subtasks, ordered by message_id desc
+            db: Database session
+            task_id: Task ID
             team_crd: Team CRD object containing member configuration
-            db: Optional database session for bot lookup
 
         Returns:
-            Tuple of (should_stay: bool, current_stage_index: Optional[int])
+            Tuple of (should_stay: bool, current_stage_index: int)
         """
-        current_stage_index = self.get_current_stage_index(
-            existing_subtasks, team_crd, db
-        )
+        current_stage_index = self.get_current_stage_index(db, task_id, team_crd)
 
-        if current_stage_index is None or current_stage_index >= len(
-            team_crd.spec.members
-        ):
+        if current_stage_index >= len(team_crd.spec.members):
             return False, current_stage_index
 
         current_member = team_crd.spec.members[current_stage_index]
@@ -155,6 +140,10 @@ class PipelineStageService:
         """
         Get pipeline stage information for a task.
 
+        Uses task.spec.currentStage as the single source of truth for current stage.
+        Stage status is determined by task status (PENDING_CONFIRMATION means waiting
+        for user confirmation).
+
         Args:
             db: Database session
             task_id: Task ID
@@ -171,151 +160,53 @@ class PipelineStageService:
         members = team_crd.spec.members
         total_stages = len(members)
 
-        # Get all subtasks for this task, ordered by message_id descending
-        # We need both USER and ASSISTANT subtasks to properly identify conversation rounds
-        all_subtasks = (
-            db.query(Subtask)
-            .filter(Subtask.task_id == task_id)
-            .order_by(Subtask.message_id.desc())
-            .all()
-        )
+        if total_stages == 0:
+            return {
+                "current_stage": 0,
+                "total_stages": 0,
+                "current_stage_name": "",
+                "is_pending_confirmation": False,
+                "stages": [],
+            }
 
-        # Determine current stage based on subtask statuses
-        current_stage = 0
+        # Get current stage from task.spec.currentStage (single source of truth)
+        current_stage = self.get_current_stage_index(db, task_id, team_crd)
+
+        # Get task to check status
+        task = self._get_task(db, task_id)
+
         is_pending_confirmation = False
+        is_task_completed = False
+        if task:
+            task_crd = self._get_task_crd(task)
+            task_status = task_crd.status.status if task_crd.status else "PENDING"
+            is_pending_confirmation = task_status == "PENDING_CONFIRMATION"
+            is_task_completed = task_status == "COMPLETED"
 
-        # Get the most recent conversation round's assistant subtasks
-        # A conversation round starts with a USER subtask, followed by ASSISTANT subtasks
-        # We need to find the assistant subtasks from the most recent round only
-        recent_round_assistants = []
-        for subtask in all_subtasks:
-            if subtask.role == SubtaskRole.USER:
-                # Found the start of the most recent round, stop collecting
-                break
-            if subtask.role == SubtaskRole.ASSISTANT:
-                recent_round_assistants.append(subtask)
-
-        # Reverse to get chronological order (oldest first within this round)
-        recent_round_assistants.reverse()
-
-        # Debug log
         logger.info(
-            f"Pipeline get_stage_info: task_id={task_id}, total_stages={total_stages}, "
-            f"recent_round_assistants_count={len(recent_round_assistants)}, "
-            f"statuses=[{', '.join([f'{s.id}:{s.status.value}' for s in recent_round_assistants])}]"
+            f"Pipeline get_stage_info: task_id={task_id}, current_stage={current_stage}, "
+            f"total_stages={total_stages}, is_pending_confirmation={is_pending_confirmation}, "
+            f"is_task_completed={is_task_completed}"
         )
 
-        # In pipeline mode with requireConfirmation, the most recent round may only have
-        # subtasks for the current stage (not all stages). We need to determine which
-        # stage these subtasks belong to.
-        #
-        # Strategy: Match subtasks to stages by bot_id
-        # Each stage has a specific bot, so we can identify which stage a subtask belongs to
-        # by checking its bot_ids against the team members' bot references.
-
-        # Build a mapping from bot name to stage index
-        bot_name_to_stage: Dict[str, int] = {}
-        for i, member in enumerate(members):
-            bot_name_to_stage[member.botRef.name] = i
-
-        # Get bot names for each subtask in the recent round
-        # We need to query the Bot kind to get the bot name from bot_id
-        # For follow-up scenarios, we need to look at ALL subtasks (not just recent round)
-        # to get the correct stage status. A stage that was COMPLETED should stay COMPLETED
-        # even if a new PENDING subtask is created for follow-up.
-        stage_subtask_map: Dict[int, Subtask] = {}  # stage_index -> subtask
-
-        # First, build map from all assistant subtasks (to get historical completed states)
-        all_assistant_subtasks = [
-            s for s in all_subtasks if s.role == SubtaskRole.ASSISTANT
-        ]
-        for subtask in all_assistant_subtasks:
-            if subtask.bot_ids:
-                bot = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.id == subtask.bot_ids[0],
-                        Kind.kind == "Bot",
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
-                )
-                if bot and bot.name in bot_name_to_stage:
-                    stage_idx = bot_name_to_stage[bot.name]
-                    # Only update if:
-                    # 1. No existing entry for this stage, OR
-                    # 2. Existing entry is PENDING/RUNNING and new one is COMPLETED
-                    #    (prefer completed state over pending for display)
-                    existing = stage_subtask_map.get(stage_idx)
-                    if existing is None:
-                        stage_subtask_map[stage_idx] = subtask
-                    elif existing.status in [
-                        SubtaskStatus.PENDING,
-                        SubtaskStatus.RUNNING,
-                    ]:
-                        # If existing is pending/running but we found a completed one, use completed
-                        if subtask.status == SubtaskStatus.COMPLETED:
-                            stage_subtask_map[stage_idx] = subtask
-                    # If existing is COMPLETED, keep it (don't overwrite with PENDING from follow-up)
-
-        # Now determine current stage and status based on the stage_subtask_map
-        for i in range(total_stages):
-            if i in stage_subtask_map:
-                subtask = stage_subtask_map[i]
-                if subtask.status == SubtaskStatus.PENDING_CONFIRMATION:
-                    current_stage = i
-                    is_pending_confirmation = True
-                    break
-                elif subtask.status in [SubtaskStatus.RUNNING, SubtaskStatus.PENDING]:
-                    current_stage = i
-                    break
-                elif subtask.status == SubtaskStatus.COMPLETED:
-                    # Check if this completed stage has requireConfirmation
-                    # and the next stage hasn't started yet
-                    if i < len(members) and members[i].requireConfirmation:
-                        next_stage_idx = i + 1
-                        if (
-                            next_stage_idx not in stage_subtask_map
-                            and next_stage_idx < total_stages
-                        ):
-                            # Next stage subtask doesn't exist yet, stay at current stage
-                            current_stage = i
-                            is_pending_confirmation = True
-                            break
-                    # Normal case: move to next stage
-                    current_stage = i + 1
-                elif subtask.status == SubtaskStatus.FAILED:
-                    current_stage = i
-                    break
-            else:
-                # No subtask for this stage yet, this is the current stage
-                current_stage = i
-                break
-
-        # Ensure current_stage doesn't exceed total_stages
-        current_stage = min(current_stage, total_stages - 1)
-
-        # Build stages list
+        # Build stages list based on current_stage and task status
         stages = []
         for i, member in enumerate(members):
-            stage_status = "pending"
-            if i in stage_subtask_map:
-                subtask_status = stage_subtask_map[i].status
-                if subtask_status == SubtaskStatus.COMPLETED:
+            if i < current_stage:
+                # Stages before current are completed
+                stage_status = "completed"
+            elif i == current_stage:
+                # Current stage status depends on task status
+                if is_task_completed:
+                    # Task is completed, all stages including current are completed
                     stage_status = "completed"
-                elif subtask_status == SubtaskStatus.RUNNING:
-                    stage_status = "running"
-                elif subtask_status == SubtaskStatus.PENDING_CONFIRMATION:
+                elif is_pending_confirmation:
                     stage_status = "pending_confirmation"
-                elif subtask_status == SubtaskStatus.FAILED:
-                    stage_status = "failed"
-                elif subtask_status == SubtaskStatus.PENDING:
-                    stage_status = "pending"
-
-            # If this is the current stage and is_pending_confirmation is true,
-            # override the status to "pending_confirmation" for UI display
-            if i == current_stage and is_pending_confirmation:
-                stage_status = "pending_confirmation"
+                else:
+                    stage_status = "running"
+            else:
+                # Stages after current are pending
+                stage_status = "pending"
 
             stages.append(
                 {
@@ -338,194 +229,17 @@ class PipelineStageService:
             "stages": stages,
         }
 
-    def _create_next_stage_subtask(
-        self,
-        db: Session,
-        task: TaskResource,
-        task_crd: Task,
-        team_crd: Team,
-        next_stage_index: int,
-        confirmed_prompt: str,
-    ) -> Optional[Subtask]:
-        """
-        Create a subtask for the next pipeline stage.
-
-        This method creates both a USER subtask (containing the confirmed prompt)
-        and an ASSISTANT subtask for the next stage bot to process.
-
-        Args:
-            db: Database session
-            task: Task resource object
-            task_crd: Task CRD object
-            team_crd: Team CRD object
-            next_stage_index: Index of the next stage (0-based)
-            confirmed_prompt: The confirmed prompt to pass to the next stage
-
-        Returns:
-            The created ASSISTANT Subtask object, or None if creation failed
-        """
-        if next_stage_index >= len(team_crd.spec.members):
-            return None
-        next_member = team_crd.spec.members[next_stage_index]
-
-        # Get the team to find the bot (supports owned, shared, and group teams)
-        team = self.get_team_for_task(db, task, task_crd)
-
-        if not team:
-            logger.error(f"Team not found for task {task.id}")
-            return None
-
-        # Find the bot for the next stage
-        # For group teams (namespace != 'default'), bot may be created by any group member
-        # so we query without user_id filter
-        if next_member.botRef.namespace and next_member.botRef.namespace != "default":
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Bot",
-                    Kind.name == next_member.botRef.name,
-                    Kind.namespace == next_member.botRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-        else:
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == team.user_id,
-                    Kind.kind == "Bot",
-                    Kind.name == next_member.botRef.name,
-                    Kind.namespace == next_member.botRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-
-        if not bot:
-            logger.error(
-                f"Bot {next_member.botRef.name} not found for pipeline stage {next_stage_index}"
-            )
-            return None
-
-        # Get the last subtask to determine message_id and parent_id
-        last_subtask = (
-            db.query(Subtask)
-            .filter(Subtask.task_id == task.id)
-            .order_by(Subtask.message_id.desc())
-            .first()
-        )
-
-        if not last_subtask:
-            logger.error(f"No existing subtasks found for task {task.id}")
-            return None
-
-        # Get all bot_ids from team members for the USER subtask
-        from app.services.readers.kinds import KindType, kindReader
-
-        bot_ids = []
-        for member in team_crd.spec.members:
-            member_bot = kindReader.get_by_name_and_namespace(
-                db,
-                team.user_id,
-                KindType.BOT,
-                member.botRef.namespace,
-                member.botRef.name,
-            )
-            if member_bot:
-                bot_ids.append(member_bot.id)
-
-        # Create USER subtask first (containing the confirmed prompt)
-        user_message_id = last_subtask.message_id + 1
-        user_parent_id = last_subtask.message_id
-
-        user_subtask = Subtask(
-            user_id=last_subtask.user_id,
-            task_id=task.id,
-            team_id=team.id,
-            title=f"{task_crd.spec.title} - User",
-            bot_ids=bot_ids if bot_ids else [bot.id],
-            role=SubtaskRole.USER,
-            executor_namespace="",
-            executor_name="",
-            prompt=confirmed_prompt,
-            status=SubtaskStatus.COMPLETED,
-            progress=0,
-            message_id=user_message_id,
-            parent_id=user_parent_id,
-            error_message="",
-            completed_at=datetime.now(),
-            result=None,
-        )
-        db.add(user_subtask)
-        db.flush()
-
-        logger.info(
-            f"Pipeline confirm_stage: created USER subtask {user_subtask.id} "
-            f"(message_id={user_message_id})"
-        )
-
-        # Get executor info from existing assistant subtasks (reuse executor)
-        executor_name = ""
-        executor_namespace = ""
-        existing_assistant = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task.id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-            )
-            .first()
-        )
-        if existing_assistant:
-            executor_name = existing_assistant.executor_name or ""
-            executor_namespace = existing_assistant.executor_namespace or ""
-
-        # Create ASSISTANT subtask for the next stage
-        assistant_message_id = user_message_id + 1
-        assistant_parent_id = user_message_id
-
-        new_subtask = Subtask(
-            user_id=last_subtask.user_id,
-            task_id=task.id,
-            team_id=team.id,
-            title=f"{task_crd.spec.title} - {bot.name}",
-            bot_ids=[bot.id],
-            role=SubtaskRole.ASSISTANT,
-            prompt=confirmed_prompt,
-            status=SubtaskStatus.PENDING,
-            progress=0,
-            message_id=assistant_message_id,
-            parent_id=assistant_parent_id,
-            executor_name=executor_name,
-            executor_namespace=executor_namespace,
-            error_message="",
-            completed_at=None,
-            result={
-                "from_stage_confirmation": True,
-            },
-        )
-
-        db.add(new_subtask)
-        db.flush()  # Get the new subtask ID
-
-        logger.info(
-            f"Pipeline confirm_stage: created ASSISTANT subtask {new_subtask.id} for stage {next_stage_index} "
-            f"(bot={bot.name}, message_id={assistant_message_id})"
-        )
-
-        return new_subtask
-
     def get_team_for_task(
         self, db: Session, task: TaskResource, task_crd: Task
     ) -> Optional[Kind]:
         """
         Get the team associated with a task.
 
-        Supports:
-        1. Teams owned by task owner
-        2. Teams shared via ResourceMember table
-        3. Public teams (user_id=0)
-        4. Group teams (namespace != 'default') - can be created by any group member
+        Uses kindReader which handles all team types:
+        - Personal teams (owned by user)
+        - Shared teams (via ResourceMember table)
+        - Public teams (user_id=0)
+        - Group teams (namespace != 'default')
 
         Args:
             db: Database session
@@ -535,16 +249,9 @@ class PipelineStageService:
         Returns:
             Team Kind object or None if not found
         """
-        from app.services.readers.kinds import KindType, kindReader
-
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
 
-        # Use kindReader which handles all team types:
-        # - Personal teams (owned by user)
-        # - Shared teams (via ResourceMember table)
-        # - Public teams (user_id=0)
-        # - Group teams (namespace != 'default')
         return kindReader.get_by_name_and_namespace(
             db, task.user_id, KindType.TEAM, team_namespace, team_name
         )
@@ -580,19 +287,8 @@ class PipelineStageService:
             - is_pipeline_complete: True if this is the last stage
             - error: Error message if validation failed
         """
-        from app.services.task_member_service import task_member_service
-
         # Get the task
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
-
+        task = self._get_task(db, task_id)
         if not task:
             logger.error(
                 f"[Pipeline] prepare_pipeline_confirm: Task not found id={task_id}"
@@ -606,7 +302,7 @@ class PipelineStageService:
             )
             return {"success": False, "error": "Task not found"}
 
-        task_crd = Task.model_validate(task.json)
+        task_crd = self._get_task_crd(task)
 
         # Check task status
         current_status = task_crd.status.status if task_crd.status else "PENDING"
@@ -669,16 +365,20 @@ class PipelineStageService:
                 "next_stage_name": None,
             }
 
-        # Get the next stage's bot
+        # Get current and next stage's bot info
+        current_member = team_crd.spec.members[current_stage]
         next_member = team_crd.spec.members[next_stage]
 
-        # Find the bot for the next stage
-        from app.services.readers.kinds import KindType, kindReader
-
-        next_bot = kindReader.get_by_name_and_namespace(
+        # Get bots using unified kindReader
+        current_bot = self._get_bot_by_ref(
             db,
             team.user_id,
-            KindType.BOT,
+            current_member.botRef.namespace,
+            current_member.botRef.name,
+        )
+        next_bot = self._get_bot_by_ref(
+            db,
+            team.user_id,
             next_member.botRef.namespace,
             next_member.botRef.name,
         )
@@ -690,13 +390,23 @@ class PipelineStageService:
             )
             return {"success": False, "error": "Bot not found for next stage"}
 
+        # current_stage_bot_id is used for session management
+        # When current_stage_bot_id != next_stage_bot_id, a new session should be created
+        current_stage_bot_id = current_bot.id if current_bot else None
+
         # Update task status to PENDING (ready for next stage)
+        # Also update currentStage to track which stage we're at for follow-up questions
         task_crd.status.status = "PENDING"
         task_crd.status.updatedAt = datetime.now()
+        task_crd.spec.currentStage = next_stage  # Track current pipeline stage
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
         task.updated_at = datetime.now()
         flag_modified(task, "json")
         db.commit()
+
+        logger.info(
+            f"[Pipeline] prepare_pipeline_confirm: Updated task currentStage to {next_stage}"
+        )
 
         logger.info(
             f"[Pipeline] prepare_pipeline_confirm: Ready for next stage {next_stage} "
@@ -706,6 +416,7 @@ class PipelineStageService:
         return {
             "success": True,
             "is_pipeline_complete": False,
+            "current_stage_bot_id": current_stage_bot_id,
             "next_stage_bot_id": next_bot.id,
             "next_stage_index": next_stage,
             "total_stages": total_stages,
@@ -732,26 +443,13 @@ class PipelineStageService:
         Returns:
             True if task should be set to PENDING_CONFIRMATION, False otherwise
         """
-        from app.models.kind import Kind
-        from app.models.subtask import Subtask, SubtaskStatus
-        from app.models.task import TaskResource
-        from app.schemas.kind import Task, Team
-
         try:
             # Get the task
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
-            )
+            task = self._get_task(db, task_id)
             if not task:
                 return False
 
-            task_crd = Task.model_validate(task.json)
+            task_crd = self._get_task_crd(task)
 
             # Get the team
             team = self.get_team_for_task(db, task, task_crd)
@@ -774,15 +472,7 @@ class PipelineStageService:
                 return False
 
             bot_id = subtask.bot_ids[0]
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == bot_id,
-                    Kind.kind == "Bot",
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
+            bot = self._get_bot_by_id(db, bot_id)
             if not bot:
                 return False
 
@@ -821,6 +511,99 @@ class PipelineStageService:
                 exc_info=True,
             )
             return False
+
+    def get_pipeline_info(
+        self,
+        db: Session,
+        team: "Kind",
+        task_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get pipeline information for any pipeline mode operation.
+
+        This is the unified method to get pipeline bot_ids based on task.spec.currentStage:
+        - New task (task_id=None): use first stage bot_id (stage 0)
+        - Existing task: read currentStage from task.spec and get corresponding bot_id
+
+        The currentStage is updated by pipeline_confirm() when user confirms to proceed.
+
+        Args:
+            db: Database session
+            team: Team Kind object
+            task_id: Optional task ID (None for new tasks)
+
+        Returns:
+            Dict with pipeline info including bot_ids, or None if not a pipeline team
+        """
+        team_crd = Team.model_validate(team.json)
+
+        # Only handle pipeline mode teams
+        if team_crd.spec.collaborationModel != "pipeline":
+            return None
+
+        if not team_crd.spec.members:
+            return None
+
+        current_stage = 0
+
+        if task_id:
+            # Existing task: read currentStage from task.spec
+            task = self._get_task(db, task_id)
+            if task:
+                task_crd = self._get_task_crd(task)
+                # Use currentStage from task spec if set, otherwise default to 0
+                current_stage = task_crd.spec.currentStage or 0
+                logger.info(
+                    f"[Pipeline] get_pipeline_info: task_id={task_id}, currentStage from task.spec={current_stage}"
+                )
+
+        # Check if pipeline is complete
+        total_stages = len(team_crd.spec.members)
+        if current_stage >= total_stages:
+            logger.info(
+                f"[Pipeline] get_pipeline_info: Pipeline completed (currentStage={current_stage} >= total_stages={total_stages})"
+            )
+            return {
+                "success": True,
+                "is_pipeline": True,
+                "is_pipeline_complete": True,
+                "bot_ids": None,
+                "current_stage": current_stage,
+                "current_stage_bot_id": None,
+                "total_stages": total_stages,
+            }
+
+        # Get bot for current stage using unified kindReader
+        current_member = team_crd.spec.members[current_stage]
+        current_bot = self._get_bot_by_ref(
+            db,
+            team.user_id,
+            current_member.botRef.namespace,
+            current_member.botRef.name,
+        )
+
+        if not current_bot:
+            logger.error(
+                f"[Pipeline] get_pipeline_info: Bot not found for stage {current_stage}: "
+                f"{current_member.botRef.namespace}/{current_member.botRef.name}"
+            )
+            return None
+
+        current_stage_bot_id = current_bot.id
+        bot_ids = [current_bot.id]
+
+        logger.info(
+            f"[Pipeline] get_pipeline_info: stage={current_stage}, bot_id={current_stage_bot_id} ({current_bot.name})"
+        )
+
+        return {
+            "success": True,
+            "is_pipeline": True,
+            "bot_ids": bot_ids,
+            "current_stage": current_stage,
+            "current_stage_bot_id": current_stage_bot_id,
+            "total_stages": total_stages,
+        }
 
 
 # Singleton instance

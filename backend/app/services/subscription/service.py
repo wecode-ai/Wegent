@@ -522,6 +522,10 @@ class SubscriptionService:
         if "knowledge_base_refs" in update_data:
             subscription_crd.spec.knowledgeBaseRefs = update_data["knowledge_base_refs"]
 
+        # Update skill references
+        if "skill_refs" in update_data:
+            subscription_crd.spec.skillRefs = update_data["skill_refs"]
+
         # Update notification webhooks
         if "notification_webhooks" in update_data:
             from app.schemas.subscription import NotificationWebhook
@@ -1038,6 +1042,8 @@ class SubscriptionService:
             bound_task_id=internal.get("bound_task_id", 0),
             # Knowledge base references
             knowledge_base_refs=subscription_crd.spec.knowledgeBaseRefs,
+            # Skill references
+            skill_refs=subscription_crd.spec.skillRefs,
             # Notification webhooks - decrypt secret for display
             notification_webhooks=self._decrypt_webhook_secrets(
                 subscription_crd.spec.notificationWebhooks

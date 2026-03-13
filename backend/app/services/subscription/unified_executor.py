@@ -16,8 +16,8 @@ across all execution modes.
 """
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -64,6 +64,8 @@ class SubscriptionExecutionData:
 
     # Default values must come last
     is_subscription: bool = True
+    # Skills to preload for this subscription execution
+    preload_skills: List[dict] = field(default_factory=list)
 
 
 async def execute_subscription_unified(
@@ -102,7 +104,7 @@ async def execute_subscription_unified(
         f"task_id={execution_data.task_id}"
     )
 
-    # Build execution request
+    # Build execution request with preload_skills from subscription
     request = await build_execution_request(
         task=task,
         assistant_subtask=assistant_subtask,
@@ -119,6 +121,9 @@ async def execute_subscription_unified(
         is_subscription=True,
         enable_tools=True,
         enable_deep_thinking=True,
+        preload_skills=(
+            execution_data.preload_skills if execution_data.preload_skills else None
+        ),
     )
 
     # Determine communication mode
@@ -334,6 +339,23 @@ def extract_subscription_execution_data(
     except Exception:
         pass  # Use team name as fallback
 
+    # Extract skills from subscription CRD's skillRefs
+    # Convert to the format expected by build_execution_request: [{"name": "skill1", "namespace": "default", "is_public": false}]
+    preload_skills: List[dict] = []
+    if ctx.subscription_crd.spec.skillRefs:
+        for skill_ref in ctx.subscription_crd.spec.skillRefs:
+            preload_skills.append(
+                {
+                    "name": skill_ref.name,
+                    "namespace": skill_ref.namespace,
+                    "is_public": skill_ref.is_public,
+                }
+            )
+        logger.info(
+            f"[extract_subscription_execution_data] Extracted {len(preload_skills)} skills "
+            f"from subscription: {[s['name'] for s in preload_skills]}"
+        )
+
     return SubscriptionExecutionData(
         subscription_id=ctx.subscription.id,
         execution_id=ctx.execution.id,
@@ -355,4 +377,5 @@ def extract_subscription_execution_data(
         team_display_name=team_display_name,
         trigger_type=ctx.trigger_type,
         trigger_reason=ctx.execution.trigger_reason or "",
+        preload_skills=preload_skills,
     )
