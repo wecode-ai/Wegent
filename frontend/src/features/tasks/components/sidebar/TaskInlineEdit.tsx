@@ -109,7 +109,7 @@ export default function TaskInlineEdit({
         onClick={e => e.stopPropagation()}
         disabled={isSaving}
         className={cn(
-          'sidebar-conversation-title w-full text-sm font-medium text-text-primary leading-5 px-1.5 py-0.5 rounded',
+          'w-full text-sm font-medium text-[#444746] leading-5 px-1.5 py-0.5 rounded',
           'border-2 outline-none transition-colors',
           'bg-transparent',
           error ? 'border-red-500' : 'border-primary',

@@ -21,6 +21,7 @@ export default {
         sans: [
           '"Google Sans Flex"',
           '"Google Sans"',
+          '"Noto Sans Simplified Chinese"',
           '"Noto Sans SC"',
           '"Inter"',
           '"PingFang SC"',
