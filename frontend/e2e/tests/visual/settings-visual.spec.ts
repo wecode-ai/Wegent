@@ -83,7 +83,10 @@ test.describe('Visual Regression - Settings Page', () => {
   test('settings models tab should match baseline @visual', async ({ page }) => {
     await page.goto('/settings?tab=models')
     await page.waitForLoadState('domcontentloaded')
-    await page.waitForTimeout(1000)
+    // Wait for the model management title to be visible
+    await expect(
+      page.locator('h2:has-text("Model Management"), h2:has-text("模型管理")').first()
+    ).toBeVisible({ timeout: 20000 })
 
     // Visual regression tests are optional - pass if baseline doesn't exist
     const result = await expect(page)

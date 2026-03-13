@@ -225,6 +225,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
    */
   async function dismissOnboardingTour(page: Page): Promise<void> {
     try {
+      // First, try to forcefully remove all driver.js elements from DOM
+      await page.evaluate(() => {
+        document.querySelectorAll('.driver-overlay, .driver-popover, .driver-popover-tip, [class*="driver-"]').forEach(el => el.remove())
+      })
+
       // Check for driver.js overlay (onboarding tour)
       const driverOverlay = page.locator('.driver-overlay, .driver-popover')
       if (await driverOverlay.isVisible({ timeout: 1000 }).catch(() => false)) {
@@ -249,11 +254,15 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
           console.log('Pressed Escape to dismiss overlay')
         }
 
-        // Verify overlay is gone
+        // Verify overlay is gone, if not forcefully remove it
         if (await driverOverlay.isVisible({ timeout: 500 }).catch(() => false)) {
-          console.warn('Overlay still visible, trying to click outside')
-          // Click outside the overlay to dismiss it
-          await page.mouse.click(10, 10)
+          console.warn('Overlay still visible, forcefully removing from DOM')
+          await page.evaluate(() => {
+            document.querySelectorAll('.driver-overlay, .driver-popover, .driver-popover-tip, [class*="driver-"]').forEach(el => {
+              ;(el as HTMLElement).style.display = 'none'
+              el.remove()
+            })
+          })
           await page.waitForTimeout(500)
         }
       }
@@ -334,6 +343,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         .first()
       if (await teamSelectorButton.isVisible({ timeout: 2000 }).catch(() => false)) {
         console.log('Found TeamSelectorButton, clicking...')
+        // Dismiss tour before clicking to avoid driver-overlay blocking
+        await dismissOnboardingTour(page)
         await teamSelectorButton.click()
         await page.waitForTimeout(500)
 
@@ -351,6 +362,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       const teamSelector = page.locator('[data-tour="team-selector"]')
       if (await teamSelector.isVisible({ timeout: 3000 }).catch(() => false)) {
         console.log('Found team selector with data-tour attribute')
+        // Dismiss tour before clicking to avoid driver-overlay blocking
+        await dismissOnboardingTour(page)
         await teamSelector.click()
         await page.waitForTimeout(1000)
 
@@ -367,6 +380,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       // Strategy 4: Direct click on team card if visible anywhere on page
       const teamCard = page.locator(`text="${TEST_TEAM_NAME}"`).first()
       if (await teamCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+        // Dismiss tour before clicking to avoid driver-overlay blocking
+        await dismissOnboardingTour(page)
         await teamCard.click()
         await page.waitForTimeout(1000)
         console.log(`Selected team from direct card: ${TEST_TEAM_NAME}`)
@@ -390,46 +405,91 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
    */
   async function selectTestModel(page: Page): Promise<boolean> {
     try {
-      // Look for model selector button - it shows "Please select a model" or "请选择模型" when required
-      const modelSelectorButton = page
-        .locator(
-          'button:has-text("Please select a model"), button:has-text("请选择模型"), button[role="combobox"]:has(svg.lucide-brain)'
-        )
-        .first()
+      // Wait for page to fully load
+      await page.waitForTimeout(2000)
 
-      if (await modelSelectorButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        const buttonText = await modelSelectorButton.textContent()
+      // First try to find by data-testid (most reliable)
+      const modelSelectorByTestId = page.locator('[data-testid="model-selector"]').first()
+      if (await modelSelectorByTestId.isVisible({ timeout: 5000 }).catch(() => false)) {
+        const buttonText = await modelSelectorByTestId.textContent()
         console.log('Model selector button text:', buttonText)
 
-        // Check if model selection is required
-        if (buttonText?.includes('Please select') || buttonText?.includes('请选择模型')) {
+        // Check if model selection is required (shows "请选择模型" or "选择模型" or isModelRequired error state)
+        const needsSelection = buttonText?.includes('选择模型') ||
+                              buttonText?.includes('Please select') ||
+                              buttonText?.includes('Model') ||
+                              buttonText?.includes('required') ||
+                              buttonText?.includes('必须') ||
+                              await modelSelectorByTestId.locator('..').locator('..').locator('[class*="border-error"]').isVisible({ timeout: 1000 }).catch(() => false)
+
+        if (needsSelection) {
           console.log('Model selection required, clicking selector...')
           // Dismiss tour before clicking
           await dismissOnboardingTour(page)
-          await modelSelectorButton.click({ force: true })
-          await page.waitForTimeout(500)
+          await modelSelectorByTestId.click({ force: true })
+          // Wait longer for dropdown to fully load and render options
+          await page.waitForTimeout(2000)
 
           // Look for our test model in the dropdown
-          const modelOption = page.locator(`[role="option"]:has-text("${TEST_MODEL_NAME}")`).first()
-          if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+          const modelOption = page.locator(`[role="option"]:has-text("${TEST_MODEL_NAME}"), [data-testid*="model-option"]`).first()
+          if (await modelOption.isVisible({ timeout: 5000 }).catch(() => false)) {
             console.log('Found test model, selecting...')
             await modelOption.click()
-            await page.waitForTimeout(500)
+            await page.waitForTimeout(1000)
             return true
           }
 
-          // Try to select any available model
-          const anyModelOption = page.locator('[role="option"]').first()
-          if (await anyModelOption.isVisible({ timeout: 2000 }).catch(() => false)) {
+          // Try to select any available model (exclude the search input if present)
+          const anyModelOption = page.locator('[role="option"]').filter({ hasNot: page.locator('input') }).first()
+          if (await anyModelOption.isVisible({ timeout: 5000 }).catch(() => false)) {
             console.log('Selecting first available model...')
             await anyModelOption.click()
-            await page.waitForTimeout(500)
+            await page.waitForTimeout(1000)
             return true
           }
 
           console.warn('No model options available in dropdown')
           // Press Escape to close dropdown
           await page.keyboard.press('Escape')
+          await page.waitForTimeout(500)
+          return false
+        }
+
+        // Model already selected
+        console.log('Model already selected:', buttonText)
+        return true
+      }
+
+      // Fallback: Look for model selector by text
+      const modelSelectorButton = page
+        .locator(
+          'button:has-text("选择模型"), button:has-text("Please select"), button[role="combobox"]:has(svg.lucide-brain)'
+        )
+        .first()
+
+      if (await modelSelectorButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        const buttonText = await modelSelectorButton.textContent()
+        console.log('Model selector button text (fallback):', buttonText)
+
+        // Check if model selection is required
+        if (buttonText?.includes('选择模型') || buttonText?.includes('Please select')) {
+          console.log('Model selection required (fallback), clicking selector...')
+          await dismissOnboardingTour(page)
+          await modelSelectorButton.click({ force: true })
+          await page.waitForTimeout(1000)
+
+          // Look for any model option
+          const anyModelOption = page.locator('[role="option"]').first()
+          if (await anyModelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+            console.log('Selecting first available model...')
+            await anyModelOption.click()
+            await page.waitForTimeout(1000)
+            return true
+          }
+
+          console.warn('No model options available in dropdown')
+          await page.keyboard.press('Escape')
+          await page.waitForTimeout(500)
           return false
         }
       }
